@@ -1,0 +1,44 @@
+# ---- Secrets / environment ----
+.env
+*.env
+!*.env.example
+backend/.env
+*.pem
+*.key
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ---- Node / frontend ----
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+build/
+.vite/
+*.local
+
+# ---- Editors / OS ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- Claude local settings ----
+.claude/settings.local.json
+
+# ---- Logs ----
+*.log
+npm-debug.log*
