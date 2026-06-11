@@ -403,6 +403,9 @@ async def chat_copilot(
         .where(
             CopilotSession.id == chat_in.session_id,
             CopilotSession.tenant_id == tenant_id,
+            # Scope to the caller — a session belongs to one user; without this a
+            # tenant peer could post into another user's session (IDOR).
+            CopilotSession.user_id == current_user.id,
         )
     )
     session = result.scalars().first()
