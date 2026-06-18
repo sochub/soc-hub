@@ -3,6 +3,7 @@ from app.db.base_class import Base  # noqa: F401
 # Import all models here so that Base has them registered
 # before any relationships are resolved.
 from app.models.tenant import Tenant  # noqa: F401
+from app.models.webhook import Webhook  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.membership import TenantMembership  # noqa: F401
 from app.models.case import Case, Alert, TimelineEvent, CaseLink  # noqa: F401
