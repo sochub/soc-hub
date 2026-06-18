@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -81,6 +81,26 @@ async def promote_alert_to_case(
 
     alert.case_id = case.id
     alert.status = "promoted"
+    await db.commit()
+    await db.refresh(alert)
+    return alert
+
+@router.post("/{alert_id}/dismiss", response_model=case_schema.Alert)
+async def dismiss_alert(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    alert_id: int,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Mark an alert as dismissed. Tenant-scoped."""
+    result = await db.execute(
+        select(Alert).where(Alert.id == alert_id, Alert.tenant_id == tenant_id)
+    )
+    alert = result.scalars().first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    alert.status = "dismissed"
     await db.commit()
     await db.refresh(alert)
     return alert
