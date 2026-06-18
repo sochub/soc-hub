@@ -19,8 +19,6 @@ class Tenant(BaseModel):
     name: str
     slug: str
     is_active: bool
-    # Only ever returned to super-admins (the only role that can read tenants).
-    webhook_api_key: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

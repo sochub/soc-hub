@@ -23,6 +23,11 @@ class AlertBase(BaseModel):
 class AlertCreate(AlertBase):
     pass
 
+class AlertWebhookCreate(BaseModel):
+    external_id: str
+    title: str
+    payload: Any = None
+
 class Alert(AlertBase):
     id: int
     case_id: Optional[int] = None

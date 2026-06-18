@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -7,6 +7,7 @@ from app.api import deps
 from app.models.case import Alert, Case
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.models.webhook import Webhook
 from app.schemas import case as case_schema
 
 router = APIRouter()
@@ -15,17 +16,23 @@ router = APIRouter()
 async def ingest_alert(
     *,
     db: AsyncSession = Depends(deps.get_db),
-    alert_in: case_schema.AlertCreate,
-    tenant: Tenant = Depends(deps.get_tenant_from_webhook_key),
+    alert_in: case_schema.AlertWebhookCreate,
+    webhook: Webhook = Depends(deps.get_webhook_from_key),
 ) -> Any:
-    """
-    Ingest a new alert from an external source.
+    """Ingest an alert via a tenant webhook.
 
-    Authenticated with the tenant's own ``X-API-Key``. The key alone determines
-    the destination tenant — there is no caller-supplied tenant header, so a
-    key can only ever write alerts into the tenant that owns it.
+    The webhook's API key determines both the destination tenant and the alert
+    ``source`` (the webhook's name), so source attribution is authoritative and
+    not caller-controlled.
     """
-    alert = Alert(**alert_in.model_dump(), tenant_id=tenant.id)
+    alert = Alert(
+        source=webhook.name,
+        external_id=alert_in.external_id,
+        title=alert_in.title,
+        payload=alert_in.payload,
+        status="pending",
+        tenant_id=webhook.tenant_id,
+    )
     db.add(alert)
     await db.commit()
     await db.refresh(alert)
@@ -74,6 +81,26 @@ async def promote_alert_to_case(
 
     alert.case_id = case.id
     alert.status = "promoted"
+    await db.commit()
+    await db.refresh(alert)
+    return alert
+
+@router.post("/{alert_id}/dismiss", response_model=case_schema.Alert)
+async def dismiss_alert(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    alert_id: int,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Mark an alert as dismissed. Tenant-scoped."""
+    result = await db.execute(
+        select(Alert).where(Alert.id == alert_id, Alert.tenant_id == tenant_id)
+    )
+    alert = result.scalars().first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    alert.status = "dismissed"
     await db.commit()
     await db.refresh(alert)
     return alert

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard, ShieldAlert, Layers, Settings, Bell, Database, Share2, LogOut,
-    Users, Building2, AlertOctagon, Menu, X, PanelLeftClose, PanelLeftOpen, BookText,
+    Users, Building2, AlertOctagon, Menu, X, PanelLeftClose, PanelLeftOpen, BookText, Code,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useQuery } from '@tanstack/react-query';
@@ -14,12 +14,14 @@ import TenantSwitcher from '../../features/tenants/TenantSwitcher';
 const baseSidebarItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
     { icon: ShieldAlert, label: 'Cases', path: '/cases' },
+    { icon: Bell, label: 'Alerts', path: '/alerts' },
     { icon: Database, label: 'Artifacts', path: '/artifacts' },
     { icon: AlertOctagon, label: 'IOCs', path: '/iocs' },
     { icon: BookText, label: 'Playbooks', path: '/playbooks' },
     { icon: Share2, label: 'Mind Map', path: '/mindmap' },
     { icon: Layers, label: 'Integrations', path: '/integrations' },
     { icon: Settings, label: 'Settings', path: '/settings' },
+    { icon: Code, label: 'API Docs', path: '/docs' },
 ];
 const adminItems = [{ icon: Users, label: 'Users', path: '/admin/users' }];
 const superAdminItems = [{ icon: Building2, label: 'Tenants', path: '/superadmin/tenants' }];

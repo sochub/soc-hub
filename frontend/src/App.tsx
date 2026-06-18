@@ -18,6 +18,8 @@ import TenantManagement from './features/superadmin/TenantManagement';
 import TenantDetail from './features/superadmin/TenantDetail';
 import IOCList from './features/iocs/IOCList';
 import Playbooks from './features/playbooks/Playbooks';
+import AlertsList from './features/alerts/AlertsList';
+import ApiDocs from './features/docs/ApiDocs';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,12 +46,14 @@ function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="cases" element={<CasesList />} />
                 <Route path="cases/:id" element={<CaseDetail />} />
+                <Route path="alerts" element={<AlertsList />} />
                 <Route path="artifacts" element={<ArtifactsList />} />
                 <Route path="iocs" element={<IOCList />} />
                 <Route path="playbooks" element={<Playbooks />} />
                 <Route path="mindmap" element={<ArtifactMindMap />} />
                 <Route path="integrations" element={<Integrations />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="docs" element={<ApiDocs />} />
                 <Route element={<RequireRole roles={['admin', 'super_admin']} />}>
                   <Route path="admin/users" element={<UserManagement />} />
                 </Route>

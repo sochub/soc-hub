@@ -31,6 +31,7 @@ app = FastAPI(
     title="SICMS API",
     description="Security Incident Case Management System API",
     version="0.1.0",
+    openapi_url="/api/v1/openapi.json",
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
