@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { ChevronDown, ChevronRight, Search, X, CheckCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
 
 interface Alert {
@@ -116,7 +117,7 @@ export default function AlertsList() {
                                                 <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded bg-zinc-100 text-zinc-600 hover:bg-zinc-200 flex items-center gap-1"><X size={12} />Dismiss</button>
                                             </div>
                                         ) : a.case_id ? (
-                                            <a href={`/cases/${a.case_id}`} className="text-xs text-accent-600 hover:underline">Case #{a.case_id}</a>
+                                            <Link to={`/cases/${a.case_id}`} className="text-xs text-accent-600 hover:underline">Case #{a.case_id}</Link>
                                         ) : <span className="text-xs text-zinc-400">—</span>}
                                     </td>
                                 </tr>
