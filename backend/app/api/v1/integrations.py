@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +49,7 @@ class WebhookOut(BaseModel):
     id: int
     name: str
     api_key: str
-    created_at: Any
+    created_at: datetime
     class Config:
         from_attributes = True
 
