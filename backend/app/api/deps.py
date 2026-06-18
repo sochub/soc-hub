@@ -1,6 +1,6 @@
 from typing import Optional
-from fastapi import Depends, Header, HTTPException, Query, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, Query, Security, status
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -121,9 +121,15 @@ def get_effective_tenant_id(
     return active
 
 
+# Named so the OpenAPI reference shows the webhook auth as an API key in the
+# X-API-Key header. auto_error=False keeps our own 401 below (a missing header
+# returns 401, matching the invalid-key behavior verify_webhooks.py asserts).
+webhook_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False, scheme_name="WebhookApiKey")
+
+
 async def get_webhook_from_key(
     db: AsyncSession = Depends(get_db),
-    x_api_key: str = Header(..., alias="X-API-Key"),
+    x_api_key: str | None = Security(webhook_api_key_scheme),
 ) -> Webhook:
     """Resolve the webhook that owns the supplied API key.
 
@@ -131,6 +137,11 @@ async def get_webhook_from_key(
     destination tenant and the alert's source name. The owning tenant must be
     active.
     """
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
     result = await db.execute(
         select(Webhook)
         .join(Tenant, Tenant.id == Webhook.tenant_id)
