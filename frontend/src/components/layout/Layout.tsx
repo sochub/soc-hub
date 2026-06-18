@@ -14,6 +14,7 @@ import TenantSwitcher from '../../features/tenants/TenantSwitcher';
 const baseSidebarItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
     { icon: ShieldAlert, label: 'Cases', path: '/cases' },
+    { icon: Bell, label: 'Alerts', path: '/alerts' },
     { icon: Database, label: 'Artifacts', path: '/artifacts' },
     { icon: AlertOctagon, label: 'IOCs', path: '/iocs' },
     { icon: BookText, label: 'Playbooks', path: '/playbooks' },
