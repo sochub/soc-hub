@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.models.webhook import Webhook
 from app.schemas import user as user_schema
 from app.utils.roles import resolve_active_role
 
@@ -120,25 +121,28 @@ def get_effective_tenant_id(
     return active
 
 
-async def get_tenant_from_webhook_key(
+async def get_webhook_from_key(
     db: AsyncSession = Depends(get_db),
     x_api_key: str = Header(..., alias="X-API-Key"),
-) -> Tenant:
-    """Resolve the tenant that owns the supplied webhook API key.
+) -> Webhook:
+    """Resolve the webhook that owns the supplied API key.
 
-    Each tenant has its own ``webhook_api_key``, so the key itself determines
-    which tenant an alert is written to.
+    Each webhook belongs to one tenant; the key alone determines both the
+    destination tenant and the alert's source name. The owning tenant must be
+    active.
     """
     result = await db.execute(
-        select(Tenant).where(
-            Tenant.webhook_api_key == x_api_key,
-            Tenant.is_active == True,  # noqa: E712 — SQL boolean comparison
+        select(Webhook)
+        .join(Tenant, Tenant.id == Webhook.tenant_id)
+        .where(
+            Webhook.api_key == x_api_key,
+            Tenant.is_active == True,  # noqa: E712
         )
     )
-    tenant = result.scalars().first()
-    if tenant is None:
+    webhook = result.scalars().first()
+    if webhook is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
         )
-    return tenant
+    return webhook

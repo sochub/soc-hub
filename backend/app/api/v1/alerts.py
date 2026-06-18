@@ -7,6 +7,7 @@ from app.api import deps
 from app.models.case import Alert, Case
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.models.webhook import Webhook
 from app.schemas import case as case_schema
 
 router = APIRouter()
@@ -15,17 +16,23 @@ router = APIRouter()
 async def ingest_alert(
     *,
     db: AsyncSession = Depends(deps.get_db),
-    alert_in: case_schema.AlertCreate,
-    tenant: Tenant = Depends(deps.get_tenant_from_webhook_key),
+    alert_in: case_schema.AlertWebhookCreate,
+    webhook: Webhook = Depends(deps.get_webhook_from_key),
 ) -> Any:
-    """
-    Ingest a new alert from an external source.
+    """Ingest an alert via a tenant webhook.
 
-    Authenticated with the tenant's own ``X-API-Key``. The key alone determines
-    the destination tenant — there is no caller-supplied tenant header, so a
-    key can only ever write alerts into the tenant that owns it.
+    The webhook's API key determines both the destination tenant and the alert
+    ``source`` (the webhook's name), so source attribution is authoritative and
+    not caller-controlled.
     """
-    alert = Alert(**alert_in.model_dump(), tenant_id=tenant.id)
+    alert = Alert(
+        source=webhook.name,
+        external_id=alert_in.external_id,
+        title=alert_in.title,
+        payload=alert_in.payload,
+        status="pending",
+        tenant_id=webhook.tenant_id,
+    )
     db.add(alert)
     await db.commit()
     await db.refresh(alert)
