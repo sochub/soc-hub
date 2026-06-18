@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard, ShieldAlert, Layers, Settings, Bell, Database, Share2, LogOut,
-    Users, Building2, AlertOctagon, Menu, X, PanelLeftClose, PanelLeftOpen, BookText,
+    Users, Building2, AlertOctagon, Menu, X, PanelLeftClose, PanelLeftOpen, BookText, Code,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useQuery } from '@tanstack/react-query';
@@ -21,6 +21,7 @@ const baseSidebarItems = [
     { icon: Share2, label: 'Mind Map', path: '/mindmap' },
     { icon: Layers, label: 'Integrations', path: '/integrations' },
     { icon: Settings, label: 'Settings', path: '/settings' },
+    { icon: Code, label: 'API Docs', path: '/docs' },
 ];
 const adminItems = [{ icon: Users, label: 'Users', path: '/admin/users' }];
 const superAdminItems = [{ icon: Building2, label: 'Tenants', path: '/superadmin/tenants' }];
