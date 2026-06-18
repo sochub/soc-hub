@@ -30,30 +30,12 @@ async def create_tenant(
     if result.scalars().first():
         raise HTTPException(status_code=409, detail="A tenant with this slug already exists.")
 
-    tenant = Tenant(**tenant_in.model_dump(), webhook_api_key=generate_webhook_key())
+    tenant = Tenant(**tenant_in.model_dump())
     db.add(tenant)
     await db.commit()
     await db.refresh(tenant)
     return tenant
 
-
-@router.post("/{tenant_id}/rotate-webhook-key", response_model=tenant_schema.Tenant)
-async def rotate_webhook_key(
-    *,
-    db: AsyncSession = Depends(deps.get_db),
-    tenant_id: int,
-    current_user: User = Depends(deps.require_super_admin),
-) -> Any:
-    """Rotate a tenant's webhook API key, invalidating the previous one. Super admin only."""
-    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-    tenant = result.scalars().first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-
-    tenant.webhook_api_key = generate_webhook_key()
-    await db.commit()
-    await db.refresh(tenant)
-    return tenant
 
 @router.get("/", response_model=List[tenant_schema.Tenant])
 async def read_tenants(
