@@ -67,12 +67,12 @@ In `backend/app/models/tenant.py`, delete these lines:
 
 - [ ] **Step 4: Write the migration**
 
-`backend/alembic/versions/a1b2c3d4e5f6_webhooks_table.py` (set `down_revision` to the current head — verify with `docker compose exec backend alembic heads`; the latest in `versions/` is `f3g4h5i6j7k8`):
+`backend/alembic/versions/a1b2c3d4e5f6_webhooks_table.py` (current Alembic head is `b3c4d5e6f7a8` — confirmed via `docker compose exec backend alembic heads`):
 ```python
 """webhooks table (multi per-tenant) + migrate single key
 
 Revision ID: a1b2c3d4e5f6
-Revises: f3g4h5i6j7k8
+Revises: b3c4d5e6f7a8
 Create Date: 2026-06-18 00:00:00.000000
 """
 from alembic import op
@@ -122,7 +122,7 @@ def downgrade() -> None:
     op.drop_table("webhooks")
 ```
 
-> Note: if the existing index name isn't `ix_tenants_webhook_api_key`, check with `docker compose exec backend python -c "import sqlalchemy as sa, asyncio; ..."` or inspect via psql `\d tenants`. SQLAlchemy's default name for `index=True` is `ix_tenants_webhook_api_key`.
+> Confirmed: the index is named `ix_tenants_webhook_api_key`.
 
 - [ ] **Step 5: Run the migration**
 
@@ -131,7 +131,7 @@ Expected: completes without error.
 
 - [ ] **Step 6: Verify table + data migration**
 
-Run: `docker compose exec db psql -U postgres -d case_management -c "\d webhooks" -c "SELECT tenant_id, name FROM webhooks;"`
+Run: `docker compose exec db psql -U user -d sicms -c "\d webhooks" -c "SELECT tenant_id, name FROM webhooks;"`
 Expected: table shown; one `Default` row per tenant that previously had a key.
 
 - [ ] **Step 7: Commit**
