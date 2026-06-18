@@ -26,7 +26,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("api_key"),
     )
     op.create_index("ix_webhooks_tenant_id", "webhooks", ["tenant_id"])
-    op.create_index("ix_webhooks_api_key", "webhooks", ["api_key"])
 
     # Migrate each tenant's existing single key into a "Default" webhook.
     op.execute(
@@ -44,8 +43,9 @@ def downgrade() -> None:
     op.create_index("ix_tenants_webhook_api_key", "tenants", ["webhook_api_key"], unique=True)
     op.execute(
         "UPDATE tenants t SET webhook_api_key = w.api_key "
-        "FROM webhooks w WHERE w.tenant_id = t.id"
+        "FROM webhooks w "
+        "WHERE w.tenant_id = t.id "
+        "AND w.id = (SELECT MIN(w2.id) FROM webhooks w2 WHERE w2.tenant_id = t.id)"
     )
-    op.drop_index("ix_webhooks_api_key", table_name="webhooks")
     op.drop_index("ix_webhooks_tenant_id", table_name="webhooks")
     op.drop_table("webhooks")
