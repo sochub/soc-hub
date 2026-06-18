@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     # decoding of complex-typed env vars.
     BACKEND_CORS_ORIGINS: str = ""
 
-    # Note: webhook auth is per-tenant (Tenant.webhook_api_key), not a single
-    # global key — see app.api.deps.get_tenant_from_webhook_key.
+    # Note: webhook auth is per-webhook (Webhook.api_key, one or more per
+    # tenant), not a single global key — see app.api.deps.get_webhook_from_key.
 
     # Jira Integration
     JIRA_URL: str | None = None
