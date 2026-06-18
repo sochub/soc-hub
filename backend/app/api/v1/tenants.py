@@ -14,7 +14,7 @@ from app.schemas.user import User as UserSchema
 router = APIRouter()
 
 
-def _generate_webhook_key() -> str:
+def generate_webhook_key() -> str:
     """Generate a high-entropy, URL-safe webhook API key for a tenant."""
     return f"whk_{secrets.token_urlsafe(32)}"
 
@@ -30,7 +30,7 @@ async def create_tenant(
     if result.scalars().first():
         raise HTTPException(status_code=409, detail="A tenant with this slug already exists.")
 
-    tenant = Tenant(**tenant_in.model_dump(), webhook_api_key=_generate_webhook_key())
+    tenant = Tenant(**tenant_in.model_dump(), webhook_api_key=generate_webhook_key())
     db.add(tenant)
     await db.commit()
     await db.refresh(tenant)
@@ -50,7 +50,7 @@ async def rotate_webhook_key(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    tenant.webhook_api_key = _generate_webhook_key()
+    tenant.webhook_api_key = generate_webhook_key()
     await db.commit()
     await db.refresh(tenant)
     return tenant
