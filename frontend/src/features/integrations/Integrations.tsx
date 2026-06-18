@@ -29,7 +29,15 @@ export default function Integrations() {
         onSuccess: () => qc.invalidateQueries({ queryKey: ['webhooks'] }),
     });
 
-    const copy = (wh: Webhook) => { navigator.clipboard.writeText(wh.api_key); setCopied(wh.id); setTimeout(() => setCopied(null), 1500); };
+    const copy = async (wh: Webhook) => {
+        try {
+            await navigator.clipboard.writeText(wh.api_key);
+            setCopied(wh.id);
+            setTimeout(() => setCopied(null), 1500);
+        } catch {
+            // clipboard unavailable (e.g. non-secure context) — don't show a false "copied"
+        }
+    };
     const ingestUrl = `${window.location.origin}/api/v1/alerts/webhook`;
 
     return (
@@ -61,7 +69,7 @@ export default function Integrations() {
                             <tbody className="divide-y divide-zinc-200">
                                 {(webhooks || []).length === 0 ? (
                                     <tr><td colSpan={4} className="px-6 py-10 text-center text-zinc-400">No webhooks yet</td></tr>
-                                ) : webhooks!.map(wh => (
+                                ) : (webhooks ?? []).map(wh => (
                                     <tr key={wh.id} className="hover:bg-zinc-100">
                                         <td className="px-4 py-2.5 font-medium text-zinc-800">{wh.name}</td>
                                         <td className="px-4 py-2.5">
