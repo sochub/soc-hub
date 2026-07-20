@@ -13,7 +13,7 @@
     "@radix-ui/react-icons": "^1.3.2",
     "@scalar/api-reference-react": "^0.9.47",
     "@tanstack/react-query": "^5.90.20",
-    "axios": "^1.13.5",
+    "axios": "^1.18.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.34.0",
     "lucide-react": "^0.563.0",
