@@ -106,7 +106,18 @@ class Case(CaseBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
+    acknowledged_at: Optional[datetime] = None
     timeline_events: List[TimelineEvent] = []
+
+    # Computed, not stored — attached to the ORM object by the endpoint via
+    # app.utils.sla.compute_sla_state before serialization.
+    sla_response_target_minutes: Optional[int] = None
+    sla_response_status: Optional[str] = None
+    sla_response_due_at: Optional[datetime] = None
+    sla_resolution_target_minutes: Optional[int] = None
+    sla_resolution_status: Optional[str] = None
+    sla_resolution_due_at: Optional[datetime] = None
+    sla_overall_status: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -80,7 +80,10 @@ services:
 
   worker:
     build: ./backend
-    command: celery -A app.worker.celery_app worker --loglevel=info
+    # -B embeds Celery beat (the periodic-task scheduler) in this same
+    # process — fine for a single worker replica; split into a separate
+    # `beat` service if this is ever scaled to multiple worker replicas.
+    command: celery -A app.worker.celery_app worker -B --loglevel=info
     volumes:
       - ./backend:/app
     environment:
