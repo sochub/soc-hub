@@ -16,3 +16,5 @@ from app.models.ioc import IOC  # noqa: F401
 from app.models.playbook import PlaybookTemplate, PlaybookTaskTemplate  # noqa: F401
 from app.models.case_task import CaseTask  # noqa: F401
 from app.models.tenant_sso_config import TenantSSOConfig  # noqa: F401
+from app.models.case_triage import CaseTriageResult  # noqa: F401
+from app.models.sla_policy import SLAPolicy  # noqa: F401

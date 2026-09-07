@@ -7,11 +7,34 @@ from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.models.case import Case, CaseStatus, TimelineEvent
+from app.models.case_triage import CaseTriageResult
 from app.models.user import User
 from app.schemas import case as case_schema
 from app.utils.audit import create_audit_log
+from app.utils.sla import compute_sla_state, load_policy_overrides
+from app.tasks.triage import run_case_triage_task
 
 router = APIRouter()
+
+
+async def _attach_sla(db: AsyncSession, tenant_id: int, cases: List[Case]) -> List[Case]:
+    """Compute SLA status and set it as transient attributes on each case ORM
+    object — the response schema reads them via from_attributes, same as any
+    stored column."""
+    if not cases:
+        return cases
+    policy_overrides = await load_policy_overrides(db, tenant_id)
+    for case in cases:
+        state = compute_sla_state(case, policy_overrides)
+        case.sla_response_target_minutes = state["response_target_minutes"]
+        case.sla_response_status = state["response_status"]
+        case.sla_response_due_at = state["response_due_at"]
+        case.sla_resolution_target_minutes = state["resolution_target_minutes"]
+        case.sla_resolution_status = state["resolution_status"]
+        case.sla_resolution_due_at = state["resolution_due_at"]
+        case.sla_overall_status = state["overall_status"]
+    return cases
+
 
 @router.get("/", response_model=List[case_schema.Case])
 async def read_cases(
@@ -29,7 +52,9 @@ async def read_cases(
         .offset(skip).limit(limit)
         .order_by(Case.created_at.desc())
     )
-    return result.scalars().all()
+    cases = result.scalars().all()
+    await _attach_sla(db, tenant_id, cases)
+    return cases
 
 @router.get("/tags", response_model=List[str])
 async def read_tags(
@@ -73,6 +98,15 @@ async def create_case(
     )
     await db.commit()
 
+    # Kick off AI triage in the background; never blocks case creation.
+    triage = CaseTriageResult(
+        case_id=case.id, tenant_id=tenant_id, triggered_by="auto_on_create", status="pending",
+    )
+    db.add(triage)
+    await db.commit()
+    await db.refresh(triage)
+    run_case_triage_task.delay(triage.id)
+
     # Re-load with eager relationships to avoid async lazy-load errors
     result = await db.execute(
         select(Case)
@@ -80,6 +114,7 @@ async def create_case(
         .where(Case.id == case.id)
     )
     case = result.scalars().first()
+    await _attach_sla(db, tenant_id, [case])
 
     return case
 
@@ -100,6 +135,7 @@ async def read_case(
     case = result.scalars().first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+    await _attach_sla(db, tenant_id, [case])
     return case
 
 @router.put("/{case_id}", response_model=case_schema.Case)
@@ -119,6 +155,7 @@ async def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
+    old_status = case.status
     update_data = case_in.model_dump(exclude_unset=True)
     changes = {}
     for field, value in update_data.items():
@@ -142,6 +179,10 @@ async def update_case(
                 case.resolved_at = datetime.now(timezone.utc)
         else:
             case.resolved_at = None
+
+        # First move off NEW stops the response SLA clock.
+        if old_status == CaseStatus.NEW and case.acknowledged_at is None:
+            case.acknowledged_at = datetime.now(timezone.utc)
 
     if "severity" in changes:
         db.add(TimelineEvent(
@@ -171,6 +212,7 @@ async def update_case(
         .where(Case.id == case.id)
     )
     case = result.scalars().first()
+    await _attach_sla(db, tenant_id, [case])
 
     return case
 
