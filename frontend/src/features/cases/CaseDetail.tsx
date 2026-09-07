@@ -8,6 +8,8 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
 import CaseTasks from './CaseTasks';
+import TriagePanel from './TriagePanel';
+import SLAPanel from './SLAPanel';
 
 const ARTIFACT_ICONS: Record<string, any> = {
     hash: FileText,
@@ -216,6 +218,9 @@ export default function CaseDetail() {
                         </h3>
                         <p className="text-zinc-700 leading-relaxed text-sm">{caseData.description}</p>
                     </div>
+
+                    {id && <TriagePanel caseId={parseInt(id)} />}
+                    <SLAPanel caseData={caseData} />
 
                     {/* Tabs */}
                     <div className="flex border-b border-zinc-200 relative space-x-6">

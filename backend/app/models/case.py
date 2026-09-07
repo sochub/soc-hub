@@ -40,6 +40,11 @@ class Case(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)
+    # Set once, the first time status moves off NEW — stops the response SLA clock.
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    # Dedupe markers so the SLA sweep emails once per breach, not every scan.
+    sla_response_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
+    sla_resolution_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
 
     alerts = relationship("Alert", back_populates="case")
     timeline_events = relationship("TimelineEvent", back_populates="case")

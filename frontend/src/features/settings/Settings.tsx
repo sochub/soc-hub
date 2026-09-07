@@ -1,9 +1,105 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Copy, Check, Save, Loader2 } from 'lucide-react';
+import { KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
-import type { SSOConfig, User } from '../../types';
+import type { SLAPolicyItem, SSOConfig, User } from '../../types';
+
+const SEVERITY_LABEL: Record<string, string> = {
+    critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info',
+};
+
+function SLAPoliciesSection() {
+    const qc = useQueryClient();
+    const [rows, setRows] = useState<SLAPolicyItem[]>([]);
+    const [savedFlash, setSavedFlash] = useState(false);
+
+    const { data: policies, isLoading } = useQuery({
+        queryKey: ['sla-policies'],
+        queryFn: async () => (await api.get('/tenants/sla-policies')).data as SLAPolicyItem[],
+    });
+
+    useEffect(() => {
+        if (policies) setRows(policies);
+    }, [policies]);
+
+    const save = useMutation({
+        mutationFn: async () => (await api.put('/tenants/sla-policies', { policies: rows })).data as SLAPolicyItem[],
+        onSuccess: (data) => {
+            setRows(data);
+            qc.invalidateQueries({ queryKey: ['sla-policies'] });
+            setSavedFlash(true);
+            setTimeout(() => setSavedFlash(false), 2000);
+        },
+    });
+
+    const updateRow = (severity: string, field: 'response_target_minutes' | 'resolution_target_minutes', raw: string) => {
+        const value = raw.trim() === '' ? null : Math.max(0, parseInt(raw, 10) || 0);
+        setRows((rs) => rs.map((r) => (r.severity === severity ? { ...r, [field]: value } : r)));
+    };
+
+    return (
+        <section className="bg-white border border-zinc-200">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-zinc-200">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+                    <Timer size={15} className="text-accent-600" /> SLA Policies
+                </h2>
+            </div>
+
+            {isLoading ? (
+                <p className="p-4 font-mono text-xs text-zinc-400">$ loading…</p>
+            ) : (
+                <div className="p-4 space-y-4">
+                    <p className="text-xs text-zinc-400">
+                        Response/resolution targets per severity, in minutes. Leave blank to disable SLA tracking
+                        for that severity.
+                    </p>
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="text-left label-mono text-zinc-400">
+                                <th className="pb-2 font-normal">Severity</th>
+                                <th className="pb-2 font-normal">Response (min)</th>
+                                <th className="pb-2 font-normal">Resolution (min)</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100">
+                            {rows.map((r) => (
+                                <tr key={r.severity}>
+                                    <td className="py-2 text-zinc-700">{SEVERITY_LABEL[r.severity] ?? r.severity}</td>
+                                    <td className="py-2 pr-4">
+                                        <input
+                                            type="number" min={0}
+                                            value={r.response_target_minutes ?? ''}
+                                            onChange={(e) => updateRow(r.severity, 'response_target_minutes', e.target.value)}
+                                            placeholder="—"
+                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-none focus:ring-1 focus:ring-accent-500"
+                                        />
+                                    </td>
+                                    <td className="py-2">
+                                        <input
+                                            type="number" min={0}
+                                            value={r.resolution_target_minutes ?? ''}
+                                            onChange={(e) => updateRow(r.severity, 'resolution_target_minutes', e.target.value)}
+                                            placeholder="—"
+                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-none focus:ring-1 focus:ring-accent-500"
+                                        />
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+
+                    <button onClick={() => save.mutate()} disabled={save.isPending}
+                        className={cn('inline-flex items-center gap-1.5 h-9 px-4 text-sm font-medium text-white transition-colors disabled:opacity-50',
+                            savedFlash ? 'bg-emerald-600' : 'bg-accent-600 hover:bg-accent-700')}>
+                        {save.isPending ? <Loader2 size={14} className="animate-spin" /> : savedFlash ? <Check size={14} /> : <Save size={14} />}
+                        {savedFlash ? 'Saved' : 'Save SLA policies'}
+                    </button>
+                </div>
+            )}
+        </section>
+    );
+}
 
 function CopyField({ label, value }: { label: string; value: string }) {
     const [copied, setCopied] = useState(false);
@@ -172,6 +268,8 @@ export default function Settings() {
                     )}
                 </section>
             )}
+
+            {isAdmin && <SLAPoliciesSection />}
         </div>
     );
 }

@@ -49,6 +49,30 @@ export interface PlaybookSummary {
   already_imported?: boolean;
 }
 
+export type TriageItemStatus = 'proposed' | 'confirmed' | 'dismissed';
+
+export interface CaseTriage {
+  id: number;
+  case_id: number;
+  triggered_by: 'auto_on_create' | 'manual';
+  status: 'pending' | 'completed' | 'failed';
+  error_message?: string | null;
+
+  proposed_severity?: string | null;
+  proposed_tags?: string[] | null;
+  severity_tags_status: TriageItemStatus;
+
+  proposed_playbook_template_id?: number | null;
+  playbook_status: TriageItemStatus;
+
+  related_case_ids?: number[] | null;
+
+  next_steps_text?: string | null;
+  next_steps_status: TriageItemStatus;
+
+  created_at: string;
+}
+
 export interface CaseTask {
   id: number;
   case_id: number;
@@ -80,6 +104,7 @@ export type CopilotActionType =
   | 'add_artifact'
   | 'add_timeline_note'
   | 'update_case'
+  | 'apply_playbook'
   | 'find_related';
 
 export interface CopilotAction {
@@ -163,6 +188,8 @@ export interface TimelineEvent {
   user: TimelineEventUser | null;
 }
 
+export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';
+
 export interface Case {
   id: number;
   title: string;
@@ -172,7 +199,22 @@ export interface Case {
   created_at: string;
   updated_at: string | null;
   resolved_at: string | null;
+  acknowledged_at: string | null;
   timeline_events: TimelineEvent[];
+
+  sla_response_target_minutes?: number | null;
+  sla_response_status?: SLAStatus | null;
+  sla_response_due_at?: string | null;
+  sla_resolution_target_minutes?: number | null;
+  sla_resolution_status?: SLAStatus | null;
+  sla_resolution_due_at?: string | null;
+  sla_overall_status?: SLAStatus | null;
+}
+
+export interface SLAPolicyItem {
+  severity: string;
+  response_target_minutes: number | null;
+  resolution_target_minutes: number | null;
 }
 
 export interface IOC {
