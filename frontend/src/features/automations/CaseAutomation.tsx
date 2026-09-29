@@ -24,7 +24,7 @@ export default function CaseAutomation({ caseId }: { caseId: number }) {
     const run = useMutation({
         mutationFn: async () => (await api.post(`/workflows/${picked}/run`, { case_id: caseId })).data as { run_id: number },
         onSuccess: ({ run_id }) => { qc.invalidateQueries({ queryKey: ['workflow-runs'] }); navigate(`/automations/runs/${run_id}`); },
-        onError: (err: { response?: { data?: { detail?: string } } }) => setError(err?.response?.data?.detail ?? 'Run failed'),
+        onError: (err: { response?: { data?: { detail?: unknown } } }) => { const d = err?.response?.data?.detail; setError(typeof d === 'string' ? d : 'Run failed'); },
     });
 
     return (
