@@ -5,7 +5,7 @@ import { ReactFlow, ReactFlowProvider, Background, Controls } from '@xyflow/reac
 import '@xyflow/react/dist/style.css';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '../../api/client';
-import type { RunDetail as Run, RunStep } from './types';
+import type { ChildRun, RunDetail as Run, RunStep } from './types';
 import { toFlow } from './flow';
 import WorkflowNode from './WorkflowNode';
 import { StatusBadge } from './RunsTable';
@@ -17,7 +17,7 @@ function Json({ value }: { value: unknown }) {
     return <pre className="text-[11px] font-mono bg-zinc-50 border border-zinc-200 p-2 overflow-x-auto whitespace-pre-wrap break-all">{JSON.stringify(value, null, 2)}</pre>;
 }
 
-export function StepPanel({ step }: { step: RunStep }) {
+export function StepPanel({ step, children = [] }: { step: RunStep; children?: ChildRun[] }) {
     const out = step.output ?? {};
     const simulated = (out as Record<string, unknown>).simulated === true;
     return (
@@ -35,6 +35,20 @@ export function StepPanel({ step }: { step: RunStep }) {
                 <><p className="label-mono">input</p><Json value={step.input} /></>
             )}
             <p className="label-mono">output</p><Json value={out} />
+            {children.length > 0 && (
+                <>
+                    <p className="label-mono">items ({children.length})</p>
+                    <ul className="divide-y divide-zinc-100 border border-zinc-200">
+                        {children.map((c) => (
+                            <li key={c.id} className="flex items-center gap-2 px-2 py-1.5 text-xs">
+                                <span className="num w-10">#{c.loop_index}</span>
+                                <StatusBadge status={c.status} />
+                                <Link to={`/automations/runs/${c.id}`} className="ml-auto text-accent-600 hover:underline">open</Link>
+                            </li>
+                        ))}
+                    </ul>
+                </>
+            )}
         </div>
     );
 }
@@ -88,7 +102,7 @@ function Detail() {
                     </ReactFlow>
                 </div>
                 <aside className="w-96 border-l border-zinc-200 bg-white overflow-y-auto">
-                    {step ? <StepPanel step={step} /> : (
+                    {step ? <StepPanel step={step} children={run.children.filter((c) => c.parent_step_id === step.id)} /> : (
                         <div className="p-4 space-y-3 text-sm">
                             <p className="text-zinc-500">Click a node to see its input and output.</p>
                             <p className="label-mono">trigger payload</p><Json value={run.trigger_payload} />

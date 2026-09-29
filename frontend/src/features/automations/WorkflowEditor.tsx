@@ -11,7 +11,7 @@ import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { User } from '../../types';
 import type { TriggerType, ValidationError, Workflow, WfGraph, WfNode } from './types';
-import { NODE_DEFS, TRIGGER_LABEL } from './nodeCatalog';
+import { NODE_DEF, NODE_DEFS, TRIGGER_LABEL } from './nodeCatalog';
 import { fromFlow, nextNodeId, toFlow, type WfFlowNode } from './flow';
 import WorkflowNode from './WorkflowNode';
 import NodeInspector from './NodeInspector';
@@ -29,7 +29,7 @@ function Editor() {
     const isNew = id === 'new';
     const navigate = useNavigate();
     const qc = useQueryClient();
-    const { screenToFlowPosition } = useReactFlow();
+    const { screenToFlowPosition, getIntersectingNodes, getInternalNode } = useReactFlow();
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const readOnly = !(me?.role === 'admin' || me?.is_super_admin);
@@ -70,21 +70,31 @@ function Editor() {
 
     const onConnect = useCallback((c: Connection) => setEdges((eds) => addEdge({ ...c, id: `e_${c.source}_${c.target}_${c.sourceHandle ?? 'out'}`, label: c.sourceHandle ?? undefined }, eds)), [setEdges]);
 
-    const addNode = useCallback((type: string, flowPos: { x: number; y: number }) => {
+    const addNode = useCallback((type: string, flowPos: { x: number; y: number }, parentId?: string) => {
         setNodes((ns) => {
             const taken = new Set(ns.map((n) => n.id));
             const nid = nextNodeId(type, taken);
-            const wfNode: WfNode = { id: nid, type, position: flowPos, config: type === 'http_request' ? { method: 'GET' } : {} };
+            let position = flowPos;
+            if (parentId) {
+                const abs = getInternalNode(parentId)?.internals.positionAbsolute ?? { x: 0, y: 0 };
+                position = { x: flowPos.x - abs.x, y: flowPos.y - abs.y };
+            }
+            const wfNode: WfNode = { id: nid, type, position, parent_id: parentId ?? null,
+                                     config: type === 'http_request' ? { method: 'GET' } : {} };
             return [...ns, ...toFlow({ nodes: [wfNode], edges: [] }).nodes];
         });
-    }, [setNodes]);
+    }, [setNodes, getInternalNode]);
 
     const onDrop = useCallback((e: DragEvent) => {
         e.preventDefault();
         const type = e.dataTransfer.getData('application/wf-node');
         if (!type) return;
-        addNode(type, screenToFlowPosition({ x: e.clientX, y: e.clientY }));
-    }, [addNode, screenToFlowPosition]);
+        const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        // ponytail: only palette drops can enter a loop; moving an existing node in/out means delete + re-add.
+        const container = type === 'for_each' ? undefined : getIntersectingNodes({ x: pos.x, y: pos.y, width: 1, height: 1 })
+            .find((n) => NODE_DEF[(n as WfFlowNode).data.wf.type]?.container);
+        addNode(type, pos, container?.id);
+    }, [addNode, screenToFlowPosition, getIntersectingNodes]);
 
     const selected = nodes.find((n) => n.id === selectedId)?.data.wf;
     const selectedErrors = errors.filter((e) => e.node_id === selectedId).map((e) => e.message);
