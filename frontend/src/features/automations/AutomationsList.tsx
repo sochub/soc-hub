@@ -31,8 +31,9 @@ export default function AutomationsList() {
         onError: (err, w) => {
             const detail = isAxiosError(err) ? err.response?.data?.detail : undefined;
             const errors = err && isAxiosError(err) && err.response?.status === 422 ? detail?.errors : undefined;
+            const action = w.enabled ? 'disable' : 'enable';
             if (Array.isArray(errors)) {
-                setToggleError(`Can't enable "${w.name}": ${errors.map((e: { message: string }) => e.message).join('; ')}`);
+                setToggleError(`Can't ${action} "${w.name}": ${errors.map((e: { message: string }) => e.message).join('; ')}`);
             } else {
                 setToggleError(typeof detail === 'string' ? detail : `Could not update "${w.name}"`);
             }
