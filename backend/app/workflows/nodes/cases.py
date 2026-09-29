@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.artifact import Artifact, ArtifactType
 from app.models.case import Case, CaseSeverity, CaseStatus
@@ -21,6 +21,10 @@ def _as_list(v) -> list:
     if isinstance(v, str):
         return [x.strip() for x in v.split(",") if x.strip()]
     return [str(x) for x in v]
+
+
+def _normalize_email(v) -> str:
+    return str(v).strip().lower()
 
 
 def _emit_updated(nctx: NodeContext, case_id: int, changes: dict) -> None:
@@ -44,7 +48,7 @@ async def run_case_update(nctx: NodeContext, config: dict) -> dict:
     if config.get("owner_email"):
         user = (await nctx.db.execute(
             select(User).join(TenantMembership, TenantMembership.user_id == User.id)
-            .where(User.email.ilike(str(config["owner_email"])), TenantMembership.tenant_id == case.tenant_id)
+            .where(func.lower(User.email) == _normalize_email(config["owner_email"]), TenantMembership.tenant_id == case.tenant_id)
         )).scalars().first()
         if not user:
             raise NodeError(f"no tenant member with email {config['owner_email']}")
