@@ -222,8 +222,8 @@ def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
             for key, hi in (("concurrency", MAX_CONCURRENCY), ("max_items", MAX_ITEMS_CAP)):
                 if cfg.get(key) not in (None, ""):
                     try:
-                        ok = 1 <= int(cfg[key]) <= hi
-                    except (TypeError, ValueError):
+                        ok = not isinstance(cfg[key], bool) and 1 <= int(cfg[key]) <= hi
+                    except (TypeError, ValueError, OverflowError):
                         ok = False
                     if not ok:
                         _err(errors, nid, f"{key} must be between 1 and {hi}")

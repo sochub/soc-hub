@@ -209,3 +209,20 @@ def test_non_string_parent_id_is_error_not_crash(pid):
     g = loop_graph()
     g["nodes"][2]["parent_id"] = pid
     assert "parent_id must be a string" in msgs(validate_graph(g, "manual"))
+
+
+@pytest.mark.parametrize("key", ["concurrency", "max_items"])
+@pytest.mark.parametrize("bad", [float("inf"), True, 0, -1])
+def test_loop_limit_bad_values_error_without_raising(key, bad):
+    g = loop_graph()
+    g["nodes"][1]["config"][key] = bad
+    assert "must be between" in msgs(validate_graph(g, "manual"))
+
+
+@pytest.mark.parametrize("parent", ["ghost", "other"])
+def test_parent_must_reference_for_each(parent):
+    g = loop_graph()
+    g["nodes"].append(n("other", "case_add_note", config={"content": "x"}))
+    g["edges"].append(e("start", "other"))
+    g["nodes"].append(n("child", "case_add_note", parent_id=parent, config={"content": "x"}))
+    assert "parent_id must reference a for_each node" in msgs(validate_graph(g, "manual"))
