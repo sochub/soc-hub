@@ -52,3 +52,14 @@ def run_outcome(graph: dict, states: Dict[str, dict]) -> Optional[str]:
     if all(states.get(nid, {}).get("status") in _RESOLVED for nid in nodes):
         return "succeeded"
     return None
+
+
+def body_graph(graph: dict, loop_id: str) -> dict:
+    body = [{**n, "parent_id": None} for n in graph["nodes"] if n.get("parent_id") == loop_id]
+    ids = {n["id"] for n in body}
+    edges = [e for e in graph["edges"] if e["source"] in ids and e["target"] in ids]
+    targets = {e["target"] for e in edges}
+    start = {"id": "__start__", "type": "trigger", "config": {}, "parent_id": None, "position": {"x": 0, "y": 0}}
+    edges += [{"id": f"__start__{nid}", "source": "__start__", "target": nid, "source_handle": None}
+              for nid in sorted(ids - targets)]
+    return {"nodes": [start] + body, "edges": edges}

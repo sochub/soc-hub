@@ -163,3 +163,49 @@ def test_parent_id_node_exempt_from_orphan_check():
     m = msgs(validate_graph(g, "manual"))
     # The body node should NOT have "not connected" error (even though it has no incoming edge)
     assert "not connected" not in m
+
+
+def loop_graph(**overrides):
+    g = {"nodes": [n("start", "trigger"), n("loop", "for_each", config={"items": "steps.start.output.users"}),
+                   n("inner", "case_add_note", parent_id="loop", config={"content": "{{ loop.item }}"})],
+         "edges": [e("start", "loop")]}
+    g.update(overrides)
+    return g
+
+
+def test_valid_loop():
+    assert validate_graph(loop_graph(), "manual") == []
+
+
+def test_edge_cannot_cross_loop_boundary():
+    g = loop_graph()
+    g["edges"].append(e("start", "inner"))
+    assert "loop boundary" in msgs(validate_graph(g, "manual"))
+
+
+def test_no_nested_loops_and_parent_must_be_loop():
+    g = loop_graph()
+    g["nodes"].append(n("inner_loop", "for_each", parent_id="loop", config={"items": "[1]"}))
+    g["nodes"].append(n("x", "case_add_note", parent_id="inner", config={"content": "x"}))
+    m = msgs(validate_graph(g, "manual"))
+    assert "nested" in m and "for_each" in m
+
+
+def test_empty_loop_body():
+    g = loop_graph()
+    g["nodes"] = g["nodes"][:2]
+    assert "empty" in msgs(validate_graph(g, "manual"))
+
+
+def test_loop_limits():
+    g = loop_graph()
+    g["nodes"][1]["config"].update({"concurrency": 50, "max_items": 900})
+    m = msgs(validate_graph(g, "manual"))
+    assert "concurrency" in m and "max_items" in m
+
+
+@pytest.mark.parametrize("pid", [5, ["loop"], {"a": 1}])
+def test_non_string_parent_id_is_error_not_crash(pid):
+    g = loop_graph()
+    g["nodes"][2]["parent_id"] = pid
+    assert "parent_id must be a string" in msgs(validate_graph(g, "manual"))

@@ -2,6 +2,7 @@
 import re
 from typing import Any, Dict, List, Optional
 
+from app.workflows.loops import MAX_CONCURRENCY, MAX_ITEMS_CAP
 from app.workflows.node_types import NODE_TYPES, TRIGGER_TYPES, MAX_NODES
 from app.workflows.templating import syntax_errors
 
@@ -199,6 +200,38 @@ def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
                 _err(errors, src["id"], "condition edges must leave from the true/false handles")
         elif handle is not None:
             _err(errors, src["id"], "only condition nodes have true/false handles")
+
+    # Loop rules (for_each bodies)
+    for node in nodes:
+        nid = node["id"]
+        pid = node.get("parent_id")
+        if pid is not None and not isinstance(pid, str):
+            _err(errors, nid, "parent_id must be a string")
+        elif pid:
+            parent = by_id.get(pid)
+            if not parent or parent.get("type") != "for_each":
+                _err(errors, nid, "parent_id must reference a for_each node")
+            if node.get("type") == "for_each":
+                _err(errors, nid, "for_each loops cannot be nested")
+            if node.get("type") == "trigger":
+                _err(errors, nid, "the trigger cannot be inside a loop")
+        if node.get("type") == "for_each":
+            cfg = node.get("config") or {}
+            if not any(c.get("parent_id") == nid for c in nodes):
+                _err(errors, nid, "loop body is empty — drop nodes inside the loop")
+            for key, hi in (("concurrency", MAX_CONCURRENCY), ("max_items", MAX_ITEMS_CAP)):
+                if cfg.get(key) not in (None, ""):
+                    try:
+                        ok = 1 <= int(cfg[key]) <= hi
+                    except (TypeError, ValueError):
+                        ok = False
+                    if not ok:
+                        _err(errors, nid, f"{key} must be between 1 and {hi}")
+
+    for e in edges:
+        src, tgt = by_id.get(e["source"]), by_id.get(e["target"])
+        if src and tgt and src.get("parent_id") != tgt.get("parent_id"):
+            _err(errors, None, f"edge {e.get('id')} crosses a loop boundary")
 
     # Skip cycle check if node count exceeds MAX_NODES (error already reported)
     if len(nodes) <= MAX_NODES and _has_cycle(list(by_id.keys()), edges):
