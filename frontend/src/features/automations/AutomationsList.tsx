@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Workflow as WorkflowIcon } from 'lucide-react';
@@ -25,8 +26,17 @@ export default function AutomationsList() {
 
     const toggle = useMutation({
         mutationFn: async (w: WorkflowSummary) => api.post(`/workflows/${w.id}/${w.enabled ? 'disable' : 'enable'}`),
-        onSuccess: () => { setToggleError(null); qc.invalidateQueries({ queryKey: ['workflows'] }); },
-        onError: () => setToggleError('This workflow has validation errors — open it to fix them before enabling.'),
+        onMutate: () => setToggleError(null),
+        onSuccess: () => { qc.invalidateQueries({ queryKey: ['workflows'] }); },
+        onError: (err, w) => {
+            const detail = isAxiosError(err) ? err.response?.data?.detail : undefined;
+            const errors = err && isAxiosError(err) && err.response?.status === 422 ? detail?.errors : undefined;
+            if (Array.isArray(errors)) {
+                setToggleError(`Can't enable "${w.name}": ${errors.map((e: { message: string }) => e.message).join('; ')}`);
+            } else {
+                setToggleError(typeof detail === 'string' ? detail : `Could not update "${w.name}"`);
+            }
+        },
     });
 
     return (
@@ -51,7 +61,7 @@ export default function AutomationsList() {
                 ))}
             </div>
 
-            {toggleError && <div className="mb-3 px-3 py-2 text-sm border border-red-200 bg-red-50 text-red-700">{toggleError}</div>}
+            {toggleError && <div role="alert" className="mb-3 px-3 py-2 text-sm border border-red-200 bg-red-50 text-red-700">{toggleError}</div>}
 
             {tab === 'runs' ? <RunsTable /> : (
                 <div className="bg-white border border-zinc-200">
@@ -75,8 +85,9 @@ export default function AutomationsList() {
                                     </td>
                                     <td className="px-4 py-2.5 font-mono text-xs text-zinc-600">{TRIGGER_LABEL[w.trigger_type]}</td>
                                     <td className="px-4 py-2.5">
-                                        <button disabled={!isAdmin || toggle.isPending} onClick={() => toggle.mutate(w)}
-                                            aria-label={w.enabled ? 'Disable workflow' : 'Enable workflow'}
+                                        <button type="button" role="switch" aria-checked={w.enabled} aria-label={`${w.name} enabled`}
+                                            title={isAdmin ? undefined : 'Only admins can enable workflows'}
+                                            disabled={!isAdmin || toggle.isPending} onClick={() => toggle.mutate(w)}
                                             className={cn('w-9 h-5 relative transition-colors disabled:opacity-50', w.enabled ? 'bg-accent-600' : 'bg-zinc-300')}>
                                             <span className={cn('absolute top-0.5 w-4 h-4 bg-white transition-all', w.enabled ? 'left-[18px]' : 'left-0.5')} />
                                         </button>
