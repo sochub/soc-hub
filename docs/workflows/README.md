@@ -102,6 +102,8 @@ Result: all three alerts are promoted into one case; one note says "new case" an
 
 Both Slack nodes need a configured Slack integration for the tenant. Set it up first: [docs/slack/setup.md](../slack/setup.md).
 
+In the mrkdwn fields (`slack_post_message.text`, `slack_ask_user.message`) every `{{ value }}` is escaped for Slack (`&`, `<`, `>` become `&amp;`, `&lt;`, `&gt;`), so alert or case data can't inject links or `<!channel>` mentions. Markup you type yourself, such as `<https://example.com|runbook>` or `<!here>`, is kept.
+
 ### `slack_post_message`
 
 Config: `channel` (blank uses the integration's default channel), `text` (templated, mrkdwn), `include_case_buttons` (`yes`/`no`; adds Acknowledge / Assign to me / Close buttons for the run's case). Output `{channel, ts}`. The bot must be in the channel (`/invite @SOC Hub`).

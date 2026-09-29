@@ -65,7 +65,7 @@ async def _scenario(monkeypatch):
             ids["w"] = [wf.id]
             tid, t2id, wid = t1.id, t2.id, wf.id
 
-            async def mk(run_status="waiting", step_status="waiting"):
+            async def mk(run_status="waiting", step_status="waiting", buttons=("Yes", "No")):
                 run = WorkflowRun(tenant_id=tid, workflow_id=wid, workflow_version=1, status=run_status, graph_snapshot={})
                 db.add(run)
                 await db.flush()
@@ -73,7 +73,7 @@ async def _scenario(monkeypatch):
                 run_id = run.id
                 tok = secrets.token_hex(8)
                 step = WorkflowRunStep(run_id=run_id, node_id="n1", status=step_status, wait_token=tok,
-                                       output={"target_slack_id": "U1", "channel": "D1", "message_ts": "1.2", "buttons": ["Yes", "No"]})
+                                       output={"target_slack_id": "U1", "channel": "D1", "message_ts": "1.2", "buttons": list(buttons)})
                 db.add(step)
                 await db.flush()
                 sid = step.id
@@ -117,6 +117,14 @@ async def _scenario(monkeypatch):
             sid3, tok3 = await mk("cancelled", "cancelled")
             await sa.handle_answer(tid, payload(), tok3, 0)
             assert "already" in ephem[-1] and len(advanced) == 1
+
+            # a label is echoed into mrkdwn escaped; the recorded response stays the raw label
+            sid4, tok4 = await mk(buttons=["<!channel> & <https://evil|go>"])
+            await sa.handle_answer(tid, payload(), tok4, 0)
+            assert (await fresh(sid4)).output["response"] == "<!channel> & <https://evil|go>"
+            assert updates[-1][1]["blocks"][0]["text"]["text"] == \
+                ":white_check_mark: You answered: *&lt;!channel&gt; &amp; &lt;https://evil|go&gt;*"
+            advanced.pop()
 
             # Slack not configured -> ephemeral, not accepted
             await db.execute(delete(SlackIntegration).where(SlackIntegration.tenant_id == tid))

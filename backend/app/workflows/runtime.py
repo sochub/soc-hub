@@ -14,9 +14,9 @@ from app.workflows.dryrun import dry_run_behaviour, simulated_output
 from app.workflows.events import trigger_matches
 from app.workflows.graph import ready_nodes, run_outcome
 from app.workflows.loops import aggregate_children, next_children_to_start
-from app.workflows.node_types import NODE_TYPES
+from app.workflows.node_types import NODE_TYPES, SLACK_MRKDWN_KEYS
 from app.workflows.nodes import EXECUTORS, NodeContext, NodeError, RetryableNodeError, WAIT
-from app.workflows.templating import render, TemplateError
+from app.workflows.templating import render, render_slack, TemplateError
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,14 @@ def _now():
 
 def _node(graph: dict, node_id: str) -> dict:
     return next(n for n in graph["nodes"] if n["id"] == node_id)
+
+
+def render_config(node: dict, ctx: dict) -> dict:
+    """Render a node's config: raw keys stay as written, Slack mrkdwn text escapes interpolated values."""
+    raw_keys = set(NODE_TYPES[node["type"]]["raw"])
+    mrkdwn = SLACK_MRKDWN_KEYS.get(node["type"], set())
+    return {k: v if k in raw_keys else (render_slack(v, ctx) if k in mrkdwn else render(v, ctx))
+            for k, v in (node.get("config") or {}).items()}
 
 
 async def create_run(db, workflow: Workflow, *, trigger_payload: dict, case_id: Optional[int] = None,
@@ -206,12 +214,10 @@ async def execute_step(step_id: int) -> None:
 
         node = _node(run.graph_snapshot, step.node_id)
         nctx = NodeContext(db=db, run=run, step=step, node=node, ctx={})
-        raw_keys = set(NODE_TYPES[node["type"]]["raw"])
         retry_in = None
         try:
             nctx.ctx = await build_context(db, run)
-            cfg = node.get("config") or {}
-            rendered = {k: (v if k in raw_keys else render(v, nctx.ctx)) for k, v in cfg.items()}
+            rendered = render_config(node, nctx.ctx)
             if run.is_dry_run and dry_run_behaviour(node) == "simulate":
                 output = simulated_output(node, rendered, run.dry_run_mocks or {})
             else:

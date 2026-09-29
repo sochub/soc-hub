@@ -19,3 +19,6 @@ NODE_TYPES = {
 }
 
 MAX_NODES = 50
+
+# Config keys sent to Slack as mrkdwn: template values rendered into them are escaped (render_slack).
+SLACK_MRKDWN_KEYS = {"slack_post_message": {"text"}, "slack_ask_user": {"message"}}

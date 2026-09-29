@@ -13,6 +13,7 @@ from app.models.workflow import WorkflowRun, WorkflowRunStep
 from app.services.case_service import apply_case_update
 from app.services.slack_service import SlackError, load_integration, parse_action_value, respond, slack_call
 from app.workflows.events import emit_event
+from app.workflows.templating import slack_escape
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +123,8 @@ async def handle_answer(tenant_id: int, payload: dict, wait_token: str, index: i
 
     try:
         await slack_call(token, "chat.update", channel=waiting["channel"], ts=waiting["message_ts"],
-                         text=f"You answered: {label}",
-                         blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": f":white_check_mark: You answered: *{label}*"}}])
+                         text=f"You answered: {slack_escape(label)}",
+                         blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": f":white_check_mark: You answered: *{slack_escape(label)}*"}}])
     except Exception:  # cosmetic; the answer is committed, so the run must still resume
         logger.warning("could not update answered Slack message for step %s", step_id, exc_info=True)
     advance_run_task.delay(run_id)

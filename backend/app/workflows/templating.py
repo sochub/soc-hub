@@ -51,6 +51,33 @@ def render(value: Any, ctx: dict) -> Any:
     return value
 
 
+def slack_escape(text: str) -> str:
+    """Escape the three characters Slack mrkdwn treats as control characters."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# Same sandbox, but every {{ value }} is escaped for Slack mrkdwn; the author's literal template
+# text (e.g. <https://ok.example|link> or <!here>) is left alone.
+_slack_env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False,
+                                  finalize=lambda v: slack_escape(str(v)))
+
+
+def render_slack(value: Any, ctx: dict) -> Any:
+    """Render a Slack mrkdwn text field: always returns a string for templated strings."""
+    if isinstance(value, str):
+        if "{{" not in value and "{%" not in value:
+            return value
+        try:
+            return _slack_env.from_string(value).render(**ctx)
+        except Exception as e:
+            raise TemplateError(f"{type(e).__name__}: {e}") from e
+    if isinstance(value, dict):
+        return {k: render_slack(v, ctx) for k, v in value.items()}
+    if isinstance(value, list):
+        return [render_slack(v, ctx) for v in value]
+    return value
+
+
 def syntax_errors(value: Any, raw: bool = False) -> List[str]:
     errors: List[str] = []
     if isinstance(value, str):
