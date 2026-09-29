@@ -6,7 +6,7 @@ import {
     type Connection, type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, AlertTriangle, FlaskConical } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { User } from '../../types';
@@ -16,6 +16,7 @@ import { fromFlow, nextNodeId, toFlow, type WfFlowNode } from './flow';
 import WorkflowNode from './WorkflowNode';
 import NodeInspector from './NodeInspector';
 import RunsTable from './RunsTable';
+import DryRunDialog from './DryRunDialog';
 
 type ApiErr = { response?: { data?: { detail?: { errors?: ValidationError[]; message?: string } } } };
 const nodeTypes = { wf: WorkflowNode };
@@ -45,6 +46,7 @@ function Editor() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [errors, setErrors] = useState<ValidationError[]>([]);
     const [tab, setTab] = useState<'editor' | 'runs'>('editor');
+    const [dryRunOpen, setDryRunOpen] = useState(false);
     const [banner, setBanner] = useState<string | null>(null);
     const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
     // id of the workflow the canvas was last hydrated for; server responses never re-hydrate after that
@@ -171,6 +173,12 @@ function Editor() {
                             <Save size={14} /> Save
                         </button>
                     )}
+                    {!readOnly && !isNew && wf && (
+                        <button onClick={() => setDryRunOpen(true)} title="Uses the last saved version"
+                            className="inline-flex items-center gap-1.5 h-8 px-3 border border-violet-300 text-violet-700 text-sm hover:bg-violet-50">
+                            <FlaskConical size={14} /> Dry run
+                        </button>
+                    )}
                     {!readOnly && !isNew && (
                         <button onClick={() => toggle.mutate()} disabled={toggle.isPending}
                             className={cn('h-8 px-3 text-sm border', wf?.enabled ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : 'border-zinc-300 text-zinc-700')}>
@@ -246,6 +254,7 @@ function Editor() {
                     </aside>
                 </div>
             )}
+            {dryRunOpen && wf && <DryRunDialog workflow={wf} onClose={() => setDryRunOpen(false)} />}
         </div>
     );
 }

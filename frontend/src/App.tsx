@@ -20,6 +20,7 @@ import IOCList from './features/iocs/IOCList';
 import Playbooks from './features/playbooks/Playbooks';
 import AutomationsList from './features/automations/AutomationsList';
 import WorkflowEditor from './features/automations/WorkflowEditor';
+import RunDetail from './features/automations/RunDetail';
 import AlertsList from './features/alerts/AlertsList';
 import ApiDocs from './features/docs/ApiDocs';
 
@@ -53,6 +54,7 @@ function App() {
                 <Route path="iocs" element={<IOCList />} />
                 <Route path="playbooks" element={<Playbooks />} />
                 <Route path="automations" element={<AutomationsList />} />
+                <Route path="automations/runs/:runId" element={<RunDetail />} />
                 <Route path="automations/:id" element={<WorkflowEditor />} />
                 <Route path="mindmap" element={<ArtifactMindMap />} />
                 <Route path="integrations" element={<Integrations />} />
