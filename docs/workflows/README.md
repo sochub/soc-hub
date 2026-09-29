@@ -64,7 +64,7 @@ Admins can dry-run a workflow (even a disabled one) against a case, an alert, or
 
 ## Loop guard
 
-Cases created by an automation emit `case.created` at depth + 1, and updates likewise. Events at depth 3 or more do not trigger workflows, which stops A -> B -> A cycles.
+Cases created by an automation emit `case.created` at depth + 1, and updates likewise. Events beyond depth 3 are dropped (with a warning in the worker log), which stops A -> B -> A cycles.
 
 ## HTTP allowlist and SSRF
 
