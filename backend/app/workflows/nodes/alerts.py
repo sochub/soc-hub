@@ -42,7 +42,8 @@ async def find_or_create_grouped_case(db, *, tenant_id: int, group_key: str, win
 
 async def _load_pending_alert(nctx: NodeContext) -> Alert:
     alert = (await nctx.db.execute(select(Alert).where(
-        Alert.id == nctx.run.alert_id, Alert.tenant_id == nctx.run.tenant_id).with_for_update())).scalars().first()
+        Alert.id == nctx.run.alert_id, Alert.tenant_id == nctx.run.tenant_id).with_for_update()
+        .execution_options(populate_existing=True))).scalars().first()
     if not alert:
         raise NodeError("this run has no alert")
     if alert.status != "pending":
@@ -53,8 +54,10 @@ async def _load_pending_alert(nctx: NodeContext) -> Alert:
 @executor("alert_promote")
 async def run_alert_promote(nctx: NodeContext, config: dict) -> dict:
     from app.tasks.triage import run_case_triage_task
-    alert = await _load_pending_alert(nctx)
     mode = config["mode"]
+    if mode == "group" and not str(config.get("group_key") or "").strip():
+        raise NodeError("group_key rendered empty — check the template")
+    alert = await _load_pending_alert(nctx)
     triage_id = None
     if mode == "link":
         try:
