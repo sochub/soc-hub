@@ -41,3 +41,9 @@ def execute_step_task(step_id):
 def loop_tick_task(parent_step_id):
     from app.workflows.runtime import loop_tick
     _run_async(loop_tick(parent_step_id))
+
+
+@celery_app.task(acks_late=True)
+def handle_slack_interaction_task(tenant_id, payload):
+    from app.services.slack_actions import handle_interaction
+    _run_async(handle_interaction(tenant_id, payload))

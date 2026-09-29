@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat } from 'lucide-react';
+import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare } from 'lucide-react';
 import type { TriggerType } from './types';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
@@ -45,6 +45,15 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'items', label: 'Items', kind: 'expression', required: true, placeholder: 'steps.lookup.output.body.users', help: 'Expression that evaluates to a list; drop nodes inside the box to run them per item' },
             { key: 'concurrency', label: 'Concurrency (1-20)', kind: 'number', placeholder: '5' },
             { key: 'max_items', label: 'Max items (≤ 500)', kind: 'number', placeholder: '100' },
+        ],
+    },
+    {
+        type: 'slack_post_message', label: 'Slack message', category: 'Slack', icon: MessageSquare, sideEffect: true,
+        fields: [
+            { key: 'channel', label: 'Channel', kind: 'text', placeholder: 'default channel' },
+            { key: 'text', label: 'Message (mrkdwn)', kind: 'textarea', required: true, placeholder: ':rotating_light: *{{ case.title }}* ({{ case.severity }})' },
+            { key: 'include_case_buttons', label: 'Case buttons', kind: 'select', options: ['no', 'yes'], help: 'Acknowledge / Assign to me / Close' },
+            CASE_ID,
         ],
     },
     {

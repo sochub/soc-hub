@@ -1,6 +1,11 @@
+import json
+import logging
 from typing import Any, Optional
+from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from cryptography.fernet import InvalidToken
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
-from app.services.slack_service import SlackError, slack_call
+from app.services.slack_service import SlackError, slack_call, verify_signature
 from app.utils.audit import create_audit_log
 from app.utils.crypto import decrypt, encrypt
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class SlackConfigIn(BaseModel):
@@ -70,7 +76,10 @@ async def test_config(db: AsyncSession = Depends(deps.get_db), current_user: Use
     integ = await _get(db, tenant_id)
     if not integ:
         raise HTTPException(status_code=400, detail="Save a bot token and signing secret first")
-    token = decrypt(integ.bot_token_enc)
+    try:
+        token = decrypt(integ.bot_token_enc)
+    except InvalidToken:
+        raise HTTPException(status_code=400, detail="Slack credentials can't be decrypted (SECRET_KEY changed?) — re-enter them in Integrations")
     try:
         auth = await slack_call(token, "auth.test")
         integ.team_id = auth["team_id"]
@@ -93,3 +102,37 @@ async def delete_config(db: AsyncSession = Depends(deps.get_db), current_user: U
         await db.delete(integ)
         await db.commit()
     return Response(status_code=204)
+
+
+def _secret_matches(integ: SlackIntegration, ts: str, body: bytes, sig: str) -> bool:
+    try:
+        secret = decrypt(integ.signing_secret_enc)
+    except InvalidToken:
+        return False  # undecryptable secret can never verify; don't 500 the public endpoint
+    return verify_signature(secret, ts, body, sig)
+
+
+@router.post("/interactions")
+async def interactions(request: Request, db: AsyncSession = Depends(deps.get_db)) -> Response:
+    """Slack interactivity callback. Unauthenticated by design: trust comes ONLY from the
+    signature check below; nothing is turned into actions before it passes."""
+    from app.tasks.workflows import handle_slack_interaction_task
+
+    body = await request.body()
+    try:
+        payload = json.loads(parse_qs(body.decode())["payload"][0])
+        team_id = payload["team"]["id"]
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="bad payload")
+
+    ts = request.headers.get("X-Slack-Request-Timestamp", "")
+    sig = request.headers.get("X-Slack-Signature", "")
+    candidates = (await db.execute(select(SlackIntegration).where(SlackIntegration.team_id == team_id))).scalars().all()
+    match = next((i for i in candidates if _secret_matches(i, ts, body, sig)), None)
+    if not match:
+        logger.warning("rejected Slack interaction for team %s (bad signature or unknown team)", team_id)
+        raise HTTPException(status_code=401, detail="invalid signature")
+
+    if payload.get("type") == "block_actions":
+        handle_slack_interaction_task.delay(match.tenant_id, payload)
+    return Response(status_code=200)  # Slack needs an ack within 3 s; work happens in Celery

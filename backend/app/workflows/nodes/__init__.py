@@ -51,4 +51,4 @@ async def load_target_case(nctx: NodeContext, config: dict):
 
 
 # register executors
-from app.workflows.nodes import logic, http, cases, alerts  # noqa: E402,F401
+from app.workflows.nodes import logic, http, cases, alerts, slack  # noqa: E402,F401
