@@ -1,0 +1,21 @@
+display_information:
+  name: SOC Hub
+  description: Case notifications and end-user confirmations from SOC Hub
+features:
+  bot_user:
+    display_name: SOC Hub
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - im:write
+      - users:read
+      - users:read.email
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://YOUR-SOC-HUB-HOST/api/v1/slack/interactions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

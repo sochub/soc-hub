@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { User } from '../../types';
 import { Plus, Trash2, Copy, Check } from 'lucide-react';
 import HttpAllowlistCard from './HttpAllowlistCard';
+import SlackCard from './SlackCard';
 
 interface Webhook { id: number; name: string; api_key: string; created_at: string; }
 
@@ -98,6 +99,8 @@ export default function Integrations() {
   -H "Content-Type: application/json" \\
   -d '{"external_id":"siem-123","title":"Suspicious login","payload":{"ip":"1.2.3.4"}}'`}</pre>
                     </div>
+
+                    <SlackCard />
 
                     <HttpAllowlistCard />
                 </div>
