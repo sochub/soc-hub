@@ -32,7 +32,7 @@ Text fields are Jinja2 templates (sandboxed, strict: an undefined variable is an
 - `for_each`: container node. `items` (expression evaluating to a list), `concurrency` (default 5, max 20), `max_items` (default 100, hard cap 500; more fails the step). One child run per item; output `{results: [{index, status, steps: {node_id: output}}], succeeded, failed}`.
 
 **Actions**
-- `http_request`: `method`, `url`, `headers`, `body` (templated), optional `retries`, `execute_in_dry_run`, `mock_output`. Output `{status, headers, body}` (body parsed as JSON when possible).
+- `http_request`: `method`, `url`, `headers`, `body` (templated), optional `retries`, `execute_in_dry_run`, `mock_output`. Output `{status, headers, body}` (body parsed as JSON when possible). 4xx responses don't fail the step: the status is in `output.status`, so branch on it with a condition. Bodies over 1 MB are truncated and `output.truncated` is true.
 - `slack_post_message`: channel (default channel if blank), text, optional case buttons (Acknowledge / Assign to me / Close).
 - `slack_ask_user`: DM a user by email with custom buttons; waits. `timeout_hours` default 24, max 168. Output `{response, responder_slack_id, responder_email, timed_out}`.
 - `case_update`: severity, status, assignee, add/remove tags.
@@ -42,6 +42,8 @@ Text fields are Jinja2 templates (sandboxed, strict: an undefined variable is an
 - `alert_promote`: `mode` `new` | `link` | `group`, see below. Output `{case_id, created}`. Sets the run's case, so later nodes act on the promoted case.
 - `alert_dismiss`: optional templated `reason`. Sets `alert.status = dismissed` and stores the reason.
 
+Every non-trigger step must have an incoming edge; a disconnected step means the workflow cannot be enabled.
+
 `alert_*` nodes are only allowed in `alert.ingested` workflows. Promoting or dismissing an alert that is no longer `pending` fails the step.
 
 ## Join and skip semantics
@@ -50,7 +52,7 @@ A node runs when all its incoming edges are resolved and at least one is active;
 
 ## Retries and timeouts
 
-`http_request` has a 15 s timeout and `retries` (default 2, backoff 10 s then 60 s), only on network errors and 5xx. Case action nodes do not retry. `slack_ask_user` waits up to `timeout_hours`; on expiry the step succeeds with `{response: null, timed_out: true}`. Analysts can cancel a running or waiting run.
+`http_request` bounds the whole request (connect plus read) to 15 s. `retries` (default 2, backoff 10 s then 60 s) applies only to network errors, timeouts and 5xx responses; 4xx responses are never retried and never raised. Case action nodes do not retry. `slack_ask_user` waits up to `timeout_hours`; on expiry the step succeeds with `{response: null, timed_out: true}`. Analysts can cancel a running or waiting run.
 
 ## Dry run
 
