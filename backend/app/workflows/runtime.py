@@ -90,10 +90,15 @@ async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] =
     run.status = status
     run.error = error
     run.finished_at = _now()
+    targets = []
     for s in (await db.execute(select(WorkflowRunStep).where(
             WorkflowRunStep.run_id == run.id, WorkflowRunStep.status.in_(_ACTIVE_STEP)))).scalars().all():
+        if s.status == "waiting" and s.wait_token:  # an open ask-user question
+            targets.append([run.tenant_id, (s.output or {}).get("channel"), (s.output or {}).get("message_ts")])
         s.status = "cancelled"
         s.finished_at = _now()
+    # No Slack I/O here (caller's transaction/locks are open): queue for flush_withdrawals() after commit.
+    db.sync_session.info.setdefault("slack_withdraw", []).extend(t for t in targets if t[1] and t[2])
     await db.flush()
     # a dead run must not leave loop children queued or executing (cancel_run -> finalize_run recurses)
     for child in (await db.execute(select(WorkflowRun).where(
@@ -104,13 +109,7 @@ async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] =
 async def cancel_run(db, run: WorkflowRun) -> None:
     if run.status in _TERMINAL_RUN:
         return
-    asks = (await db.execute(select(WorkflowRunStep).where(
-        WorkflowRunStep.run_id == run.id, WorkflowRunStep.status == "waiting",
-        WorkflowRunStep.wait_token.isnot(None)))).scalars().all()
-    targets = [[run.tenant_id, (s.output or {}).get("channel"), (s.output or {}).get("message_ts")] for s in asks]
-    await finalize_run(db, run, "cancelled")  # also cancels non-terminal children
-    # No Slack I/O here (caller's transaction/locks are open): queue for flush_withdrawals() after commit.
-    db.sync_session.info.setdefault("slack_withdraw", []).extend(t for t in targets if t[1] and t[2])
+    await finalize_run(db, run, "cancelled")  # also cancels non-terminal children, queues DM withdrawals
 
 
 def flush_withdrawals(db) -> None:

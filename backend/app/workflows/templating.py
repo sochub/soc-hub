@@ -3,9 +3,10 @@ import re
 from typing import Any, List
 
 from jinja2 import StrictUndefined, Undefined
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-_env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+# Immutable: templates can't mutate context lists/dicts (e.g. case.tags.append).
+_env = ImmutableSandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
 _SINGLE_EXPR = re.compile(r"^\s*\{\{(?P<expr>(?:(?!\{\{|\}\}).)+)\}\}\s*$", re.S)
 
 
@@ -58,8 +59,8 @@ def slack_escape(text: str) -> str:
 
 # Same sandbox, but every {{ value }} is escaped for Slack mrkdwn; the author's literal template
 # text (e.g. <https://ok.example|link> or <!here>) is left alone.
-_slack_env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False,
-                                  finalize=lambda v: slack_escape(str(v)))
+_slack_env = ImmutableSandboxedEnvironment(undefined=StrictUndefined, autoescape=False,
+                                           finalize=lambda v: slack_escape(str(v)))
 
 
 def render_slack(value: Any, ctx: dict) -> Any:

@@ -43,7 +43,7 @@ async def _scenario(delayed, ticks):
             await db.flush()
             ids["tenants"] += [ta.id, tb.id]
             ids["users"].append(user.id)
-            case1 = Case(title="wf-api-test", tenant_id=1)
+            case1 = Case(title="wf-api-test", tenant_id=tb.id)
             db.add(case1)
             wf_b = Workflow(tenant_id=tb.id, name="other", trigger_type="manual", graph=GOOD, enabled=False, version=1)
             db.add(wf_b)
@@ -124,6 +124,9 @@ async def _scenario(delayed, ticks):
 
                 r = await c.get(f"/api/v1/workflow-runs/?workflow_id={wf['id']}")
                 assert [x["id"] for x in r.json()] == [run_id]
+                for lim in (0, -5):  # clamped to at least 1 (a negative LIMIT is a Postgres error)
+                    r = await c.get(f"/api/v1/workflow-runs/?workflow_id={wf['id']}&limit={lim}")
+                    assert r.status_code == 200 and [x["id"] for x in r.json()] == [run_id], f"limit {lim}"
                 r = await c.get("/api/v1/workflows/")
                 row = next(x for x in r.json() if x["id"] == wf["id"])
                 assert row["run_count"] == 1 and row["last_run_status"] is not None

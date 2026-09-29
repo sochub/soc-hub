@@ -5,6 +5,7 @@ _READ_ONLY = {"trigger", "condition", "for_each", "case_search"}
 _STUBS = {
     "http_request": {"status": 200, "headers": {}, "body": {}},
     "alert_promote": {"case_id": None, "created": True},
+    "slack_post_message": {"channel": "", "ts": ""},
 }
 
 

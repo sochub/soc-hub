@@ -96,3 +96,54 @@ async def _scenario(monkeypatch, mode):
 @pytest.mark.parametrize("mode", ["wait", "error"])
 def test_cancel_during_step_is_not_overwritten(monkeypatch, mode):
     asyncio.run(_scenario(monkeypatch, mode))
+
+
+async def _failed_run_withdraws(monkeypatch):
+    import app.tasks.workflows as tw
+    h = secrets.token_hex(3)
+    ids = {"t": [], "w": [], "r": [], "s": []}
+    withdrawn = []
+    monkeypatch.setattr(tw.withdraw_messages_task, "delay", lambda targets: withdrawn.extend(targets))
+    async with AsyncSessionLocal() as db:
+        try:
+            t = Tenant(name="wf-test", slug=f"wf-test-{h}")
+            db.add(t)
+            await db.flush()
+            ids["t"] = [t.id]
+            wf = Workflow(tenant_id=t.id, name="wf-test", trigger_type="manual", graph=GRAPH)
+            db.add(wf)
+            await db.flush()
+            ids["w"] = [wf.id]
+            run = WorkflowRun(tenant_id=t.id, workflow_id=wf.id, workflow_version=1, status="running",
+                              trigger_payload={}, graph_snapshot=GRAPH)
+            db.add(run)
+            await db.flush()
+            ids["r"] = [run.id]
+            ask = WorkflowRunStep(run_id=run.id, node_id="ask", status="waiting", wait_token="tok-" + h,
+                                  output={"target_slack_id": "U1", "channel": "D3", "message_ts": "3.3", "buttons": ["Yes"]})
+            db.add(ask)
+            await db.flush()
+            ids["s"] = [ask.id]
+            tid, ask_id = t.id, ask.id
+
+            await runtime.finalize_run(db, run, "failed", "step 'other' failed: boom")
+            await db.commit()
+            runtime.flush_withdrawals(db)
+            db.expire_all()
+            st = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == ask_id))).scalars().one()
+            assert st.status == "cancelled"
+            assert withdrawn == [[tid, "D3", "3.3"]], withdrawn
+        finally:
+            await db.rollback()
+            await db.execute(delete(WorkflowRunStep).where(WorkflowRunStep.id.in_(ids["s"])))
+            await db.execute(delete(WorkflowRun).where(WorkflowRun.id.in_(ids["r"])))
+            await db.execute(delete(Workflow).where(Workflow.id.in_(ids["w"])))
+            await db.execute(delete(Tenant).where(Tenant.id.in_(ids["t"])))
+            await db.commit()
+            left = (await db.execute(select(func.count()).select_from(Tenant).where(Tenant.slug.like("wf-test-%")))).scalar()
+            assert left == 0
+    await engine.dispose()
+
+
+def test_failed_run_withdraws_open_questions(monkeypatch):
+    asyncio.run(_failed_run_withdraws(monkeypatch))

@@ -92,3 +92,14 @@ def test_render_config_escapes_only_slack_text():
     assert out["buttons"] == ["A&B", "C"], "plain_text button labels keep native values"
     note = {"id": "n", "type": "case_add_note", "config": {"content": "{{ alert.payload.x }}"}}
     assert render_config(note, EVIL)["content"] == "<https://evil|click> <!channel> & co"
+
+
+def test_templates_cannot_mutate_context():
+    ctx = {"case": {"tags": ["a"]}}
+    with pytest.raises(TemplateError):
+        render("{{ case.tags.append('z') }}", ctx)
+    with pytest.raises(TemplateError):
+        render("x {{ case.tags.append('z') }}", ctx)
+    with pytest.raises(TemplateError):
+        render_slack("x {{ case.tags.append('z') }}", ctx)
+    assert ctx["case"]["tags"] == ["a"]

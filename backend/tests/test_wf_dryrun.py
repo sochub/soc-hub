@@ -49,3 +49,9 @@ def test_ask_user_dry_run_bad_buttons_falls_back():
     node = {"id": "ask", "type": "slack_ask_user"}
     out = simulated_output(node, {"buttons": 5}, NO_MOCKS)
     assert out["response"] == "Yes" and out["timed_out"] is False
+
+
+def test_post_message_stub_has_output_shape():
+    from app.workflows.dryrun import simulated_output
+    out = simulated_output({"id": "p", "type": "slack_post_message"}, {"text": "hi"}, {})
+    assert out["channel"] == "" and out["ts"] == "" and out["simulated"] is True

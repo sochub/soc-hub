@@ -2,6 +2,7 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -35,7 +36,7 @@ async def _run_stats(db, workflow_ids: List[int]) -> dict:
         .group_by(WorkflowRun.workflow_id))).all())
     last = {r.workflow_id: r for r in (await db.execute(
         select(WorkflowRun).where(WorkflowRun.workflow_id.in_(workflow_ids), WorkflowRun.parent_run_id.is_(None))
-        .distinct(WorkflowRun.workflow_id)
+        .ext(distinct_on(WorkflowRun.workflow_id))
         .order_by(WorkflowRun.workflow_id, WorkflowRun.started_at.desc()))).scalars()}
     return {wid: {"run_count": counts.get(wid, 0),
                   "last_run_status": last[wid].status if wid in last else None,
@@ -222,8 +223,9 @@ async def dry_run(workflow_id: int, body: DryRunIn, db: AsyncSession = Depends(d
 
 # ── runs ─────────────────────────────────────────────────────────
 
-async def _get_run(db, run_id: int, tenant_id: int) -> WorkflowRun:
-    run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id, WorkflowRun.tenant_id == tenant_id))).scalars().first()
+async def _get_run(db, run_id: int, tenant_id: int, lock: bool = False) -> WorkflowRun:
+    q = select(WorkflowRun).where(WorkflowRun.id == run_id, WorkflowRun.tenant_id == tenant_id)
+    run = (await db.execute(q.with_for_update() if lock else q)).scalars().first()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
@@ -249,7 +251,7 @@ async def list_runs(workflow_id: Optional[int] = None, case_id: Optional[int] = 
         q = q.where(WorkflowRun.status == status)
     if dry_run is not None:
         q = q.where(WorkflowRun.is_dry_run == dry_run)
-    runs = (await db.execute(q.order_by(WorkflowRun.started_at.desc()).limit(min(limit, 200)))).scalars().all()
+    runs = (await db.execute(q.order_by(WorkflowRun.started_at.desc()).limit(max(1, min(limit, 200))))).scalars().all()
     names = await _names(db, {r.workflow_id for r in runs})
     return [{**RunSummary.model_validate(r).model_dump(), "workflow_name": names.get(r.workflow_id)} for r in runs]
 
@@ -272,7 +274,8 @@ async def get_run(run_id: int, db: AsyncSession = Depends(deps.get_db),
 async def cancel(run_id: int, db: AsyncSession = Depends(deps.get_db),
                  current_user: User = Depends(deps.require_analyst_or_above),
                  tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
-    run = await _get_run(db, run_id, tenant_id)
+    # row lock: a concurrent advance_run/execute_step/handle_answer can't overwrite the cancel
+    run = await _get_run(db, run_id, tenant_id, lock=True)
     await cancel_run(db, run)
     await create_audit_log(db=db, entity_type="workflow_run", entity_id=run.id, action="cancel", tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
