@@ -14,6 +14,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
     const [caseId, setCaseId] = useState('');
     const [alertId, setAlertId] = useState('');
     const [payload, setPayload] = useState('{\n  "event": "manual"\n}');
+    const [filter, setFilter] = useState('');
     const [mocks, setMocks] = useState<Record<string, string>>({});
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
 
     const run = useMutation({
         mutationFn: async () => {
-            const body: Record<string, unknown> = { mocks: {}, ask_user_answers: answers };
+            const body: Record<string, unknown> = { mocks: {}, ask_user_answers: Object.fromEntries(Object.entries(answers).filter(([, v]) => v !== '')) };
             for (const [nid, text] of Object.entries(mocks)) {
                 if (text.trim()) (body.mocks as Record<string, unknown>)[nid] = JSON.parse(text);
             }
@@ -56,18 +57,31 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
                     <div className="flex gap-4">
                         {(['case', 'alert', 'payload'] as const).map((s) => (
                             <label key={s} className="flex items-center gap-1.5 capitalize">
-                                <input type="radio" name="src" checked={source === s} onChange={() => setSource(s)} />{s === 'payload' ? 'JSON payload' : s}
+                                <input type="radio" name="src" checked={source === s} onChange={() => { setSource(s); setFilter(''); }} />{s === 'payload' ? 'JSON payload' : s}
                             </label>
                         ))}
                     </div>
-                    {source === 'case' && <select className={input} value={caseId} onChange={(e) => setCaseId(e.target.value)}>
-                        <option value="">Select a case…</option>
-                        {cases.map((c) => <option key={c.id} value={c.id}>#{c.id} {c.title}</option>)}
-                    </select>}
-                    {source === 'alert' && <select className={input} value={alertId} onChange={(e) => setAlertId(e.target.value)}>
-                        <option value="">Select an alert…</option>
-                        {alerts.map((a) => <option key={a.id} value={a.id}>#{a.id} {a.title} ({a.status})</option>)}
-                    </select>}
+                    {source !== 'payload' && (() => {
+                        const isCase = source === 'case';
+                        const label = isCase ? 'cases' : 'alerts';
+                        const q = filter.trim().toLowerCase();
+                        const items: { id: number; title: string; status?: string }[] = isCase ? cases : alerts;
+                        const shown = items.filter((x) => !q || `#${x.id}`.includes(q) || String(x.id) === q.replace('#', '') || x.title.toLowerCase().includes(q));
+                        const value = isCase ? caseId : alertId;
+                        const setValue = isCase ? setCaseId : setAlertId;
+                        return (
+                            <div className="space-y-2">
+                                <div className="flex gap-2">
+                                    <input className={input} aria-label={`Filter ${label}`} placeholder={`Filter ${label}…`} value={filter} onChange={(e) => setFilter(e.target.value)} />
+                                    <input type="number" min={1} className={input + ' w-32'} aria-label={isCase ? 'Case ID' : 'Alert ID'} placeholder="or enter ID" value={value} onChange={(e) => setValue(e.target.value)} />
+                                </div>
+                                <select className={input} value={value} onChange={(e) => setValue(e.target.value)}>
+                                    <option value="">Select {isCase ? 'a case' : 'an alert'}…</option>
+                                    {shown.map((x) => <option key={x.id} value={x.id}>#{x.id} {x.title}{x.status ? ` (${x.status})` : ''}</option>)}
+                                </select>
+                            </div>
+                        );
+                    })()}
                     {source === 'payload' && <textarea rows={6} className={input + ' font-mono text-xs'} value={payload} onChange={(e) => setPayload(e.target.value)} />}
 
                     {askNodes.length > 0 && (
