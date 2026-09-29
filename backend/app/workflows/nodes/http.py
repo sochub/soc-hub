@@ -17,19 +17,32 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
     url = str(config["url"])
     try:
         # getaddrinfo blocks, so keep the guard off the event loop
-        await asyncio.to_thread(assert_url_allowed, url, tenant.workflow_http_allowlist or [])
+        pinned_ip = await asyncio.to_thread(assert_url_allowed, url, tenant.workflow_http_allowlist or [])
     except SSRFError as e:
         raise NodeError(str(e))
 
     method = str(config.get("method", "GET")).upper()
     headers = {str(k): str(v) for k, v in (config.get("headers") or {}).items()}
+    target, extensions = url, {}
+    if pinned_ip:
+        # Connect to the vetted IP (no second DNS lookup to rebind), but keep the hostname for the
+        # Host header and for TLS: httpcore uses `sni_hostname` as server_hostname, so SNI and
+        # certificate verification are still against the original name.
+        try:
+            parsed = httpx.URL(url)
+            target = parsed.copy_with(host=pinned_ip)
+        except httpx.InvalidURL as e:
+            raise NodeError(f"invalid URL: {e}")
+        headers = {k: v for k, v in headers.items() if k.lower() != "host"}
+        headers["Host"] = parsed.netloc.decode("ascii")
+        extensions = {"sni_hostname": parsed.host}
     body = config.get("body")
     kwargs = {"json": body} if isinstance(body, (dict, list)) else ({"content": str(body)} if body not in (None, "") else {})
     async def _fetch():
         buf = bytearray()
         truncated = False
         async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-            async with client.stream(method, url, headers=headers, **kwargs) as resp:
+            async with client.stream(method, target, headers=headers, extensions=extensions, **kwargs) as resp:
                 async for chunk in resp.aiter_bytes():
                     buf.extend(chunk)
                     if len(buf) > MAX_BODY:

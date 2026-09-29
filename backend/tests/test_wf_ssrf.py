@@ -20,11 +20,15 @@ R = fake_resolver({
     "10.0.0.1": ["10.0.0.1"],
     "169.254.169.254": ["169.254.169.254"],
     "::1": ["::1"],
+    "cgnat.example.com": ["100.100.100.200"],
+    "100.100.100.200": ["100.100.100.200"],
+    "v6.example.com": ["2606:2800:220:1:248:1893:25c8:1946"],
 })
 
 
 def test_public_host_allowed():
-    assert_url_allowed("https://api.example.com/v1", [], resolve=R)
+    assert assert_url_allowed("https://api.example.com/v1", [], resolve=R) == "93.184.216.34"
+    assert assert_url_allowed("https://v6.example.com/", [], resolve=R) == "2606:2800:220:1:248:1893:25c8:1946"
 
 
 @pytest.mark.parametrize("url", [
@@ -33,6 +37,8 @@ def test_public_host_allowed():
     "http://169.254.169.254/latest/meta-data/",
     "http://[::1]/",
     "http://sneaky.example.com/",   # public name, private IP
+    "http://100.100.100.200/",      # CGNAT / shared address space (100.64.0.0/10)
+    "http://cgnat.example.com/",
 ])
 def test_private_targets_blocked(url):
     with pytest.raises(SSRFError):
@@ -40,7 +46,8 @@ def test_private_targets_blocked(url):
 
 
 def test_allowlisted_host_passes():
-    assert_url_allowed("http://internal.corp/hook", ["INTERNAL.corp"], resolve=R)
+    # allowlisted hosts are trusted as named: nothing to pin
+    assert assert_url_allowed("http://internal.corp/hook", ["INTERNAL.corp"], resolve=R) is None
 
 
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "gopher://x", "ftp://api.example.com", "http:///nohost"])

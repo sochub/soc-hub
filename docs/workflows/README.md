@@ -70,7 +70,7 @@ Cases created by an automation emit `case.created` at depth + 1, and updates lik
 
 ## HTTP allowlist and SSRF
 
-`http_request` allows only `http`/`https`. The host is resolved and rejected if any address is loopback, private (RFC1918, ULA), link-local (including `169.254.169.254`), unspecified, or multicast, unless the hostname is on the tenant's HTTP allowlist (Automations settings, admin only). Redirects are not followed and the response body is capped at 1 MB.
+`http_request` allows only `http`/`https`. The host is resolved and rejected if any address is loopback, private (RFC1918, ULA), link-local (including `169.254.169.254`), shared/CGNAT (`100.64.0.0/10`), reserved, unspecified, or multicast, unless the hostname is on the tenant's HTTP allowlist (Automations settings, admin only). The request then connects to the vetted address itself, so a second DNS answer cannot rebind it to an internal host; the hostname is still sent as `Host` and used for TLS SNI and certificate verification. Allowlisted hosts are trusted by name and resolved normally. Redirects are not followed and the response body is capped at 1 MB.
 
 ## Worked example: group EDR alerts into one case
 
