@@ -20,7 +20,7 @@ Text fields are Jinja2 templates (sandboxed, strict: an undefined variable is an
 |---|---|
 | `case` | The run's case, reloaded before each step (tags, artifacts summary). `null` until one exists, e.g. before `alert_promote`. |
 | `alert` | The run's alert (`source`, `external_id`, `title`, `payload`, `status`), reloaded fresh. |
-| `trigger` | The event payload, e.g. `trigger.changes.tags.added`. |
+| `trigger` | The event payload: `event`, `case_id`, `alert_id`, `changes`. For `case.updated`, `changes` has one `{from, to}` entry per changed field, with enum values as plain strings (`trigger.changes.severity.to == 'critical'`, `trigger.changes.status.from == 'new'`). `tags` also has `added` and `removed` lists (`'phishing' in trigger.changes.tags.added`). An owner change appears as both `owner_id` and `assignee` (`{from, to}` user ids). |
 | `steps.<node_id>.output` | Output of an already completed step. Loop child runs also see the parent's. |
 | `loop.item`, `loop.index` | Inside a `for_each` body only. |
 | `dry_run` | Boolean. |

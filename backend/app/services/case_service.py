@@ -3,7 +3,8 @@
 All functions only flush; the caller commits (and emits workflow events after commit).
 """
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from enum import Enum
+from typing import Any, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,14 +30,30 @@ async def create_case_record(db: AsyncSession, *, tenant_id: int, data: dict, us
     return case, triage.id
 
 
+def _plain(value: Any) -> Any:
+    """JSON-safe form of a case field value (enums -> their value) for audit logs and trigger payloads."""
+    if isinstance(value, Enum):  # before str: CaseStatus etc. are str subclasses
+        return value.value
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return str(value)
+
+
 async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, user_id: Optional[int]) -> dict:
     old_status = case.status
     changes = {}
     for field, value in update_data.items():
         old_value = getattr(case, field)
         if old_value != value:
-            changes[field] = {"from": str(old_value) if old_value is not None else None,
-                              "to": str(value) if value is not None else None}
+            changes[field] = {"from": _plain(old_value), "to": _plain(value)}
+            if field == "tags":
+                before, after = changes[field]["from"] or [], changes[field]["to"] or []
+                changes[field]["added"] = [t for t in after if t not in before]
+                changes[field]["removed"] = [t for t in before if t not in after]
+            elif field == "owner_id":
+                changes["assignee"] = dict(changes[field])
         setattr(case, field, value)
 
     if "status" in changes:
