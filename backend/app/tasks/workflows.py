@@ -53,3 +53,9 @@ def handle_slack_interaction_task(tenant_id, payload):
 def expire_waits_task():
     from app.workflows.runtime import expire_waits
     _run_async(expire_waits())
+
+
+@celery_app.task(acks_late=True)
+def withdraw_messages_task(targets):
+    from app.workflows.runtime import withdraw_messages
+    _run_async(withdraw_messages(targets))

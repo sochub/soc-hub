@@ -99,11 +99,31 @@ async def cancel_run(db, run: WorkflowRun) -> None:
     asks = (await db.execute(select(WorkflowRunStep).where(
         WorkflowRunStep.run_id == run.id, WorkflowRunStep.status == "waiting",
         WorkflowRunStep.wait_token.isnot(None)))).scalars().all()
-    targets = [((s.output or {}).get("channel"), (s.output or {}).get("message_ts")) for s in asks]
-    targets = [t for t in targets if t[0] and t[1]]
+    targets = [[run.tenant_id, (s.output or {}).get("channel"), (s.output or {}).get("message_ts")] for s in asks]
     await finalize_run(db, run, "cancelled")  # also cancels non-terminal children
+    # No Slack I/O here (caller's transaction/locks are open): queue for flush_withdrawals() after commit.
+    db.sync_session.info.setdefault("slack_withdraw", []).extend(t for t in targets if t[1] and t[2])
+
+
+def flush_withdrawals(db) -> None:
+    """Call after the caller's commit: dispatch the queued 'withdrawn' Slack edits."""
+    targets = db.sync_session.info.pop("slack_withdraw", [])
     if targets:
-        await _update_slack_messages(db, run.tenant_id, targets, "This request was withdrawn.", ":no_entry_sign:")
+        from app.tasks.workflows import withdraw_messages_task
+        withdraw_messages_task.delay(targets)
+
+
+async def withdraw_messages(targets) -> None:
+    """Best-effort 'withdrawn' edits for [tenant_id, channel, ts] targets; never raises."""
+    try:
+        by_tenant = {}
+        for tenant_id, channel, ts in targets:
+            by_tenant.setdefault(tenant_id, []).append((channel, ts))
+        async with AsyncSessionLocal() as db:
+            for tenant_id, items in by_tenant.items():
+                await _update_slack_messages(db, tenant_id, items, "This request was withdrawn.", ":no_entry_sign:")
+    except Exception:
+        logger.warning("could not withdraw Slack messages", exc_info=True)
 
 
 async def _update_slack_messages(db, tenant_id, targets, text: str, emoji: str) -> None:
@@ -159,6 +179,7 @@ async def advance_run(run_id: int) -> None:
         if run.status in _TERMINAL_RUN and run.parent_step_id:
             finished_child = run.parent_step_id
         await db.commit()
+        flush_withdrawals(db)
         step_ids = [s.id for s in to_execute]
 
     for sid in step_ids:
@@ -301,8 +322,12 @@ async def expire_waits() -> None:
             step.status, step.finished_at = "succeeded", _now()
         await db.commit()
 
-        for run_id, tenant_id, channel, ts in expired:
+        # resume runs first: Slack edits are cosmetic and may be slow or fail
+        for run_id, *_ in expired:
+            advance_run_task.delay(run_id)
+        by_tenant = {}
+        for _, tenant_id, channel, ts in expired:
             if channel and ts:
-                await _update_slack_messages(db, tenant_id, [(channel, ts)], "This request expired.", ":hourglass:")
-    for run_id, *_ in expired:
-        advance_run_task.delay(run_id)
+                by_tenant.setdefault(tenant_id, []).append((channel, ts))
+        for tenant_id, items in by_tenant.items():
+            await _update_slack_messages(db, tenant_id, items, "This request expired.", ":hourglass:")

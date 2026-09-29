@@ -68,7 +68,9 @@ async def _scenario(monkeypatch):
             r_fut, s_fut = await mk(now + timedelta(hours=1))
             r_loop, s_loop = await mk(None, token=False)
 
+            fail["exc"] = RuntimeError("slack down")  # advance must still be recorded
             await runtime.expire_waits()
+            fail["exc"] = None
             st = await fresh(s_exp)
             assert st.status == "succeeded" and st.output["timed_out"] is True and st.output["response"] is None
             assert st.finished_at is not None
@@ -77,18 +79,28 @@ async def _scenario(monkeypatch):
             for sid, rid in ((s_fut, r_fut), (s_loop, r_loop)):
                 assert (await fresh(sid)).status == "waiting" and rid not in advanced
 
-            # cancel a waiting ask run: message withdrawn; SlackError / other errors don't break the cancel
+            # cancel_run: no Slack I/O, targets queued; flush after commit dispatches the task
+            withdrawn = []
+            monkeypatch.setattr(tw.withdraw_messages_task, "delay", lambda targets: withdrawn.append(targets))
+            calls.clear()
+            rid, sid = await mk(now + timedelta(hours=1), ts="3.4")
+            run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == rid))).scalars().one()
+            await runtime.cancel_run(db, run)
+            assert calls == [] and withdrawn == []
+            assert db.sync_session.info["slack_withdraw"] == [[tid, "D1", "3.4"]]
+            await db.commit()
+            runtime.flush_withdrawals(db)
+            assert withdrawn == [[[tid, "D1", "3.4"]]] and "slack_withdraw" not in db.sync_session.info
+            runtime.flush_withdrawals(db)
+            assert len(withdrawn) == 1
+            assert (await fresh(sid)).status == "cancelled"
+
+            # task body: "withdrawn" edit attempted; failures (SlackError or anything) never raise
             for exc in (None, SlackError("boom"), RuntimeError("boom")):
                 calls.clear()
                 fail["exc"] = exc
-                rid, sid = await mk(now + timedelta(hours=1), ts="3.4")
-                run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == rid))).scalars().one()
-                await runtime.cancel_run(db, run)
-                await db.commit()
+                await runtime.withdraw_messages([[tid, "D1", "3.4"]])
                 assert [c for c in calls if c[0] == "chat.update" and c[1]["ts"] == "3.4" and "withdrawn" in c[1]["text"]]
-                assert (await fresh(sid)).status == "cancelled"
-                db.expire_all()
-                assert (await db.execute(select(WorkflowRun.status).where(WorkflowRun.id == rid))).scalar() == "cancelled"
         finally:
             await db.rollback()
             if ids["s"]:
