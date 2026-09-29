@@ -61,11 +61,15 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
         if not case:
             await _ephemeral(payload, f"Case #{case_id} no longer exists.")
             return
+        if action == "ack" and case.status in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
+            await _ephemeral(payload, f"Case #{case_id} is already {case.status.value}.")
+            return  # a stale/replayed Acknowledge must not reopen a finished case
         label, build = _CASE_UPDATES[action]
         changes = await apply_case_update(db, case=case, update_data=build(user), user_id=user.id)
         await db.commit()
-    if changes:
-        emit_event(tenant_id, "case.updated", case_id=case_id, changes=changes)
+    if not changes:
+        return  # nothing changed (e.g. already in that state): don't announce it
+    emit_event(tenant_id, "case.updated", case_id=case_id, changes=changes)
     if payload.get("response_url"):
         await respond(payload["response_url"], {"response_type": "in_channel", "replace_original": False,
                                                 "text": f"{label} case #{case_id} — <@{clicker}>"})

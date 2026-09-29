@@ -77,6 +77,15 @@ async def _scenario(monkeypatch):
                 r = await c.post(u, content=body, headers={**hdr(body), "X-Slack-Signature": "v0=\u00e9\u00ff".encode("utf-8")})
                 assert r.status_code == 401 and not calls, f"f {r.status_code}"
 
+                for bad in (5, {"a": 1}, True, None, ""):
+                    bb = _form({**ba, "team": {"id": bad}})
+                    r = await c.post(u, content=bb, headers=hdr(bb))
+                    assert r.status_code == 400 and not calls, f"bad team id {bad!r}: {r.status_code}"
+
+                big = _form({**ba, "pad": "x" * 70000})
+                r = await c.post(u, content=big, headers=hdr(big))
+                assert r.status_code == 413 and not calls, f"413 {r.status_code}"
+
                 vs = _form({"type": "view_submission", "team": {"id": "TTEST"}})
                 r = await c.post(u, content=vs, headers=hdr(vs))
                 assert r.status_code == 200 and not calls, "g"

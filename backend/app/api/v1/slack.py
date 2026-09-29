@@ -119,10 +119,14 @@ async def interactions(request: Request, db: AsyncSession = Depends(deps.get_db)
     from app.tasks.workflows import handle_slack_interaction_task
 
     body = await request.body()
+    if len(body) > 65536:
+        raise HTTPException(status_code=413, detail="payload too large")
     try:
         payload = json.loads(parse_qs(body.decode())["payload"][0])
         team_id = payload["team"]["id"]
     except (KeyError, IndexError, ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="bad payload")
+    if not isinstance(team_id, str) or not team_id:
         raise HTTPException(status_code=400, detail="bad payload")
 
     ts = request.headers.get("X-Slack-Request-Timestamp", "")
