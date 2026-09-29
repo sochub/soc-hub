@@ -29,5 +29,9 @@ def emit_event(tenant_id: int, event_type: str, *, case_id: Optional[int] = None
     if not should_emit(depth):
         logger.warning("dropping %s event for tenant %s at depth %s (loop guard)", event_type, tenant_id, depth)
         return
-    from app.tasks.workflows import dispatch_event_task  # late import: avoids worker import cycle
-    dispatch_event_task.delay(tenant_id, event_type, case_id, alert_id, changes or {}, depth)
+    try:
+        from app.tasks.workflows import dispatch_event_task  # late import: avoids worker import cycle
+        dispatch_event_task.delay(tenant_id, event_type, case_id, alert_id, changes or {}, depth)
+    except Exception:
+        # The originating change is already committed; never fail the request over enqueueing.
+        logger.exception("failed to enqueue %s event for tenant %s", event_type, tenant_id)
