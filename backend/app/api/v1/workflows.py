@@ -275,4 +275,7 @@ async def cancel(run_id: int, db: AsyncSession = Depends(deps.get_db),
     await cancel_run(db, run)
     await create_audit_log(db=db, entity_type="workflow_run", entity_id=run.id, action="cancel", tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
+    if run.parent_step_id:  # a cancelled loop child must wake its parent for_each
+        from app.tasks.workflows import loop_tick_task
+        loop_tick_task.delay(run.parent_step_id)
     return run

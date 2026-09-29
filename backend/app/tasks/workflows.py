@@ -39,4 +39,5 @@ def execute_step_task(step_id):
 
 @celery_app.task(acks_late=True)
 def loop_tick_task(parent_step_id):
-    pass  # replaced in Task 18
+    from app.workflows.runtime import loop_tick
+    _run_async(loop_tick(parent_step_id))

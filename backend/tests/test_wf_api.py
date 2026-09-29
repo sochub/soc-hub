@@ -13,7 +13,7 @@ from app.models.audit_log import AuditLog
 from app.models.case import Case
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.models.workflow import Workflow, WorkflowRun
+from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 
 GOOD = {"nodes": [{"id": "start", "type": "trigger", "config": {}},
                    {"id": "note", "type": "case_add_note", "config": {"content": "hi"}}],
@@ -30,7 +30,7 @@ def _deny():
     raise HTTPException(status_code=403, detail="Insufficient permissions")
 
 
-async def _scenario(delayed):
+async def _scenario(delayed, ticks):
     h = secrets.token_hex(3)
     ids = {"tenants": [], "users": [], "cases": [], "workflows": []}
     state = {"tenant": None, "role": "admin", "user": None}
@@ -114,6 +114,22 @@ async def _scenario(delayed):
                 r = await c.post(wid + "/dry-run", json={"case_id": other_case})
                 assert r.status_code == 404, "j case"
 
+                async with AsyncSessionLocal() as db2:  # cancelling a loop child must wake the parent for_each
+                    loop_step = WorkflowRunStep(run_id=run_id, node_id="loop", status="waiting")
+                    db2.add(loop_step)
+                    await db2.flush()
+                    child = WorkflowRun(tenant_id=state["tenant"], workflow_id=wf["id"], workflow_version=1, status="running",
+                                        trigger_payload={}, graph_snapshot=GOOD, parent_run_id=run_id,
+                                        parent_step_id=loop_step.id, loop_index=0)
+                    db2.add(child)
+                    await db2.commit()
+                    child_id, step_id = child.id, loop_step.id
+                r = await c.post(f"/api/v1/workflow-runs/{child_id}/cancel")
+                assert r.status_code == 200 and r.json()["status"] == "cancelled", "l cancel"
+                assert ticks == [step_id], "l tick"
+                r = await c.post(f"/api/v1/workflow-runs/{run_id}/cancel")
+                assert r.status_code == 200 and ticks == [step_id], "l top-level cancel must not tick"
+
                 state["role"] = "viewer"
                 r = await c.post("/api/v1/workflows/", json=_wf())
                 assert r.status_code == 403, "i"
@@ -134,6 +150,8 @@ async def _scenario(delayed):
 
 def test_workflow_api(monkeypatch):
     from app.tasks.workflows import advance_run_task
-    delayed = []
+    from app.tasks.workflows import loop_tick_task
+    delayed, ticks = [], []
     monkeypatch.setattr(advance_run_task, "delay", lambda rid: delayed.append(rid))
-    asyncio.run(_scenario(delayed))
+    monkeypatch.setattr(loop_tick_task, "delay", lambda sid: ticks.append(sid))
+    asyncio.run(_scenario(delayed, ticks))

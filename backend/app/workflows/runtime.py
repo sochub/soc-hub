@@ -13,6 +13,7 @@ from app.workflows.context import build_context
 from app.workflows.dryrun import dry_run_behaviour, simulated_output
 from app.workflows.events import trigger_matches
 from app.workflows.graph import ready_nodes, run_outcome
+from app.workflows.loops import aggregate_children, next_children_to_start
 from app.workflows.node_types import NODE_TYPES
 from app.workflows.nodes import EXECUTORS, NodeContext, NodeError, RetryableNodeError, WAIT
 from app.workflows.templating import render, TemplateError
@@ -140,7 +141,7 @@ async def advance_run(run_id: int) -> None:
     for sid in step_ids:
         execute_step_task.delay(sid)
     if finished_child:
-        from app.tasks.workflows import loop_tick_task  # defined in Task 18
+        from app.tasks.workflows import loop_tick_task
         loop_tick_task.delay(finished_child)
 
 
@@ -206,3 +207,51 @@ async def execute_step(step_id: int) -> None:
         execute_step_task.apply_async((step_id,), countdown=retry_in)
     else:  # also for "waiting": advance_run flips the run to status=waiting
         advance_run_task.delay(step.run_id)
+
+
+async def loop_tick(parent_step_id: int) -> None:
+    from app.tasks.workflows import advance_run_task
+
+    start_ids, resume_run = [], None
+    async with AsyncSessionLocal() as db:
+        step = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == parent_step_id).with_for_update())).scalars().first()
+        if not step or step.status != "waiting":
+            return
+        parent = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == step.run_id))).scalars().first()
+        if parent.status in _TERMINAL_RUN:
+            return
+        children = (await db.execute(select(WorkflowRun).where(WorkflowRun.parent_step_id == step.id)
+                                     .order_by(WorkflowRun.loop_index))).scalars().all()
+        statuses = [c.status for c in children]
+
+        if all(s in _TERMINAL_RUN for s in statuses):
+            rows = (await db.execute(select(WorkflowRunStep).where(
+                WorkflowRunStep.run_id.in_([c.id for c in children])))).scalars().all()
+            outputs = {}
+            for r in rows:
+                if r.node_id != "__start__":
+                    outputs.setdefault(r.run_id, {})[r.node_id] = r.output
+            agg = aggregate_children([{"index": c.loop_index, "status": c.status, "steps": outputs.get(c.id, {})} for c in children])
+            node = _node(parent.graph_snapshot, step.node_id)
+            if agg["failed"] and not node.get("continue_on_error"):
+                step.status, step.error = "failed", f"{agg['failed']} of {len(children)} items failed"
+                step.output = agg
+            else:
+                step.status = "succeeded"
+                step.output = {**agg, **({"error": f"{agg['failed']} items failed"} if agg["failed"] else {})}
+            step.finished_at = _now()
+            resume_run = parent.id
+        else:
+            concurrency = int((step.output or {}).get("concurrency", 5))
+            for i in next_children_to_start(statuses, concurrency):
+                child = children[i]
+                child.status = "running"
+                db.add(WorkflowRunStep(run_id=child.id, node_id="__start__", status="succeeded",
+                                       output=child.trigger_payload, started_at=_now(), finished_at=_now()))
+                start_ids.append(child.id)
+        await db.commit()
+
+    for cid in start_ids:
+        advance_run_task.delay(cid)
+    if resume_run:
+        advance_run_task.delay(resume_run)
