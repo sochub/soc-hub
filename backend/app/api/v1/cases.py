@@ -1,16 +1,16 @@
 from typing import Any, List
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
-from app.models.case import Case, CaseStatus, TimelineEvent
-from app.models.case_triage import CaseTriageResult
+from app.models.case import Case, TimelineEvent
 from app.models.user import User
 from app.schemas import case as case_schema
-from app.utils.audit import create_audit_log
+from app.services.case_service import (
+    add_timeline_note, apply_case_update, create_case_record,
+)
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
 
@@ -81,31 +81,13 @@ async def create_case(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create new case."""
-    case = Case(**case_in.model_dump(), tenant_id=tenant_id)
-    if not case.owner_id:
-        case.owner_id = current_user.id
-
-    db.add(case)
-    await db.flush()
-
-    await create_audit_log(
-        db=db,
-        entity_type="case",
-        entity_id=case.id,
-        action="create",
-        tenant_id=tenant_id,
-        user_id=current_user.id,
+    case, triage_id = await create_case_record(
+        db, tenant_id=tenant_id, data=case_in.model_dump(), user_id=current_user.id,
     )
     await db.commit()
 
     # Kick off AI triage in the background; never blocks case creation.
-    triage = CaseTriageResult(
-        case_id=case.id, tenant_id=tenant_id, triggered_by="auto_on_create", status="pending",
-    )
-    db.add(triage)
-    await db.commit()
-    await db.refresh(triage)
-    run_case_triage_task.delay(triage.id)
+    run_case_triage_task.delay(triage_id)
 
     # Re-load with eager relationships to avoid async lazy-load errors
     result = await db.execute(
@@ -155,53 +137,9 @@ async def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    old_status = case.status
-    update_data = case_in.model_dump(exclude_unset=True)
-    changes = {}
-    for field, value in update_data.items():
-        old_value = getattr(case, field)
-        if old_value != value:
-            changes[field] = {"from": str(old_value) if old_value is not None else None, "to": str(value) if value is not None else None}
-        setattr(case, field, value)
-
-    # Auto-generate timeline events for status/severity changes
-    if "status" in changes:
-        db.add(TimelineEvent(
-            case_id=case.id,
-            user_id=current_user.id,
-            event_type="status_change",
-            content=f"Status changed from {changes['status']['from']} to {changes['status']['to']}",
-        ))
-        # Set/clear resolved_at
-        new_status = update_data["status"]
-        if new_status in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
-            if case.resolved_at is None:
-                case.resolved_at = datetime.now(timezone.utc)
-        else:
-            case.resolved_at = None
-
-        # First move off NEW stops the response SLA clock.
-        if old_status == CaseStatus.NEW and case.acknowledged_at is None:
-            case.acknowledged_at = datetime.now(timezone.utc)
-
-    if "severity" in changes:
-        db.add(TimelineEvent(
-            case_id=case.id,
-            user_id=current_user.id,
-            event_type="severity_change",
-            content=f"Severity changed from {changes['severity']['from']} to {changes['severity']['to']}",
-        ))
-
-    if changes:
-        await create_audit_log(
-            db=db,
-            entity_type="case",
-            entity_id=case.id,
-            action="update",
-            tenant_id=tenant_id,
-            user_id=current_user.id,
-            changes=changes,
-        )
+    await apply_case_update(
+        db, case=case, update_data=case_in.model_dump(exclude_unset=True), user_id=current_user.id,
+    )
 
     await db.commit()
 
@@ -233,16 +171,13 @@ async def create_timeline_event(
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
     )
-    if not result.scalars().first():
+    case = result.scalars().first()
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    event = TimelineEvent(
-        case_id=case_id,
-        user_id=current_user.id,
-        **event_in.model_dump(),
+    event = await add_timeline_note(
+        db, case=case, user_id=current_user.id, **event_in.model_dump(),
     )
-    db.add(event)
-    await db.flush()
 
     event_id = event.id
     await db.commit()
