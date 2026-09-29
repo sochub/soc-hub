@@ -203,4 +203,24 @@ def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
     # Skip cycle check if node count exceeds MAX_NODES (error already reported)
     if len(nodes) <= MAX_NODES and _has_cycle(list(by_id.keys()), edges):
         _err(errors, None, "graph contains a cycle")
+
+    # Check for unconnected nodes (orphans)
+    # Collect nodes that have incoming edges
+    has_incoming = set()
+    for e in edges:
+        has_incoming.add(e.get("target"))
+
+    for node in nodes:
+        nid = node.get("id")
+        node_type = node.get("type")
+        # Skip if it's a trigger (triggers have no incoming edges by design)
+        if node_type == "trigger":
+            continue
+        # Skip if it has a parent_id (body nodes of loops, etc.)
+        if node.get("parent_id"):
+            continue
+        # Error if this node has no incoming edges
+        if nid not in has_incoming:
+            _err(errors, nid, "node is not connected (no incoming edge)")
+
     return errors

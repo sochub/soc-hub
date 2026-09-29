@@ -145,3 +145,21 @@ def test_malformed_input_returns_errors_not_exceptions(malformed_graph):
     # Should return non-empty error list, not raise
     assert isinstance(errors, list)
     assert len(errors) > 0
+
+
+def test_orphan_node_rejected():
+    """Unconnected non-trigger nodes should be rejected as orphans."""
+    g = {"nodes": [n("start", "trigger"), n("orphan", "case_add_note", config={"content": "x"})],
+         "edges": []}
+    m = msgs(validate_graph(g, "manual"))
+    assert "not connected" in m
+
+
+def test_parent_id_node_exempt_from_orphan_check():
+    """Nodes with parent_id (loop bodies) are exempt from orphan check."""
+    g = {"nodes": [n("start", "trigger"), n("loop", "for_each", config={"items": "x"}),
+                   n("body", "case_add_note", config={"content": "x"}, parent_id="loop")],
+         "edges": [e("start", "loop")]}
+    m = msgs(validate_graph(g, "manual"))
+    # The body node should NOT have "not connected" error (even though it has no incoming edge)
+    assert "not connected" not in m
