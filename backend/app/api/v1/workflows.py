@@ -33,11 +33,10 @@ async def _run_stats(db, workflow_ids: List[int]) -> dict:
         select(WorkflowRun.workflow_id, func.count()).where(
             WorkflowRun.workflow_id.in_(workflow_ids), WorkflowRun.parent_run_id.is_(None))
         .group_by(WorkflowRun.workflow_id))).all())
-    last = {}
-    for r in (await db.execute(
-            select(WorkflowRun).where(WorkflowRun.workflow_id.in_(workflow_ids), WorkflowRun.parent_run_id.is_(None))
-            .order_by(WorkflowRun.started_at.desc()).limit(500))).scalars():
-        last.setdefault(r.workflow_id, r)
+    last = {r.workflow_id: r for r in (await db.execute(
+        select(WorkflowRun).where(WorkflowRun.workflow_id.in_(workflow_ids), WorkflowRun.parent_run_id.is_(None))
+        .distinct(WorkflowRun.workflow_id)
+        .order_by(WorkflowRun.workflow_id, WorkflowRun.started_at.desc()))).scalars()}
     return {wid: {"run_count": counts.get(wid, 0),
                   "last_run_status": last[wid].status if wid in last else None,
                   "last_run_at": last[wid].started_at if wid in last else None} for wid in workflow_ids}
@@ -118,6 +117,7 @@ async def update_workflow(workflow_id: int, body: WorkflowIn, db: AsyncSession =
     await create_audit_log(db=db, entity_type="workflow", entity_id=wf.id, action="update", tenant_id=tenant_id,
                            user_id=current_user.id, changes={"version": wf.version})
     await db.commit()
+    await db.refresh(wf)
     return _out(wf, await _run_stats(db, [wf.id]))
 
 
@@ -152,6 +152,7 @@ async def _set_enabled(db, wf: Workflow, enabled: bool, user_id: int, tenant_id:
     await create_audit_log(db=db, entity_type="workflow", entity_id=wf.id, action="enable" if enabled else "disable",
                            tenant_id=tenant_id, user_id=user_id)
     await db.commit()
+    await db.refresh(wf)
 
 
 @router.post("/{workflow_id}/enable", response_model=WorkflowOut)
