@@ -13,6 +13,7 @@ from app.services.case_service import (
 )
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
+from app.workflows.events import emit_event
 
 router = APIRouter()
 
@@ -88,6 +89,7 @@ async def create_case(
 
     # Kick off AI triage in the background; never blocks case creation.
     run_case_triage_task.delay(triage_id)
+    emit_event(tenant_id, "case.created", case_id=case.id)
 
     # Re-load with eager relationships to avoid async lazy-load errors
     result = await db.execute(
@@ -137,11 +139,13 @@ async def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    await apply_case_update(
+    changes = await apply_case_update(
         db, case=case, update_data=case_in.model_dump(exclude_unset=True), user_id=current_user.id,
     )
 
     await db.commit()
+    if changes:
+        emit_event(tenant_id, "case.updated", case_id=case.id, changes=changes)
 
     # Re-load with eager relationships
     result = await db.execute(
