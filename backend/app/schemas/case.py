@@ -31,6 +31,7 @@ class AlertWebhookCreate(BaseModel):
 class Alert(AlertBase):
     id: int
     case_id: Optional[int] = None
+    dismiss_reason: Optional[str] = None
     created_at: datetime
 
     class Config:

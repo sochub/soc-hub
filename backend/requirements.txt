@@ -1,6 +1,6 @@
 fastapi[all]
 uvicorn[standard]
-sqlalchemy
+sqlalchemy[asyncio]
 asyncpg
 pydantic-settings
 alembic
@@ -12,3 +12,4 @@ pytest-asyncio
 redis
 celery
 python3-saml
+jinja2

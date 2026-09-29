@@ -6,10 +6,11 @@ from sqlalchemy.future import select
 
 from app.api import deps
 from app.models.artifact import Artifact
-from app.models.case import Case, TimelineEvent
+from app.models.case import Case
 from app.models.case_artifact import CaseArtifact
 from app.models.user import User
 from app.schemas import artifact as artifact_schema
+from app.services.case_service import add_artifact_to_case
 
 router = APIRouter()
 
@@ -51,57 +52,11 @@ async def create_artifact(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    artifact = None
-
-    if not artifact_in.isolated:
-        # Try to find an existing shared artifact with same value + type + tenant
-        result = await db.execute(
-            select(Artifact).where(
-                Artifact.value == artifact_in.value,
-                Artifact.artifact_type == artifact_in.artifact_type,
-                Artifact.tenant_id == tenant_id,
-                Artifact.isolated == False,  # noqa: E712
-            )
-        )
-        artifact = result.scalars().first()
-
-    if artifact is None:
-        # Create new artifact
-        artifact = Artifact(
-            artifact_type=artifact_in.artifact_type,
-            value=artifact_in.value,
-            description=artifact_in.description,
-            isolated=artifact_in.isolated,
-            tenant_id=tenant_id,
-            created_by=current_user.id,
-        )
-        db.add(artifact)
-        await db.flush()  # Get artifact.id
-
-    # Check if junction already exists
-    result = await db.execute(
-        select(CaseArtifact).where(
-            CaseArtifact.case_id == artifact_in.case_id,
-            CaseArtifact.artifact_id == artifact.id,
-        )
+    artifact = await add_artifact_to_case(
+        db, case=case, artifact_type=artifact_in.artifact_type, value=artifact_in.value,
+        description=artifact_in.description, user_id=current_user.id,
+        isolated=artifact_in.isolated,
     )
-    existing_link = result.scalars().first()
-
-    if not existing_link:
-        junction = CaseArtifact(
-            case_id=artifact_in.case_id,
-            artifact_id=artifact.id,
-            added_by=current_user.id,
-        )
-        db.add(junction)
-
-        timeline = TimelineEvent(
-            case_id=artifact_in.case_id,
-            user_id=current_user.id,
-            event_type="artifact_added",
-            content=f"Added artifact: {artifact_in.value} ({artifact_in.artifact_type})"
-        )
-        db.add(timeline)
 
     await db.commit()
     await db.refresh(artifact)

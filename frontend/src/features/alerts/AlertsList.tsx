@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils';
 import { ChevronDown, ChevronRight, Search, X, CheckCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
+import { AlertRuns } from '../automations/CaseAutomation';
 
 interface Alert {
     id: number;
@@ -123,6 +124,7 @@ export default function AlertsList() {
                                 </tr>
                                 {expanded === a.id && (
                                     <tr><td colSpan={6} className="px-6 py-3 bg-zinc-50">
+                                        <AlertRuns alertId={a.id} />
                                         <pre className="text-xs text-zinc-600 overflow-x-auto">{JSON.stringify(a.payload, null, 2)}</pre>
                                     </td></tr>
                                 )}

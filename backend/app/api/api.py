@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_triage, sso
+from app.api.v1 import auth, users, cases, alerts, artifacts, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_triage, sso, workflows, slack
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -21,3 +21,6 @@ api_router.include_router(stats.router, prefix="/stats", tags=["stats"])
 api_router.include_router(playbooks.router, prefix="/playbooks", tags=["playbooks"])
 api_router.include_router(case_tasks.router, prefix="/cases", tags=["case-tasks"])
 api_router.include_router(case_triage.router, prefix="/cases", tags=["triage"])
+api_router.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
+api_router.include_router(workflows.runs_router, prefix="/workflow-runs", tags=["workflows"])
+api_router.include_router(slack.router, prefix="/slack", tags=["slack"])

@@ -31,6 +31,8 @@ class Case(Base):
 
     tags = Column(JSON, default=list)
     source = Column(String, default="user-reported", index=True)
+    # Set by the alert_promote workflow node in "group" mode; dedupes alert storms.
+    group_key = Column(String, nullable=True)
 
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -62,6 +64,7 @@ class Alert(Base):
     title = Column(String)
     payload = Column(JSON)  # Raw alert data
     status = Column(String, default="pending")  # pending, promoted, dismissed
+    dismiss_reason = Column(Text, nullable=True)
 
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)

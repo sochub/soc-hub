@@ -18,3 +18,5 @@ from app.models.case_task import CaseTask  # noqa: F401
 from app.models.tenant_sso_config import TenantSSOConfig  # noqa: F401
 from app.models.case_triage import CaseTriageResult  # noqa: F401
 from app.models.sla_policy import SLAPolicy  # noqa: F401
+from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep  # noqa: F401
+from app.models.slack_integration import SlackIntegration  # noqa: F401

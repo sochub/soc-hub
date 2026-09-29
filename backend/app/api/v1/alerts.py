@@ -9,6 +9,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
+from app.workflows.events import emit_event
 
 router = APIRouter()
 
@@ -36,6 +37,7 @@ async def ingest_alert(
     db.add(alert)
     await db.commit()
     await db.refresh(alert)
+    emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
     return alert
 
 @router.get("/", response_model=List[case_schema.Alert])
