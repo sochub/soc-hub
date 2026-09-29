@@ -102,6 +102,8 @@ async def handle_answer(tenant_id: int, payload: dict, wait_token: str, index: i
         step_id, run_id = step.id, step.run_id
         waiting = dict(step.output or {})
         reason = authorize_answer(step.status, waiting.get("target_slack_id"), clicker)
+        if not reason and step.wait_expires_at and step.wait_expires_at <= datetime.now(timezone.utc):
+            reason = "This request was already answered or has expired."  # past deadline, sweeper not yet run
         buttons = waiting.get("buttons") or []
         if reason or not 0 <= index < len(buttons):
             await _ephemeral(payload, reason or "Unknown option.")
@@ -122,8 +124,8 @@ async def handle_answer(tenant_id: int, payload: dict, wait_token: str, index: i
         await slack_call(token, "chat.update", channel=waiting["channel"], ts=waiting["message_ts"],
                          text=f"You answered: {label}",
                          blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": f":white_check_mark: You answered: *{label}*"}}])
-    except SlackError:
-        logger.warning("could not update answered Slack message for step %s", step_id)
+    except Exception:  # cosmetic; the answer is committed, so the run must still resume
+        logger.warning("could not update answered Slack message for step %s", step_id, exc_info=True)
     advance_run_task.delay(run_id)
 
 

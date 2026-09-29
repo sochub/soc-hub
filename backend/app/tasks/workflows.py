@@ -47,3 +47,9 @@ def loop_tick_task(parent_step_id):
 def handle_slack_interaction_task(tenant_id, payload):
     from app.services.slack_actions import handle_interaction
     _run_async(handle_interaction(tenant_id, payload))
+
+
+@celery_app.task(acks_late=True)
+def expire_waits_task():
+    from app.workflows.runtime import expire_waits
+    _run_async(expire_waits())

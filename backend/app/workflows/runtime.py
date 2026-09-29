@@ -96,7 +96,29 @@ async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] =
 async def cancel_run(db, run: WorkflowRun) -> None:
     if run.status in _TERMINAL_RUN:
         return
+    asks = (await db.execute(select(WorkflowRunStep).where(
+        WorkflowRunStep.run_id == run.id, WorkflowRunStep.status == "waiting",
+        WorkflowRunStep.wait_token.isnot(None)))).scalars().all()
+    targets = [((s.output or {}).get("channel"), (s.output or {}).get("message_ts")) for s in asks]
+    targets = [t for t in targets if t[0] and t[1]]
     await finalize_run(db, run, "cancelled")  # also cancels non-terminal children
+    if targets:
+        await _update_slack_messages(db, run.tenant_id, targets, "This request was withdrawn.", ":no_entry_sign:")
+
+
+async def _update_slack_messages(db, tenant_id, targets, text: str, emoji: str) -> None:
+    """Best-effort chat.update of ask-user messages; never raises."""
+    try:
+        from app.services.slack_service import load_integration, slack_call
+        _, token = await load_integration(db, tenant_id)
+        for channel, ts in targets:
+            try:
+                await slack_call(token, "chat.update", channel=channel, ts=ts, text=text,
+                                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": f"{emoji} {text}"}}])
+            except Exception:
+                logger.warning("could not update Slack message %s/%s (%s)", channel, ts, text, exc_info=True)
+    except Exception:
+        logger.warning("could not update Slack messages for tenant %s (%s)", tenant_id, text, exc_info=True)
 
 
 async def advance_run(run_id: int) -> None:
@@ -258,3 +280,29 @@ async def loop_tick(parent_step_id: int) -> None:
         advance_run_task.delay(cid)
     if resume_run:
         advance_run_task.delay(resume_run)
+
+
+async def expire_waits() -> None:
+    """Beat sweep: ask-user steps past wait_expires_at complete with timed_out=True."""
+    from app.tasks.workflows import advance_run_task
+
+    expired = []
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(WorkflowRunStep, WorkflowRun.tenant_id).join(WorkflowRun, WorkflowRun.id == WorkflowRunStep.run_id)
+            .where(WorkflowRunStep.status == "waiting", WorkflowRunStep.wait_expires_at.isnot(None),
+                   WorkflowRunStep.wait_expires_at < _now())
+            .with_for_update(of=WorkflowRunStep, skip_locked=True).limit(200)
+        )).all()
+        for step, tenant_id in rows:
+            out = dict(step.output or {})
+            expired.append((step.run_id, tenant_id, out.get("channel"), out.get("message_ts")))
+            step.output = {**out, "response": None, "responder_slack_id": None, "responder_email": None, "timed_out": True}
+            step.status, step.finished_at = "succeeded", _now()
+        await db.commit()
+
+        for run_id, tenant_id, channel, ts in expired:
+            if channel and ts:
+                await _update_slack_messages(db, tenant_id, [(channel, ts)], "This request expired.", ":hourglass:")
+    for run_id, *_ in expired:
+        advance_run_task.delay(run_id)

@@ -26,4 +26,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.sla.check_sla_breaches_task",
         "schedule": 300.0,  # every 5 minutes
     },
+    "expire-workflow-waits": {
+        "task": "app.tasks.workflows.expire_waits_task",
+        "schedule": 60.0,
+    },
 }

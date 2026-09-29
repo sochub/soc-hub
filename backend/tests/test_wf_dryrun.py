@@ -32,3 +32,20 @@ def test_mock_precedence():
 def test_alert_promote_stub():
     out = simulated_output({"id": "p", "type": "alert_promote"}, {"mode": "new"}, NO_MOCKS)
     assert out["case_id"] is None and out["created"] is True
+
+
+def test_ask_user_dry_run_answers():
+    node = {"id": "ask", "type": "slack_ask_user"}
+    rendered = {"email": "a@x.com", "message": "ok?", "buttons": "Yes, No"}
+    default = simulated_output(node, rendered, NO_MOCKS)
+    assert default["response"] == "Yes" and default["timed_out"] is False and default["simulated"] is True
+    no = simulated_output(node, rendered, {"mocks": {}, "ask_user_answers": {"ask": "No"}})
+    assert no["response"] == "No"
+    t = simulated_output(node, rendered, {"mocks": {}, "ask_user_answers": {"ask": "timeout"}})
+    assert t["response"] is None and t["timed_out"] is True
+
+
+def test_ask_user_dry_run_bad_buttons_falls_back():
+    node = {"id": "ask", "type": "slack_ask_user"}
+    out = simulated_output(node, {"buttons": 5}, NO_MOCKS)
+    assert out["response"] == "Yes" and out["timed_out"] is False

@@ -142,3 +142,94 @@ async def _scenario(monkeypatch):
 
 def test_handle_answer(monkeypatch):
     asyncio.run(_scenario(monkeypatch))
+
+
+async def _r21(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    h = secrets.token_hex(3)
+    ids = {"t": [], "w": [], "r": [], "s": []}
+    ephem, advanced = [], []
+    mode = {"update_exc": None}
+
+    async def fake_call(token, method, **kw):
+        if method == "users.info":
+            return {"user": {"profile": {"email": "bob@example.test"}}}
+        if mode["update_exc"]:
+            raise mode["update_exc"]
+        return {}
+
+    async def fake_ephemeral(payload, text):
+        ephem.append(text)
+
+    import app.tasks.workflows as tw
+    monkeypatch.setattr(sa, "slack_call", fake_call)
+    monkeypatch.setattr(sa, "_ephemeral", fake_ephemeral)
+    monkeypatch.setattr(tw.advance_run_task, "delay", lambda rid: advanced.append(rid))
+    payload = {"user": {"id": "U1"}, "response_url": "https://hooks.slack.com/x"}
+    now = datetime.now(timezone.utc)
+
+    async with AsyncSessionLocal() as db:
+        try:
+            t = Tenant(name="wf-test", slug=f"wf-test-{h}")
+            db.add(t)
+            await db.flush()
+            ids["t"] = [t.id]
+            db.add(SlackIntegration(tenant_id=t.id, team_id="TX", bot_token_enc=encrypt("x"), signing_secret_enc=encrypt("y")))
+            wf = Workflow(tenant_id=t.id, name="wf-test", trigger_type="manual", graph={"nodes": [], "edges": []})
+            db.add(wf)
+            await db.flush()
+            ids["w"] = [wf.id]
+            tid, wid = t.id, wf.id
+
+            async def mk(expires):
+                run = WorkflowRun(tenant_id=tid, workflow_id=wid, workflow_version=1, status="waiting", graph_snapshot={})
+                db.add(run)
+                await db.flush()
+                ids["r"].append(run.id)
+                run_id = run.id
+                tok = secrets.token_hex(8)
+                step = WorkflowRunStep(run_id=run_id, node_id="n1", status="waiting", wait_token=tok, wait_expires_at=expires,
+                                       output={"target_slack_id": "U1", "channel": "D1", "message_ts": "1.2", "buttons": ["Yes", "No"]})
+                db.add(step)
+                await db.flush()
+                ids["s"].append(step.id)
+                sid = step.id
+                await db.commit()
+                return sid, tok
+
+            async def fresh(sid):
+                db.expire_all()
+                return (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == sid))).scalars().one()
+
+            # expired but unswept: rejected
+            sid, tok = await mk(now - timedelta(seconds=5))
+            await sa.handle_answer(tid, payload, tok, 0)
+            assert "already answered or has expired" in ephem[-1]
+            assert (await fresh(sid)).status == "waiting" and advanced == []
+
+            # future deadline still accepted; chat.update raising RuntimeError must not block advance
+            sid2, tok2 = await mk(now + timedelta(hours=1))
+            mode["update_exc"] = RuntimeError("boom")
+            await sa.handle_answer(tid, payload, tok2, 0)
+            st = await fresh(sid2)
+            assert st.status == "succeeded" and st.output["response"] == "Yes"
+            assert advanced == [st.run_id]
+        finally:
+            await db.rollback()
+            if ids["s"]:
+                await db.execute(delete(WorkflowRunStep).where(WorkflowRunStep.id.in_(ids["s"])))
+            if ids["r"]:
+                await db.execute(delete(WorkflowRun).where(WorkflowRun.id.in_(ids["r"])))
+            if ids["w"]:
+                await db.execute(delete(Workflow).where(Workflow.id.in_(ids["w"])))
+            if ids["t"]:
+                await db.execute(delete(SlackIntegration).where(SlackIntegration.tenant_id.in_(ids["t"])))
+                await db.execute(delete(Tenant).where(Tenant.id.in_(ids["t"])))
+            await db.commit()
+        n = (await db.execute(select(func.count()).select_from(Tenant).where(Tenant.slug.like("wf-test-%")))).scalar()
+        assert n == 0
+    await engine.dispose()
+
+
+def test_handle_answer_expired_and_update_failure(monkeypatch):
+    asyncio.run(_r21(monkeypatch))
