@@ -33,8 +33,8 @@ Text fields are Jinja2 templates (sandboxed, strict: an undefined variable is an
 
 **Actions**
 - `http_request`: `method`, `url`, `headers`, `body` (templated), optional `retries`, `execute_in_dry_run`, `mock_output`. Output `{status, headers, body}` (body parsed as JSON when possible). 4xx responses don't fail the step: the status is in `output.status`, so branch on it with a condition. Bodies over 1 MB are truncated and `output.truncated` is true.
-- `slack_post_message`: channel (default channel if blank), text, optional case buttons (Acknowledge / Assign to me / Close).
-- `slack_ask_user`: DM a user by email with custom buttons; waits. `timeout_hours` default 24, max 168. Output `{response, responder_slack_id, responder_email, timed_out}`.
+- `slack_post_message`: see [Slack nodes](#slack-nodes).
+- `slack_ask_user`: DM a user by email with buttons and wait for the answer; see [Slack nodes](#slack-nodes).
 - `case_update`: severity, status, assignee, add/remove tags.
 - `case_add_note`: `content`. `case_add_artifact`: artifact type and value.
 - `case_apply_playbook`: playbook template.
@@ -97,3 +97,72 @@ for i in 1 2 3; do curl -s -X POST localhost:8000/api/v1/alerts/webhook -H "X-AP
 ```
 
 Result: all three alerts are promoted into one case; one note says "new case" and two say "existing case". An alert with severity 2 is dismissed with the reason, and an alert without a `severity` matches neither filter and stays pending.
+
+## Slack nodes
+
+Both Slack nodes need a configured Slack integration for the tenant. Set it up first: [docs/slack/setup.md](../slack/setup.md).
+
+### `slack_post_message`
+
+Config: `channel` (blank uses the integration's default channel), `text` (templated, mrkdwn), `include_case_buttons` (`yes`/`no`; adds Acknowledge / Assign to me / Close buttons for the run's case). Output `{channel, ts}`. The bot must be in the channel (`/invite @SOC Hub`).
+
+### `slack_ask_user`
+
+Sends a DM to the workspace member with the given email and pauses the run until they click a button or the timeout expires.
+
+Config:
+- `email`: templated, for example `{{ loop.item }}`. An empty result fails the step.
+- `message`: templated question. An empty result fails the step.
+- `buttons`: comma-separated labels, for example `Yes, No` (default `Yes, No`). At most 5 buttons; more fails the step.
+- `timeout_hours`: default 24, must be greater than 0 and at most 168. Fractions are fine (`0.02` is about 72 seconds, handy for testing).
+
+Output: `{response, responder_slack_id, responder_email, timed_out}`. While waiting, the step output holds `{target_slack_id, channel, message_ts, buttons}` and the run status is `waiting`.
+
+Waiting, timeout and cancel behaviour:
+- **Waiting**: the run stays `waiting` and holds no worker. The first valid click resumes the run; the DM is edited to show the answer and later clicks are ignored.
+- **Timeout**: a beat sweep completes the step with `{response: null, timed_out: true}` (the run continues, it does not fail) and edits the DM to say the request expired. Branch on it with `steps.ask.output.timed_out`.
+- **Cancel**: cancelling a run (or a parent run whose loop children are waiting) edits every open question to "This request was withdrawn." after the cancel commits. This is best effort and never blocks the cancel.
+- **Security**: interaction requests are verified with the app's signing secret and rejected with 401 when the signature is wrong, the team is unknown, or the timestamp is more than 5 minutes old. Buttons only resolve steps of the tenant that owns the Slack team.
+
+### Dry run
+
+In a dry run `slack_ask_user` and `slack_post_message` never contact Slack. The ask step resolves to `ask_user_answers[node_id]` from the dry-run request: a button label, or the literal `timeout` to simulate expiry. With no entry it answers with the first button. Simulated ask output has `responder_email: null` and `simulated: true`, so a template such as `{{ steps.ask.output.responder_email }}` renders `None` in a dry run only.
+
+## Worked example 1: case -> webhook -> Slack confirmation -> branch
+
+Trigger `case.created`, filter `'x' in case.tags`.
+
+1. `hook` (`http_request`): POST `https://webhook.site/<your-id>`, body `{"case": "{{ case.id }}", "title": "{{ case.title }}"}`.
+2. `ask` (`slack_ask_user`): email `<user email>`, message `Did you report "{{ case.title }}"?`, buttons `Yes, No`, `timeout_hours` `1`.
+3. `check` (`condition`): `steps.ask.output.response == 'No' or steps.ask.output.timed_out`.
+4. `check` true: `escalate` (`case_update`, severity `critical`) -> `esc_note` (`case_add_note`): `Escalated: user answered {{ steps.ask.output.response or 'nothing (timeout)' }}`.
+5. `check` false: `ok_note` (`case_add_note`): `Confirmed by {{ steps.ask.output.responder_email }}` -> `close` (`case_update`, status `closed`).
+
+Dry-run it against a case tagged `x` with `ask_user_answers: {"ask": "No"}`: `escalate` and `esc_note` are simulated, `ok_note` and `close` are skipped. With `Yes` the reverse. With `timeout` the escalate branch runs (`esc_note` renders "nothing (timeout)"). Set `execute_in_dry_run` on `hook` to make the HTTP call for real while everything else stays simulated.
+
+Verified end to end through the real engine as dry runs (HTTP step returned status 200 against httpbin.org, the case was unchanged in all three runs). Live, enabled behaviour is on the [human acceptance checklist](#human-acceptance-checklist).
+
+## Worked example 2: alert -> group promote -> ask each user
+
+Trigger `alert.ingested`, filter `alert.payload.severity is defined and alert.payload.severity >= 7`.
+
+1. `promote` (`alert_promote`): mode `group`, group_key `host:{{ alert.payload.host }}`, window_hours `6`.
+2. `users` (`for_each`): items `alert.payload.users`, concurrency `5`. Body: `ask` (`slack_ask_user`), email `{{ loop.item }}`, message `Unusual activity on {{ alert.payload.host }} - was this you?`.
+3. After the loop, `check` (`condition`): `steps.users.output.results | selectattr('steps.ask.response', 'equalto', 'No') | list | length > 0`.
+4. `check` true: `crit` (`case_update`, severity `critical`).
+
+Each loop item runs as its own child run, so a two-user alert produces two DMs and two child runs. Dry-run it on a pending alert with `"users": ["a@x.com", "b@x.com"]` and `ask_user_answers: {"ask": "No"}`: 2 child runs each with a simulated ask, `check` evaluates true, `crit` is simulated, the alert stays `pending` and no case is created.
+
+If the `selectattr` expression is awkward for your data, put a `condition` plus a `case_update` inside the loop body instead: it fires per user as soon as that user answers `No`.
+
+## Human acceptance checklist
+
+The engine paths above are covered by automated tests and dry runs. These live steps still need a person, a real Slack workspace and a browser:
+
+- [ ] Install the Slack app from the manifest, save the token and signing secret, click **Test** once (stores `team_id`; buttons return 401 until then).
+- [ ] Expose the backend with `ngrok http 80` and set the interactivity URL to `https://<id>.ngrok.app/api/v1/slack/interactions`.
+- [ ] Example 1, enabled: create a case tagged `x`; webhook.site receives the POST; the DM arrives. Answer **No**: case becomes critical with the note. Repeat with **Yes**: note plus closed. Repeat unanswered with `timeout_hours` `0.02`: escalated with "nothing (timeout)".
+- [ ] Example 2, enabled: ingest the alert with two real Slack users: one case, two DMs; one **No** makes the case critical.
+- [ ] Cancel a waiting run from the UI: the DM changes to "This request was withdrawn."
+- [ ] UI click-throughs: build both graphs in the Automations editor, dry-run with answers, and check skipped (gray) and simulated markers on the run page.
+- [ ] Viewer role: sees Automations and runs but cannot save, enable, dry-run, run or cancel (API returns 403, covered by `tests/test_wf_api.py`).
