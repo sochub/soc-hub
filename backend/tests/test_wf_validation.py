@@ -1,3 +1,5 @@
+import pytest
+
 from app.workflows.validation import validate_graph
 
 
@@ -96,3 +98,50 @@ def test_alert_promote_mode_requirements():
     g = {"nodes": [n("start", "trigger"), n("p", "alert_promote", config={"mode": "group", "title": "x"})],
          "edges": [e("start", "p")]}
     assert "group_key" in msgs(validate_graph(g, "alert.ingested"))
+
+
+@pytest.mark.parametrize("malformed_graph", [
+    # node not a dict
+    {"nodes": ["x"], "edges": []},
+    # node id null
+    {"nodes": [{"id": None, "type": "trigger"}], "edges": []},
+    # node id int
+    {"nodes": [{"id": 123, "type": "trigger"}], "edges": []},
+    # node type a list
+    {"nodes": [{"id": "start", "type": ["trigger"]}], "edges": []},
+    # config a non-empty list
+    {"nodes": [{"id": "start", "type": "trigger", "config": ["x"]}], "edges": []},
+    # config a string
+    {"nodes": [{"id": "start", "type": "trigger", "config": "x"}], "edges": []},
+    # edge not a dict
+    {"nodes": [{"id": "start", "type": "trigger"}], "edges": ["x"]},
+    # edge missing source
+    {"nodes": [{"id": "start", "type": "trigger"}], "edges": [{}]},
+    # edge source a list
+    {"nodes": [{"id": "start", "type": "trigger"}], "edges": [{"source": ["x"], "target": "y"}]},
+    # edge target a list
+    {"nodes": [{"id": "start", "type": "trigger"}], "edges": [{"source": "x", "target": ["y"]}]},
+    # edge source_handle not string/None
+    {"nodes": [{"id": "start", "type": "trigger"}], "edges": [{"source": "x", "target": "y", "source_handle": 123}]},
+    # graph not a dict (list)
+    [],
+    # graph not a dict (string)
+    "not a dict",
+    # nodes not a list
+    {"nodes": "not a list", "edges": []},
+    # edges not a list
+    {"nodes": [], "edges": "not a list"},
+    # deep graph causing RecursionError (3000 nodes chain)
+    {
+        "nodes": [{"id": f"n{i}", "type": "trigger" if i == 0 else "case_add_note", "config": {} if i > 0 else {}}
+                  for i in range(3000)],
+        "edges": [{"id": f"e{i}", "source": f"n{i}", "target": f"n{i+1}", "source_handle": None}
+                  for i in range(2999)],
+    },
+])
+def test_malformed_input_returns_errors_not_exceptions(malformed_graph):
+    """Test that validate_graph returns errors instead of raising on malformed input."""
+    errors = validate_graph(malformed_graph, "manual")
+    # Should return non-empty error list, not raise
+    assert isinstance(errors, list)
+    assert len(errors) > 0

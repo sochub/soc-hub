@@ -1,6 +1,6 @@
 """Pure save-time validation of a workflow graph."""
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.workflows.node_types import NODE_TYPES, TRIGGER_TYPES, MAX_NODES
 from app.workflows.templating import syntax_errors
@@ -12,23 +12,125 @@ def _err(errors: List[dict], node_id: Optional[str], message: str) -> None:
     errors.append({"node_id": node_id, "message": message})
 
 
+def _sanitize_graph(graph: Any, errors: List[dict]) -> tuple[List[dict], List[dict]]:
+    """Validate graph structure and return sanitized nodes/edges lists.
+
+    Returns (nodes, edges) with malformed items filtered out and errors reported.
+    """
+    # Ensure graph is a dict
+    if not isinstance(graph, dict):
+        _err(errors, None, "graph must be a dict")
+        return [], []
+
+    # Ensure nodes and edges are lists
+    nodes_raw = graph.get("nodes", [])
+    edges_raw = graph.get("edges", [])
+
+    if not isinstance(nodes_raw, list):
+        _err(errors, None, "nodes must be a list")
+        nodes_raw = []
+    if not isinstance(edges_raw, list):
+        _err(errors, None, "edges must be a list")
+        edges_raw = []
+
+    # Filter and validate nodes
+    nodes: List[dict] = []
+    for i, node in enumerate(nodes_raw):
+        if not isinstance(node, dict):
+            _err(errors, None, f"node at index {i} must be a dict")
+            continue
+
+        # Validate node structure
+        node_id = node.get("id")
+        node_type = node.get("type")
+        node_config = node.get("config")
+
+        if not isinstance(node_id, str):
+            _err(errors, None, f"node id must be a string (got {type(node_id).__name__} at index {i})")
+            continue
+
+        if not isinstance(node_type, str):
+            _err(errors, None, f"node type must be a string for node '{node_id}'")
+            continue
+
+        if node_config is not None and not isinstance(node_config, dict):
+            _err(errors, node_id, f"node config must be a dict (got {type(node_config).__name__})")
+            continue
+
+        nodes.append(node)
+
+    # Filter and validate edges
+    edges: List[dict] = []
+    for i, edge in enumerate(edges_raw):
+        if not isinstance(edge, dict):
+            _err(errors, None, f"edge at index {i} must be a dict")
+            continue
+
+        # Validate edge structure
+        edge_source = edge.get("source")
+        edge_target = edge.get("target")
+        edge_handle = edge.get("source_handle")
+
+        if not isinstance(edge_source, str):
+            _err(errors, None, f"edge source must be a string (got {type(edge_source).__name__} at index {i})")
+            continue
+
+        if not isinstance(edge_target, str):
+            _err(errors, None, f"edge target must be a string (got {type(edge_target).__name__} at index {i})")
+            continue
+
+        if edge_handle is not None and not isinstance(edge_handle, str):
+            _err(errors, None, f"edge source_handle must be None or a string (got {type(edge_handle).__name__} at index {i})")
+            continue
+
+        edges.append(edge)
+
+    return nodes, edges
+
+
 def _has_cycle(node_ids: List[str], edges: List[dict]) -> bool:
+    """Detect cycles using iterative DFS to avoid RecursionError on deep graphs."""
     adj: Dict[str, List[str]] = {nid: [] for nid in node_ids}
     for e in edges:
         if e["source"] in adj and e["target"] in adj:
             adj[e["source"]].append(e["target"])
+
     WHITE, GREY, BLACK = 0, 1, 2
     color = {nid: WHITE for nid in node_ids}
 
-    def visit(u: str) -> bool:
-        color[u] = GREY
-        for v in adj[u]:
-            if color[v] == GREY or (color[v] == WHITE and visit(v)):
-                return True
-        color[u] = BLACK
-        return False
+    # Iterative DFS using explicit stack to avoid RecursionError
+    for start_node in node_ids:
+        if color[start_node] != WHITE:
+            continue
 
-    return any(color[nid] == WHITE and visit(nid) for nid in node_ids)
+        stack = [(start_node, False)]  # (node, children_processed)
+
+        while stack:
+            u, children_processed = stack.pop()
+
+            if children_processed:
+                color[u] = BLACK
+                continue
+
+            if color[u] == GREY:
+                # Back edge found - cycle detected
+                return True
+
+            if color[u] != WHITE:
+                continue
+
+            color[u] = GREY
+            stack.append((u, True))
+
+            # Add children in reverse order to maintain DFS order
+            for v in reversed(adj[u]):
+                if color[v] == GREY:
+                    # Back edge found
+                    return True
+                if color[v] == WHITE:
+                    stack.append((v, False))
+
+    return False
 
 
 def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> None:
@@ -53,10 +155,15 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             _err(errors, nid, f"template error in '{key}': {msg}")
 
 
-def validate_graph(graph: dict, trigger_type: str) -> List[dict]:
+def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
+    """Validate a workflow graph. Returns list of error dicts, empty list if valid.
+
+    Handles malformed input gracefully by returning errors instead of raising.
+    """
     errors: List[dict] = []
-    nodes = graph.get("nodes") or []
-    edges = graph.get("edges") or []
+
+    # Shape validation and sanitization
+    nodes, edges = _sanitize_graph(graph, errors)
 
     if trigger_type not in TRIGGER_TYPES:
         _err(errors, None, f"unknown trigger type '{trigger_type}'")
@@ -93,6 +200,7 @@ def validate_graph(graph: dict, trigger_type: str) -> List[dict]:
         elif handle is not None:
             _err(errors, src["id"], "only condition nodes have true/false handles")
 
-    if _has_cycle(list(by_id.keys()), edges):
+    # Skip cycle check if node count exceeds MAX_NODES (error already reported)
+    if len(nodes) <= MAX_NODES and _has_cycle(list(by_id.keys()), edges):
         _err(errors, None, "graph contains a cycle")
     return errors
