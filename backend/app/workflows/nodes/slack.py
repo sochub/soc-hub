@@ -1,7 +1,7 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from app.services.slack_service import SlackError, ask_blocks, case_buttons_block, load_integration, slack_call
+from app.services.slack_service import SlackError, ask_blocks, case_buttons_block, load_integration, parse_button_labels, slack_call
 from app.workflows.nodes import WAIT, NodeContext, NodeError, executor, load_target_case
 
 
@@ -31,13 +31,21 @@ async def run_post_message(nctx: NodeContext, config: dict) -> dict:
 
 
 def button_labels(raw) -> list:
-    labels = raw.split(",") if isinstance(raw, str) else (raw or [])
-    labels = [str(b).strip() for b in labels if str(b).strip()]
+    try:
+        labels = parse_button_labels(raw)
+    except ValueError as e:
+        raise NodeError(str(e))
     return labels or ["Yes", "No"]
 
 
 @executor("slack_ask_user")
 async def run_ask_user(nctx: NodeContext, config: dict):
+    email = str(config["email"]).strip()
+    message = str(config["message"])
+    if not email:
+        raise NodeError("email is empty — check the template")
+    if not message.strip():
+        raise NodeError("message is empty — check the template")
     _, token = await _integration(nctx)
     buttons = button_labels(config.get("buttons"))
     if len(buttons) > 5:
@@ -51,8 +59,6 @@ async def run_ask_user(nctx: NodeContext, config: dict):
     if not valid:
         raise NodeError("timeout_hours must be between 0 and 168")
     wait_token = secrets.token_urlsafe(24)
-    email = str(config["email"]).strip()
-    message = str(config["message"])
     try:
         user_id = (await slack_call(token, "users.lookupByEmail", email=email))["user"]["id"]
         channel = (await slack_call(token, "conversations.open", users=user_id))["channel"]["id"]

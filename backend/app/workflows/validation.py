@@ -2,6 +2,7 @@
 import re
 from typing import Any, Dict, List, Optional
 
+from app.services.slack_service import parse_button_labels
 from app.workflows.loops import MAX_CONCURRENCY, MAX_ITEMS_CAP
 from app.workflows.node_types import NODE_TYPES, TRIGGER_TYPES, MAX_NODES
 from app.workflows.templating import syntax_errors
@@ -152,10 +153,11 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
         if mode == "group" and not cfg.get("group_key"):
             _err(errors, nid, "missing required field 'group_key'")
     if node["type"] == "slack_ask_user":
-        buttons = cfg.get("buttons")
-        labels = [b for b in (buttons.split(",") if isinstance(buttons, str) else (buttons or [])) if str(b).strip()]
-        if len(labels) > 5:
-            _err(errors, nid, "at most 5 buttons")
+        try:
+            if len(parse_button_labels(cfg.get("buttons"))) > 5:
+                _err(errors, nid, "at most 5 buttons")
+        except ValueError as exc:
+            _err(errors, nid, str(exc))
         th = cfg.get("timeout_hours")
         if th not in (None, ""):
             try:

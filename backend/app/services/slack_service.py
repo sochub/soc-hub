@@ -103,3 +103,17 @@ async def load_integration(db, tenant_id: int) -> Tuple[SlackIntegration, str]:
         return integ, decrypt(integ.bot_token_enc)
     except InvalidToken as e:
         raise SlackError("Slack credentials can't be decrypted (SECRET_KEY changed?) — re-enter them in Integrations") from e
+
+
+BUTTONS_TYPE_ERROR = "buttons must be a comma-separated string or a list"
+
+
+def parse_button_labels(raw) -> list:
+    """Normalize a `buttons` config value to a list of labels. Raises ValueError on a bad type."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    elif not isinstance(raw, (list, tuple)):
+        raise ValueError(BUTTONS_TYPE_ERROR)
+    return [str(b).strip() for b in raw if str(b).strip()]

@@ -243,3 +243,11 @@ def test_ask_user_bad_timeout_never_raises(bad):
                    n("ask", "slack_ask_user", config={"email": "a@b.c", "message": "ok?", "timeout_hours": bad})],
          "edges": [e("start", "ask")]}
     assert "timeout_hours" in msgs(validate_graph(g, "manual"))
+
+
+@pytest.mark.parametrize("bad", [5, True, {"a": 1}, 1.5])
+def test_ask_user_bad_buttons_type_never_raises(bad):
+    g = {"nodes": [n("start", "trigger"),
+                   n("ask", "slack_ask_user", config={"email": "a@b.c", "message": "ok?", "buttons": bad})],
+         "edges": [e("start", "ask")]}
+    assert "buttons must be a comma-separated string or a list" in msgs(validate_graph(g, "manual"))

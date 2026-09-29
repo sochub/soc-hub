@@ -64,3 +64,22 @@ async def test_ask_user_too_many_buttons(monkeypatch):
     with pytest.raises(NodeError, match="5 buttons"):
         await node.run_ask_user(nctx, {"email": "a@b.c", "message": "hi", "buttons": "a,b,c,d,e,f"})
     assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [5, True, {"a": 1}, 1.5])
+async def test_ask_user_bad_buttons_type(monkeypatch, bad):
+    nctx, calls = make(monkeypatch, OK)
+    with pytest.raises(NodeError, match="comma-separated string or a list"):
+        await node.run_ask_user(nctx, {"email": "a@b.c", "message": "hi", "buttons": bad})
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cfg,match", [({"email": "  ", "message": "hi"}, "email is empty"),
+                                       ({"email": "a@b.c", "message": " "}, "message is empty")])
+async def test_ask_user_empty_email_or_message(monkeypatch, cfg, match):
+    nctx, calls = make(monkeypatch, OK)
+    with pytest.raises(NodeError, match=match):
+        await node.run_ask_user(nctx, cfg)
+    assert calls == []
