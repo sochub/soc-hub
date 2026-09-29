@@ -25,13 +25,23 @@ def assert_url_allowed(url: str, allowlist: List[str], resolve=socket.getaddrinf
     host = p.hostname
     if not host:
         raise SSRFError("URL has no host")
-    if host.lower() in {h.lower() for h in allowlist}:
+
+    # Normalize hostname: strip whitespace and trailing dot, lowercase for comparison
+    normalized_host = host.strip().rstrip(".").lower()
+    normalized_allowlist = {h.strip().rstrip(".").lower() for h in allowlist}
+    if normalized_host in normalized_allowlist:
         return
-    port = p.port or (443 if p.scheme == "https" else 80)
+
+    try:
+        port = p.port or (443 if p.scheme == "https" else 80)
+    except ValueError as e:
+        raise SSRFError(f"invalid port in URL") from e
+
     try:
         infos = resolve(host, port, proto=socket.IPPROTO_TCP)
-    except socket.gaierror as e:
+    except (socket.gaierror, ValueError, UnicodeError, OSError) as e:
         raise SSRFError(f"cannot resolve {host}") from e
+
     for info in infos:
         ip = ipaddress.ip_address(info[4][0].split("%")[0])
         if _blocked(ip):

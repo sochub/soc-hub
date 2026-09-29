@@ -52,3 +52,26 @@ def test_bad_scheme_or_host_blocked(url):
 def test_unresolvable_blocked():
     with pytest.raises(SSRFError):
         assert_url_allowed("https://nope.invalid/", [], resolve=R)
+
+
+def test_bad_port_raises_ssrferror():
+    """Port out of range should raise SSRFError, not ValueError."""
+    with pytest.raises(SSRFError):
+        assert_url_allowed("http://api.example.com:99999/", [], resolve=R)
+
+
+def test_overlong_label_raises_ssrferror():
+    """Hostname label > 63 chars should raise SSRFError, not UnicodeError."""
+    overlong_host = "a" * 64 + ".example.com"
+    with pytest.raises(SSRFError):
+        assert_url_allowed(f"http://{overlong_host}/", [], resolve=socket.getaddrinfo)
+
+
+def test_allowlist_normalization_trailing_dot():
+    """Allowlist entry with trailing dot should match hostname without it."""
+    assert_url_allowed("http://internal.corp./hook", ["internal.corp"], resolve=R)
+
+
+def test_allowlist_normalization_whitespace():
+    """Allowlist entry with whitespace should match after normalization."""
+    assert_url_allowed("http://internal.corp/hook", [" internal.corp "], resolve=R)
