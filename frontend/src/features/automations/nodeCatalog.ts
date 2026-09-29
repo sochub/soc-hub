@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle } from 'lucide-react';
+import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat } from 'lucide-react';
 import type { TriggerType } from './types';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
@@ -38,6 +38,14 @@ export const NODE_DEFS: NodeDef[] = [
     {
         type: 'condition', label: 'Condition', category: 'Logic', icon: GitBranch, branching: true,
         fields: [{ key: 'expression', label: 'Expression', kind: 'expression', required: true, placeholder: "'phishing' in case.tags", help: 'Jinja expression, no {{ }}' }],
+    },
+    {
+        type: 'for_each', label: 'For each', category: 'Logic', icon: Repeat, container: true,
+        fields: [
+            { key: 'items', label: 'Items', kind: 'expression', required: true, placeholder: 'steps.lookup.output.body.users', help: 'Expression that evaluates to a list; drop nodes inside the box to run them per item' },
+            { key: 'concurrency', label: 'Concurrency (1-20)', kind: 'number', placeholder: '5' },
+            { key: 'max_items', label: 'Max items (≤ 500)', kind: 'number', placeholder: '100' },
+        ],
     },
     {
         type: 'http_request', label: 'HTTP request', category: 'HTTP', icon: Globe, sideEffect: true,
