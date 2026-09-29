@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -47,19 +47,23 @@ function Editor() {
     const [tab, setTab] = useState<'editor' | 'runs'>('editor');
     const [banner, setBanner] = useState<string | null>(null);
     const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
+    // id of the workflow the canvas was last hydrated for; server responses never re-hydrate after that
+    const hydratedFor = useRef<string | null>(null);
 
     /* eslint-disable react-hooks/set-state-in-effect -- one-time hydration of editor state from fetched workflow */
     useEffect(() => {
-        if (isNew && loadedVersion === null) {
+        if (isNew && hydratedFor.current !== 'new') {
+            hydratedFor.current = 'new';
             const f = toFlow(EMPTY_GRAPH); setNodes(f.nodes); setEdges(f.edges); setLoadedVersion(0);
         }
-        if (wf && wf.version !== loadedVersion) {
+        if (wf && hydratedFor.current !== String(wf.id)) {
+            hydratedFor.current = String(wf.id);
             setMeta({ name: wf.name, description: wf.description ?? '', trigger_type: wf.trigger_type, trigger_filter: wf.trigger_filter ?? '' });
             const invalid = new Set(wf.validation_errors.map((e) => e.node_id).filter(Boolean) as string[]);
             const f = toFlow(wf.graph, { invalidIds: invalid });
             setNodes(f.nodes); setEdges(f.edges); setErrors(wf.validation_errors); setLoadedVersion(wf.version);
         }
-    }, [wf, isNew, loadedVersion, setNodes, setEdges]);
+    }, [wf, isNew, setNodes, setEdges]);
     /* eslint-enable react-hooks/set-state-in-effect */
 
     const onConnect = useCallback((c: Connection) => setEdges((eds) => addEdge({ ...c, id: `e_${c.source}_${c.target}_${c.sourceHandle ?? 'out'}`, label: c.sourceHandle ?? undefined }, eds)), [setEdges]);
@@ -87,7 +91,7 @@ function Editor() {
     const updateNode = (updated: WfNode) =>
         setNodes((ns) => ns.map((n) => (n.id === updated.id ? { ...n, data: { ...n.data, wf: updated } } : n)));
     const renameNode = (oldId: string, newId: string) => {
-        if (nodes.some((n) => n.id === newId)) { setBanner(`Node id "${newId}" already exists`); return; }
+        if (nodes.some((n) => n.id === newId)) { setBanner(`Node id "${newId}" already exists`); return false; }
         setNodes((ns) => ns.map((n) => {
             if (n.id === oldId) return { ...n, id: newId, data: { ...n.data, wf: { ...n.data.wf, id: newId } } };
             if (n.parentId === oldId) return { ...n, parentId: newId };
@@ -95,12 +99,24 @@ function Editor() {
         }));
         setEdges((es) => es.map((e) => ({ ...e, source: e.source === oldId ? newId : e.source, target: e.target === oldId ? newId : e.target })));
         setSelectedId(newId);
+        return true;
     };
     const deleteNode = (nid: string) => {
-        setNodes((ns) => ns.filter((n) => n.id !== nid && n.parentId !== nid));
-        setEdges((es) => es.filter((e) => e.source !== nid && e.target !== nid));
+        const gone = new Set([nid, ...nodes.filter((n) => n.parentId === nid).map((n) => n.id)]);
+        setNodes((ns) => ns.filter((n) => !gone.has(n.id)));
+        setEdges((es) => es.filter((e) => !gone.has(e.source) && !gone.has(e.target)));
         setSelectedId(null);
     };
+
+    const onBeforeDelete = useCallback(async ({ nodes: dn, edges: de }: { nodes: WfFlowNode[]; edges: Edge[] }) => {
+        const gone = new Set(dn.filter((n) => n.data.wf.type !== 'trigger').map((n) => n.id));
+        const kids = nodes.filter((n) => n.parentId && gone.has(n.parentId)).map((n) => n.id);
+        kids.forEach((k) => gone.add(k));
+        return {
+            nodes: nodes.filter((n) => gone.has(n.id)),
+            edges: edges.filter((e) => gone.has(e.source) || gone.has(e.target) || (e.selected && de.some((d) => d.id === e.id))),
+        };
+    }, [nodes, edges]);
 
     const save = useMutation({
         mutationFn: async () => {
@@ -108,6 +124,8 @@ function Editor() {
             return (isNew ? await api.post('/workflows/', body) : await api.put(`/workflows/${id}`, body)).data as Workflow;
         },
         onSuccess: (saved) => {
+            hydratedFor.current = String(saved.id);
+            setLoadedVersion(saved.version);
             setErrors(saved.validation_errors);
             setBanner(saved.validation_errors.length ? `Saved with ${saved.validation_errors.length} problem(s)` : 'Saved');
             qc.invalidateQueries({ queryKey: ['workflows'] });
@@ -206,7 +224,7 @@ function Editor() {
                             onNodesChange={readOnly ? undefined : onNodesChange} onEdgesChange={readOnly ? undefined : onEdgesChange}
                             onConnect={readOnly ? undefined : onConnect}
                             onNodeClick={(_, n) => setSelectedId(n.id)} onPaneClick={() => setSelectedId(null)}
-                            nodesDraggable={!readOnly} nodesConnectable={!readOnly} deleteKeyCode={null} fitView>
+                            nodesDraggable={!readOnly} nodesConnectable={!readOnly} deleteKeyCode={readOnly ? null : undefined} onBeforeDelete={onBeforeDelete} fitView>
                             <Background gap={16} color="#e4e4e7" />
                             <Controls />
                             <MiniMap pannable zoomable />

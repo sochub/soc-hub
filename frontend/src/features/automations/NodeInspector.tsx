@@ -8,7 +8,7 @@ interface Props {
     readOnly: boolean;
     errors: string[];
     onChange: (node: WfNode) => void;
-    onRename: (oldId: string, newId: string) => void;
+    onRename: (oldId: string, newId: string) => boolean;
     onDelete: () => void;
 }
 
@@ -70,7 +70,7 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
             <label className="block">
                 <span className="label-mono">node id</span>
                 <input className={monoCls} disabled={readOnly} value={idDraft} onChange={(e) => setIdDraft(e.target.value)}
-                    onBlur={() => { if (idDraft !== node.id && /^[a-z0-9_]+$/.test(idDraft)) onRename(node.id, idDraft); else setIdDraft(node.id); }} />
+                    onBlur={() => { if (idDraft !== node.id && /^[a-z0-9_]+$/.test(idDraft)) { if (!onRename(node.id, idDraft)) setIdDraft(node.id); } else setIdDraft(node.id); }} />
                 <span className="text-[11px] text-zinc-500">Reference outputs as <code className="font-mono">{`{{ steps.${node.id}.output }}`}</code></span>
             </label>
 
