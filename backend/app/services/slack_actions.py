@@ -1,5 +1,6 @@
 """Handles verified Slack block_actions payloads (runs in Celery)."""
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func, or_, select
@@ -8,6 +9,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.case import Case, CaseStatus
 from app.models.membership import TenantMembership
 from app.models.user import User
+from app.models.workflow import WorkflowRun, WorkflowRunStep
 from app.services.case_service import apply_case_update
 from app.services.slack_service import SlackError, load_integration, parse_action_value, respond, slack_call
 from app.workflows.events import emit_event
@@ -75,6 +77,56 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
                                                 "text": f"{label} case #{case_id} — <@{clicker}>"})
 
 
+def authorize_answer(step_status: str, target_slack_id: Optional[str], clicker_id: str) -> Optional[str]:
+    if step_status != "waiting":
+        return "This request was already answered or has expired."
+    if not target_slack_id or target_slack_id != clicker_id:
+        return "This request isn't for you."
+    return None
+
+
+async def handle_answer(tenant_id: int, payload: dict, wait_token: str, index: int) -> None:
+    from app.tasks.workflows import advance_run_task
+
+    clicker = payload["user"]["id"]
+    async with AsyncSessionLocal() as db:
+        # Row lock + status re-check under the lock: double clicks/races resume the run at most once.
+        step = (await db.execute(
+            select(WorkflowRunStep).join(WorkflowRun, WorkflowRun.id == WorkflowRunStep.run_id)
+            .where(WorkflowRunStep.wait_token == wait_token, WorkflowRun.tenant_id == tenant_id)
+            .with_for_update(of=WorkflowRunStep)
+        )).scalars().first()
+        if not step:
+            await _ephemeral(payload, "This request was already answered or has expired.")
+            return
+        step_id, run_id = step.id, step.run_id
+        waiting = dict(step.output or {})
+        reason = authorize_answer(step.status, waiting.get("target_slack_id"), clicker)
+        buttons = waiting.get("buttons") or []
+        if reason or not 0 <= index < len(buttons):
+            await _ephemeral(payload, reason or "Unknown option.")
+            return
+        try:
+            _, token = await load_integration(db, tenant_id)
+        except SlackError:
+            logger.exception("Slack unavailable while accepting answer for step %s", step_id)
+            await _ephemeral(payload, "Slack isn't available for this workspace right now; your answer was not recorded.")
+            return
+        label = buttons[index]
+        step.output = {**waiting, "response": label, "responder_slack_id": clicker,
+                       "responder_email": await _slack_email(token, clicker), "timed_out": False}
+        step.status, step.finished_at = "succeeded", datetime.now(timezone.utc)
+        await db.commit()
+
+    try:
+        await slack_call(token, "chat.update", channel=waiting["channel"], ts=waiting["message_ts"],
+                         text=f"You answered: {label}",
+                         blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": f":white_check_mark: You answered: *{label}*"}}])
+    except SlackError:
+        logger.warning("could not update answered Slack message for step %s", step_id)
+    advance_run_task.delay(run_id)
+
+
 async def handle_interaction(tenant_id: int, payload: dict) -> None:
     for action in payload.get("actions") or []:
         parsed = parse_action_value(action.get("value", ""))
@@ -83,5 +135,7 @@ async def handle_interaction(tenant_id: int, payload: dict) -> None:
         try:
             if parsed[0] == "case":
                 await _handle_case_action(tenant_id, payload, *parsed[1:])
+            elif parsed[0] == "wf":
+                await handle_answer(tenant_id, payload, parsed[1], parsed[2])
         except SlackError:
             logger.exception("Slack interaction failed for tenant %s", tenant_id)
