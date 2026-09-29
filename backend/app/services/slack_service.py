@@ -4,6 +4,7 @@ import hmac
 import json
 import re
 import time
+from urllib.parse import urlsplit
 from typing import List, Optional, Tuple
 
 import httpx
@@ -15,8 +16,8 @@ from app.utils.crypto import decrypt
 
 SLACK_API = "https://slack.com/api/"
 _CASE_ACTIONS = {"ack", "assign", "close"}
-_WF_RE = re.compile(r"^wf:([A-Za-z0-9_\-]+):(\d+)$")
-_CASE_RE = re.compile(r"^case:(\d+):(\d+):([a-z]+)$")
+_WF_RE = re.compile(r"wf:([A-Za-z0-9_\-]{1,64}):([0-9]{1,2})")
+_CASE_RE = re.compile(r"case:([0-9]{1,10}):([0-9]{1,10}):([a-z]{1,10})")
 
 
 class SlackError(Exception):
@@ -31,7 +32,11 @@ def verify_signature(signing_secret: str, timestamp: str, body: bytes, signature
     if abs((now if now is not None else time.time()) - ts) > 300:
         return False
     expected = "v0=" + hmac.new(signing_secret.encode(), b"v0:" + timestamp.encode() + b":" + body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature or "")
+    try:
+        sig = signature.encode("utf-8", "surrogateescape") if isinstance(signature, str) else b""
+        return hmac.compare_digest(expected.encode(), sig)
+    except (TypeError, ValueError):
+        return False
 
 
 async def slack_call(token: str, method: str, **args) -> dict:
@@ -48,15 +53,22 @@ async def slack_call(token: str, method: str, **args) -> dict:
 
 
 async def respond(response_url: str, payload: dict) -> None:
-    async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(response_url, json=payload)
+    parts = urlsplit(response_url or "")
+    if parts.scheme != "https" or parts.hostname != "hooks.slack.com":
+        raise SlackError("refusing non-Slack response_url")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(response_url, json=payload)
+            resp.raise_for_status()
+    except httpx.HTTPError as e:
+        raise SlackError(f"response_url: {e}") from e
 
 
 def parse_action_value(value: str) -> Optional[Tuple]:
-    m = _WF_RE.match(value or "")
+    m = _WF_RE.fullmatch(value or "")
     if m:
         return ("wf", m.group(1), int(m.group(2)))
-    m = _CASE_RE.match(value or "")
+    m = _CASE_RE.fullmatch(value or "")
     if m and m.group(3) in _CASE_ACTIONS:
         return ("case", int(m.group(1)), int(m.group(2)), m.group(3))
     return None

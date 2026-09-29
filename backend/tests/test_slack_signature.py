@@ -66,3 +66,63 @@ def test_load_integration_undecryptable_token(monkeypatch):
     monkeypatch.setattr(slack_service, "decrypt", boom)
     with pytest.raises(SlackError, match="can't be decrypted"):
         asyncio.run(load_integration(_FakeDB(SimpleNamespace(bot_token_enc="x")), 1))
+
+
+def test_signature_non_ascii_or_bytes_fail_closed():
+    assert verify_signature(SECRET, TS, BODY, "v0=\xe9", now=int(TS)) is False
+    assert verify_signature(SECRET, TS, BODY, b"v0=abc", now=int(TS)) is False
+
+
+def test_parse_action_value_strict_grammar():
+    assert parse_action_value("wf:tok:1\n") is None
+    assert parse_action_value("wf:tok:١") is None
+    assert parse_action_value("case:1:99999999999:ack") is None
+
+
+@pytest.mark.parametrize("url", [
+    "http://backend:8000/x",
+    "https://evil.com/",
+    "https://hooks.slack.com.evil.com/",
+    "http://hooks.slack.com/actions/T/1/x",
+])
+def test_respond_refuses_non_slack_url(url):
+    with pytest.raises(SlackError, match="non-Slack response_url"):
+        asyncio.run(slack_service.respond(url, {"text": "x"}))
+
+
+import httpx
+
+_REAL_CLIENT = httpx.AsyncClient
+
+
+def _patch_client(monkeypatch, handler):
+    real = _REAL_CLIENT
+    monkeypatch.setattr(slack_service.httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+
+
+def test_respond_posts_to_slack(monkeypatch):
+    import httpx
+    seen = []
+
+    def handler(req):
+        seen.append((str(req.url), req.content))
+        return httpx.Response(200, text="ok")
+
+    _patch_client(monkeypatch, handler)
+    asyncio.run(slack_service.respond("https://hooks.slack.com/actions/T/1/x", {"text": "hi"}))
+    assert seen[0][0] == "https://hooks.slack.com/actions/T/1/x"
+
+
+def test_respond_wraps_errors(monkeypatch):
+    import httpx
+    _patch_client(monkeypatch, lambda req: httpx.Response(500))
+    with pytest.raises(SlackError):
+        asyncio.run(slack_service.respond("https://hooks.slack.com/actions/T/1/x", {}))
+
+    def boom(req):
+        raise httpx.ConnectError("down")
+
+    _patch_client(monkeypatch, boom)
+    with pytest.raises(SlackError):
+        asyncio.run(slack_service.respond("https://hooks.slack.com/actions/T/1/x", {}))
