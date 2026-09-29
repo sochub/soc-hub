@@ -22,8 +22,8 @@ BAD = {"nodes": [{"id": "start", "type": "trigger", "config": {}},
                  {"id": "note", "type": "case_add_note", "config": {}}], "edges": []}
 
 
-def _wf(graph=GOOD, trigger="case.created"):
-    return {"name": "t", "trigger_type": trigger, "trigger_filter": None, "graph": graph}
+def _wf(graph=GOOD, trigger="case.created", trigger_filter=None):
+    return {"name": "t", "trigger_type": trigger, "trigger_filter": trigger_filter, "graph": graph}
 
 
 def _deny():
@@ -85,6 +85,24 @@ async def _scenario(delayed, ticks):
                 ids["workflows"].append(bad_id)
                 r = await c.post(f"/api/v1/workflows/{bad_id}/enable")
                 assert r.status_code == 422 and r.json()["detail"]["errors"], "e"
+
+                # a broken trigger filter is a validation error like a broken graph
+                r = await c.post("/api/v1/workflows/", json=_wf(trigger_filter="case.id =="))
+                bad_filter_id = r.json()["id"]
+                ids["workflows"].append(bad_filter_id)
+                errs = r.json()["validation_errors"]
+                assert errs and errs[0]["node_id"] is None and errs[0]["message"].startswith("trigger filter:"), errs
+                r = await c.post(f"/api/v1/workflows/{bad_filter_id}/enable")
+                assert r.status_code == 422 and r.json()["detail"]["errors"], "filter enable"
+                r = await c.post(f"/api/v1/workflows/{bad_filter_id}/dry-run", json={})
+                assert r.status_code == 422, "filter dry-run"
+                assert (await c.post(f"/api/v1/workflows/{bad_filter_id}/validate")).json()["errors"], "filter validate"
+                r = await c.post(wid + "/enable")
+                assert r.status_code == 200, "re-enable"
+                r = await c.put(wid, json=_wf(trigger_filter="case.id =="))
+                assert r.status_code == 422, "filter enabled put"
+                r = await c.post(wid + "/disable")
+                assert r.status_code == 200
 
                 r = await c.post(wid + "/dry-run", json={"payload": {"event": "case.created", "case_id": None, "changes": {}}})
                 assert r.status_code == 200, f"f {r.status_code} {r.text}"

@@ -251,3 +251,11 @@ def test_ask_user_bad_buttons_type_never_raises(bad):
                    n("ask", "slack_ask_user", config={"email": "a@b.c", "message": "ok?", "buttons": bad})],
          "edges": [e("start", "ask")]}
     assert "buttons must be a comma-separated string or a list" in msgs(validate_graph(g, "manual"))
+
+
+def test_trigger_filter_validation():
+    from app.workflows.validation import validate_trigger_filter
+    assert validate_trigger_filter(None) == [] and validate_trigger_filter("  ") == []
+    assert validate_trigger_filter("'phishing' in case.tags") == []
+    errs = validate_trigger_filter("case.id ==")
+    assert len(errs) == 1 and errs[0]["node_id"] is None and errs[0]["message"].startswith("trigger filter: ")

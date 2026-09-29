@@ -272,3 +272,14 @@ def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
             _err(errors, nid, "node is not connected (no incoming edge)")
 
     return errors
+
+
+def validate_trigger_filter(expr: Optional[str]) -> List[dict]:
+    """Syntax-check the optional trigger filter expression."""
+    if not expr or not expr.strip():
+        return []
+    return [{"node_id": None, "message": f"trigger filter: {msg}"} for msg in syntax_errors(expr, raw=True)]
+
+
+def workflow_errors(graph: Any, trigger_type: str, trigger_filter: Optional[str]) -> List[dict]:
+    return validate_trigger_filter(trigger_filter) + validate_graph(graph, trigger_type)

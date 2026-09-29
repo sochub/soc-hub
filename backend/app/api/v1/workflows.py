@@ -13,7 +13,7 @@ from app.schemas.workflow import (AllowlistIn, DryRunIn, ManualRunIn, RunDetail,
                                   WorkflowIn, WorkflowOut, WorkflowSummary)
 from app.utils.audit import create_audit_log
 from app.workflows.runtime import cancel_run, create_run, flush_withdrawals
-from app.workflows.validation import validate_graph
+from app.workflows.validation import workflow_errors
 
 router = APIRouter()
 runs_router = APIRouter()
@@ -50,7 +50,7 @@ def _summary(wf: Workflow, stats: dict) -> dict:
 
 def _out(wf: Workflow, stats: dict) -> dict:
     return {**_summary(wf, stats), "trigger_filter": wf.trigger_filter, "graph": wf.graph,
-            "validation_errors": validate_graph(wf.graph, wf.trigger_type)}
+            "validation_errors": workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter)}
 
 
 # settings routes are declared BEFORE /{workflow_id} so "settings" isn't parsed as an id
@@ -109,7 +109,7 @@ async def update_workflow(workflow_id: int, body: WorkflowIn, db: AsyncSession =
                           tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     wf = await _get_workflow(db, workflow_id, tenant_id)
     if wf.enabled:
-        errors = validate_graph(body.graph, body.trigger_type)
+        errors = workflow_errors(body.graph, body.trigger_type, body.trigger_filter)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors, "message": "Disable the workflow to save an invalid graph"})
     wf.name, wf.description, wf.trigger_type = body.name, body.description, body.trigger_type
@@ -141,12 +141,12 @@ async def validate_workflow(workflow_id: int, db: AsyncSession = Depends(deps.ge
                             current_user: User = Depends(deps.get_current_active_user),
                             tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     wf = await _get_workflow(db, workflow_id, tenant_id)
-    return {"errors": validate_graph(wf.graph, wf.trigger_type)}
+    return {"errors": workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter)}
 
 
 async def _set_enabled(db, wf: Workflow, enabled: bool, user_id: int, tenant_id: int) -> None:
     if enabled:
-        errors = validate_graph(wf.graph, wf.trigger_type)
+        errors = workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
     wf.enabled = enabled
@@ -198,7 +198,7 @@ async def dry_run(workflow_id: int, body: DryRunIn, db: AsyncSession = Depends(d
                   tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     from app.tasks.workflows import advance_run_task
     wf = await _get_workflow(db, workflow_id, tenant_id)
-    errors = validate_graph(wf.graph, wf.trigger_type)
+    errors = workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter)
     if errors:
         raise HTTPException(status_code=422, detail={"errors": errors})
     case_id = alert_id = None
