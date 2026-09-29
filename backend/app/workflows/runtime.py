@@ -199,6 +199,7 @@ async def execute_step(step_id: int) -> None:
         run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == step.run_id))).scalars().first()
         if run.status in _TERMINAL_RUN:
             return
+        run_id, tenant_id = run.id, run.tenant_id  # usable after a rollback expires `run`
         step.status = "running"
         step.started_at = step.started_at or _now()
         await db.commit()
@@ -211,11 +212,13 @@ async def execute_step(step_id: int) -> None:
             nctx.ctx = await build_context(db, run)
             cfg = node.get("config") or {}
             rendered = {k: (v if k in raw_keys else render(v, nctx.ctx)) for k, v in cfg.items()}
-            step.input = rendered
             if run.is_dry_run and dry_run_behaviour(node) == "simulate":
                 output = simulated_output(node, rendered, run.dry_run_mocks or {})
             else:
                 output = await EXECUTORS[node["type"]](nctx, rendered)
+            # Set after the node ran: a node's explicit flush would otherwise write (row-lock) the
+            # step before the run lock below is taken (cancel_run locks run -> steps).
+            step.input = rendered
             if output is WAIT:
                 step.status = "waiting"
             else:
@@ -240,6 +243,24 @@ async def execute_step(step_id: int) -> None:
             step = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == step_id))).scalars().first()
             nctx.after_commit.clear()
             step.status, step.error, step.finished_at = "failed", f"internal error: {e}", _now()
+
+        # The run may have been cancelled/failed while the node ran: re-check under the run lock
+        # (no autoflush, so the run row is locked before this step's row).
+        with db.no_autoflush:
+            run_status = (await db.execute(select(WorkflowRun.status).where(WorkflowRun.id == run_id)
+                                           .with_for_update())).scalar_one()
+        if run_status in _TERMINAL_RUN:
+            out = step.output if isinstance(step.output, dict) else {}
+            posted = [tenant_id, out.get("channel"), out.get("message_ts")] if node["type"] == "slack_ask_user" else None
+            await db.rollback()  # discard the node's writes
+            step = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == step_id))).scalars().first()
+            if step.status in _ACTIVE_STEP:
+                step.status, step.finished_at = "cancelled", _now()
+            await db.commit()
+            if posted and posted[1] and posted[2]:  # the DM went out before we noticed: withdraw it
+                db.sync_session.info.setdefault("slack_withdraw", []).append(posted)
+            flush_withdrawals(db)
+            return
         await db.commit()
 
     for fn in nctx.after_commit:
