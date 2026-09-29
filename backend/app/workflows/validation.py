@@ -151,6 +151,19 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             _err(errors, nid, "missing required field 'case_id'")
         if mode == "group" and not cfg.get("group_key"):
             _err(errors, nid, "missing required field 'group_key'")
+    if node["type"] == "slack_ask_user":
+        buttons = cfg.get("buttons")
+        labels = [b for b in (buttons.split(",") if isinstance(buttons, str) else (buttons or [])) if str(b).strip()]
+        if len(labels) > 5:
+            _err(errors, nid, "at most 5 buttons")
+        th = cfg.get("timeout_hours")
+        if th not in (None, ""):
+            try:
+                ok = not isinstance(th, bool) and 0 < float(th) <= 168
+            except (TypeError, ValueError, OverflowError):
+                ok = False
+            if not ok:
+                _err(errors, nid, "timeout_hours must be between 0 and 168")
     for key, value in cfg.items():
         for msg in syntax_errors(value, raw=key in spec["raw"]):
             _err(errors, nid, f"template error in '{key}': {msg}")

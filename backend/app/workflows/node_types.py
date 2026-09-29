@@ -13,6 +13,7 @@ NODE_TYPES = {
     "case_search":         {"required": [], "raw": [], "alert_only": False},
     "alert_promote":       {"required": ["mode"], "raw": [], "alert_only": True},
     "for_each":            {"required": ["items"], "raw": ["items"], "alert_only": False},
+    "slack_ask_user":      {"required": ["email", "message"], "raw": [], "alert_only": False},
     "slack_post_message":  {"required": ["text"], "raw": [], "alert_only": False},
     "alert_dismiss":       {"required": [], "raw": [], "alert_only": True},
 }

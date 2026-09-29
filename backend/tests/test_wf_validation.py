@@ -226,3 +226,20 @@ def test_parent_must_reference_for_each(parent):
     g["edges"].append(e("start", "other"))
     g["nodes"].append(n("child", "case_add_note", parent_id=parent, config={"content": "x"}))
     assert "parent_id must reference a for_each node" in msgs(validate_graph(g, "manual"))
+
+
+def test_ask_user_limits():
+    g = {"nodes": [n("start", "trigger"),
+                   n("ask", "slack_ask_user", config={"email": "{{ case.title }}", "message": "ok?", "timeout_hours": 200,
+                                                      "buttons": "a,b,c,d,e,f"})],
+         "edges": [e("start", "ask")]}
+    m = msgs(validate_graph(g, "manual"))
+    assert "timeout_hours" in m and "buttons" in m
+
+
+@pytest.mark.parametrize("bad", ["abc", True, float("inf"), 10**400, 0, -1])
+def test_ask_user_bad_timeout_never_raises(bad):
+    g = {"nodes": [n("start", "trigger"),
+                   n("ask", "slack_ask_user", config={"email": "a@b.c", "message": "ok?", "timeout_hours": bad})],
+         "edges": [e("start", "ask")]}
+    assert "timeout_hours" in msgs(validate_graph(g, "manual"))

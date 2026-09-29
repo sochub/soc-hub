@@ -1,5 +1,8 @@
-from app.services.slack_service import SlackError, case_buttons_block, load_integration, slack_call
-from app.workflows.nodes import NodeContext, NodeError, executor, load_target_case
+import secrets
+from datetime import datetime, timedelta, timezone
+
+from app.services.slack_service import SlackError, ask_blocks, case_buttons_block, load_integration, slack_call
+from app.workflows.nodes import WAIT, NodeContext, NodeError, executor, load_target_case
 
 
 async def _integration(nctx: NodeContext):
@@ -25,3 +28,39 @@ async def run_post_message(nctx: NodeContext, config: dict) -> dict:
     except SlackError as e:
         raise NodeError(str(e))
     return {"channel": res["channel"], "ts": res["ts"]}
+
+
+def button_labels(raw) -> list:
+    labels = raw.split(",") if isinstance(raw, str) else (raw or [])
+    labels = [str(b).strip() for b in labels if str(b).strip()]
+    return labels or ["Yes", "No"]
+
+
+@executor("slack_ask_user")
+async def run_ask_user(nctx: NodeContext, config: dict):
+    _, token = await _integration(nctx)
+    buttons = button_labels(config.get("buttons"))
+    if len(buttons) > 5:
+        raise NodeError("at most 5 buttons")
+    raw_hours = config.get("timeout_hours")
+    try:
+        hours = 24.0 if raw_hours in (None, "") else float(raw_hours)
+        valid = not isinstance(raw_hours, bool) and 0 < hours <= 168
+    except (TypeError, ValueError, OverflowError):
+        valid = False
+    if not valid:
+        raise NodeError("timeout_hours must be between 0 and 168")
+    wait_token = secrets.token_urlsafe(24)
+    email = str(config["email"]).strip()
+    message = str(config["message"])
+    try:
+        user_id = (await slack_call(token, "users.lookupByEmail", email=email))["user"]["id"]
+        channel = (await slack_call(token, "conversations.open", users=user_id))["channel"]["id"]
+        msg = await slack_call(token, "chat.postMessage", channel=channel, text=message,
+                               blocks=ask_blocks(message, buttons, wait_token))
+    except SlackError as e:
+        raise NodeError(f"could not ask {email}: {e}")
+    nctx.step.wait_token = wait_token
+    nctx.step.wait_expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+    nctx.step.output = {"target_slack_id": user_id, "channel": channel, "message_ts": msg["ts"], "buttons": buttons}
+    return WAIT
