@@ -87,15 +87,16 @@ async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] =
         s.status = "cancelled"
         s.finished_at = _now()
     await db.flush()
+    # a dead run must not leave loop children queued or executing (cancel_run -> finalize_run recurses)
+    for child in (await db.execute(select(WorkflowRun).where(
+            WorkflowRun.parent_run_id == run.id, WorkflowRun.status.notin_(_TERMINAL_RUN)))).scalars().all():
+        await cancel_run(db, child)
 
 
 async def cancel_run(db, run: WorkflowRun) -> None:
     if run.status in _TERMINAL_RUN:
         return
-    await finalize_run(db, run, "cancelled")
-    children = (await db.execute(select(WorkflowRun).where(WorkflowRun.parent_run_id == run.id))).scalars().all()
-    for child in children:
-        await cancel_run(db, child)
+    await finalize_run(db, run, "cancelled")  # also cancels non-terminal children
 
 
 async def advance_run(run_id: int) -> None:
@@ -221,7 +222,7 @@ async def loop_tick(parent_step_id: int) -> None:
         if parent.status in _TERMINAL_RUN:
             return
         children = (await db.execute(select(WorkflowRun).where(WorkflowRun.parent_step_id == step.id)
-                                     .order_by(WorkflowRun.loop_index))).scalars().all()
+                                     .order_by(WorkflowRun.loop_index).with_for_update())).scalars().all()
         statuses = [c.status for c in children]
 
         if all(s in _TERMINAL_RUN for s in statuses):
@@ -245,6 +246,8 @@ async def loop_tick(parent_step_id: int) -> None:
             concurrency = int((step.output or {}).get("concurrency", 5))
             for i in next_children_to_start(statuses, concurrency):
                 child = children[i]
+                if child.status != "queued":  # cancelled concurrently; children are row-locked above
+                    continue
                 child.status = "running"
                 db.add(WorkflowRunStep(run_id=child.id, node_id="__start__", status="succeeded",
                                        output=child.trigger_payload, started_at=_now(), finished_at=_now()))
