@@ -25,18 +25,33 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
     headers = {str(k): str(v) for k, v in (config.get("headers") or {}).items()}
     body = config.get("body")
     kwargs = {"json": body} if isinstance(body, (dict, list)) else ({"content": str(body)} if body not in (None, "") else {})
-    try:
+    async def _fetch():
+        buf = bytearray()
+        truncated = False
         async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-            resp = await client.request(method, url, headers=headers, **kwargs)
+            async with client.stream(method, url, headers=headers, **kwargs) as resp:
+                async for chunk in resp.aiter_bytes():
+                    buf.extend(chunk)
+                    if len(buf) > MAX_BODY:
+                        truncated = True
+                        break
+                return resp.status_code, dict(resp.headers), bytes(buf[:MAX_BODY]), truncated
+
+    try:
+        status, resp_headers, raw, truncated = await asyncio.wait_for(_fetch(), timeout=15)
+    except asyncio.TimeoutError:
+        raise RetryableNodeError(f"request to {url} timed out after 15s")
     except httpx.TransportError as e:
         raise RetryableNodeError(f"request failed: {e}")
-    if resp.status_code >= 500:
-        raise RetryableNodeError(f"HTTP {resp.status_code} from {url}")
+    if status >= 500:
+        raise RetryableNodeError(f"HTTP {status} from {url}")
 
-    raw = resp.content[:MAX_BODY]
     try:
         parsed = json.loads(raw)
     except ValueError:
         parsed = raw.decode(errors="replace")
     # 4xx is returned (not raised) so workflows can branch on output.status.
-    return {"status": resp.status_code, "headers": dict(resp.headers), "body": parsed}
+    out = {"status": status, "headers": resp_headers, "body": parsed}
+    if truncated:
+        out["truncated"] = True
+    return out
