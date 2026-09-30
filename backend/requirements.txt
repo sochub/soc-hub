@@ -4,7 +4,8 @@ sqlalchemy[asyncio]
 asyncpg
 pydantic-settings
 alembic
-python-jose[cryptography]
+PyJWT
+cryptography
 passlib[argon2]
 httpx
 pytest
