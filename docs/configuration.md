@@ -260,9 +260,10 @@ uploaded (no files, no submissions).
 - `internal_domains` [none]: domains (and their subdomains) that are never sent out.
 - `sources`: per-source on/off switches.
 
-Saving the Threat intel card saves the **full configuration**. Through the API,
-any field left out of a `PUT` resets to its default (keys are kept unless you send
-a new one or a `clear_*` flag).
+Saving the Threat intel card saves the **full configuration**. Through the API, a
+`PUT` merges the fields sent: any field left out keeps its stored value (or its
+default when nothing is stored yet). Keys are kept unless you send a new one or a
+`clear_*` flag.
 
 **Rate limits.** Counted per tenant in Redis and shared by all workers, except
 crt.sh, which is limited globally. VirusTotal uses the two limits above; URLhaus and
@@ -291,8 +292,10 @@ or more (VirusTotal daily quota) or retries are exhausted, the result is `rate_l
 followed; each must be `https` and pass the same internal-address check, and TLS
 verification protects the hostname.
 
-**Kill switch.** `ENRICHMENT_ENABLED=false` (environment, default `true`) stops all
-automatic and manual enqueueing. Restart the backend and the worker after changing it.
+**Kill switch.** `ENRICHMENT_ENABLED=false` (environment, default `true`) stops new
+enqueues (automatic and manual), tasks already queued and pending retries: the worker
+task does nothing, and a manual run answers `503`. Restart the backend and the worker
+after changing it.
 
 **Logging.** One `ti_lookup tenant=.. source=.. type=.. outcome=.. duration_ms=..`
 line per source per lookup, and one `ti_config` line per config save, test or delete.

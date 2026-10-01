@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, select, update
 
 from app.api import deps
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.enrichment.config import DEFAULTS, decrypt_keys
@@ -60,13 +61,16 @@ async def _scenario(monkeypatch, caplog, recorder):
             plain = IOC(tenant_id=tid, ioc_type="domain", value="clean.example", tlp="green", tags=[])
             email = IOC(tenant_id=tid, ioc_type="email", value="a@b.example", tlp="green", tags=[])
             other = IOC(tenant_id=tid2, ioc_type="domain", value="other.example", tlp="green", tags=[])
+            nulltlp = IOC(tenant_id=tid, ioc_type="domain", value="nulltlp.example", tags=[])
             art = Artifact(tenant_id=tid, artifact_type=ArtifactType.DOMAIN, value="art.example")
-            db.add_all([ioc, plain, email, other, art])
+            db.add_all([ioc, plain, email, other, nulltlp, art])
             await db.flush()
-            ids["iocs"] += [int(ioc.id), int(plain.id), int(email.id), int(other.id)]
+            ids["iocs"] += [int(ioc.id), int(plain.id), int(email.id), int(other.id), int(nulltlp.id)]
             ids["artifacts"].append(int(art.id))
             await db.commit()
-            ioc_id, plain_id, email_id, other_id = ids["iocs"]
+            await db.execute(update(IOC).where(IOC.id == int(nulltlp.id)).values(tlp=None))
+            await db.commit()
+            ioc_id, plain_id, email_id, other_id, null_id = ids["iocs"]
             art_id = ids["artifacts"][0]
 
             state["tenant"], state["user"] = tid, user
@@ -136,6 +140,24 @@ async def _scenario(monkeypatch, caplog, recorder):
                 assert r.status_code == 200 and r.json()["credentials_set"]["virustotal"] is False, f"c clear {r.text}"
                 assert "virustotal_api_key" not in (await stored_keys())[1], "c key still stored"
 
+                # c2) partial PUTs merge: fields not sent keep their stored values (never loosened)
+                r = await call("PUT", CFG, "save", json={"auto_max_tlp": "none", "internal_domains": ["corp.local"],
+                                                         "sources": {"crtsh": False}})
+                assert r.status_code == 200, f"c2 setup {r.text}"
+                for partial in ({"virustotal_api_key": "x"}, {"clear_virustotal": True}):
+                    r = await call("PUT", CFG, "save", json=partial)
+                    assert r.status_code == 200, f"c2 {partial} {r.text}"
+                    d = r.json()
+                    assert d["auto_max_tlp"] == "none", f"c2 {partial} auto {d}"
+                    assert d["internal_domains"] == ["corp.local"], f"c2 {partial} domains {d}"
+                    assert d["sources"]["crtsh"] is False, f"c2 {partial} sources {d}"
+                    row, _ = await stored_keys()
+                    assert (row.auto_max_tlp, row.internal_domains, row.sources.get("crtsh")) == (
+                        "none", ["corp.local"], False), f"c2 {partial} stored"
+                r = await call("PUT", CFG, "save", json={"auto_max_tlp": "green", "internal_domains": [],
+                                                         "sources": dict(DEFAULTS["sources"])})
+                assert r.status_code == 200 and r.json()["auto_max_tlp"] == "green", f"c2 restore {r.text}"
+
                 # d) invalid bodies -> 422 each (rejected before the handler, so no log line)
                 for bad in ({"auto_max_tlp": "purple"}, {"cache_ttl_hours": 0}, {"vt_per_minute": 0},
                             {"internal_domains": ["not a domain"]}, {"sources": {"shodan": True}}):
@@ -167,6 +189,24 @@ async def _scenario(monkeypatch, caplog, recorder):
                 assert {x["source"] for x in res} == {"rdap", "crtsh"}, f"g sources {res}"
                 assert all(x["status"] == "pending" for x in res), f"g status {res}"
                 assert ((tid, "domain", "evil.example", "amber", True), {}) in recorder, f"g recorder {recorder}"
+
+                # g2) kill switch off -> 503 before 422/409, no pending rows written
+                async def n_rows():
+                    return (await db.execute(select(func.count()).select_from(EnrichmentResult).where(
+                        EnrichmentResult.tenant_id == tid))).scalar()
+                before = await n_rows()
+                monkeypatch.setattr(settings, "ENRICHMENT_ENABLED", False)
+                n_rec = len(recorder)
+                for target, body in ((plain_id, {"confirm": True}), (email_id, {"confirm": True}), (null_id, {})):
+                    r = await call("POST", f"/api/v1/enrichment/ioc/{target}/run", json=body)
+                    assert r.status_code == 503, f"g2 {target} {r.status_code} {r.text}"
+                    assert r.json()["detail"] == "Threat-intel enrichment is disabled", f"g2 detail {r.text}"
+                monkeypatch.setattr(settings, "ENRICHMENT_ENABLED", True)
+                assert await n_rows() == before and len(recorder) == n_rec, "g2 rows written or enqueued"
+
+                # the IOC list schema requires a TLP string, so give it one back before step l
+                await db.execute(update(IOC).where(IOC.id == null_id).values(tlp="green"))
+                await db.commit()
 
                 # h) seeded VT + ThreatFox malicious -> critical suggestion with the malware tag
                 now = datetime.now(timezone.utc)

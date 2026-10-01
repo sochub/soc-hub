@@ -235,3 +235,24 @@ async def test_entry_tlp_gating_and_artifact_default(monkeypatch):
     await task._entry(1, "domain", "d.com", "red", True)        # forced -> runs
     await task._entry(1, "email", "x@y.com", "white", True)     # not enrichable -> no run
     assert [a[2] for a in seen] == ["c.com", "d.com"]
+
+
+@pytest.mark.asyncio
+async def test_entry_does_nothing_when_disabled(monkeypatch):
+    seen = []
+
+    async def fake_run(db, *a, **k):
+        seen.append(a)
+        return {}
+    monkeypatch.setattr(task, "run_enrichment", fake_run)
+
+    def no_session():
+        raise AssertionError("opened a DB session while disabled")
+    monkeypatch.setattr(task, "AsyncSessionLocal", no_session)
+    monkeypatch.setattr(task, "normalise", lambda *a: (_ for _ in ()).throw(AssertionError("normalised")))
+    monkeypatch.setattr(task.settings, "ENRICHMENT_ENABLED", False)
+    await task._entry(1, "domain", "a.com", "white", True)                       # forced run
+    await task._entry(1, "domain", "a.com", "white", True, ["virustotal"], 3)    # countdown retry
+    await task._entry(1, "domain", "a.com", "white", False)
+    assert seen == []
+

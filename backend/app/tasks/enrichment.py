@@ -9,6 +9,7 @@ from typing import List, Optional
 from sqlalchemy import select
 
 from app.ai.errors import scrub
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal, engine
 from app.enrichment.config import SOURCE_KEY, load_settings, runnable_sources
 from app.enrichment.indicators import normalise, should_skip, tlp_allows
@@ -159,8 +160,6 @@ class _RedisLock:
     async def acquire(self, key: str) -> bool:
         if self._r is None:
             import redis.asyncio as aioredis
-
-            from app.core.config import settings
             self._r = aioredis.from_url(settings.REDIS_URL)
         return bool(await self._r.set(key, "1", nx=True, ex=60))
 
@@ -175,6 +174,8 @@ def _lock():
 
 
 async def _entry(tenant_id, raw_type, value, tlp, force, only=None, attempt=0, *, lock=None, limiter=None):
+    if not settings.ENRICHMENT_ENABLED:  # kill switch also stops already-queued tasks and pending retries
+        return
     norm = normalise(raw_type, value)
     if norm is None:
         return

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.errors import scrub
 from app.api import deps
+from app.core.config import settings
 from app.enrichment import hooks
 from app.enrichment.config import DEFAULTS, KEY_FIELDS, decrypt_keys, load_settings, runnable_sources
 from app.enrichment.indicators import normalise, tlp_allows
@@ -111,7 +112,9 @@ async def put_config(body: EnrichmentConfigIn, db: AsyncSession = Depends(deps.g
         row = TenantEnrichmentConfig(tenant_id=tenant_id)
         db.add(row)
     fields = []
-    for f in _PLAIN:
+    # A partial PUT merges: on an existing row only the fields actually sent change, so omitting a
+    # field can never silently loosen what leaves the system. A new row takes the defaults.
+    for f in (_PLAIN if created else [f for f in _PLAIN if f in body.model_fields_set]):
         v = getattr(body, f)
         if created or getattr(row, f) != v:
             fields.append(f)
@@ -204,6 +207,8 @@ async def run(kind: str, obj_id: int, body: Optional[RunIn] = Body(None),
               current_user: User = Depends(deps.require_analyst_or_above),
               tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Response:
     obj, raw_type = await _target(db, kind, obj_id, tenant_id)
+    if not settings.ENRICHMENT_ENABLED:  # kill switch: nothing is queued and no pending rows are written
+        raise HTTPException(status_code=503, detail="Threat-intel enrichment is disabled")
     value = obj.value
     s = await load_settings(db, tenant_id)
     tlp = obj.tlp if kind == "ioc" else s.artifact_tlp
