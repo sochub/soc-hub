@@ -1,0 +1,90 @@
+name: PR labels
+
+# SECURITY: this workflow runs on `pull_request_target` so it has write access
+# even for fork PRs. It therefore NEVER checks out or executes PR code, and the
+# PR title is only read through the event payload inside github-script (never
+# interpolated into a shell). Keep it that way when editing.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+concurrency:
+  group: pr-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  path-labels:
+    name: Path labels
+    runs-on: ubuntu-latest
+    steps:
+      # Reads .github/labeler.yml from the base branch via the API; no checkout.
+      # sync-labels is off so it does not remove the `ci` label set from the
+      # PR title by the type-labels job.
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          sync-labels: false
+
+  size-label:
+    name: Size label
+    runs-on: ubuntu-latest
+    steps:
+      # Uses only the GitHub API (file list); no checkout.
+      - uses: codelytv/pr-size-labeler@4e3aa0f77f348c8066513d453515316ffa01a607 # v1.11.1
+        with:
+          xs_label: 'size/XS'
+          xs_max_size: '10'
+          s_label: 'size/S'
+          s_max_size: '100'
+          m_label: 'size/M'
+          m_max_size: '500'
+          l_label: 'size/L'
+          l_max_size: '1000'
+          xl_label: 'size/XL'
+          fail_if_xl: 'false'
+          files_to_ignore: 'frontend/package-lock.json'
+
+  type-label:
+    name: Conventional-commit type label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const typeToLabel = {
+              feat: 'enhancement',
+              fix: 'bug',
+              docs: 'documentation',
+              ci: 'ci',
+              chore: 'chore',
+              refactor: 'refactor',
+              test: 'test',
+              perf: 'perf',
+              build: 'build',
+              security: 'security',
+              revert: 'revert',
+            };
+            const pr = context.payload.pull_request;
+            const m = /^(\w+)(\([^)]*\))?!?:/.exec(pr.title || '');
+            const wanted = m ? typeToLabel[m[1].toLowerCase()] : undefined;
+            const { owner, repo } = context.repo;
+            const issue_number = pr.number;
+
+            // Labels owned by this mapping, other than the wanted one.
+            // `ci` is also a path label, so never remove it here.
+            const stale = Object.values(typeToLabel)
+              .filter((l) => l !== wanted && l !== 'ci');
+            const current = (await github.paginate(
+              github.rest.issues.listLabelsOnIssue,
+              { owner, repo, issue_number, per_page: 100 },
+            )).map((l) => l.name);
+
+            for (const name of stale.filter((l) => current.includes(l))) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+            }
+            if (wanted && !current.includes(wanted)) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [wanted] });
+            }
