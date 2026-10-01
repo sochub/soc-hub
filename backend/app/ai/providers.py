@@ -113,6 +113,9 @@ def build_kwargs(cfg: ProviderConfig, aws_creds: Optional[dict] = None) -> dict:
         kw["api_key"] = s["api_key"]
     if p == "openai_compatible" and "api_key" not in kw:
         kw["api_key"] = "not-needed"  # LiteLLM's OpenAI client requires some key
+    if p == "ollama" and cfg.source == "tenant":
+        # LiteLLM otherwise falls back to the server's OLLAMA_API_KEY and sends it to the tenant's host.
+        kw["api_key"] = "not-needed"
     if p == "openai" and s.get("organization"):
         kw["organization"] = s["organization"]
     if p == "vertex":

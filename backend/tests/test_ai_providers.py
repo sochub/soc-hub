@@ -17,7 +17,13 @@ def test_seven_providers():
 
 def test_ollama():
     kw = build_kwargs(cfg("ollama", api_base="http://h:11434"))
-    assert kw == {"model": "ollama_chat/m1", "api_base": "http://h:11434"}
+    assert kw == {"model": "ollama_chat/m1", "api_base": "http://h:11434", "api_key": "not-needed"}
+    assert "api_key" not in build_kwargs(cfg("ollama", api_base="http://h:11434", source="deployment"))
+
+
+def test_tenant_ollama_never_inherits_server_ollama_key():
+    kw = build_kwargs(cfg("ollama", api_base="http://h:11434", source="tenant"))
+    assert kw["api_key"] == "not-needed"
 
 
 def test_openai_with_org():
