@@ -33,22 +33,30 @@ def _changed(obj, attrs) -> bool:
 def _collect(session, flush_context):
     from app.models.artifact import Artifact
     from app.models.ioc import IOC
+    # Keyed on the instance itself (identity-hashed, held until commit): id() can be reused after GC.
     pending = session.info.setdefault(_KEY, {})
     for obj in list(session.new) + list(session.dirty):
         is_new = obj in session.new
         if isinstance(obj, IOC) and (is_new or _changed(obj, ("value", "ioc_type", "tlp"))):
-            pending[("ioc", id(obj))] = (obj.tenant_id, obj.ioc_type, obj.value, obj.tlp)
+            pending[obj] = (obj.tenant_id, obj.ioc_type, obj.value, obj.tlp)
         elif isinstance(obj, Artifact) and (is_new or _changed(obj, ("value", "artifact_type"))):
             atype = getattr(obj.artifact_type, "value", obj.artifact_type)
-            pending[("art", id(obj))] = (obj.tenant_id, atype, obj.value, None)
+            pending[obj] = (obj.tenant_id, atype, obj.value, None)
 
 
 @event.listens_for(Session, "after_commit")
 def _flush_queue(session):
+    if session.in_nested_transaction():
+        return  # a released savepoint is not durable yet; wait for the outer commit
     for tenant_id, raw_type, value, tlp in session.info.pop(_KEY, {}).values():
         enqueue(tenant_id, raw_type, value, tlp)
 
 
-@event.listens_for(Session, "after_rollback")
-def _clear(session):
-    session.info.pop(_KEY, None)
+@event.listens_for(Session, "after_transaction_end")
+def _clear(session, transaction):
+    # Only the outermost transaction ending drops the queue. After a commit _flush_queue has
+    # already popped it; after a rollback (or close) nothing must be enqueued. A savepoint
+    # rollback keeps everything collected so far (items from inside it may still be enqueued;
+    # the task re-normalises and re-gates them, so that is harmless).
+    if transaction.parent is None:
+        session.info.pop(_KEY, None)

@@ -63,57 +63,93 @@ async def _run(db, tenant_id, itype, value, s, sources, force, attempt, limiter,
     out = {}
     if s.key_error:
         for name in SOURCE_KEY:
-            if s.sources.get(name, True) and (sources is None or name in sources):
-                await upsert_result(db, tenant_id, itype, value, name, status="error", error=_DECRYPT_MSG)
-                out[name] = "error"
-                logger.info(_LOG, tenant_id, name, itype, "error", 0)
+            if (s.sources.get(name, True) and name in REGISTRY and itype in REGISTRY[name].TYPES
+                    and (sources is None or name in sources)):
+                await _guarded(db, tenant_id, itype, value, name, out, secrets_,
+                               _decrypt_error(db, tenant_id, itype, value, name, out))
     skip = should_skip(itype, value, s.internal_domains)
     fresh_after = now - timedelta(hours=s.cache_ttl_hours)
     for name in runnable:
-        if skip:
-            await upsert_result(db, tenant_id, itype, value, name, status="skipped", verdict=None, error=None)
-            out[name] = "skipped"
-            continue
-        if not force:
-            row = (await db.execute(select(EnrichmentResult).where(
-                EnrichmentResult.tenant_id == tenant_id, EnrichmentResult.indicator_type == itype,
-                EnrichmentResult.indicator_value == value, EnrichmentResult.source == name))).scalars().first()
-            if row and row.status in ("ok", "not_found") and row.fetched_at and row.fetched_at > fresh_after:
-                out[name] = row.status
-                continue
-        wait = await limiter.acquire(tenant_id, name, limits_for(name, s))
-        if wait is not None:
-            if wait >= 3600:
-                err = "VirusTotal daily quota reached" if name == "virustotal" else f"{name} quota reached"
-                await upsert_result(db, tenant_id, itype, value, name, status="rate_limited", error=err)
-                out[name] = "rate_limited"
-            elif attempt >= MAX_ATTEMPTS:
-                await upsert_result(db, tenant_id, itype, value, name, status="rate_limited", error=f"{name} rate limit")
-                out[name] = "rate_limited"
-            else:
-                await upsert_result(db, tenant_id, itype, value, name, status="pending", error=None)
-                _retry(tenant_id, itype, value, name, attempt=attempt + 1, countdown=wait)
-                out[name] = "pending"
-            logger.info(_LOG, tenant_id, name, itype, out[name], 0)
-            continue
-        start = time.monotonic()
-        key = s.keys.get(SOURCE_KEY.get(name, ""), None)
-        try:
-            res = await REGISTRY[name].lookup(itype, value, key)
-        except Exception as e:  # a source bug must never block the others
-            res = None
-            err = f"{name} failed ({type(e).__name__})"
-        if res is None:
-            await upsert_result(db, tenant_id, itype, value, name, status="error", error=scrub(err, secrets_))
-            out[name] = "error"
-        else:
-            await upsert_result(db, tenant_id, itype, value, name, status=res.status, verdict=res.verdict,
-                                score=res.score, summary=res.summary, link=res.link,
-                                error=scrub(res.error, secrets_) if res.error else None,
-                                fetched_at=now if res.status in ("ok", "not_found") else None)
-            out[name] = res.status
-        logger.info(_LOG, tenant_id, name, itype, out[name], int((time.monotonic() - start) * 1000))
+        await _guarded(db, tenant_id, itype, value, name, out, secrets_, _one_source(
+            db, tenant_id, itype, value, name, s, out, secrets_, skip, force, fresh_after, attempt, limiter, now))
     return out
+
+
+async def _guarded(db, tenant_id, itype, value, name, out, secrets_, coro):
+    """Per-source isolation: a failure outside lookup() (Redis, DB, broker) only fails this source.
+
+    The step coroutine logs its own ti_lookup line on success; on failure the line is logged here.
+    """
+    start = time.monotonic()
+    try:
+        await coro
+    except Exception as e:
+        out[name] = "error"
+        try:
+            await db.rollback()
+            await upsert_result(db, tenant_id, itype, value, name, status="error",
+                                error=scrub(f"{name} failed ({type(e).__name__})", secrets_))
+        except Exception:
+            pass  # best effort: the row may stay as it was
+        # Still the single ti_lookup line for this source, at WARNING so infrastructure faults stand out.
+        logger.warning(_LOG, tenant_id, name, itype, "error", int((time.monotonic() - start) * 1000))
+
+
+async def _decrypt_error(db, tenant_id, itype, value, name, out):
+    await upsert_result(db, tenant_id, itype, value, name, status="error", error=_DECRYPT_MSG)
+    out[name] = "error"
+    logger.info(_LOG, tenant_id, name, itype, "error", 0)
+
+
+async def _one_source(db, tenant_id, itype, value, name, s, out, secrets_, skip, force, fresh_after,
+                      attempt, limiter, now):
+    if skip:
+        await upsert_result(db, tenant_id, itype, value, name, status="skipped", verdict=None, error=None)
+        out[name] = "skipped"
+        logger.info(_LOG, tenant_id, name, itype, "skipped", 0)
+        return
+    if not force:
+        row = (await db.execute(select(EnrichmentResult).where(
+            EnrichmentResult.tenant_id == tenant_id, EnrichmentResult.indicator_type == itype,
+            EnrichmentResult.indicator_value == value, EnrichmentResult.source == name))).scalars().first()
+        if row and row.status in ("ok", "not_found") and row.fetched_at and row.fetched_at > fresh_after:
+            out[name] = row.status
+            logger.info(_LOG, tenant_id, name, itype, row.status, 0)
+            return
+    wait = await limiter.acquire(tenant_id, name, limits_for(name, s))
+    if wait is not None:
+        if wait >= 3600:
+            err = "VirusTotal daily quota reached" if name == "virustotal" else f"{name} quota reached"
+            await upsert_result(db, tenant_id, itype, value, name, status="rate_limited", error=err)
+            status = "rate_limited"
+        elif attempt >= MAX_ATTEMPTS:
+            await upsert_result(db, tenant_id, itype, value, name, status="rate_limited", error=f"{name} rate limit")
+            status = "rate_limited"
+        else:
+            await upsert_result(db, tenant_id, itype, value, name, status="pending", error=None)
+            _retry(tenant_id, itype, value, name, attempt=attempt + 1, countdown=wait)
+            status = "pending"
+        out[name] = status
+        logger.info(_LOG, tenant_id, name, itype, status, 0)
+        return
+    start = time.monotonic()
+    key = s.keys.get(SOURCE_KEY.get(name, ""), None)
+    try:
+        res = await REGISTRY[name].lookup(itype, value, key)
+    except Exception as e:  # a source bug must never block the others
+        res = None
+        err = f"{name} failed ({type(e).__name__})"
+    if res is None:
+        await upsert_result(db, tenant_id, itype, value, name, status="error", error=scrub(err, secrets_))
+        status = "error"
+    else:
+        await upsert_result(db, tenant_id, itype, value, name, status=res.status, verdict=res.verdict,
+                            score=res.score, summary=res.summary, link=res.link,
+                            error=scrub(res.error, secrets_) if res.error else None,
+                            fetched_at=now if res.status in ("ok", "not_found") else None)
+        status = res.status
+    out[name] = status
+    logger.info(_LOG, tenant_id, name, itype, status, int((time.monotonic() - start) * 1000))
 
 
 class _RedisLock:

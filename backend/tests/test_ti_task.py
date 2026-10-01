@@ -61,6 +61,10 @@ def patch_world(monkeypatch, sources, settings=None, delays=None):
     monkeypatch.setattr(task, "_retry", lambda *a, **k: (delays if delays is not None else []).append((a, k)))
 
 
+def ti_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.name == "app.tasks.enrichment"]
+
+
 async def rows(tid):
     async with AsyncSessionLocal() as db:
         return {r.source: r for r in (await db.execute(select(EnrichmentResult).where(
@@ -86,13 +90,17 @@ async def test_sources_independent_and_logged(tenant, monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
-async def test_cache_fresh_skips_and_force_refreshes(tenant, monkeypatch):
+async def test_cache_fresh_skips_and_force_refreshes(tenant, monkeypatch, caplog):
     src = FakeSource("rdap", {"domain"}, LookupResult(status="ok", verdict="unknown"))
     patch_world(monkeypatch, [src])
+    caplog.set_level(logging.INFO, logger="app.tasks.enrichment")
     async with AsyncSessionLocal() as db:
         await task.run_enrichment(db, tenant, "domain", "example.com", limiter=FakeLimiter(), now=NOW)
+        caplog.clear()
         await task.run_enrichment(db, tenant, "domain", "example.com", limiter=FakeLimiter(), now=NOW + timedelta(hours=1))
         assert src.calls == 1
+        lines = ti_lines(caplog)
+        assert len(lines) == 1 and "source=rdap" in lines[0] and "outcome=ok duration_ms=0" in lines[0]
         await task.run_enrichment(db, tenant, "domain", "example.com", limiter=FakeLimiter(), now=NOW + timedelta(hours=25))
         assert src.calls == 2
         await task.run_enrichment(db, tenant, "domain", "example.com", force=True, limiter=FakeLimiter(), now=NOW + timedelta(hours=25))
@@ -100,12 +108,16 @@ async def test_cache_fresh_skips_and_force_refreshes(tenant, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_private_ip_skipped_without_call(tenant, monkeypatch):
+async def test_private_ip_skipped_without_call(tenant, monkeypatch, caplog):
     src = FakeSource("rdap", {"ip"}, LookupResult(status="ok"))
     patch_world(monkeypatch, [src])
+    caplog.set_level(logging.INFO, logger="app.tasks.enrichment")
     async with AsyncSessionLocal() as db:
         out = await task.run_enrichment(db, tenant, "ip", "10.0.0.1", limiter=FakeLimiter(), now=NOW)
     assert out == {"rdap": "skipped"} and src.calls == 0
+    lines = ti_lines(caplog)
+    assert len(lines) == 1 and "source=rdap" in lines[0] and "outcome=skipped duration_ms=0" in lines[0]
+    assert not any("10.0.0.1" in l for l in lines)
 
 
 @pytest.mark.asyncio
@@ -136,12 +148,39 @@ async def test_retry_attempt_cap(tenant, monkeypatch):
 @pytest.mark.asyncio
 async def test_key_decrypt_failure_marks_keyed_sources(tenant, monkeypatch):
     rd = FakeSource("rdap", {"domain"}, LookupResult(status="ok", verdict="unknown"))
-    patch_world(monkeypatch, [rd], EnrichmentSettings(sources={"rdap": True, "virustotal": True}, key_error=True))
+    vt = FakeSource("virustotal", {"domain", "ip"})
+    tf = FakeSource("threatfox", {"ip"})          # keyed + enabled, but does not handle domains
+    uh = FakeSource("urlhaus", {"domain"})        # keyed + supports domains, but disabled
+    patch_world(monkeypatch, [rd, vt, tf, uh], EnrichmentSettings(
+        sources={"rdap": True, "virustotal": True, "threatfox": True, "urlhaus": False}, key_error=True))
     monkeypatch.setattr(task, "runnable_sources", lambda s: ["rdap"])
     async with AsyncSessionLocal() as db:
         out = await task.run_enrichment(db, tenant, "domain", "example.com", limiter=FakeLimiter(), now=NOW)
-    assert out["virustotal"] == "error" and out["rdap"] == "ok"
-    assert "re-enter in Integrations" in (await rows(tenant))["virustotal"].error
+    assert out == {"virustotal": "error", "rdap": "ok"}
+    rs = await rows(tenant)
+    assert "re-enter in Integrations" in rs["virustotal"].error
+    assert "threatfox" not in rs and "urlhaus" not in rs and vt.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_one_source_failing_outside_lookup_does_not_stop_others(tenant, monkeypatch, caplog):
+    a = FakeSource("rdap", {"domain"}, LookupResult(status="ok", verdict="unknown"))
+    b = FakeSource("crtsh", {"domain"}, LookupResult(status="ok", verdict="unknown"))
+    patch_world(monkeypatch, [a, b])
+
+    class BoomLimiter:
+        async def acquire(self, tid, source, limits):
+            if source == "rdap":
+                raise ConnectionError("redis down")
+            return None
+    caplog.set_level(logging.INFO, logger="app.tasks.enrichment")
+    async with AsyncSessionLocal() as db:
+        out = await task.run_enrichment(db, tenant, "domain", "example.com", limiter=BoomLimiter(), now=NOW)
+    assert out == {"rdap": "error", "crtsh": "ok"} and a.calls == 0 and b.calls == 1
+    rs = await rows(tenant)
+    assert rs["rdap"].status == "error" and rs["crtsh"].status == "ok"
+    lines = ti_lines(caplog)
+    assert sorted(l.split()[2] for l in lines) == ["source=crtsh", "source=rdap"]
 
 
 @pytest.mark.asyncio
