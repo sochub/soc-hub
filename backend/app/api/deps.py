@@ -1,7 +1,8 @@
 from typing import Optional
 from fastapi import Depends, HTTPException, Query, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -33,7 +34,7 @@ async def get_current_user(
         token_data = user_schema.TokenData(
             email=email, active_tenant_id=payload.get("active_tenant_id")
         )
-    except JWTError:
+    except PyJWTError:
         raise credentials_exception
 
     result = await db.execute(
