@@ -11,6 +11,8 @@ import CaseTasks from './CaseTasks';
 import TriagePanel from './TriagePanel';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
+import EnrichmentPanel from '../enrichment/EnrichmentPanel';
+import { useCanRun } from '../enrichment/useCanRun';
 
 const ARTIFACT_ICONS: Record<string, any> = {
     hash: FileText,
@@ -27,6 +29,8 @@ export default function CaseDetail() {
     const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState<'timeline' | 'tasks' | 'artifacts' | 'network' | 'audit' | 'automation'>('timeline');
     const [showArtifactModal, setShowArtifactModal] = useState(false);
+    const [intelOpen, setIntelOpen] = useState<number | null>(null);
+    const canRunIntel = useCanRun();
     const [newArtifact, setNewArtifact] = useState({ type: 'hash', value: '' });
     const [showEditModal, setShowEditModal] = useState(false);
 
@@ -462,6 +466,9 @@ export default function CaseDetail() {
                                                             <p className="text-xs text-zinc-400 mt-2">
                                                                 Added {new Date(artifact.created_at).toLocaleDateString()}
                                                             </p>
+                                                            <button onClick={() => setIntelOpen(intelOpen === artifact.id ? null : artifact.id)}
+                                                                aria-expanded={intelOpen === artifact.id} className="mt-2 text-xs text-accent-600 hover:underline">Intel</button>
+                                                            {intelOpen === artifact.id && <div className="mt-2"><EnrichmentPanel kind="artifact" id={artifact.id} canRun={canRunIntel} /></div>}
                                                         </div>
                                                         <button
                                                             onClick={() => {

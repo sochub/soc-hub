@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { AlertOctagon, Plus, Trash2, X } from 'lucide-react';
+import { AlertOctagon, ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
 import type { IOC } from '../../types';
+import EnrichmentPanel from '../enrichment/EnrichmentPanel';
+import { useCanRun } from '../enrichment/useCanRun';
+
+const VERDICT_DOT: Record<string, string> = { malicious: 'bg-red-600', suspicious: 'bg-amber-500', harmless: 'bg-green-600' };
 
 const IOC_TYPES = ['ip_address', 'domain', 'url', 'file_hash', 'email', 'registry_key', 'mutex', 'user_agent', 'other'];
 const THREAT_LEVELS = ['critical', 'high', 'medium', 'low', 'info'];
@@ -57,6 +61,8 @@ export default function IOCList() {
     const queryClient = useQueryClient();
     const [showModal, setShowModal] = useState(false);
     const [form, setForm] = useState(defaultForm);
+    const [openId, setOpenId] = useState<number | null>(null);
+    const canRun = useCanRun();
 
     const { data: iocs, isLoading } = useQuery<IOC[]>({
         queryKey: ['iocs'],
@@ -125,6 +131,7 @@ export default function IOCList() {
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-zinc-200 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                                    <th className="px-2 py-3 w-8"></th>
                                     <th className="px-4 py-3 text-left">Type</th>
                                     <th className="px-4 py-3 text-left">Value</th>
                                     <th className="px-4 py-3 text-left">Threat Level</th>
@@ -138,13 +145,22 @@ export default function IOCList() {
                             </thead>
                             <tbody className="divide-y divide-zinc-200">
                                 {iocs.map((ioc) => (
-                                    <tr key={ioc.id} className="hover:bg-white transition-colors group">
+                                    <Fragment key={ioc.id}>
+                                    <tr className="hover:bg-white transition-colors group">
+                                        <td className="px-2 py-3">
+                                            <button onClick={() => setOpenId(openId === ioc.id ? null : ioc.id)} className="text-zinc-400 hover:text-zinc-700" title="Threat intel" aria-expanded={openId === ioc.id}>
+                                                {openId === ioc.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                            </button>
+                                        </td>
                                         <td className="px-4 py-3">
                                             <span className="font-mono text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded">
                                                 {ioc.ioc_type.replace('_', ' ')}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 font-mono text-zinc-800 max-w-[200px] truncate" title={ioc.value}>
+                                            {ioc.enrichment_verdict && VERDICT_DOT[ioc.enrichment_verdict] && (
+                                                <span title={ioc.enrichment_verdict} className={cn('inline-block w-2 h-2 rounded-full mr-2 align-middle', VERDICT_DOT[ioc.enrichment_verdict])} />
+                                            )}
                                             {ioc.value}
                                         </td>
                                         <td className="px-4 py-3">
@@ -191,6 +207,13 @@ export default function IOCList() {
                                             </button>
                                         </td>
                                     </tr>
+                                    {openId === ioc.id && (
+                                        <tr className="bg-zinc-50">
+                                            <td></td>
+                                            <td colSpan={9} className="px-4 py-3"><EnrichmentPanel kind="ioc" id={ioc.id} canRun={canRun} ioc={ioc} /></td>
+                                        </tr>
+                                    )}
+                                    </Fragment>
                                 ))}
                             </tbody>
                         </table>

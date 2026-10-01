@@ -6,6 +6,7 @@ import { Plus, Trash2, Copy, Check } from 'lucide-react';
 import HttpAllowlistCard from './HttpAllowlistCard';
 import SlackCard from './SlackCard';
 import AIProviderCard from './AIProviderCard';
+import ThreatIntelCard from './ThreatIntelCard';
 
 interface Webhook { id: number; name: string; api_key: string; created_at: string; }
 
@@ -103,6 +104,7 @@ export default function Integrations() {
 
                     {/* key: a tenant switch remounts the card so an unsaved draft never leaks across tenants */}
                     <AIProviderCard key={me?.active_tenant_id ?? 'none'} />
+                    <ThreatIntelCard key={me?.active_tenant_id ?? 'none'} />
 
                     <SlackCard />
 
