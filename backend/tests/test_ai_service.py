@@ -159,3 +159,11 @@ def test_triage_task_passes_triage_tenant(monkeypatch):
     run(triage_task._run_with_session(9))
     assert seen == [42]
     assert triage_row.status == "failed"
+
+
+def test_tenant_id_is_required_keyword():
+    with pytest.raises(TypeError):
+        AIService()
+    with pytest.raises(TypeError):
+        AIService(5)
+    assert AIService(tenant_id=None).tenant_id is None  # deployment-only use is explicit

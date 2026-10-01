@@ -138,6 +138,33 @@ async def _scenario(monkeypatch, caplog, tested):
                 assert r.status_code == 200 and r.json()["ok"] is True, f"f2 {r.text}"
                 assert (tested[-1].provider, tested[-1].model, tested[-1].source) == ("ollama", "llama3.1", "tenant"), "f2 cfg"
 
+                # f3) a changed api_base never carries the stored key over (PUT and test-with-body)
+                oc = {"provider": "openai_compatible", "model": "m", "api_base": "http://127.0.0.1:8000/v1"}
+                r = await call("PUT", URL, "save", "updated", json={**oc, "api_key": KEY})
+                assert r.status_code == 200 and r.json()["secrets_set"]["api_key"] is True, f"f3 put {r.text}"
+                r = await call("POST", URL + "/test", "test", "ok", json=oc)
+                assert tested[-1].secrets.get("api_key") == KEY, "f3 same base keeps key"
+                moved = {**oc, "api_base": "http://127.0.0.1:9000/v1"}
+                r = await call("POST", URL + "/test", "test", "ok", json=moved)
+                assert r.status_code == 200 and KEY not in json.dumps(tested[-1].secrets), "f3 key sent to new base"
+                r = await call("PUT", URL, "save", "updated", json=moved)
+                assert r.status_code == 200 and r.json()["secrets_set"]["api_key"] is False, f"f3 put moved {r.text}"
+
+                # f4) api_base with userinfo is rejected at save and test
+                creds_url = {**oc, "api_base": "http://user:pw@127.0.0.1:8000/v1"}
+                r = await call("PUT", URL, json=creds_url)
+                assert r.status_code == 422, f"f4 put {r.status_code}"
+                n = len(tested)
+                r = await call("POST", URL + "/test", json=creds_url)
+                assert r.status_code == 422 and len(tested) == n, f"f4 test {r.status_code}"
+
+                # f5) region / project / location must be simple slugs
+                for bad in ({"provider": "bedrock", "model": "m", "region": "us-east-1.evil.com", "auth_mode": "role"},
+                            {"provider": "vertex", "model": "m", "project": "P/../x", "location": "us-central1"},
+                            {"provider": "vertex", "model": "m", "project": "proj", "location": "us central1"}):
+                    r = await call("PUT", URL, json=bad)
+                    assert r.status_code == 422, f"f5 {bad} {r.status_code}"
+
                 # g0) bedrock keys -> role drops the stored access keys
                 bed = {"provider": "bedrock", "model": "anthropic.claude-3", "region": "us-east-1"}
                 r = await call("PUT", URL, "save", "updated",

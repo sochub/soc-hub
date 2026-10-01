@@ -93,7 +93,7 @@ async def _run_with_session(triage_id: int) -> None:
 
         try:
             indicator_values = await _indicator_values(db, triage.tenant_id, case.id)
-            generated = await AIService(triage.tenant_id).generate_triage({
+            generated = await AIService(tenant_id=triage.tenant_id).generate_triage({
                 "title": case.title,
                 "description": case.description,
                 "tags": case.tags or [],

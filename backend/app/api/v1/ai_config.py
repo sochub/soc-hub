@@ -71,10 +71,15 @@ def _allowed_secrets(provider: str, auth_mode: Optional[str]) -> frozenset:
     return SECRET_FIELDS[provider]
 
 
+def _api_base(body: AIConfigIn) -> Optional[str]:
+    return ((body.api_base or "").strip() or None) if body.provider in SSRF_GUARDED else None
+
+
 def _merge_secrets(body: AIConfigIn, row: Optional[TenantAIConfig]) -> dict:
-    # Stored secrets carry over only for the same provider, and only the fields valid for the new
-    # provider/auth_mode — never reuse one vendor's key for another.
-    stored = _stored_secrets(row) if row and row.provider == body.provider else {}
+    # Stored secrets carry over only for the same provider and base URL, and only the fields valid for
+    # the new provider/auth_mode — never reuse one vendor's key for another, nor send it to a new host.
+    same = row and row.provider == body.provider and row.api_base == _api_base(body)
+    stored = _stored_secrets(row) if same else {}
     allowed = _allowed_secrets(body.provider, body.auth_mode)
     merged = {k: v for k, v in stored.items() if k in allowed}
     for f in allowed:
@@ -86,7 +91,7 @@ def _merge_secrets(body: AIConfigIn, row: Optional[TenantAIConfig]) -> dict:
 
 def _candidate(body: AIConfigIn, row, merged: dict, tenant_id: int) -> ProviderConfig:
     return ProviderConfig(provider=body.provider, model=body.model.strip(), source="tenant", tenant_id=tenant_id,
-                          api_base=((body.api_base or "").strip() or None) if body.provider in SSRF_GUARDED else None, region=body.region, project=body.project,
+                          api_base=_api_base(body), region=body.region, project=body.project,
                           location=body.location, auth_mode=body.auth_mode if body.provider == "bedrock" else None,
                           role_arn=body.role_arn, external_id=(row.external_id if row else None), secrets=merged)
 

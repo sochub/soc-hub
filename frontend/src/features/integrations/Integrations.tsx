@@ -101,7 +101,8 @@ export default function Integrations() {
   -d '{"external_id":"siem-123","title":"Suspicious login","payload":{"ip":"1.2.3.4"}}'`}</pre>
                     </div>
 
-                    <AIProviderCard />
+                    {/* key: a tenant switch remounts the card so an unsaved draft never leaks across tenants */}
+                    <AIProviderCard key={me?.active_tenant_id ?? 'none'} />
 
                     <SlackCard />
 

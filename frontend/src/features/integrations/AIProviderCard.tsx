@@ -107,8 +107,9 @@ export default function AIProviderCard() {
 
     if (!data) return null;
     const saved = hasSavedRow(data);
-    // Stored secrets only carry over when the provider is unchanged.
-    const secretIsSet = (f: SecretField) => saved && provider === data.provider && data.secrets_set[f];
+    // Stored secrets only carry over when the provider and base URL are unchanged.
+    const secretIsSet = (f: SecretField) => saved && provider === data.provider && data.secrets_set[f]
+        && (!spec.plain.includes('api_base') || (form.api_base || null) === data.api_base);
     const input = 'w-full border border-zinc-300 px-2 py-1.5 text-sm';
     const readOnly = !data.override_allowed;
     const status = data.source === 'tenant' ? `this tenant · ${data.provider}`
