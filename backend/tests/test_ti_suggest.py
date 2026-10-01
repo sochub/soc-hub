@@ -33,3 +33,11 @@ def test_tags_dedup_cap_and_order():
 
 def test_ignores_non_ok_results():
     assert suggest("low", [], [r("virustotal", "malicious", {"malicious": 50}, status="error")]) is None
+
+
+def test_junk_types_do_not_crash():
+    res = [{"status": "ok", "verdict": "malicious", "summary": {"malicious": "lots", "popular_threat_label": 5}},
+           {"source": "threatfox", "status": "ok", "verdict": "malicious", "summary": {"malware_printable": 7}},
+           {"source": "urlhaus", "status": "ok", "verdict": None, "summary": "oops"},
+           {"source": "virustotal", "status": "ok", "verdict": "malicious", "summary": {"malicious": "x", "popular_threat_label": ["a"]}}]
+    assert suggest("low", [], res) == {"threat_level": "high", "tags": []}

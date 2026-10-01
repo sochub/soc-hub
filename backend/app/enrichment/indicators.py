@@ -1,6 +1,7 @@
 """Pure indicator helpers: normalisation, TLP gating and never-send-out rules."""
 import ipaddress
 import re
+import socket
 from typing import Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
@@ -12,7 +13,9 @@ _HASH_RX = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$")
 
 def _domain(v: str) -> Optional[str]:
     v = v.strip().lower().rstrip(".")
-    return v if _DOMAIN_RX.match(v) else None
+    if not _DOMAIN_RX.match(v) or not re.search(r"[a-z]", v.rsplit(".", 1)[-1]):
+        return None  # all-digit TLD would be a disguised IPv4
+    return v
 
 
 def normalise(raw_type: str, value: str) -> Optional[Tuple[str, str]]:
@@ -31,8 +34,12 @@ def normalise(raw_type: str, value: str) -> Optional[Tuple[str, str]]:
     if itype == "file_hash":
         h = v.lower()
         return (itype, h) if _HASH_RX.match(h) else None
-    parts = urlsplit(v)
-    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+    try:
+        parts = urlsplit(v)
+        host = parts.hostname
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("http", "https") or not host:
         return None
     netloc = parts.netloc.rsplit("@", 1)[-1].lower()
     return itype, urlunsplit((parts.scheme.lower(), netloc, parts.path, parts.query, ""))
@@ -57,10 +64,28 @@ def should_skip(itype: str, value: str, internal_domains) -> bool:
     if itype == "domain":
         return _under(value, internal_domains)
     if itype == "url":
-        host = urlsplit(value).hostname or ""
         try:
-            ip = ipaddress.ip_address(host)
-            return not ip.is_global or ip.is_multicast
+            host = (urlsplit(value).hostname or "").rstrip(".")
         except ValueError:
-            return _under(host, internal_domains)
+            return True
+        return _host_blocked(host, internal_domains)
     return False
+
+
+def _non_global(ip) -> bool:
+    return not ip.is_global or ip.is_multicast
+
+
+def _host_blocked(host: str, internal_domains) -> bool:
+    try:
+        return _non_global(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    if re.fullmatch(r"[0-9a-fA-FxX.]+", host):
+        try:  # numeric/hex/octal shorthand such as 0x7f.1, 127.1, 2130706433
+            return _non_global(ipaddress.ip_address(socket.inet_ntoa(socket.inet_aton(host))))
+        except OSError:
+            pass
+    if not host or "." not in host:
+        return True  # single-label hosts (localhost, intranet) are internal
+    return _under(host, internal_domains)

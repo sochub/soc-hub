@@ -8,10 +8,22 @@ def _rank(level: str) -> int:
     return LEVELS.index(level) if level in LEVELS else LEVELS.index("medium")
 
 
+def _summary(by: dict, source: str) -> dict:
+    s = by.get(source, {}).get("summary")
+    return s if isinstance(s, dict) else {}
+
+
+def _str(v) -> Optional[str]:
+    return v.lower() if isinstance(v, str) and v else None
+
+
 def suggest(current_level: str, current_tags: List[str], results: List[dict]) -> Optional[dict]:
     ok = [r for r in results if r.get("status") == "ok"]
-    by = {r["source"]: r for r in ok}
-    vt_mal = int((by.get("virustotal", {}).get("summary") or {}).get("malicious") or 0)
+    by = {r.get("source"): r for r in ok}
+    try:
+        vt_mal = int(_summary(by, "virustotal").get("malicious") or 0)
+    except (TypeError, ValueError):
+        vt_mal = 0
     abuse_hit = any(by.get(s, {}).get("verdict") == "malicious" for s in ("urlhaus", "threatfox"))
     verdicts = {r.get("verdict") for r in ok}
     level = None
@@ -26,15 +38,15 @@ def suggest(current_level: str, current_tags: List[str], results: List[dict]) ->
 
     have = {t.lower() for t in current_tags or []}
     candidates = []
-    tf = (by.get("threatfox", {}).get("summary") or {}).get("malware_printable")
+    tf = _str(_summary(by, "threatfox").get("malware_printable"))
     if tf:
-        candidates.append(f"malware:{tf.lower()}")
-    uh = (by.get("urlhaus", {}).get("summary") or {}).get("threat")
+        candidates.append(f"malware:{tf}")
+    uh = _str(_summary(by, "urlhaus").get("threat"))
     if uh:
-        candidates.append(f"urlhaus:{uh.lower()}")
-    vt_label = (by.get("virustotal", {}).get("summary") or {}).get("popular_threat_label")
+        candidates.append(f"urlhaus:{uh}")
+    vt_label = _str(_summary(by, "virustotal").get("popular_threat_label"))
     if vt_label:
-        candidates.append(vt_label.lower())
+        candidates.append(vt_label)
     tags = []
     for t in candidates:
         if t not in have and t not in tags:

@@ -9,6 +9,7 @@ from app.enrichment.indicators import normalise, tlp_allows, should_skip
     ("url", "HTTP://Example.COM/a/B?x=1#frag", ("url", "http://example.com/a/B?x=1")),
     ("file_hash", "D41D8CD98F00B204E9800998ECF8427E", ("file_hash", "d41d8cd98f00b204e9800998ecf8427e")),
     ("file_hash", "a" * 64, ("file_hash", "a" * 64)),
+    ("url", "http://u:p@Example.com/a", ("url", "http://example.com/a")),
 ])
 def test_normalise_ok(raw_type, value, expected):
     assert normalise(raw_type, value) == expected
@@ -18,6 +19,7 @@ def test_normalise_ok(raw_type, value, expected):
     ("ip_address", "999.1.1.1"), ("ip", ""), ("file_hash", "not-a-hash"), ("file_hash", "abc"),
     ("domain", "no spaces.com"), ("domain", ""), ("url", "notaurl"), ("url", "ftp://x.com/a"),
     ("email", "a@b.com"), ("registry_key", "HKLM\\x"), ("mutex", "m"), ("other", "x"),
+    ("url", "http://[abc/"), ("domain", "10.0.0.11"), ("domain", "1.2.3.4"),
 ])
 def test_normalise_rejects(raw_type, value):
     assert normalise(raw_type, value) is None
@@ -42,3 +44,15 @@ def test_should_not_skip_public():
     assert not should_skip("ip", "8.8.8.8", ["corp.local"])
     assert not should_skip("domain", "notcorp.local.evil.com", ["corp.local"])
     assert not should_skip("file_hash", "a" * 32, ["corp.local"])
+
+
+@pytest.mark.parametrize("url", [
+    "http://0x7f.1/", "http://2130706433/", "http://127.1/", "http://017700000001/",
+    "http://localhost/x", "http://intranet/x", "http://[::1]/",
+])
+def test_should_skip_disguised_url_hosts(url):
+    assert should_skip("url", url, ["corp.local"])
+
+
+def test_should_not_skip_public_url():
+    assert not should_skip("url", "http://8.8.8.8/", ["corp.local"])
