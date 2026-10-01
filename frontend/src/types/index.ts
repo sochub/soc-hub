@@ -234,4 +234,18 @@ export interface IOC {
   description: string | null;
   created_at: string;
   created_by: number | null;
+  enrichment_verdict?: string | null;
 }
+
+export type EnrichmentResultRow = {
+  source: 'virustotal' | 'urlhaus' | 'threatfox' | 'rdap' | 'crtsh';
+  status: 'pending' | 'ok' | 'not_found' | 'error' | 'rate_limited' | 'skipped';
+  verdict: 'malicious' | 'suspicious' | 'harmless' | 'unknown' | null;
+  score: string | null; summary: Record<string, unknown>; link: string | null;
+  error: string | null; fetched_at: string | null; stalled: boolean;
+};
+export type EnrichmentView = {
+  enrichable: boolean; indicator_type: string | null; indicator_value: string | null;
+  effective_tlp: string | null; auto: boolean; results: EnrichmentResultRow[];
+  suggestion: { threat_level: string | null; tags: string[] } | null;
+};

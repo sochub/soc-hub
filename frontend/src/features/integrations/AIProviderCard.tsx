@@ -53,9 +53,11 @@ const hasSavedRow = (d: AIConfig) =>
     || [d.api_base, d.region, d.project, d.location, d.role_arn, d.auth_mode].some((v) => v != null)
     || d.provider !== d.deployment.provider || d.model !== d.deployment.model;
 
-export default function AIProviderCard() {
+export default function AIProviderCard({ tenantId }: { tenantId: number | null }) {
+    // Tenant-scoped key: switching tenants must never show (or save over) another tenant's config.
+    const key = ['ai-config', tenantId];
     const qc = useQueryClient();
-    const { data } = useQuery({ queryKey: ['ai-config'], queryFn: async () => (await api.get('/ai/config')).data as AIConfig });
+    const { data } = useQuery({ queryKey: key, queryFn: async () => (await api.get('/ai/config')).data as AIConfig });
     const [draft, setDraft] = useState<Record<string, FormValue> | null>(null);
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -82,11 +84,11 @@ export default function AIProviderCard() {
     const save = useMutation({
         mutationFn: async () => (await api.put('/ai/config', body())).data as AIConfig,
         onSuccess: (r) => {
-            qc.setQueryData(['ai-config'], r); setDraft(null); qc.invalidateQueries({ queryKey: ['ai-info'] });
+            qc.setQueryData(key, r); setDraft(null); qc.invalidateQueries({ queryKey: ['ai-info'] });
             setMsg({ ok: true, text: r.enabled ? 'Saved' : 'Saved (disabled until the role ARN is set)' });
         },
         onError: (e) => {
-            if (isAxiosError(e) && e.response?.status === 409) qc.invalidateQueries({ queryKey: ['ai-config'] });
+            if (isAxiosError(e) && e.response?.status === 409) qc.invalidateQueries({ queryKey: key });
             setMsg({ ok: false, text: errText(e, 'Save failed') });
         },
     });
@@ -99,7 +101,7 @@ export default function AIProviderCard() {
     const reset = useMutation({
         mutationFn: async () => api.delete('/ai/config'),
         onSuccess: () => {
-            setDraft(null); qc.invalidateQueries({ queryKey: ['ai-config'] }); qc.invalidateQueries({ queryKey: ['ai-info'] });
+            setDraft(null); qc.invalidateQueries({ queryKey: key }); qc.invalidateQueries({ queryKey: ['ai-info'] });
             setMsg({ ok: true, text: 'Reverted to the deployment default' });
         },
         onError: (e) => setMsg({ ok: false, text: errText(e, 'Reset failed') }),
