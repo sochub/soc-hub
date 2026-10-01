@@ -21,3 +21,5 @@ from app.models.sla_policy import SLAPolicy  # noqa: F401
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep  # noqa: F401
 from app.models.slack_integration import SlackIntegration  # noqa: F401
 from app.models.tenant_ai_config import TenantAIConfig  # noqa: F401
+from app.models.tenant_enrichment_config import TenantEnrichmentConfig  # noqa: F401
+from app.models.enrichment_result import EnrichmentResult  # noqa: F401
