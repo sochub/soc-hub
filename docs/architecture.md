@@ -28,7 +28,8 @@
 | `api/deps.py` | Auth dependencies: current user, active-tenant resolution, role checks |
 | `models/` | SQLAlchemy ORM models |
 | `schemas/` | Pydantic request/response models |
-| `services/` | AI (Ollama), SAML, email, Jira integrations |
+| `ai/` | Provider-agnostic LLM layer (LiteLLM): providers, tenant config, AWS credentials |
+| `services/` | AI service (copilot/triage prompts), SAML, email, Jira integrations |
 | `utils/` | Audit logging, role resolution, copilot heuristics |
 | `scripts/` | CLI: create super-admin, seed incidents, seed playbooks |
 | `alembic/` | Database migrations |
