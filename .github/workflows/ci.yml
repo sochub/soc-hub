@@ -31,9 +31,9 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://user:password@localhost:5432/sicms
       REDIS_URL: redis://:ci-redis-pass@localhost:6379/0
       SECRET_KEY: ci-only-secret-key-not-used-anywhere-else-0123456789
-      # CI uses the dev Postgres password; DEBUG turns the production
+      # CI uses throwaway credentials; ENVIRONMENT=test turns the production
       # credential guard (app/core/config.py) into warnings.
-      DEBUG: "true"
+      ENVIRONMENT: test
     steps:
       - uses: actions/checkout@v7
       # Service containers can't take a command, so start Redis with

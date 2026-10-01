@@ -8,19 +8,21 @@
 ## 1. Configure environment
 
 ```bash
-# docker-compose variables (Postgres/Redis credentials, DEBUG)
+# docker-compose variables (Postgres/Redis credentials, ENVIRONMENT)
 cp .env.example .env
 # backend settings
 cp backend/.env.example backend/.env
-# Generate a strong SECRET_KEY (required outside DEBUG mode):
+# Generate a strong SECRET_KEY (required when ENVIRONMENT=production):
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 # paste the result into backend/.env as SECRET_KEY=...
 ```
 
-The root `.env` ships with local-development values (`DEBUG=true`, the default
-Postgres password, `REDIS_PASSWORD=devredispass`). For any shared or production
-deployment set `DEBUG=false` and strong `POSTGRES_PASSWORD` / `REDIS_PASSWORD`
-values — the backend refuses to boot otherwise.
+The root `.env.example` ships local-development values: `ENVIRONMENT=development`,
+the default Postgres password and `REDIS_PASSWORD=devredispass`. In
+`development` the backend only **warns** about these weak credentials. For any
+shared or production deployment set `ENVIRONMENT=production` (also the default
+when unset) with a strong `SECRET_KEY`, `POSTGRES_PASSWORD` and `REDIS_PASSWORD`;
+in production the backend refuses to boot with any of the dev defaults.
 
 See [configuration.md](configuration.md) for every variable.
 

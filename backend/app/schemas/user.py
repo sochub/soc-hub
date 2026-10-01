@@ -1,6 +1,7 @@
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr, field_validator
 from app.core.passwords import validate_password_strength
+from app.utils.emails import normalize_email
 from app.models.user import UserRole
 from app.schemas.membership import MembershipOut
 
@@ -23,6 +24,11 @@ class UserCreate(BaseModel):
     is_active: bool = True
     password: str
     tenant_id: Optional[int] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalize_email(cls, v):
+        return normalize_email(v) if isinstance(v, str) else v
 
     @field_validator("password")
     @classmethod

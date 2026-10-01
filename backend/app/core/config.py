@@ -1,10 +1,10 @@
 import warnings
 
-from typing import List
+from typing import List, Literal
 from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 # Placeholder values shipped in .env.example / docker-compose that must never
 # reach a production deployment.
@@ -15,13 +15,30 @@ _WEAK_SECRET_KEYS = {
 _MIN_SECRET_KEY_LENGTH = 32
 # The docker-compose local-dev Postgres password; never acceptable in production.
 _WEAK_DB_PASSWORDS = {"password"}
+# Public/placeholder Redis passwords (the compose dev default is "devredispass").
+_WEAK_REDIS_PASSWORDS = {"devredispass", "changeme", "redis"}
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sicms"
     SECRET_KEY: str = "changeme"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # Security mode. The credential guard below is enforced ONLY in
+    # "production" (the default, so a forgotten setting fails closed);
+    # "development"/"test" downgrade it to warnings.
+    ENVIRONMENT: Literal["production", "development", "test"] = "production"
+    # Logging only — has no effect on security checks.
     DEBUG: bool = False
+    # Log every SQL statement (SQLAlchemy echo).
+    SQL_ECHO: bool = False
+
+    # Login brute-force throttling (see app.core.login_throttle). Counts
+    # attempts per fixed window. All must be >= 1 (0 refuses to boot).
+    LOGIN_WINDOW_SECONDS: int = Field(900, ge=1)
+    LOGIN_MAX_PER_EMAIL_IP: int = Field(5, ge=1)   # hard lock for one (email, client IP)
+    LOGIN_MAX_PER_EMAIL: int = Field(30, ge=1)     # global cap per email (distributed guessing)
+    LOGIN_MAX_PER_IP: int = Field(20, ge=1)        # per client IP, failures only
 
     REDIS_URL: str = "redis://localhost:6379"
 
@@ -69,11 +86,12 @@ class Settings(BaseSettings):
     def validate_secret_key(self) -> "Settings":
         """Refuse to boot with weak secrets in production.
 
-        "Production" means DEBUG is off. A predictable HS256 key lets anyone
-        forge tokens for any user/role, an unauthenticated Redis lets anyone
-        who reaches it inject Celery tasks, and the compose default DB password
-        is public — so outside DEBUG mode each is a hard failure. In DEBUG we
-        only warn, to keep local development frictionless.
+        Enforced only when ENVIRONMENT == "production" (DEBUG is irrelevant).
+        A predictable HS256 key lets anyone forge tokens for any user/role, an
+        unauthenticated (or default-password) Redis lets anyone who reaches it
+        inject Celery tasks, and the compose default DB password is public — so
+        in production each is a hard failure. Outside production we only warn,
+        to keep local development frictionless.
         """
         problems = []
         if (
@@ -85,21 +103,25 @@ class Settings(BaseSettings):
                 f"{_MIN_SECRET_KEY_LENGTH} characters. Generate a strong key, e.g. "
                 "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
             )
-        if not urlsplit(self.REDIS_URL).password:
+        redis_password = urlsplit(self.REDIS_URL).password
+        if not redis_password:
             problems.append(
                 "REDIS_URL has no password. Run Redis with --requirepass and use "
                 "redis://:<password>@host:6379/0."
+            )
+        elif redis_password in _WEAK_REDIS_PASSWORDS:
+            problems.append(
+                "REDIS_URL uses a known default password. Set a strong REDIS_PASSWORD."
             )
         if urlsplit(self.DATABASE_URL).password in _WEAK_DB_PASSWORDS:
             problems.append(
                 "DATABASE_URL uses the local-development default password. Set a "
                 "strong POSTGRES_PASSWORD."
             )
-        for message in problems:
-            if self.DEBUG:
-                warnings.warn(message, stacklevel=2)
-        if problems and not self.DEBUG:
+        if problems and self.ENVIRONMENT == "production":
             raise ValueError(" ".join(problems))
+        for message in problems:
+            warnings.warn(message, stacklevel=2)
         return self
 
     class Config:

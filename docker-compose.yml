@@ -18,7 +18,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-sicms}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
-      - DEBUG=${DEBUG:-false}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
     depends_on:
@@ -97,7 +97,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-sicms}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
-      - DEBUG=${DEBUG:-false}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
     depends_on:

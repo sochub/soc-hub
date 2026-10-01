@@ -46,16 +46,18 @@ async def ingest_alert(
         .returning(Alert.id)
     )).scalar()
     await db.commit()
-    alert = (await db.execute(
+    if inserted_id is not None:
+        alert = (await db.execute(select(Alert).where(Alert.id == inserted_id))).scalars().one()
+        emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
+        return alert
+    # Duplicate: return the existing alert for this natural key.
+    return (await db.execute(
         select(Alert).where(
             Alert.tenant_id == webhook.tenant_id,
             Alert.source == webhook.name,
             Alert.external_id == alert_in.external_id,
         )
     )).scalars().one()
-    if inserted_id is not None:
-        emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
-    return alert
 
 @router.get("/", response_model=List[case_schema.Alert])
 async def read_alerts(

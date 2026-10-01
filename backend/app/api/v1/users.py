@@ -52,7 +52,7 @@ async def create_user(
     if user_in.role == UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=400, detail="Cannot create super admin users through this endpoint.")
 
-    result = await db.execute(select(User).where(User.email == user_in.email))
+    result = await db.execute(select(User).where(func.lower(User.email) == user_in.email))
     if result.scalars().first():
         raise HTTPException(status_code=409, detail="A user with this email already exists.")
 

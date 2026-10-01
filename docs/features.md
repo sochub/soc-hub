@@ -71,9 +71,17 @@ External tools post alerts to `POST /api/v1/alerts/webhook` using a **per-tenant
 `X-API-Key`. The key determines the destination tenant; a leaked key can only ever
 write to its owning tenant.
 
-Ingestion is **idempotent** on `(tenant, source, external_id)`: re-posting an alert
-with the same `external_id` returns the existing alert (HTTP 200) and does not
-re-trigger `alert.ingested` workflows, so senders can safely retry.
+Ingestion is **idempotent** on `(tenant, source, external_id)`, where `source` is
+the webhook's name: re-posting an alert with the same `external_id` returns the
+existing alert (HTTP 200) and does not re-trigger `alert.ingested` workflows, so
+senders can safely retry. Consequences:
+
+- **Renaming a webhook resets the namespace** — after a rename, an `external_id`
+  seen under the old name is accepted as a new alert.
+- **A genuinely re-fired alert that reuses its `external_id`** (e.g. the same
+  detection firing again later) is treated as a duplicate and dropped. Senders
+  that want each firing recorded must make `external_id` unique per firing
+  (e.g. append a timestamp or occurrence id).
 
 ## Single Sign-On (SAML)
 

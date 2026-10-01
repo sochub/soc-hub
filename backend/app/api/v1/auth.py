@@ -51,12 +51,14 @@ async def login_access_token(
     email = form_data.username.strip().lower()
     ip = client_ip(request)
 
-    retry_after = await throttle.retry_after(email, ip)
+    # Reserve the attempt atomically BEFORE checking the password, so parallel
+    # guesses can't all pass a check-then-act race.
+    retry_after = await throttle.reserve(email, ip)
     if retry_after:
         logger.warning("login throttled email=%r ip=%s retry_after=%ss", email[:64], ip, retry_after)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many failed login attempts. Try again later.",
+            detail="Too many login attempts. Try again later.",
             headers={"Retry-After": str(retry_after)},
         )
 
@@ -75,7 +77,6 @@ async def login_access_token(
     elif not user.is_active:
         reason = "inactive user"
     if reason:
-        await throttle.record_failure(email, ip)
         logger.warning("failed login email=%r ip=%s reason=%s", email[:64], ip, reason)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -83,7 +84,7 @@ async def login_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    await throttle.reset(email)
+    await throttle.reset(email, ip)
     active_tenant_id = await _default_active_tenant_id(db, user)
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {

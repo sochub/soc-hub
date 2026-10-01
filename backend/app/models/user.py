@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String
+from sqlalchemy import Boolean, Column, Index, Integer, String, func
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 import enum
@@ -25,6 +25,10 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     # Global super-admin flag. Tenant-scoped roles live on TenantMembership.
     is_super_admin = Column(Boolean, nullable=False, default=False)
+
+    # Case-insensitive uniqueness (emails are also stored lower-cased; see
+    # app.utils.emails.normalize_email).
+    __table_args__ = (Index("uq_users_email_lower", func.lower(email), unique=True),)
 
     memberships = relationship(
         "TenantMembership", back_populates="user", cascade="all, delete-orphan"
