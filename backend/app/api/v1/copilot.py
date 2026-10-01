@@ -234,7 +234,7 @@ async def _create_session_with_briefing(
     context = await _build_full_case_context(db, case_id, tenant_id)
 
     if context:
-        service = AIService()
+        service = AIService(tenant_id)
         welcome_text = await service.generate_welcome_briefing(context)
     else:
         welcome_text = "Investigation session started. Ask me anything about this case."
@@ -265,7 +265,7 @@ async def _create_general_session_with_briefing(
     await db.flush()
 
     context = await _build_general_context(db, tenant_id)
-    service = AIService()
+    service = AIService(tenant_id)
     welcome_text = await service.generate_general_welcome(context)
 
     db.add(CopilotMessage(session_id=session.id, role="assistant", content=welcome_text))
@@ -426,7 +426,7 @@ async def chat_copilot(
     history = [{"role": m.role, "content": m.content} for m in session.messages]
     history.append({"role": "user", "content": chat_in.message})
 
-    service = AIService()
+    service = AIService(tenant_id)
     response_text = await service.chat(history, context, general=general)
 
     # ---- action resolution -------------------------------------------------
@@ -502,7 +502,7 @@ async def analyze_case(
     if not case_data:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    service = AIService()
+    service = AIService(tenant_id)
     analysis = await service.analyze_case(case_data)
 
     return {"analysis": analysis}
