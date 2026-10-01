@@ -4,7 +4,7 @@ from typing import List, Literal, Optional
 from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 # Placeholder values shipped in .env.example / docker-compose that must never
 # reach a production deployment.
@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     VERTEX_LOCATION: Optional[str] = None
     AI_TIMEOUT_SECONDS: float = Field(120, gt=0)
     AI_ALLOW_TENANT_OVERRIDE: bool = True
+
+    @field_validator("AI_PROVIDER", mode="before")
+    @classmethod
+    def _blank_provider_is_none(cls, v):
+        return None if isinstance(v, str) and not v.strip() else v
 
     # SMTP (optional — invitations work without it)
     SMTP_HOST: str | None = None

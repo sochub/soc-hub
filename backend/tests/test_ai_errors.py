@@ -29,3 +29,39 @@ def test_scrub_truncates():
 
 def test_scrub_ignores_blank_secrets():
     assert scrub("hello", ["", None]) == "hello"
+
+
+import pytest
+
+
+@pytest.mark.parametrize("text", [
+    "task-management-system", "risk-assessment", "desk-top-computer", "Bearer token is missing",
+])
+def test_scrub_leaves_benign_text(text):
+    assert scrub(text) == text
+
+
+@pytest.mark.parametrize("text,secret", [
+    ("tok ya29.a0AfH6SMBxABCDEF-ghi_jkl", "a0AfH6SMBx"),
+    ("rt 1//0gABCDEFGHIJKLMNOPQRSTUV", "0gABCDEFGHIJKLMNOPQRSTUV"),
+    ("x-api-key: abcDEF1234567890", "abcDEF1234567890"),
+    ("api_key=abcdef123456", "abcdef123456"),
+    ("aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "wJalrXUtnFEMI"),
+    ("X-Amz-Security-Token=FwoGZXIvYXdzEJr", "FwoGZXIvYXdzEJr"),
+    ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA"),
+    ('{"api_key": "zzzz1234"}', "zzzz1234"),
+])
+def test_scrub_credential_forms(text, secret):
+    assert secret not in scrub(text)
+
+
+def test_scrub_longest_secret_first():
+    out = scrub("abcdefgh and abcdefghijkl", ["abcdefgh", "abcdefghijkl"])
+    assert "ijkl" not in out
+
+
+def test_blank_ai_provider_is_none():
+    from app.core.config import Settings
+    assert Settings(AI_PROVIDER="  ").AI_PROVIDER is None
+    assert Settings(AI_PROVIDER="").AI_PROVIDER is None
+    assert Settings(AI_PROVIDER="openai").AI_PROVIDER == "openai"
