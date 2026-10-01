@@ -1,0 +1,92 @@
+import json
+import pytest
+
+from app.ai.providers import ProviderConfig, ConfigError, build_kwargs, missing_fields, PROVIDERS, SECRET_FIELDS
+
+
+def cfg(provider, **kw):
+    kw.setdefault("model", "m1")
+    kw.setdefault("source", "tenant")
+    return ProviderConfig(provider=provider, **kw)
+
+
+def test_seven_providers():
+    assert set(PROVIDERS) == {"ollama", "openai", "openai_compatible", "anthropic", "gemini", "vertex", "bedrock"}
+    assert set(SECRET_FIELDS) == set(PROVIDERS)
+
+
+def test_ollama():
+    kw = build_kwargs(cfg("ollama", api_base="http://h:11434"))
+    assert kw == {"model": "ollama_chat/m1", "api_base": "http://h:11434"}
+
+
+def test_openai_with_org():
+    kw = build_kwargs(cfg("openai", secrets={"api_key": "k", "organization": "org1"}))
+    assert kw == {"model": "openai/m1", "api_key": "k", "organization": "org1"}
+
+
+def test_openai_compatible_without_key_gets_placeholder():
+    kw = build_kwargs(cfg("openai_compatible", api_base="https://llm.example/v1"))
+    assert kw["model"] == "openai/m1" and kw["api_base"] == "https://llm.example/v1" and kw["api_key"] == "not-needed"
+
+
+def test_anthropic_and_gemini():
+    assert build_kwargs(cfg("anthropic", secrets={"api_key": "a"})) == {"model": "anthropic/m1", "api_key": "a"}
+    assert build_kwargs(cfg("gemini", secrets={"api_key": "g"})) == {"model": "gemini/m1", "api_key": "g"}
+
+
+def test_vertex_tenant_requires_and_passes_json():
+    sa = json.dumps({"type": "service_account", "client_email": "x@y", "private_key": "k"})
+    kw = build_kwargs(cfg("vertex", project="p", location="us-central1", secrets={"service_account_json": sa}))
+    assert kw == {"model": "vertex_ai/m1", "vertex_project": "p", "vertex_location": "us-central1", "vertex_credentials": sa}
+    assert "secrets.service_account_json" in missing_fields(cfg("vertex", project="p", location="l"))
+
+
+def test_vertex_deployment_uses_adc():
+    kw = build_kwargs(cfg("vertex", source="deployment", project="p", location="l"))
+    assert "vertex_credentials" not in kw
+
+
+def test_bedrock_chain_and_creds():
+    assert build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="chain", source="deployment")) == {"model": "bedrock/m1", "aws_region_name": "us-east-1"}
+    kw = build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="role", role_arn="arn:aws:iam::1:role/r"),
+                      aws_creds={"aws_access_key_id": "A", "aws_secret_access_key": "S", "aws_session_token": "T"})
+    assert kw["aws_access_key_id"] == "A" and kw["aws_session_token"] == "T"
+
+
+def test_bedrock_tenant_mode_requirements():
+    assert "role_arn" in missing_fields(cfg("bedrock", region="r", auth_mode="role"))
+    m = missing_fields(cfg("bedrock", region="r", auth_mode="keys"))
+    assert "secrets.access_key_id" in m and "secrets.secret_access_key" in m
+    assert "auth_mode" in missing_fields(cfg("bedrock", region="r", auth_mode="chain"))  # tenants can't use the server chain
+
+
+@pytest.mark.parametrize("provider,extra", [
+    ("ollama", {}), ("openai", {}), ("anthropic", {}), ("gemini", {}), ("openai_compatible", {}),
+    ("vertex", {"project": "p"}), ("bedrock", {}),
+])
+def test_missing_fields_raise(provider, extra):
+    with pytest.raises(ConfigError):
+        build_kwargs(cfg(provider, **extra))
+
+
+def test_model_required():
+    assert "model" in missing_fields(cfg("openai", model="", secrets={"api_key": "k"}))
+
+
+def test_unknown_provider():
+    with pytest.raises(ConfigError):
+        build_kwargs(cfg("azure", secrets={"api_key": "k"}))
+
+
+@pytest.mark.parametrize("model", ["meta-llama/Llama-3-70b", "us.anthropic.claude-3-5-sonnet-20241022-v2:0", "gpt-4o-mini"])
+def test_model_id_passed_verbatim(model):
+    kw = build_kwargs(cfg("openai_compatible", model=model, api_base="https://x/v1"))
+    assert kw["model"] == f"openai/{model}"
+    kw = build_kwargs(cfg("bedrock", model=model, region="us-east-1", auth_mode="chain", source="deployment"))
+    assert kw["model"] == f"bedrock/{model}"
+
+
+def test_invalid_vertex_json_is_config_error():
+    with pytest.raises(ConfigError):
+        build_kwargs(cfg("vertex", project="p", location="l", secrets={"service_account_json": "{not json"}))
