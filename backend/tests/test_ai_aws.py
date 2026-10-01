@@ -229,3 +229,12 @@ def test_role_mode_without_arn_does_not_call_sts():
     with pytest.raises(AIUnavailable, match="role ARN not configured"):
         run(aws.bedrock_credentials(role_cfg(role_arn=None), sts_factory=lambda r: sts))
     assert sts.calls == []
+
+
+def test_deployment_principal_arn_normalises_assumed_role(monkeypatch):
+    class AssumedSTS:
+        def get_caller_identity(self):
+            return {"Arn": "arn:aws:sts::123456789012:assumed-role/soc-server/i-0abc123"}
+    monkeypatch.setattr(aws, "_default_sts", lambda region: AssumedSTS())
+    assert run(aws.deployment_principal_arn()) == "arn:aws:iam::123456789012:role/soc-server"
+    assert aws._principal == "arn:aws:iam::123456789012:role/soc-server"

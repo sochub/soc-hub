@@ -9,6 +9,7 @@ until 5 minutes before they expire. Tenant "keys": stored access keys.
 """
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Optional, Tuple
 
@@ -40,6 +41,16 @@ def clear_cache(tenant_id: Optional[int] = None) -> None:
         return
     for key in [k for k in _cache if k[0] == tenant_id]:
         del _cache[key]
+
+
+_ASSUMED_ROLE = re.compile(r"^arn:(aws[\w-]*):sts::(\d+):assumed-role/([^/]+)/.+$")
+
+
+def _normalise_arn(arn: Optional[str]) -> Optional[str]:
+    # An assumed-role session ARN can't go in a trust policy; use the underlying IAM role ARN.
+    # (A role path, if any, isn't recoverable from the session ARN.)
+    m = _ASSUMED_ROLE.match(arn or "")
+    return f"arn:{m.group(1)}:iam::{m.group(2)}:role/{m.group(3)}" if m else arn
 
 
 def _default_sts(region: Optional[str]):
@@ -120,7 +131,7 @@ async def deployment_principal_arn(*, now: Optional[datetime] = None) -> Optiona
         logger.warning("sts:GetCallerIdentity failed: code=%s", _error_code(e))
         _principal_failed_at = now
         return None
-    _principal = ident.get("Arn")
+    _principal = _normalise_arn(ident.get("Arn"))
     if not _principal:
         _principal_failed_at = now
     return _principal

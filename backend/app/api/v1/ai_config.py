@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import aws
@@ -27,6 +28,7 @@ from app.workflows.ssrf import SSRFError, assert_url_allowed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+_MANAGED = "AI provider is managed by the deployment"
 _PLAIN_FIELDS = ("provider", "model", "enabled", "api_base", "region", "project", "location", "auth_mode", "role_arn")
 
 
@@ -63,10 +65,17 @@ def _out(row: Optional[TenantAIConfig], principal: Optional[str]) -> dict:
             "secrets_set": {f: bool(stored.get(f)) for f in sorted(ALL_SECRET_FIELDS)}}
 
 
+def _allowed_secrets(provider: str, auth_mode: Optional[str]) -> frozenset:
+    if provider == "bedrock" and auth_mode != "keys":
+        return frozenset()  # role mode assumes a role; no stored keys
+    return SECRET_FIELDS[provider]
+
+
 def _merge_secrets(body: AIConfigIn, row: Optional[TenantAIConfig]) -> dict:
-    # Stored secrets carry over only for the same provider — never reuse one vendor's key for another.
+    # Stored secrets carry over only for the same provider, and only the fields valid for the new
+    # provider/auth_mode — never reuse one vendor's key for another.
     stored = _stored_secrets(row) if row and row.provider == body.provider else {}
-    allowed = SECRET_FIELDS[body.provider]
+    allowed = _allowed_secrets(body.provider, body.auth_mode)
     merged = {k: v for k, v in stored.items() if k in allowed}
     for f in allowed:
         v = getattr(body, f)
@@ -77,7 +86,7 @@ def _merge_secrets(body: AIConfigIn, row: Optional[TenantAIConfig]) -> dict:
 
 def _candidate(body: AIConfigIn, row, merged: dict, tenant_id: int) -> ProviderConfig:
     return ProviderConfig(provider=body.provider, model=body.model.strip(), source="tenant", tenant_id=tenant_id,
-                          api_base=(body.api_base or "").strip() or None, region=body.region, project=body.project,
+                          api_base=((body.api_base or "").strip() or None) if body.provider in SSRF_GUARDED else None, region=body.region, project=body.project,
                           location=body.location, auth_mode=body.auth_mode if body.provider == "bedrock" else None,
                           role_arn=body.role_arn, external_id=(row.external_id if row else None), secrets=merged)
 
@@ -109,7 +118,8 @@ async def put_config(body: AIConfigIn, db: AsyncSession = Depends(deps.get_db),
                      current_user: User = Depends(deps.require_admin),
                      tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     if not settings.AI_ALLOW_TENANT_OVERRIDE:
-        raise HTTPException(status_code=403, detail="AI provider is managed by the deployment")
+        _log("save", tenant_id, body.provider, "forbidden")
+        raise HTTPException(status_code=403, detail=_MANAGED)
     row = await _row(db, tenant_id)
     merged = _merge_secrets(body, row)
     cfg = _candidate(body, row, merged, tenant_id)
@@ -119,23 +129,30 @@ async def put_config(body: AIConfigIn, db: AsyncSession = Depends(deps.get_db),
         _log("save", tenant_id, cfg.provider, "rejected")
         raise
     created = row is None
+    new = {"provider": cfg.provider, "model": cfg.model, "api_base": cfg.api_base, "region": cfg.region,
+           "project": cfg.project, "location": cfg.location, "auth_mode": cfg.auth_mode, "role_arn": cfg.role_arn,
+           "enabled": body.enabled and not (cfg.provider == "bedrock" and cfg.auth_mode == "role" and not cfg.role_arn)}
+    changed = [f for f in _PLAIN_FIELDS if new[f] != (None if created else getattr(row, f))]
     if created:
-        row = TenantAIConfig(tenant_id=tenant_id, provider=cfg.provider, model=cfg.model)
+        row = TenantAIConfig(tenant_id=tenant_id)
         db.add(row)
-    changed = [f for f in _PLAIN_FIELDS if getattr(row, f, None) != getattr(cfg if f != "enabled" else body, f, None)]
-    row.provider, row.model = cfg.provider, cfg.model
-    row.api_base, row.region, row.project, row.location = cfg.api_base, cfg.region, cfg.project, cfg.location
-    row.auth_mode, row.role_arn = cfg.auth_mode, cfg.role_arn
+    for f, v in new.items():
+        setattr(row, f, v)
     if cfg.provider == "bedrock" and cfg.auth_mode == "role" and not row.external_id:
         row.external_id = pysecrets.token_urlsafe(24)
-    row.enabled = body.enabled and not (cfg.provider == "bedrock" and cfg.auth_mode == "role" and not cfg.role_arn)
     row.credentials_enc = encrypt(json.dumps(merged)) if merged else None
-    secrets_updated = sorted(f for f in SECRET_FIELDS[cfg.provider] if (getattr(body, f) or "").strip())
-    await db.flush()
-    await create_audit_log(db=db, entity_type="ai_config", entity_id=row.id, action="create" if created else "update",
-                           tenant_id=tenant_id, user_id=current_user.id,
-                           changes={"fields": changed, "secrets_updated": secrets_updated})
-    await db.commit()
+    secrets_updated = sorted(f for f in _allowed_secrets(cfg.provider, cfg.auth_mode) if (getattr(body, f) or "").strip())
+    try:
+        await db.flush()
+        await create_audit_log(db=db, entity_type="ai_config", entity_id=row.id,
+                               action="create" if created else "update", tenant_id=tenant_id, user_id=current_user.id,
+                               changes={"fields": changed, "secrets_updated": secrets_updated})
+        await db.commit()
+    except IntegrityError:
+        # A concurrent first save won the unique tenant_id race.
+        await db.rollback()
+        _log("save", tenant_id, cfg.provider, "conflict")
+        raise HTTPException(status_code=409, detail="AI config was changed concurrently; reload and retry")
     await db.refresh(row)
     # ponytail: per-process cache — other workers/processes pick the change up within the 60s TTL.
     invalidate(tenant_id)
@@ -148,6 +165,9 @@ async def put_config(body: AIConfigIn, db: AsyncSession = Depends(deps.get_db),
 async def test_config(body: Optional[AIConfigIn] = Body(None), db: AsyncSession = Depends(deps.get_db),
                       current_user: User = Depends(deps.require_admin),
                       tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    if body is not None and not settings.AI_ALLOW_TENANT_OVERRIDE:
+        _log("test", tenant_id, body.provider, "forbidden")
+        raise HTTPException(status_code=403, detail=_MANAGED)
     row = await _row(db, tenant_id)
     if body is not None:
         cfg = _candidate(body, row, _merge_secrets(body, row), tenant_id)
@@ -156,15 +176,16 @@ async def test_config(body: Optional[AIConfigIn] = Body(None), db: AsyncSession 
         except HTTPException:
             _log("test", tenant_id, cfg.provider, "rejected")
             raise
-    elif row and row.enabled and settings.AI_ALLOW_TENANT_OVERRIDE:
+    elif row:  # the saved row, enabled or not — never silently test the deployment provider
         try:
             cfg = row_to_config(row)
         except AIUnavailable as e:
             _log("test", tenant_id, row.provider, "unavailable")
             return {"ok": False, "message": str(e)}
     else:
-        cfg = deployment_config()
-    allow = await tenant_allowlist(db, tenant_id) if cfg.source == "tenant" else []
+        _log("test", tenant_id, None, "no_config")
+        return {"ok": False, "message": "No tenant AI configuration to test"}
+    allow = await tenant_allowlist(db, tenant_id)
     ok, message = await test_connection(cfg, allowlist=allow)
     _log("test", tenant_id, cfg.provider, "ok" if ok else "failed")
     return {"ok": ok, "message": message}
