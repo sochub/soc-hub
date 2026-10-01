@@ -486,7 +486,7 @@ import logging
 import secrets
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.db.session import AsyncSessionLocal, engine
 from app.enrichment.config import DEFAULTS, load_settings, runnable_sources
@@ -529,8 +529,8 @@ async def test_row_with_keys_and_toggles(caplog):
             assert s.keys == {"virustotal_api_key": "vt-k", "abusech_auth_key": "ab-k"}
             assert runnable_sources(s) == ["virustotal", "urlhaus", "threatfox", "rdap"]
             # undecryptable credentials -> no keys, key_error, ERROR log with tenant id only
-            row = (await db.get(TenantEnrichmentConfig, (await db.execute(
-                TenantEnrichmentConfig.__table__.select().where(TenantEnrichmentConfig.tenant_id == t.id))).first().id))
+            row = (await db.execute(select(TenantEnrichmentConfig).where(
+                TenantEnrichmentConfig.tenant_id == t.id))).scalars().one()
             row.credentials_enc = "garbage"
             await db.commit()
             caplog.set_level(logging.ERROR, logger="app.enrichment.config")
@@ -1358,7 +1358,7 @@ git commit -m "feat(ti): atomic per-tenant Redis rate limiter"
   - from Task 5: `RateLimiter`, `limits_for`
   - `app.ai.errors.scrub`
 - Produces:
-  - `async def run_enrichment(db, tenant_id, itype, value, *, sources: Optional[list[str]] = None, force: bool = False, limiter=None, lock=None, now=None) -> dict[str, str]`. It works on an already-normalised (itype, value) and returns `{source: status}`.
+  - `async def run_enrichment(db, tenant_id, itype, value, *, sources: Optional[list[str]] = None, force: bool = False, attempt: int = 0, limiter=None, now=None) -> dict[str, str]`. It works on an already-normalised (itype, value) and returns `{source: status}`.
   - `def enrich_indicator(tenant_id, itype, value, tlp, force=False)`: the Celery task. It normalises the value, checks the TLP for automatic calls (`force=False`), then calls `run_enrichment`.
   - `async def upsert_result(db, tenant_id, itype, value, source, **fields)`
   - `def enqueue(tenant_id, raw_type, value, tlp, force=False) -> None`, in `app/enrichment/hooks.py`. It calls `enrich_indicator.delay(...)` and never raises.
@@ -1548,6 +1548,10 @@ async def test_dedupe_lock(monkeypatch):
         seen.append(a)
         return {}
     monkeypatch.setattr(task, "run_enrichment", fake_run)
+
+    async def fake_settings(db, tid):
+        return EnrichmentSettings()
+    monkeypatch.setattr(task, "load_settings", fake_settings)
 
     class Lock:
         def __init__(self):
@@ -1796,7 +1800,7 @@ async def run_enrichment(db, tenant_id, itype, value, *, sources: Optional[List[
                 out[name] = "rate_limited"
             else:
                 await upsert_result(db, tenant_id, itype, value, name, status="pending", error=None)
-                _retry(tenant_id, itype, value, name, attempt + 1, wait)
+                _retry(tenant_id, itype, value, name, attempt=attempt + 1, countdown=wait)
                 out[name] = "pending"
             logger.info(_LOG, tenant_id, name, itype, out[name], 0)
             continue
