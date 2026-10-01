@@ -39,8 +39,13 @@ const FIELD_LABEL: Record<string, string> = {
     service_account_json: 'Service account JSON',
 };
 
-const errText = (e: unknown, fb: string) =>
-    isAxiosError(e) && typeof e.response?.data?.detail === 'string' ? e.response.data.detail : fb;
+const errText = (e: unknown, fb: string): string => {
+    const d: unknown = isAxiosError(e) ? e.response?.data?.detail : undefined;
+    if (typeof d === 'string') return d;
+    // pydantic 422: detail is a list of {loc, msg, ...}
+    if (Array.isArray(d) && typeof d[0]?.msg === 'string') return d[0].msg;
+    return fb;
+};
 
 // GET /ai/config has no explicit "row exists" flag; a saved-but-disabled row reports source=deployment.
 const hasSavedRow = (d: AIConfig) =>
@@ -54,11 +59,12 @@ export default function AIProviderCard() {
     const [draft, setDraft] = useState<Record<string, FormValue> | null>(null);
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-    const form: Record<string, FormValue> = draft ?? (data ? {
-        provider: data.provider, model: data.model, enabled: true,
-        api_base: data.api_base, region: data.region, project: data.project, location: data.location,
-        auth_mode: data.auth_mode ?? 'role', role_arn: data.role_arn,
-    } : {});
+    const seed = (d: AIConfig): Record<string, FormValue> => ({
+        provider: d.provider, model: d.model, enabled: true,
+        api_base: d.api_base, region: d.region, project: d.project, location: d.location,
+        auth_mode: d.auth_mode ?? 'role', role_arn: d.role_arn,
+    });
+    const form: Record<string, FormValue> = draft ?? (data ? seed(data) : {});
     const set = (k: string, v: FormValue) => { setDraft({ ...form, [k]: v }); setMsg(null); };
     const provider = (form.provider as Provider) || 'ollama';
     const spec = FIELDS[provider];
@@ -68,7 +74,7 @@ export default function AIProviderCard() {
     const body = () => {
         const b: Record<string, unknown> = { provider, model: form.model, enabled: form.enabled ?? true };
         for (const f of spec.plain) b[f] = form[f] || null;
-        if (provider === 'bedrock') { b.auth_mode = form.auth_mode; b.role_arn = form.role_arn || null; }
+        if (provider === 'bedrock') { b.auth_mode = form.auth_mode; b.role_arn = form.auth_mode === 'keys' ? null : form.role_arn || null; }
         // Blank secrets are omitted so the backend keeps the stored value.
         for (const f of secretFields) if (form[`secret_${f}`]) b[f] = form[`secret_${f}`];
         return b;
@@ -137,7 +143,7 @@ export default function AIProviderCard() {
                 <>
                     <p className="text-xs text-zinc-500">Case data sent to the AI goes to this provider. Leave unset to use the deployment default ({data.deployment.provider} / {data.deployment.model}).</p>
                     <label className="block"><span className="label-mono">provider</span>
-                        <select className={input} value={provider} onChange={(e) => { setDraft({ provider: e.target.value, model: '', enabled: true, auth_mode: 'role' }); setMsg(null); }}>
+                        <select className={input} value={provider} onChange={(e) => { setDraft(e.target.value === data.provider ? seed(data) : { provider: e.target.value, model: '', enabled: true, auth_mode: 'role' }); setMsg(null); }}>
                             {(Object.keys(LABEL) as Provider[]).map((p) => <option key={p} value={p}>{LABEL[p]}</option>)}
                         </select></label>
                     <label className="block"><span className="label-mono">model</span>
@@ -179,7 +185,7 @@ export default function AIProviderCard() {
                     ))}
                     <div className="flex items-center gap-2 flex-wrap">
                         <button onClick={() => save.mutate()} disabled={save.isPending || !form.model} className="h-8 px-3 bg-accent-600 text-white text-sm disabled:opacity-50">Save</button>
-                        <button onClick={() => test.mutate()} disabled={test.isPending} className="h-8 px-3 border border-zinc-300 text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test'}</button>
+                        <button onClick={() => test.mutate()} disabled={test.isPending || (!!draft && !form.model)} className="h-8 px-3 border border-zinc-300 text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test'}</button>
                         {saved && <button onClick={() => { if (confirm('Remove this tenant\'s AI provider and use the deployment default?')) reset.mutate(); }} disabled={reset.isPending} className="h-8 px-3 border border-zinc-300 text-sm disabled:opacity-50">Reset to deployment default</button>}
                         {msg && <span role="status" className={msg.ok ? 'text-xs text-emerald-700' : 'text-xs text-red-700'}>{msg.text}</span>}
                     </div>
