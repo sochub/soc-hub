@@ -184,9 +184,10 @@ async def test_config(body: Optional[AIConfigIn] = Body(None), db: AsyncSession 
     elif row:  # the saved row, enabled or not — never silently test the deployment provider
         try:
             cfg = row_to_config(row)
-        except AIUnavailable as e:
+        except AIUnavailable:
             _log("test", tenant_id, row.provider, "unavailable")
-            return {"ok": False, "message": str(e)}
+            logger.exception("AI configuration test unavailable for tenant_id=%s provider=%s", tenant_id, row.provider)
+            return {"ok": False, "message": "AI provider is currently unavailable"}
     else:
         _log("test", tenant_id, None, "no_config")
         return {"ok": False, "message": "No tenant AI configuration to test"}
