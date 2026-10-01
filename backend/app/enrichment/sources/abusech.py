@@ -1,5 +1,7 @@
 """URLhaus and ThreatFox (abuse.ch); both use the same free Auth-Key."""
-from app.enrichment.sources.base import LookupResult, guarded, http_client, parse_json, status_result
+from urllib.parse import quote
+
+from app.enrichment.sources.base import LookupResult, guarded, http_client, parse_json, status_result, tag_list
 
 URLHAUS, THREATFOX = "urlhaus", "threatfox"
 URLHAUS_TYPES = frozenset({"url", "domain", "ip", "file_hash"})
@@ -26,10 +28,10 @@ async def _urlhaus(itype, value, key, transport):
     entries = data.get("urls") or ([data] if path in ("url", "payload") else [])
     first = entries[0] if entries else data
     summary = {"threat": first.get("threat") or data.get("signature") or "malware",
-               "url_status": first.get("url_status"), "tags": list(first.get("tags") or [])[:5],
+               "url_status": first.get("url_status"), "tags": tag_list(first.get("tags")),
                "first_seen": first.get("date_added") or data.get("firstseen")}
     return LookupResult(status="ok", verdict="malicious", summary=summary,
-                        link=f"https://urlhaus.abuse.ch/browse.php?search={value}")
+                        link=f"https://urlhaus.abuse.ch/browse.php?search={quote(value, safe='')}")
 
 
 async def _threatfox(itype, value, key, transport):
@@ -46,9 +48,9 @@ async def _threatfox(itype, value, key, transport):
     best = max(rows, key=lambda r: int(r.get("confidence_level") or 0))
     summary = {"malware_printable": best.get("malware_printable"), "threat_type": best.get("threat_type"),
                "confidence_level": best.get("confidence_level"), "first_seen": best.get("first_seen"),
-               "tags": list(best.get("tags") or [])[:5]}
+               "tags": tag_list(best.get("tags"))}
     return LookupResult(status="ok", verdict="malicious", score=f"confidence {best.get('confidence_level')}",
-                        summary=summary, link=f"https://threatfox.abuse.ch/browse.php?search=ioc%3A{value}")
+                        summary=summary, link=f"https://threatfox.abuse.ch/browse.php?search=ioc%3A{quote(value, safe='')}")
 
 
 async def lookup_urlhaus(itype, value, key, *, transport=None) -> LookupResult:

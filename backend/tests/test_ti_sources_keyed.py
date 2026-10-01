@@ -108,3 +108,106 @@ async def test_timeout_is_error():
 def test_registry():
     assert {"virustotal", "urlhaus", "threatfox"} <= set(REGISTRY)
     assert REGISTRY["virustotal"].TYPES == frozenset({"ip", "domain", "url", "file_hash"})
+
+
+# ---- fix round 1 ----
+KEY = "SECRETKEY123"
+
+
+def _all_lookups(t):
+    return [
+        ("vt", lambda: virustotal.lookup("ip", "8.8.8.8", KEY, transport=t)),
+        ("uh", lambda: abusech.lookup_urlhaus("domain", "example.com", KEY, transport=t)),
+        ("tf", lambda: abusech.lookup_threatfox("ip", "1.2.3.4", KEY, transport=t)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vt_other_4xx_is_error():
+    r = await virustotal.lookup("ip", "8.8.8.8", "K", transport=transport(lambda req: httpx.Response(400)))
+    assert r.status == "error" and r.error == "virustotal unavailable (HTTP 400)"
+
+
+@pytest.mark.asyncio
+async def test_urlhaus_404_is_error_not_not_found():
+    r = await abusech.lookup_urlhaus("domain", "example.com", "AB", transport=transport(lambda req: httpx.Response(404)))
+    assert r.status == "error" and r.error == "urlhaus unavailable (HTTP 404)"
+    r = await abusech.lookup_threatfox("ip", "1.2.3.4", "AB", transport=transport(lambda req: httpx.Response(404)))
+    assert r.status == "error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{"data": []}, {"data": {"attributes": {"last_analysis_stats": {"malicious": "x"}}}}])
+async def test_vt_malformed_200_is_error(body):
+    r = await virustotal.lookup("ip", "8.8.8.8", "K", transport=transport(lambda req: httpx.Response(200, json=body)))
+    assert r.status == "error" and r.error == "unexpected response from virustotal"
+
+
+@pytest.mark.asyncio
+async def test_threatfox_non_dict_row_is_error():
+    t = transport(lambda req: httpx.Response(200, json={"query_status": "ok", "data": ["oops"]}))
+    r = await abusech.lookup_threatfox("ip", "1.2.3.4", "AB", transport=t)
+    assert r.status == "error" and r.error == "unexpected response from threatfox"
+
+
+@pytest.mark.asyncio
+async def test_redirect_not_followed_is_error():
+    t = transport(lambda req: httpx.Response(302, headers={"location": "http://evil.example/"}))
+    for _, call in _all_lookups(t):
+        assert (await call()).status == "error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code,status", [(401, "error"), (429, "rate_limited")])
+async def test_abusech_status_mapping(code, status):
+    t = transport(lambda req: httpx.Response(code))
+    for _, call in _all_lookups(t)[1:]:
+        assert (await call()).status == status
+
+
+@pytest.mark.asyncio
+async def test_abusech_timeout_and_threatfox_header():
+    def boom(req):
+        raise httpx.ReadTimeout("slow")
+    r = await abusech.lookup_urlhaus("ip", "1.2.3.4", "AB", transport=transport(boom))
+    assert r.error == "urlhaus timed out"
+    r = await abusech.lookup_threatfox("ip", "1.2.3.4", "AB", transport=transport(boom))
+    assert r.error == "threatfox timed out"
+    seen = {}
+
+    def h(req):
+        seen["k"] = req.headers.get("Auth-Key")
+        return httpx.Response(200, json={"query_status": "no_result"})
+    await abusech.lookup_threatfox("ip", "1.2.3.4", "AB", transport=transport(h))
+    assert seen["k"] == "AB"
+
+
+@pytest.mark.asyncio
+async def test_value_quoted_and_tags_must_be_list():
+    seen = {}
+
+    def h(req):
+        seen["raw"] = req.url.raw_path.decode()
+        return httpx.Response(200, json=vt_body(0, 0, 1, 1) | {"data": {"attributes": {
+            "last_analysis_stats": {"harmless": 1}, "tags": "notalist"}}})
+    r = await virustotal.lookup("domain", "a/b?c#d", "K", transport=transport(h))
+    assert "a%2Fb%3Fc%23d" in seen["raw"] and "a%2Fb%3Fc%23d" in r.link
+    assert r.summary["tags"] == []
+    t = transport(lambda req: httpx.Response(200, json={"query_status": "ok", "urls": [{"tags": "x"}]}))
+    r = await abusech.lookup_urlhaus("domain", "a&b", "AB", transport=t)
+    assert r.summary["tags"] == [] and r.link.endswith("search=a%26b")
+
+
+@pytest.mark.asyncio
+async def test_key_never_leaks_into_results():
+    cases = [
+        httpx.Response(200, json=vt_body(5, 0, 1, 1)),
+        httpx.Response(200, json={"query_status": "ok", "urls": [{"threat": "t"}], "data": [{"confidence_level": 1}]}),
+        httpx.Response(200, text="not json"), httpx.Response(401), httpx.Response(429), httpx.Response(503),
+        httpx.Response(404), httpx.Response(302),
+    ]
+    for resp in cases:
+        t = transport(lambda req, resp=resp: resp)
+        for _, call in _all_lookups(t):
+            r = await call()
+            assert KEY not in json.dumps([r.summary, r.link, r.error])

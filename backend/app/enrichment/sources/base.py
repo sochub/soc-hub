@@ -19,6 +19,10 @@ class LookupResult:
     error: Optional[str] = None
 
 
+def tag_list(v) -> list:
+    return list(v)[:5] if isinstance(v, list) else []
+
+
 def http_client(transport=None, follow_redirects: bool = False) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=15.0, follow_redirects=follow_redirects, transport=transport,
                              headers={"User-Agent": "SOC-Hub-Enrichment/1.0"})
@@ -39,7 +43,7 @@ def status_result(name: str, resp: httpx.Response) -> Optional[LookupResult]:
         return LookupResult(status="error", error="invalid API key")
     if resp.status_code == 429:
         return LookupResult(status="rate_limited")
-    if resp.status_code >= 500:
+    if resp.status_code >= 400:  # 404 is handled by callers that treat it as not_found, before this
         return LookupResult(status="error", error=f"{name} unavailable (HTTP {resp.status_code})")
     return None
 
@@ -50,6 +54,8 @@ async def guarded(name: str, coro) -> LookupResult:
         return await coro
     except httpx.TimeoutException:
         return LookupResult(status="error", error=f"{name} timed out")
+    except (ValueError, TypeError, AttributeError, KeyError, UnicodeError):
+        return LookupResult(status="error", error=f"unexpected response from {name}")
     except SourceError as e:
         return LookupResult(status="error", error=str(e))
     except httpx.HTTPError as e:

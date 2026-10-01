@@ -1,6 +1,7 @@
 import base64
+from urllib.parse import quote
 
-from app.enrichment.sources.base import LookupResult, guarded, http_client, parse_json, status_result
+from app.enrichment.sources.base import LookupResult, SourceError, guarded, http_client, parse_json, status_result, tag_list
 
 NAME = "virustotal"
 TYPES = frozenset({"ip", "domain", "url", "file_hash"})
@@ -10,7 +11,7 @@ _GUI = {"ip": "ip-address", "domain": "domain", "file_hash": "file", "url": "url
 
 
 def _id(itype: str, value: str) -> str:
-    return base64.urlsafe_b64encode(value.encode()).decode().rstrip("=") if itype == "url" else value
+    return base64.urlsafe_b64encode(value.encode()).decode().rstrip("=") if itype == "url" else quote(value, safe="")
 
 
 async def _lookup(itype, value, key, transport):
@@ -22,7 +23,10 @@ async def _lookup(itype, value, key, transport):
     bad = status_result(NAME, resp)
     if bad:
         return bad
-    attrs = (parse_json(resp).get("data") or {}).get("attributes") or {}
+    data = parse_json(resp).get("data")
+    if not isinstance(data, dict):
+        raise SourceError(f"unexpected response from {NAME}")
+    attrs = data.get("attributes") or {}
     st = attrs.get("last_analysis_stats") or {}
     mal, sus = int(st.get("malicious") or 0), int(st.get("suspicious") or 0)
     harmless, und = int(st.get("harmless") or 0), int(st.get("undetected") or 0)
@@ -36,7 +40,7 @@ async def _lookup(itype, value, key, transport):
     else:
         verdict = "unknown"
     summary = {"malicious": mal, "suspicious": sus, "harmless": harmless, "undetected": und,
-               "reputation": attrs.get("reputation"), "tags": list(attrs.get("tags") or [])[:5]}
+               "reputation": attrs.get("reputation"), "tags": tag_list(attrs.get("tags"))}
     label = (attrs.get("popular_threat_classification") or {}).get("suggested_threat_label")
     if label:
         summary["popular_threat_label"] = label
