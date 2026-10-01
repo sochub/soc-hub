@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
+from app.enrichment.indicators import normalise
+from app.models.enrichment_result import EnrichmentResult
 from app.models.ioc import IOC
 from app.models.user import User
 from app.schemas import ioc as ioc_schema
@@ -33,7 +35,34 @@ async def read_iocs(
         query = query.where(IOC.ioc_type == ioc_type)
     query = query.offset(skip).limit(limit).order_by(IOC.created_at.desc())
     result = await db.execute(query)
-    return result.scalars().all()
+    iocs = result.scalars().all()
+    verdicts = await _verdicts(db, tenant_id, iocs)
+    return [{**ioc_schema.IOC.model_validate(i).model_dump(), "enrichment_verdict": verdicts.get(i.id)}
+            for i in iocs]
+
+
+_RANK = {"malicious": 3, "suspicious": 2, "harmless": 1, "unknown": 0}
+
+
+async def _verdicts(db: AsyncSession, tenant_id: int, iocs) -> dict:
+    """Worst ok enrichment verdict per IOC id, from one query over the page's normalised indicators."""
+    pairs = {}
+    for ioc in iocs:
+        n = normalise(ioc.ioc_type, ioc.value)
+        if n:
+            pairs[ioc.id] = n
+    if not pairs:
+        return {}
+    rows = (await db.execute(select(
+        EnrichmentResult.indicator_type, EnrichmentResult.indicator_value, EnrichmentResult.verdict).where(
+        EnrichmentResult.tenant_id == tenant_id, EnrichmentResult.status == "ok",
+        EnrichmentResult.indicator_type.in_({t for t, _ in pairs.values()}),
+        EnrichmentResult.indicator_value.in_({v for _, v in pairs.values()})))).all()
+    worst = {}
+    for t, v, verdict in rows:
+        if verdict in _RANK and _RANK[verdict] > _RANK.get(worst.get((t, v)), -1):
+            worst[(t, v)] = verdict
+    return {ioc_id: worst.get(pair) for ioc_id, pair in pairs.items()}
 
 
 @router.post("/", response_model=ioc_schema.IOC)
