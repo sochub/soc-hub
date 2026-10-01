@@ -170,16 +170,62 @@ def test_clear_cache_resets_principal_caches(monkeypatch):
 def test_sts_client_uses_short_timeouts(monkeypatch):
     seen = []
 
-    def fake_client(service, **kw):
-        seen.append((service, kw))
-        return object()
+    sessions = []
 
-    monkeypatch.setattr(aws.boto3, "client", fake_client)
+    class FakeSession:
+        def __init__(self):
+            sessions.append(self)
+
+        def client(self, service, **kw):
+            seen.append((service, kw))
+            return object()
+
+    def module_client(*a, **kw):
+        raise AssertionError("must not use the shared default session")
+
+    monkeypatch.setattr(aws.boto3.session, "Session", FakeSession)
+    monkeypatch.setattr(aws.boto3, "client", module_client)
     aws._default_sts("eu-west-1")
     aws._default_sts(None)
     assert [s for s, _ in seen] == ["sts", "sts"]
+    assert len(sessions) == 2  # fresh session per client
     assert seen[0][1]["region_name"] == "eu-west-1"
     for _, kw in seen:
         cfg = kw["config"]
         assert cfg.connect_timeout == 2 and cfg.read_timeout == 2
         assert cfg.retries == {"max_attempts": 1}
+
+
+# --- fix round 1: fail closed ---------------------------------------------------
+
+def test_unexpected_assume_error_is_unavailable_and_logged(caplog):
+    class Boom:
+        def assume_role(self, **kw):
+            raise KeyError("credential_provider")
+
+    with caplog.at_level(logging.WARNING, logger="app.ai.aws"):
+        with pytest.raises(AIUnavailable, match="KeyError"):
+            run(aws.bedrock_credentials(role_cfg(), sts_factory=lambda r: Boom()))
+    text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    assert "KeyError" in text and "arn:aws:iam::123:role/r" in text and "ext-1" not in text
+
+
+@pytest.mark.parametrize("mode", [None, "chain", "bogus"])
+def test_tenant_requires_role_or_keys(mode):
+    cfg = ProviderConfig("bedrock", "m", "tenant", tenant_id=1, region="r", auth_mode=mode)
+    with pytest.raises(AIUnavailable, match="must be role or keys"):
+        run(aws.bedrock_credentials(cfg))
+
+
+@pytest.mark.parametrize("secrets", [{}, {"access_key_id": "AKIA1"}, {"secret_access_key": "S1"}])
+def test_keys_mode_missing_keys(secrets):
+    cfg = ProviderConfig("bedrock", "m", "tenant", tenant_id=1, region="r", auth_mode="keys", secrets=secrets)
+    with pytest.raises(AIUnavailable, match="access keys not configured"):
+        run(aws.bedrock_credentials(cfg))
+
+
+def test_role_mode_without_arn_does_not_call_sts():
+    sts = FakeSTS()
+    with pytest.raises(AIUnavailable, match="role ARN not configured"):
+        run(aws.bedrock_credentials(role_cfg(role_arn=None), sts_factory=lambda r: sts))
+    assert sts.calls == []

@@ -14,7 +14,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import ClientError
 
 from app.ai.errors import AIUnavailable
 from app.ai.providers import ProviderConfig
@@ -43,9 +43,9 @@ def clear_cache(tenant_id: Optional[int] = None) -> None:
 
 
 def _default_sts(region: Optional[str]):
-    if region:
-        return boto3.client("sts", region_name=region, config=_STS_CONFIG)
-    return boto3.client("sts", config=_STS_CONFIG)
+    # A fresh Session per call: the module-level default session is not thread-safe
+    # and this runs inside asyncio.to_thread.
+    return boto3.session.Session().client("sts", region_name=region, config=_STS_CONFIG)
 
 
 def _error_code(e: Exception) -> str:
@@ -56,17 +56,21 @@ def _error_code(e: Exception) -> str:
 
 async def bedrock_credentials(cfg: ProviderConfig, *, now: Optional[datetime] = None,
                               sts_factory: Optional[Callable] = None) -> Optional[dict]:
-    mode = cfg.auth_mode or "chain"
-    if cfg.source == "deployment" or mode == "chain":
-        return None
+    if cfg.source != "tenant":
+        return None  # deployment: boto3 standard credential chain
+    mode = cfg.auth_mode
+    if mode not in ("role", "keys"):
+        raise AIUnavailable("tenant Bedrock auth mode must be role or keys")
     if mode == "keys":
         s = cfg.secrets or {}
+        if not s.get("access_key_id") or not s.get("secret_access_key"):
+            raise AIUnavailable("Bedrock access keys not configured")
         creds = {"aws_access_key_id": s.get("access_key_id"), "aws_secret_access_key": s.get("secret_access_key")}
         if s.get("session_token"):
             creds["aws_session_token"] = s["session_token"]
         return creds
-    if mode != "role":
-        raise AIUnavailable(f"unknown Bedrock auth mode '{mode}'")
+    if not cfg.role_arn:
+        raise AIUnavailable("Bedrock role ARN not configured")
 
     now = now or datetime.now(timezone.utc)
     key = (cfg.tenant_id or 0, cfg.role_arn or "", cfg.external_id or "")
@@ -86,7 +90,7 @@ async def bedrock_credentials(cfg: ProviderConfig, *, now: Optional[datetime] = 
 
     try:
         c = await asyncio.to_thread(_assume)
-    except (ClientError, BotoCoreError) as e:
+    except Exception as e:
         code = _error_code(e)
         # Only the error code, role ARN and tenant id — never keys, tokens or the external id.
         logger.warning("Bedrock sts:AssumeRole failed: code=%s role_arn=%s tenant_id=%s",
