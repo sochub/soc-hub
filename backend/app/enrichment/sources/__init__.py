@@ -8,3 +8,8 @@ REGISTRY = {
     "urlhaus": SimpleNamespace(NAME="urlhaus", TYPES=abusech.URLHAUS_TYPES, lookup=abusech.lookup_urlhaus),
     "threatfox": SimpleNamespace(NAME="threatfox", TYPES=abusech.THREATFOX_TYPES, lookup=abusech.lookup_threatfox),
 }
+
+from app.enrichment.sources import crtsh, rdap  # noqa: E402
+
+REGISTRY["rdap"] = rdap
+REGISTRY["crtsh"] = crtsh
