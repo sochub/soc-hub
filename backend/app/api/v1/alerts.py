@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -43,8 +43,8 @@ async def ingest_alert(
 @router.get("/", response_model=List[case_schema.Alert])
 async def read_alerts(
     db: AsyncSession = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:

@@ -1,6 +1,6 @@
 import secrets
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -44,8 +44,8 @@ async def create_tenant(
 @router.get("/", response_model=List[tenant_schema.Tenant])
 async def read_tenants(
     db: AsyncSession = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     current_user: User = Depends(deps.require_super_admin),
 ) -> Any:
     """List all tenants. Super admin only."""
