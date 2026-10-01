@@ -31,6 +31,7 @@ interface Stats {
     total_artifacts: number;
     total_iocs: number;
     oldest_open_days: number;
+    sla_compliance_pct: number | null;
     cases_over_time: { date: string; count: number }[];
     resolved_over_time: { date: string; count: number }[];
     cases_by_severity: { severity: string; count: number }[];
@@ -195,7 +196,7 @@ export default function Dashboard() {
             </div>
 
             {/* KPI strip */}
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 mb-3">
                 <StatTile label="total cases" value={stats?.total_cases ?? 0} to="/cases" />
                 <StatTile label="open" value={stats?.open_cases ?? 0} accent to="/cases?status=open"
                     sub={<span>oldest <span className="num text-zinc-700">{stats?.oldest_open_days ?? 0}d</span></span>} />
@@ -203,6 +204,7 @@ export default function Dashboard() {
                     sub={<span className="text-severity-critical font-mono text-[11px]">needs triage</span>} />
                 <StatTile label="resolution rate" value={`${stats?.resolution_rate ?? 0}%`} />
                 <StatTile label="mttr" value={stats?.mttr_hours != null ? `${stats.mttr_hours}h` : '—'} />
+                <StatTile label="sla compliance" value={stats?.sla_compliance_pct != null ? `${stats.sla_compliance_pct}%` : '—'} />
                 <StatTile label="this week" value={stats?.cases_this_week ?? 0}
                     sub={weekDelta != null && (
                         <span className={cn('inline-flex items-center gap-0.5 font-mono text-[11px]',

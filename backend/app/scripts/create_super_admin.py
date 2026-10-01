@@ -21,6 +21,7 @@ from app.core.passwords import validate_password_strength
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal
 from app.models.user import User
+from app.utils.emails import normalize_email
 
 
 def _prompt_for_password() -> str:
@@ -40,6 +41,7 @@ def _prompt_for_password() -> str:
 
 
 async def create_super_admin(email: str, password: str, full_name: str) -> None:
+    email = normalize_email(email)
     async with AsyncSessionLocal() as db:
         # Check if user exists
         result = await db.execute(select(User).where(User.email == email))

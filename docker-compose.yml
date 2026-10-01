@@ -10,11 +10,15 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
+    # Published on loopback only: db/redis/ollama/backend are reachable from this
+    # machine (local dev tools) but not from the network. nginx (frontend) is
+    # the only public entry point.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/sicms
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-sicms}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
+      - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
     depends_on:
@@ -35,27 +39,31 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=sicms
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-sicms}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     networks:
       - app_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d sicms"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7
+    command: redis-server --requirepass ${REDIS_PASSWORD:-devredispass}
+    environment:
+      # lets redis-cli (healthcheck, `docker compose exec redis redis-cli`) authenticate
+      - REDISCLI_AUTH=${REDIS_PASSWORD:-devredispass}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - app_network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -69,7 +77,7 @@ services:
       - ollama_data:/root/.ollama
       - ./ollama-entrypoint.sh:/entrypoint.sh:ro
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     networks:
       - app_network
     healthcheck:
@@ -80,12 +88,16 @@ services:
 
   worker:
     build: ./backend
-    command: celery -A app.worker.celery_app worker --loglevel=info
+    # -B embeds Celery beat (the periodic-task scheduler) in this same
+    # process — fine for a single worker replica; split into a separate
+    # `beat` service if this is ever scaled to multiple worker replicas.
+    command: celery -A app.worker.celery_app worker -B --loglevel=info
     volumes:
       - ./backend:/app
     environment:
-      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/sicms
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-sicms}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
+      - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
     depends_on:

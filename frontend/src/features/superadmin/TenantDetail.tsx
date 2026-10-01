@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Save, UserPlus, RefreshCw, X, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Save, UserPlus, RefreshCw, X, Copy, Check, Trash2 } from 'lucide-react';
 import { api } from '../../api/client';
 import type { Tenant, User, Invitation } from '../../types';
 import InviteUserModal from '../admin/InviteUserModal';
+import DeleteTenantModal from './DeleteTenantModal';
 
 const statusColors: Record<string, string> = {
     pending: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -21,6 +22,7 @@ export default function TenantDetail() {
     const [editName, setEditName] = useState('');
     const [editSlug, setEditSlug] = useState('');
     const [showInviteModal, setShowInviteModal] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [copiedId, setCopiedId] = useState<number | null>(null);
 
     const { data: tenant, isLoading: tenantLoading } = useQuery({
@@ -160,6 +162,15 @@ export default function TenantDetail() {
                         >
                             {tenant.is_active ? 'Deactivate' : 'Activate'}
                         </button>
+                        {!tenant.is_active && (
+                            <button
+                                onClick={() => setShowDeleteModal(true)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-50 text-red-700 hover:bg-red-100 rounded-md transition-colors"
+                            >
+                                <Trash2 size={12} />
+                                Delete Permanently
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -360,6 +371,12 @@ export default function TenantDetail() {
                     queryClient.invalidateQueries({ queryKey: ['tenant-invitations', id] });
                 }}
                 tenantId={Number(id)}
+            />
+
+            <DeleteTenantModal
+                tenant={tenant}
+                isOpen={showDeleteModal}
+                onClose={() => setShowDeleteModal(false)}
             />
         </div>
     );

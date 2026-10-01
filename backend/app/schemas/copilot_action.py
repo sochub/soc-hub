@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 # Action types the copilot may propose.
-WRITE_ACTIONS = {"create_case", "add_artifact", "add_timeline_note", "update_case"}
+WRITE_ACTIONS = {"create_case", "add_artifact", "add_timeline_note", "update_case", "apply_playbook"}
 READ_ACTIONS = {"find_related"}
 ACTION_TYPES = WRITE_ACTIONS | READ_ACTIONS
 

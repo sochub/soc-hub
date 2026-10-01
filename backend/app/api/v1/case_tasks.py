@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.models.case import Case
@@ -12,6 +11,7 @@ from app.models.playbook import PlaybookTemplate
 from app.models.user import User
 from app.schemas.case_task import CaseTaskCreate, CaseTaskUpdate, CaseTaskOut
 from app.utils.audit import create_audit_log
+from app.utils.playbooks import apply_playbook_to_case
 
 router = APIRouter()
 
@@ -151,39 +151,16 @@ async def apply_playbook(
 ) -> Any:
     """Copy a tenant template's tasks onto the case (dedupe by phase+title)."""
     case = await _get_case(db, case_id, tenant_id)
-    res = await db.execute(
-        select(PlaybookTemplate).options(selectinload(PlaybookTemplate.tasks))
-        .where(PlaybookTemplate.id == template_id, PlaybookTemplate.tenant_id == tenant_id)
+    n = await apply_playbook_to_case(db, case=case, template_id=template_id, tenant_id=tenant_id)
+
+    template_res = await db.execute(
+        select(PlaybookTemplate.name).where(PlaybookTemplate.id == template_id)
     )
-    template = res.scalars().first()
-    if not template:
-        raise HTTPException(status_code=404, detail="Playbook not found in your tenant. Import it first.")
-
-    existing = await db.execute(
-        select(CaseTask.phase, CaseTask.title).where(CaseTask.case_id == case_id)
-    )
-    have = {(p, t) for p, t in existing.all()}
-    base_order = (await db.execute(
-        select(func.max(CaseTask.order)).where(CaseTask.case_id == case_id)
-    )).scalar() or 0
-
-    n = 0
-    for task in template.tasks:
-        if (task.phase, task.title) in have:
-            continue
-        n += 1
-        db.add(CaseTask(
-            case_id=case_id, tenant_id=tenant_id, phase=task.phase, title=task.title,
-            description=task.description, status="todo", order=base_order + n,
-            source_template_id=template.id,
-        ))
-        have.add((task.phase, task.title))
-
-    case.playbook_template_id = template.id
+    template_name = template_res.scalars().first() or "playbook"
     await create_audit_log(
         db=db, entity_type="case", entity_id=case_id, action="playbook_applied",
         tenant_id=tenant_id, user_id=current_user.id,
-        changes={"playbook": template.name, "tasks_added": n},
+        changes={"playbook": template_name, "tasks_added": n},
     )
     await db.commit()
 

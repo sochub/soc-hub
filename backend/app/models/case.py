@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Enum, ForeignKey, DateTime, Text, JSON
+from sqlalchemy import Boolean, Column, Integer, String, Enum, ForeignKey, DateTime, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base_class import Base
@@ -31,6 +31,8 @@ class Case(Base):
 
     tags = Column(JSON, default=list)
     source = Column(String, default="user-reported", index=True)
+    # Set by the alert_promote workflow node in "group" mode; dedupes alert storms.
+    group_key = Column(String, nullable=True)
 
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
@@ -40,6 +42,11 @@ class Case(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)
+    # Set once, the first time status moves off NEW — stops the response SLA clock.
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    # Dedupe markers so the SLA sweep emails once per breach, not every scan.
+    sla_response_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
+    sla_resolution_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
 
     alerts = relationship("Alert", back_populates="case")
     timeline_events = relationship("TimelineEvent", back_populates="case")
@@ -50,6 +57,10 @@ class Case(Base):
 
 class Alert(Base):
     __tablename__ = "alerts"
+    __table_args__ = (
+        # Webhook ingest is idempotent on this key (see alerts.ingest_alert).
+        UniqueConstraint("tenant_id", "source", "external_id", name="uq_alerts_tenant_source_external"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     source = Column(String, index=True)  # e.g., "EDR", "SIEM"
@@ -57,6 +68,7 @@ class Alert(Base):
     title = Column(String)
     payload = Column(JSON)  # Raw alert data
     status = Column(String, default="pending")  # pending, promoted, dismissed
+    dismiss_reason = Column(Text, nullable=True)
 
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)

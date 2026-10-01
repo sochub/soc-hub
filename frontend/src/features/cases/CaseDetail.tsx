@@ -8,6 +8,9 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
 import CaseTasks from './CaseTasks';
+import TriagePanel from './TriagePanel';
+import SLAPanel from './SLAPanel';
+import CaseAutomation from '../automations/CaseAutomation';
 
 const ARTIFACT_ICONS: Record<string, any> = {
     hash: FileText,
@@ -22,7 +25,7 @@ const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigatio
 export default function CaseDetail() {
     const { id } = useParams();
     const queryClient = useQueryClient();
-    const [activeTab, setActiveTab] = useState<'timeline' | 'tasks' | 'artifacts' | 'network' | 'audit'>('timeline');
+    const [activeTab, setActiveTab] = useState<'timeline' | 'tasks' | 'artifacts' | 'network' | 'audit' | 'automation'>('timeline');
     const [showArtifactModal, setShowArtifactModal] = useState(false);
     const [newArtifact, setNewArtifact] = useState({ type: 'hash', value: '' });
     const [showEditModal, setShowEditModal] = useState(false);
@@ -217,9 +220,12 @@ export default function CaseDetail() {
                         <p className="text-zinc-700 leading-relaxed text-sm">{caseData.description}</p>
                     </div>
 
+                    {id && <TriagePanel caseId={parseInt(id)} />}
+                    <SLAPanel caseData={caseData} />
+
                     {/* Tabs */}
                     <div className="flex border-b border-zinc-200 relative space-x-6">
-                        {['timeline', 'tasks', 'artifacts', 'network', 'audit'].map((tab) => (
+                        {['timeline', 'tasks', 'artifacts', 'network', 'audit', 'automation'].map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => setActiveTab(tab as any)}
@@ -410,6 +416,8 @@ export default function CaseDetail() {
                             {activeTab === 'tasks' && id && (
                                 <CaseTasks caseId={parseInt(id)} />
                             )}
+
+                            {activeTab === 'automation' && id && <CaseAutomation caseId={parseInt(id)} />}
 
                             {activeTab === 'artifacts' && (
                                 <div className="space-y-4">

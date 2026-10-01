@@ -1,5 +1,6 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -9,6 +10,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
+from app.workflows.events import emit_event
 
 router = APIRouter()
 
@@ -24,25 +26,44 @@ async def ingest_alert(
     The webhook's API key determines both the destination tenant and the alert
     ``source`` (the webhook's name), so source attribution is authoritative and
     not caller-controlled.
+
+    Idempotent on ``(tenant, source, external_id)``: re-posting an alert that
+    already exists returns the existing row and does not re-emit
+    ``alert.ingested``. ``ON CONFLICT DO NOTHING`` makes concurrent duplicates
+    safe — exactly one insert wins.
     """
-    alert = Alert(
-        source=webhook.name,
-        external_id=alert_in.external_id,
-        title=alert_in.title,
-        payload=alert_in.payload,
-        status="pending",
-        tenant_id=webhook.tenant_id,
-    )
-    db.add(alert)
+    inserted_id = (await db.execute(
+        insert(Alert)
+        .values(
+            source=webhook.name,
+            external_id=alert_in.external_id,
+            title=alert_in.title,
+            payload=alert_in.payload,
+            status="pending",
+            tenant_id=webhook.tenant_id,
+        )
+        .on_conflict_do_nothing(constraint="uq_alerts_tenant_source_external")
+        .returning(Alert.id)
+    )).scalar()
     await db.commit()
-    await db.refresh(alert)
-    return alert
+    if inserted_id is not None:
+        alert = (await db.execute(select(Alert).where(Alert.id == inserted_id))).scalars().one()
+        emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
+        return alert
+    # Duplicate: return the existing alert for this natural key.
+    return (await db.execute(
+        select(Alert).where(
+            Alert.tenant_id == webhook.tenant_id,
+            Alert.source == webhook.name,
+            Alert.external_id == alert_in.external_id,
+        )
+    )).scalars().one()
 
 @router.get("/", response_model=List[case_schema.Alert])
 async def read_alerts(
     db: AsyncSession = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:

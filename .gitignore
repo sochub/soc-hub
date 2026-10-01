@@ -42,3 +42,10 @@ Thumbs.db
 # ---- Logs ----
 *.log
 npm-debug.log*
+
+# ---- Celery beat runtime state ----
+celerybeat-schedule
+celerybeat.pid
+
+# ---- Local agent scratch space ----
+.superpowers/

@@ -42,6 +42,28 @@ def strip_action_blocks(text: str) -> str:
     return _ACTION_BLOCK_RE.sub("", text or "").strip()
 
 
+_VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+
+def parse_triage_payload(data: Any) -> Optional[Dict[str, Any]]:
+    """Validate/normalize a triage JSON payload from the model. Pure function
+    (no I/O) so it's unit-testable without Ollama. Returns None if nothing
+    usable came back."""
+    if not isinstance(data, dict):
+        return None
+
+    severity = str(data.get("severity", "")).strip().lower()
+    if severity not in _VALID_SEVERITIES:
+        severity = None
+
+    tags = [str(t).strip() for t in (data.get("tags") or []) if str(t).strip()][:8]
+    next_steps = str(data.get("next_steps", "")).strip() or None
+
+    if severity is None and not tags and not next_steps:
+        return None
+    return {"severity": severity, "tags": tags, "next_steps_text": next_steps}
+
+
 ACTIONS_GUIDE = """\
 
 ## Taking Actions
@@ -520,3 +542,43 @@ class AIService:
         except Exception as e:
             logger.warning("Forced action extraction failed: %s", e)
         return None
+
+    async def generate_triage(self, case_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """LLM-only triage for a new/updated case: proposed severity, tags, and
+        a short next-steps note. Returns None if Ollama is unavailable or the
+        response can't be parsed into anything usable — the caller marks the
+        triage run failed rather than guessing."""
+        if not await self._check_ollama_available():
+            return None
+        system = (
+            "You triage a new SOC case for an analyst. Given the title, "
+            "description, and any attached indicators, propose a severity, a "
+            "short list of descriptive tags, and 1-3 sentences of immediate "
+            "next steps.\n"
+            "Output ONLY strict JSON: "
+            '{"severity": "critical|high|medium|low|info", "tags": ["..."], '
+            '"next_steps": "..."}'
+        )
+        indicators = ", ".join(case_data.get("indicator_values") or []) or "(none yet)"
+        user = (
+            f"Title: {_sanitize_text(case_data.get('title', ''), 300)}\n"
+            f"Description: {_sanitize_text(case_data.get('description') or '', 1500)}\n"
+            f"Existing tags: {', '.join(case_data.get('tags') or []) or '(none)'}\n"
+            f"Attached indicators: {_sanitize_text(indicators, 500)}"
+        )
+        try:
+            result = await self._call_ollama("api/chat", {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0},
+            })
+            data = json.loads(result.get("message", {}).get("content", "{}"))
+            return parse_triage_payload(data)
+        except Exception as e:
+            logger.warning("Triage generation failed: %s", e)
+            return None

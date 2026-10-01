@@ -2,12 +2,18 @@ from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, field_validator
 from app.core.passwords import validate_password_strength
+from app.utils.emails import normalize_email
 from app.models.user import UserRole
 
 
 class InvitationCreate(BaseModel):
     email: EmailStr
     role: UserRole = UserRole.ANALYST
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalize_email(cls, v):
+        return normalize_email(v) if isinstance(v, str) else v
 
 
 class InvitationResponse(BaseModel):

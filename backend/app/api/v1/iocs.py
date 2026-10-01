@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -20,8 +20,8 @@ async def read_iocs(
     case_id: Optional[int] = None,
     status: Optional[str] = None,
     ioc_type: Optional[str] = None,
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
 ) -> Any:
     """List all IOCs scoped to tenant."""
     query = select(IOC).where(IOC.tenant_id == tenant_id)

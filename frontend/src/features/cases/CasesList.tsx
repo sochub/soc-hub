@@ -5,6 +5,8 @@ import { Clock, AlertCircle, CheckCircle, XCircle, Plus, Search, ChevronDown } f
 import { cn } from '../../lib/utils';
 import { useState } from 'react';
 import NewCaseModal from './NewCaseModal';
+import { SLABadge } from './SLABadge';
+import type { SLAStatus } from '../../types';
 
 interface Case {
     id: number;
@@ -16,6 +18,7 @@ interface Case {
     source: string;
     created_at: string;
     updated_at: string;
+    sla_overall_status?: SLAStatus | null;
 }
 
 const severityConfig = {
@@ -209,6 +212,7 @@ export default function CasesList() {
                                 <th className="px-4 py-3">Case Title</th>
                                 <th className="px-4 py-3 w-32">Severity</th>
                                 <th className="px-4 py-3 w-36">Status</th>
+                                <th className="px-4 py-3 w-28">SLA</th>
                                 <th className="px-4 py-3 w-40">Created</th>
                                 <th className="px-4 py-3 w-40">Updated</th>
                             </tr>
@@ -216,7 +220,7 @@ export default function CasesList() {
                         <tbody className="divide-y divide-zinc-200">
                             {filteredCases.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center">
+                                    <td colSpan={7} className="px-6 py-12 text-center">
                                         <div className="flex flex-col items-center justify-center text-zinc-400">
                                             <Search size={32} className="mb-2 opacity-50" />
                                             <p>No matching cases found</p>
@@ -264,6 +268,9 @@ export default function CasesList() {
                                                         {c.status}
                                                     </span>
                                                 </div>
+                                            </td>
+                                            <td className="px-4 py-2.5">
+                                                <SLABadge status={c.sla_overall_status} />
                                             </td>
                                             <td className="px-4 py-2.5 text-zinc-500 text-xs whitespace-nowrap">
                                                 {new Date(c.created_at).toLocaleDateString()}

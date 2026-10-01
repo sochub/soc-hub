@@ -11,6 +11,7 @@ from app.models.artifact import Artifact
 from app.models.case_artifact import CaseArtifact
 from app.models.ioc import IOC
 from app.models.user import User
+from app.utils.sla import compute_sla_state, load_policy_overrides
 
 router = APIRouter()
 
@@ -259,8 +260,24 @@ async def get_stats(
         for v, t, c in top_artifacts_result.all()
     ]
 
+    open_case_rows = (
+        await db.execute(
+            select(Case).where(Case.tenant_id == tenant_id, Case.status.in_(_OPEN_STATUSES))
+        )
+    ).scalars().all()
+    if open_case_rows:
+        policy_overrides = await load_policy_overrides(db, tenant_id)
+        breached = sum(
+            1 for c in open_case_rows
+            if compute_sla_state(c, policy_overrides)["overall_status"] == "breached"
+        )
+        sla_compliance_pct = round(100 * (1 - breached / len(open_case_rows)), 1)
+    else:
+        sla_compliance_pct = None
+
     return {
         "total_cases": total_cases,
+        "sla_compliance_pct": sla_compliance_pct,
         "critical_cases": critical_cases,
         "open_cases": open_cases,
         "resolution_rate": resolution_rate,

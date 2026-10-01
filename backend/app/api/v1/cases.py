@@ -1,23 +1,47 @@
 from typing import Any, List
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
-from app.models.case import Case, CaseStatus, TimelineEvent
+from app.models.case import Case, TimelineEvent
 from app.models.user import User
 from app.schemas import case as case_schema
-from app.utils.audit import create_audit_log
+from app.services.case_service import (
+    add_timeline_note, apply_case_update, create_case_record,
+)
+from app.utils.sla import compute_sla_state, load_policy_overrides
+from app.tasks.triage import run_case_triage_task
+from app.workflows.events import emit_event
 
 router = APIRouter()
+
+
+async def _attach_sla(db: AsyncSession, tenant_id: int, cases: List[Case]) -> List[Case]:
+    """Compute SLA status and set it as transient attributes on each case ORM
+    object — the response schema reads them via from_attributes, same as any
+    stored column."""
+    if not cases:
+        return cases
+    policy_overrides = await load_policy_overrides(db, tenant_id)
+    for case in cases:
+        state = compute_sla_state(case, policy_overrides)
+        case.sla_response_target_minutes = state["response_target_minutes"]
+        case.sla_response_status = state["response_status"]
+        case.sla_response_due_at = state["response_due_at"]
+        case.sla_resolution_target_minutes = state["resolution_target_minutes"]
+        case.sla_resolution_status = state["resolution_status"]
+        case.sla_resolution_due_at = state["resolution_due_at"]
+        case.sla_overall_status = state["overall_status"]
+    return cases
+
 
 @router.get("/", response_model=List[case_schema.Case])
 async def read_cases(
     db: AsyncSession = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
@@ -29,7 +53,9 @@ async def read_cases(
         .offset(skip).limit(limit)
         .order_by(Case.created_at.desc())
     )
-    return result.scalars().all()
+    cases = result.scalars().all()
+    await _attach_sla(db, tenant_id, cases)
+    return cases
 
 @router.get("/tags", response_model=List[str])
 async def read_tags(
@@ -56,22 +82,14 @@ async def create_case(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create new case."""
-    case = Case(**case_in.model_dump(), tenant_id=tenant_id)
-    if not case.owner_id:
-        case.owner_id = current_user.id
-
-    db.add(case)
-    await db.flush()
-
-    await create_audit_log(
-        db=db,
-        entity_type="case",
-        entity_id=case.id,
-        action="create",
-        tenant_id=tenant_id,
-        user_id=current_user.id,
+    case, triage_id = await create_case_record(
+        db, tenant_id=tenant_id, data=case_in.model_dump(), user_id=current_user.id,
     )
     await db.commit()
+
+    # Kick off AI triage in the background; never blocks case creation.
+    run_case_triage_task.delay(triage_id)
+    emit_event(tenant_id, "case.created", case_id=case.id)
 
     # Re-load with eager relationships to avoid async lazy-load errors
     result = await db.execute(
@@ -80,6 +98,7 @@ async def create_case(
         .where(Case.id == case.id)
     )
     case = result.scalars().first()
+    await _attach_sla(db, tenant_id, [case])
 
     return case
 
@@ -100,6 +119,7 @@ async def read_case(
     case = result.scalars().first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+    await _attach_sla(db, tenant_id, [case])
     return case
 
 @router.put("/{case_id}", response_model=case_schema.Case)
@@ -119,50 +139,13 @@ async def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    update_data = case_in.model_dump(exclude_unset=True)
-    changes = {}
-    for field, value in update_data.items():
-        old_value = getattr(case, field)
-        if old_value != value:
-            changes[field] = {"from": str(old_value) if old_value is not None else None, "to": str(value) if value is not None else None}
-        setattr(case, field, value)
-
-    # Auto-generate timeline events for status/severity changes
-    if "status" in changes:
-        db.add(TimelineEvent(
-            case_id=case.id,
-            user_id=current_user.id,
-            event_type="status_change",
-            content=f"Status changed from {changes['status']['from']} to {changes['status']['to']}",
-        ))
-        # Set/clear resolved_at
-        new_status = update_data["status"]
-        if new_status in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
-            if case.resolved_at is None:
-                case.resolved_at = datetime.now(timezone.utc)
-        else:
-            case.resolved_at = None
-
-    if "severity" in changes:
-        db.add(TimelineEvent(
-            case_id=case.id,
-            user_id=current_user.id,
-            event_type="severity_change",
-            content=f"Severity changed from {changes['severity']['from']} to {changes['severity']['to']}",
-        ))
-
-    if changes:
-        await create_audit_log(
-            db=db,
-            entity_type="case",
-            entity_id=case.id,
-            action="update",
-            tenant_id=tenant_id,
-            user_id=current_user.id,
-            changes=changes,
-        )
+    changes = await apply_case_update(
+        db, case=case, update_data=case_in.model_dump(exclude_unset=True), user_id=current_user.id,
+    )
 
     await db.commit()
+    if changes:
+        emit_event(tenant_id, "case.updated", case_id=case.id, changes=changes)
 
     # Re-load with eager relationships
     result = await db.execute(
@@ -171,6 +154,7 @@ async def update_case(
         .where(Case.id == case.id)
     )
     case = result.scalars().first()
+    await _attach_sla(db, tenant_id, [case])
 
     return case
 
@@ -191,16 +175,13 @@ async def create_timeline_event(
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
     )
-    if not result.scalars().first():
+    case = result.scalars().first()
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    event = TimelineEvent(
-        case_id=case_id,
-        user_id=current_user.id,
-        **event_in.model_dump(),
+    event = await add_timeline_note(
+        db, case=case, user_id=current_user.id, **event_in.model_dump(),
     )
-    db.add(event)
-    await db.flush()
 
     event_id = event.id
     await db.commit()
