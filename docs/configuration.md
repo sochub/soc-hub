@@ -60,6 +60,16 @@ The settings are read from the backend environment or `backend/.env` (see
 under compose put them in `backend/.env`. That file is bind-mounted into the
 backend and worker containers. Restart both containers after a change.
 
+Cloud SDK variables are different. `AWS_REGION` / `AWS_DEFAULT_REGION`, the
+`AWS_*` credential variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_SESSION_TOKEN`, `AWS_PROFILE`, ...) and `GOOGLE_APPLICATION_CREDENTIALS` are
+read by boto3 and google-auth straight from the process environment. Pydantic
+reads `backend/.env` into the settings object but does not export it to
+`os.environ`, so these variables have no effect in `backend/.env`. Set them as
+real environment variables: in the backend and worker `environment:` section of
+`docker-compose.yml`, or on the host. (`AI_AWS_REGION` is an app setting and does
+work from `backend/.env`.)
+
 > Model choice matters for the copilot's action reliability. With Ollama,
 > `llama3.1` and `qwen2.5` emit structured actions more reliably than `llama3`.
 
@@ -200,6 +210,10 @@ For a non-allowlisted `http://` URL, the call connects to the IP that was vetted
 so a second DNS answer can't rebind it to an internal address. `https://` keeps
 its hostname, because TLS certificate verification already defeats rebinding.
 The deployment default (env vars) is trusted and is not checked.
+
+Redirects are refused. Tenant calls to these endpoints never follow a 3xx
+response, because the redirect target would skip the guard. The call fails
+with "AI endpoint redirect refused". Point `api_base` at the final URL.
 
 ### Privacy and logging
 

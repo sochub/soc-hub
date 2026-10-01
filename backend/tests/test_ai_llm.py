@@ -1,3 +1,4 @@
+import json
 import asyncio
 import logging
 from types import SimpleNamespace
@@ -298,3 +299,67 @@ def test_config_lookup_failure_becomes_unavailable(monkeypatch):
     monkeypatch.setattr(config_mod, "resolve_config", unavailable)
     with pytest.raises(AIUnavailable, match="tenant override broken"):
         asyncio.run(llm.complete([{"role": "user", "content": "x"}], tenant_id=1))
+
+
+def _stub(handler_fn):
+    import http.server
+    import threading
+
+    hits = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(self.path)
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            handler_fn(self)
+
+        do_GET = do_POST  # a 302 turns POST into GET; count those hits too
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, hits
+
+
+def _ok(h):
+    body = json.dumps({
+        "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        # ollama /api/chat shape
+        "message": {"role": "assistant", "content": "OK"}, "done": True,
+    }).encode()
+    h.send_response(200)
+    h.send_header("content-type", "application/json")
+    h.send_header("content-length", str(len(body)))
+    h.end_headers()
+    h.wfile.write(body)
+
+
+@pytest.mark.parametrize("provider,path", [("openai_compatible", "/v1"), ("ollama", "")])
+def test_tenant_redirects_refused(provider, path):
+    target, target_hits = _stub(_ok)
+    tport = target.server_address[1]
+
+    def redirect(h):
+        h.send_response(302)
+        h.send_header("location", f"http://127.0.0.1:{tport}{h.path}")
+        h.send_header("content-length", "0")
+        h.end_headers()
+
+    origin, origin_hits = _stub(redirect)
+    try:
+        cfg = ProviderConfig(provider, "m", "tenant", tenant_id=1,
+                             api_base=f"http://127.0.0.1:{origin.server_address[1]}{path}")
+        with pytest.raises(AIUnavailable, match="AI endpoint redirect refused"):
+            run(llm.complete_with(cfg, [{"role": "user", "content": "x"}], timeout=10, allowlist=["127.0.0.1"]))
+        assert origin_hits and target_hits == []
+        # sanity: the same stack reaches a non-redirecting endpoint
+        cfg.api_base = f"http://127.0.0.1:{tport}{path}"
+        assert run(llm.complete_with(cfg, [{"role": "user", "content": "x"}], timeout=10,
+                                     allowlist=["127.0.0.1"])) == "OK"
+    finally:
+        origin.shutdown()
+        target.shutdown()

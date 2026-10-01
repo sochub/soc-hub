@@ -9,7 +9,10 @@ from urllib.parse import urlparse, urlunparse
 # Use the bundled model cost map — never fetch it from GitHub at import time.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+import httpx  # noqa: E402
 import litellm  # noqa: E402
+from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler  # noqa: E402
+from openai import AsyncOpenAI  # noqa: E402
 
 from app.ai.aws import bedrock_credentials
 from app.ai.errors import AIError, AIUnavailable, scrub
@@ -59,6 +62,35 @@ def _pin(url: str, ip: Optional[str]) -> str:
     return urlunparse(p._replace(netloc=f"{userinfo}@{netloc}" if userinfo else netloc))
 
 
+class _RedirectRefused(Exception):
+    pass
+
+
+def _no_redirect_client(cfg: ProviderConfig, kwargs: dict, refused: list) -> Tuple[object, List[httpx.AsyncClient]]:
+    """Per-call client for a guarded tenant endpoint that never follows redirects: a 3xx could send the
+    request on to a host the SSRF check never vetted. LiteLLM's default clients use follow_redirects=True."""
+    async def flag(response: httpx.Response) -> None:
+        if 300 <= response.status_code < 400:
+            refused.append(response.status_code)
+
+    async def flag_and_raise(response: httpx.Response) -> None:
+        await flag(response)
+        if refused:
+            raise _RedirectRefused()
+
+    if cfg.provider == "openai_compatible":
+        # The openai SDK never follows redirects itself, and a 3xx is not retryable, so flagging suffices.
+        http = httpx.AsyncClient(follow_redirects=False, event_hooks={"response": [flag]})
+        return AsyncOpenAI(base_url=kwargs["api_base"], api_key=kwargs["api_key"], http_client=http), [http]
+    # ollama_chat: LiteLLM's AsyncHTTPHandler retries connection errors on a fresh follow_redirects=True
+    # client that inherits these event hooks, so the hook must raise to stop that client too.
+    hooks = {"response": [flag_and_raise]}
+    handler = AsyncHTTPHandler(event_hooks=hooks)
+    owned = handler.client  # the follow_redirects=True default, replaced before any request
+    handler.client = http = httpx.AsyncClient(follow_redirects=False, event_hooks=hooks)
+    return handler, [owned, http]
+
+
 async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float], json_mode: bool,
                 max_tokens: Optional[int], timeout: Optional[float], allowlist: Sequence[str]) -> str:
     secrets = list((cfg.secrets or {}).values())
@@ -90,13 +122,24 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     kwargs["timeout"] = timeout if timeout is not None else settings.AI_TIMEOUT_SECONDS
+    refused: list = []
+    to_close: List[httpx.AsyncClient] = []
+    if guarded:
+        kwargs["client"], to_close = _no_redirect_client(cfg, kwargs, refused)
     # `from None` throughout: the raw provider exception may carry keys; only the scrubbed text survives.
     try:
         resp = await litellm.acompletion(messages=messages, **kwargs)
-    except _UNAVAILABLE as e:
-        raise _fail(AIUnavailable, scrub(f"{type(e).__name__}: {e}", secrets), e) from None
     except Exception as e:
+        if refused:
+            raise _fail(AIUnavailable, "AI endpoint redirect refused", "RedirectRefused") from None
+        if isinstance(e, _UNAVAILABLE):
+            raise _fail(AIUnavailable, scrub(f"{type(e).__name__}: {e}", secrets), e) from None
         raise _fail(AIError, scrub(f"{type(e).__name__}: {e}", secrets), e) from None
+    finally:
+        for c in to_close:
+            await c.aclose()
+    if refused:
+        raise _fail(AIUnavailable, "AI endpoint redirect refused", "RedirectRefused")
     try:
         return resp.choices[0].message.content or ""
     except (AttributeError, IndexError, TypeError):

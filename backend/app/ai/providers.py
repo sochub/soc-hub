@@ -27,6 +27,29 @@ class ConfigError(ValueError):
     pass
 
 
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+_SA_KEYS = ("type", "project_id", "private_key_id", "private_key", "client_email", "client_id", "auth_uri",
+            "token_uri", "auth_provider_x509_cert_url", "client_x509_cert_url")
+
+
+def _service_account(raw: str) -> dict:
+    """Accept only a plain service-account key. Other google-auth credential types (external_account,
+    authorized_user) and custom token URIs would let the server read local files/metadata and post them out."""
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        raise ConfigError("service account JSON is not valid JSON") from None
+    if not isinstance(parsed, dict) or parsed.get("type") != "service_account":
+        raise ConfigError("service account JSON must be a Google service-account key")
+    if not all(isinstance(parsed.get(k), str) and parsed[k].strip() for k in ("client_email", "private_key")):
+        raise ConfigError("service account JSON must include client_email and private_key")
+    if parsed.get("token_uri") not in (None, GOOGLE_TOKEN_URI):
+        raise ConfigError(f"service account token_uri must be {GOOGLE_TOKEN_URI}")
+    out = {k: parsed[k] for k in _SA_KEYS if k in parsed}
+    out["token_uri"] = GOOGLE_TOKEN_URI
+    return out
+
+
 @dataclass
 class ProviderConfig:
     provider: str
@@ -97,13 +120,7 @@ def build_kwargs(cfg: ProviderConfig, aws_creds: Optional[dict] = None) -> dict:
         kw["vertex_location"] = cfg.location
         sa = s.get("service_account_json")
         if sa:
-            try:
-                parsed = json.loads(sa)
-            except ValueError as e:
-                raise ConfigError("service account JSON is not valid JSON") from None
-            if not isinstance(parsed, dict) or "client_email" not in parsed:
-                raise ConfigError("service account JSON must be a Google service-account key")
-            kw["vertex_credentials"] = sa
+            kw["vertex_credentials"] = json.dumps(_service_account(sa))
     if p == "bedrock":
         kw["aws_region_name"] = cfg.region
         if cfg.source == "tenant":

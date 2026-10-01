@@ -36,9 +36,11 @@ def test_anthropic_and_gemini():
 
 
 def test_vertex_tenant_requires_and_passes_json():
-    sa = json.dumps({"type": "service_account", "client_email": "x@y", "private_key": "k"})
-    kw = build_kwargs(cfg("vertex", project="p", location="us-central1", secrets={"service_account_json": sa}))
-    assert kw == {"model": "vertex_ai/m1", "vertex_project": "p", "vertex_location": "us-central1", "vertex_credentials": sa}
+    sa = {"type": "service_account", "client_email": "x@y", "private_key": "k"}
+    kw = build_kwargs(cfg("vertex", project="p", location="us-central1", secrets={"service_account_json": json.dumps(sa)}))
+    creds = json.loads(kw.pop("vertex_credentials"))
+    assert kw == {"model": "vertex_ai/m1", "vertex_project": "p", "vertex_location": "us-central1"}
+    assert creds == {**sa, "token_uri": "https://oauth2.googleapis.com/token"}
     assert "secrets.service_account_json" in missing_fields(cfg("vertex", project="p", location="l"))
 
 
@@ -104,3 +106,35 @@ def test_tenant_bedrock_without_resolved_creds_raises():
     with pytest.raises(ConfigError):
         build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="role", role_arn="arn:aws:iam::1:role/r"),
                     aws_creds={"aws_access_key_id": "A"})
+
+
+SA_OK = {"type": "service_account", "project_id": "p", "private_key_id": "kid", "private_key": "-----BEGIN-----",
+         "client_email": "svc@p.iam.gserviceaccount.com", "client_id": "1",
+         "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token",
+         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs", "client_x509_cert_url": "https://x"}
+
+
+def _vertex(sa):
+    return cfg("vertex", project="p", location="l", secrets={"service_account_json": json.dumps(sa)})
+
+
+@pytest.mark.parametrize("sa", [
+    {"type": "external_account", "client_email": "x@y", "private_key": "k", "token_url": "https://evil",
+     "credential_source": {"file": "/proc/self/environ"}},
+    {"type": "authorized_user", "client_email": "x@y", "private_key": "k", "refresh_token": "r"},
+    {**SA_OK, "token_uri": "https://evil.example/token"},
+    {**SA_OK, "type": None},
+    {k: v for k, v in SA_OK.items() if k != "private_key"},
+    {**SA_OK, "client_email": ""},
+    ["not", "a", "dict"],
+])
+def test_vertex_rejects_non_service_account_json(sa):
+    with pytest.raises(ConfigError):
+        build_kwargs(_vertex(sa))
+
+
+def test_vertex_service_account_normalised():
+    sa = {**SA_OK, "universe_domain": "evil.example", "credential_source": {"url": "http://169.254.169.254"}}
+    sa.pop("token_uri")
+    creds = json.loads(build_kwargs(_vertex(sa))["vertex_credentials"])
+    assert creds == SA_OK  # token_uri forced, universe_domain and unknown keys dropped
