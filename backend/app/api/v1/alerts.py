@@ -1,5 +1,6 @@
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -25,19 +26,35 @@ async def ingest_alert(
     The webhook's API key determines both the destination tenant and the alert
     ``source`` (the webhook's name), so source attribution is authoritative and
     not caller-controlled.
+
+    Idempotent on ``(tenant, source, external_id)``: re-posting an alert that
+    already exists returns the existing row and does not re-emit
+    ``alert.ingested``. ``ON CONFLICT DO NOTHING`` makes concurrent duplicates
+    safe — exactly one insert wins.
     """
-    alert = Alert(
-        source=webhook.name,
-        external_id=alert_in.external_id,
-        title=alert_in.title,
-        payload=alert_in.payload,
-        status="pending",
-        tenant_id=webhook.tenant_id,
-    )
-    db.add(alert)
+    inserted_id = (await db.execute(
+        insert(Alert)
+        .values(
+            source=webhook.name,
+            external_id=alert_in.external_id,
+            title=alert_in.title,
+            payload=alert_in.payload,
+            status="pending",
+            tenant_id=webhook.tenant_id,
+        )
+        .on_conflict_do_nothing(constraint="uq_alerts_tenant_source_external")
+        .returning(Alert.id)
+    )).scalar()
     await db.commit()
-    await db.refresh(alert)
-    emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
+    alert = (await db.execute(
+        select(Alert).where(
+            Alert.tenant_id == webhook.tenant_id,
+            Alert.source == webhook.name,
+            Alert.external_id == alert_in.external_id,
+        )
+    )).scalars().one()
+    if inserted_id is not None:
+        emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
     return alert
 
 @router.get("/", response_model=List[case_schema.Alert])

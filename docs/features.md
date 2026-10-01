@@ -71,6 +71,10 @@ External tools post alerts to `POST /api/v1/alerts/webhook` using a **per-tenant
 `X-API-Key`. The key determines the destination tenant; a leaked key can only ever
 write to its owning tenant.
 
+Ingestion is **idempotent** on `(tenant, source, external_id)`: re-posting an alert
+with the same `external_id` returns the existing alert (HTTP 200) and does not
+re-trigger `alert.ingested` workflows, so senders can safely retry.
+
 ## Single Sign-On (SAML)
 
 Tenant admins configure their own IdP (Okta, Entra ID, Google, …) under
