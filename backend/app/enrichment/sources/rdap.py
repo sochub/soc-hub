@@ -1,4 +1,5 @@
 """RDAP via the rdap.org bootstrap redirector; each redirect hop is SSRF-vetted."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote, urljoin, urlsplit
@@ -24,24 +25,31 @@ def _registrar(data: dict) -> Optional[str]:
         if "registrar" in (ent.get("roles") or []):
             for item in ((ent.get("vcardArray") or [None, []])[1] or []):
                 if isinstance(item, list) and item and item[0] == "fn":
-                    return item[-1]
+                    fn = item[-1]
+                    return fn if isinstance(fn, str) else None
     return None
 
 
 async def _lookup(itype, value, transport, now):
     kind = "domain" if itype == "domain" else "ip"
-    link = f"https://rdap.org/{kind}/{quote(value, safe='')}"
+    link = f"https://rdap.org/{kind}/{quote(value, safe=':')}"
     url = link
     async with http_client(transport) as c:
         for _ in range(_MAX_HOPS + 1):
             resp = await c.get(url, headers={"Accept": "application/rdap+json"})
             if resp.status_code not in (301, 302, 303, 307, 308):
                 break
-            nxt = urljoin(url, resp.headers.get("location", ""))
+            loc = resp.headers.get("location")
+            if not loc:
+                raise SourceError("rdap redirect refused")
+            nxt = urljoin(url, loc)
             if urlsplit(nxt).scheme != "https":
                 raise SourceError("rdap redirect refused")
+            # ponytail: no IP pinning (ruling R6). Every hop must be https and httpx verifies the TLS cert
+            # against the hostname, so DNS rebinding to an internal IP cannot present a valid cert for the
+            # vetted name. Plain-http is refused above, before vetting. DNS is blocking, so run in a thread.
             try:
-                assert_url_allowed(nxt, [])
+                await asyncio.to_thread(assert_url_allowed, nxt, [])
             except SSRFError:
                 raise SourceError("rdap redirect refused") from None
             url = nxt

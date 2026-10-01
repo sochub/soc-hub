@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -18,7 +19,7 @@ def no_dns(monkeypatch):
     import app.enrichment.sources.rdap as m
 
     def fake(url, allowlist):
-        if "internal" in url:
+        if urlsplit(url).hostname == "internal.example":
             from app.workflows.ssrf import SSRFError
             raise SSRFError("blocked")
         return "203.0.113.10"
@@ -57,6 +58,42 @@ async def test_rdap_ip_summary():
 async def test_rdap_refuses_unsafe_redirect(location):
     r = await rdap.lookup("domain", "x.com", transport=T(lambda req: httpx.Response(302, headers={"location": location})), now=NOW)
     assert r.status == "error" and r.error == "rdap redirect refused"
+
+
+@pytest.mark.asyncio
+async def test_rdap_relative_location_followed_and_vetted():
+    seen = []
+
+    def h(req):
+        seen.append(str(req.url))
+        if req.url.path.startswith("/domain/") and req.url.host == "rdap.org":
+            return httpx.Response(302, headers={"location": "/rdap/x.com"})
+        return httpx.Response(200, json={"events": []})
+    r = await rdap.lookup("domain", "x.com", transport=T(h), now=NOW)
+    assert r.status == "ok" and seen[-1] == "https://rdap.org/rdap/x.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("headers", [{"location": "//internal.example/domain/x.com"}, {"location": ""}, {}])
+async def test_rdap_refuses_protocol_relative_and_missing_location(headers):
+    r = await rdap.lookup("domain", "x.com", transport=T(lambda req: httpx.Response(302, headers=headers)), now=NOW)
+    assert r.status == "error" and r.error == "rdap redirect refused"
+
+
+@pytest.mark.asyncio
+async def test_rdap_non_str_registrar_ignored():
+    body = {"events": [], "entities": [{"roles": ["registrar"], "vcardArray": ["vcard", [["fn", {}, "text", ["x"]]]]}]}
+    r = await rdap.lookup("domain", "x.com", transport=T(lambda req: httpx.Response(200, json=body)), now=NOW)
+    assert r.status == "ok" and "registrar" not in r.summary
+
+
+@pytest.mark.asyncio
+async def test_rdap_ipv6_colons_literal():
+    def h(req):
+        assert req.url.path == "/ip/2001:db8::1"
+        return httpx.Response(200, json={"name": "N"})
+    r = await rdap.lookup("ip", "2001:db8::1", transport=T(h), now=NOW)
+    assert r.link == "https://rdap.org/ip/2001:db8::1"
 
 
 @pytest.mark.asyncio

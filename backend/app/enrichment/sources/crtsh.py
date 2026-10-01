@@ -26,6 +26,7 @@ async def _lookup(value, transport, now):
     verdict = "unknown"
     if first:
         try:
+            # crt.sh timestamps are naive UTC
             d = datetime.fromisoformat(first).replace(tzinfo=timezone.utc)
             verdict = "suspicious" if now - d < timedelta(days=30) else "unknown"
         except ValueError:
