@@ -1,0 +1,69 @@
+# Path -> label mapping for actions/labeler (v5+ format).
+backend:
+  - changed-files:
+      - any-glob-to-any-file: ['backend/**']
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: ['frontend/**']
+
+migrations:
+  - changed-files:
+      - any-glob-to-any-file: ['backend/alembic/versions/**']
+
+workflows-engine:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/app/workflows/**'
+          - 'frontend/src/features/automations/**'
+
+slack:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/app/services/slack*'
+          - 'backend/app/api/v1/slack.py'
+          - 'backend/tests/test_slack*'
+          - 'docs/slack/**'
+
+ai:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/app/services/ai_service.py'
+          - 'backend/app/api/v1/copilot.py'
+          - 'backend/app/ai/**'
+          - 'frontend/src/features/copilot/**'
+
+auth:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/app/core/security.py'
+          - 'backend/app/core/login_throttle.py'
+          - 'backend/app/api/v1/auth.py'
+          - 'backend/app/api/v1/sso.py'
+          - 'backend/app/api/deps.py'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: ['docs/**', '*.md']
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/**']
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'frontend/package*.json'
+          - 'backend/requirements*.txt'
+          - 'backend/Dockerfile'
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docker-compose*.yml'
+          - '**/Dockerfile'
+          - 'frontend/nginx.conf'
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: ['backend/tests/**']
