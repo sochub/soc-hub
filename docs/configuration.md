@@ -33,16 +33,183 @@ backend and worker get `DATABASE_URL` / `REDIS_URL` built from them.
 | `BACKEND_CORS_ORIGINS` | Comma-separated allowed origins. Empty = same-origin only | _(empty)_ |
 | `PUBLIC_BASE_URL` | Externally visible origin (behind nginx). Used to build SAML SP URLs and post-SSO redirects | `http://localhost` |
 
-## AI (Ollama)
+## AI provider
+
+All AI features (Copilot, case analysis, triage) go through one provider layer
+(LiteLLM, `backend/app/ai/`). The **deployment default** comes from the env vars
+below. A tenant admin can optionally **override** it for their tenant under
+**Integrations → AI provider**.
 
 | Variable | Description | Default |
 |---|---|---|
-| `OLLAMA_BASE_URL` | Ollama API endpoint | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Model name. The `ollama` container auto-pulls this on first boot | `llama3` |
+| `AI_PROVIDER` | `ollama` \| `openai` \| `openai_compatible` \| `anthropic` \| `gemini` \| `vertex` \| `bedrock`. Unset or blank means `ollama` | _(unset)_ |
+| `AI_MODEL` | Model name without a provider prefix, e.g. `gpt-4o-mini`. For Ollama it falls back to `OLLAMA_MODEL` | _(unset)_ |
+| `AI_API_BASE` | Endpoint for `ollama` / `openai_compatible`. For Ollama it falls back to `OLLAMA_BASE_URL` | _(unset)_ |
+| `AI_API_KEY` | Key for `openai` / `anthropic` / `gemini` (optional for `openai_compatible`) | _(unset)_ |
+| `AI_AWS_REGION` | Bedrock region. Falls back to `AWS_REGION`, then `AWS_DEFAULT_REGION` | _(unset)_ |
+| `VERTEX_PROJECT` / `VERTEX_LOCATION` | Vertex AI project and region | _(unset)_ |
+| `AI_TIMEOUT_SECONDS` | Per-call timeout (must be > 0) | `120` |
+| `AI_ALLOW_TENANT_OVERRIDE` | Allow tenant admins to set their own provider | `true` |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Legacy Ollama settings, still honoured | `http://localhost:11434` / `llama3` |
 
-> Model choice matters for the copilot's action reliability. `llama3.1` and
-> `qwen2.5` have native tool-calling and emit structured actions more reliably than
-> `llama3`. Set `OLLAMA_MODEL` and the container pulls it automatically.
+**Backward compatibility.** With `AI_PROVIDER` unset, nothing changes: the app
+uses Ollama at `OLLAMA_BASE_URL` with `OLLAMA_MODEL`, as before.
+
+The settings are read from the backend environment or `backend/.env` (see
+`backend/.env.example`). `docker-compose.yml` does not pass `AI_*` through, so
+under compose put them in `backend/.env`. That file is bind-mounted into the
+backend and worker containers. Restart both containers after a change.
+
+> Model choice matters for the copilot's action reliability. With Ollama,
+> `llama3.1` and `qwen2.5` emit structured actions more reliably than `llama3`.
+
+### Examples
+
+```bash
+# Ollama, local (the default). These two lines are equivalent to leaving AI_* unset.
+AI_PROVIDER=ollama
+AI_MODEL=llama3.1                       # AI_API_BASE falls back to OLLAMA_BASE_URL
+
+# OpenAI
+AI_PROVIDER=openai
+AI_MODEL=gpt-4o-mini
+AI_API_KEY=sk-...
+
+# OpenAI-compatible server (vLLM, LM Studio, LocalAI, ...)
+AI_PROVIDER=openai_compatible
+AI_MODEL=meta-llama/Llama-3.1-8B-Instruct
+AI_API_BASE=http://vllm:8000/v1
+# AI_API_KEY=...                        # only if the server requires one
+
+# Anthropic
+AI_PROVIDER=anthropic
+AI_MODEL=claude-sonnet-4-5
+AI_API_KEY=sk-ant-...
+
+# Google Gemini (AI Studio key)
+AI_PROVIDER=gemini
+AI_MODEL=gemini-2.0-flash
+AI_API_KEY=AIza...
+
+# Google Vertex AI with Application Default Credentials
+# (GOOGLE_APPLICATION_CREDENTIALS, gcloud ADC, or the GCE/GKE service account)
+AI_PROVIDER=vertex
+AI_MODEL=gemini-2.0-flash
+VERTEX_PROJECT=my-project
+VERTEX_LOCATION=us-central1
+
+# AWS Bedrock with an instance / task role (no keys in config)
+AI_PROVIDER=bedrock
+AI_MODEL=anthropic.claude-3-5-sonnet-20240620-v1:0
+AI_AWS_REGION=us-east-1
+```
+
+### AWS credentials (Bedrock)
+
+The deployment default never stores AWS keys. boto3's standard credential chain
+applies, in this order:
+
+1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`)
+2. Shared config and credentials files / `AWS_PROFILE`
+3. Web identity token (EKS IRSA, `AWS_WEB_IDENTITY_TOKEN_FILE`)
+4. ECS / Fargate task role
+5. EC2 instance profile (IMDS)
+
+The deployment identity needs `bedrock:InvokeModel` on the models it uses.
+
+### Tenant overrides
+
+Tenant admins configure a provider under **Integrations → AI provider**
+(`GET`/`PUT`/`DELETE /api/v1/ai/config`; test with `POST /api/v1/ai/config/test`).
+
+- Credentials are encrypted at rest with `SECRET_KEY` and are write-only: the
+  API only reports which secret fields are set. Leaving a secret blank on save
+  keeps the stored value. Switching provider drops the stored secrets.
+- Tenant Vertex needs a service-account JSON key. Tenant Bedrock uses either
+  **role** mode (assume a role, below) or **keys** mode (stored access keys).
+  Tenants can't use the server's own credential chain.
+- If `SECRET_KEY` changes, stored credentials can't be decrypted. AI is then
+  unavailable for that tenant until an admin re-enters the credentials.
+- With `AI_ALLOW_TENANT_OVERRIDE=false`, the deployment provider is used for
+  everyone. Saving (`PUT`) and testing an unsaved config (`POST .../test` with a
+  body) return `403`. An existing tenant row is ignored but not deleted.
+- Changes apply within about 60 seconds in other backend and worker processes
+  (per-process cache).
+
+**No fallback.** When a tenant config is enabled but fails (bad key, endpoint
+down, AssumeRole denied, undecryptable credentials), the call fails. It never
+falls back to the deployment provider, so tenant case data is never sent to a
+provider the tenant didn't choose.
+
+**Errors.** Users only see the error type, e.g. *"AI Assistant unavailable
+(AuthenticationError). Ask an admin to check the AI provider settings."* The
+full reason, with secrets scrubbed, is shown only to admins in **Test connection**.
+
+#### Bedrock assume-role setup
+
+1. In **Integrations → AI provider**, pick Bedrock and **role** mode, then save.
+   The first save in role mode generates the tenant's **External ID**. The card
+   shows it with the server's AWS principal. That principal is shown as an IAM
+   role ARN (`arn:aws:iam::<acct>:role/<name>`). A role path is not preserved, so
+   correct the ARN if your role has one. The config stays disabled until a role
+   ARN is set.
+2. In the tenant's AWS account, create a role with this trust policy:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Principal": { "AWS": "<server principal ARN>" },
+       "Action": "sts:AssumeRole",
+       "Condition": { "StringEquals": { "sts:ExternalId": "<External ID>" } }
+     }]
+   }
+   ```
+
+3. Give the role permission to invoke the model:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Action": "bedrock:InvokeModel",
+       "Resource": "arn:aws:bedrock:<region>::foundation-model/*"
+     }]
+   }
+   ```
+
+   Inference profiles also need their `inference-profile` ARN in `Resource`.
+4. The server's own identity needs `sts:AssumeRole` on that role. Paste the role
+   ARN, save, and run **Test connection**.
+
+The server assumes the role (1-hour sessions, session name
+`sochub-tenant-<id>`) and caches the credentials until 5 minutes before they
+expire.
+
+#### Tenant base URLs (SSRF guard)
+
+For tenant `ollama` and `openai_compatible` configs, `api_base` goes through the
+same outbound guard as workflow HTTP nodes, both when it is saved and on every
+call. A host that resolves to a private, loopback, link-local, CGNAT or reserved
+address is rejected unless it is on the tenant's **HTTP allowlist**
+(Integrations). Allowlisted hosts are trusted by name.
+
+For a non-allowlisted `http://` URL, the call connects to the IP that was vetted,
+so a second DNS answer can't rebind it to an internal address. `https://` keeps
+its hostname, because TLS certificate verification already defeats rebinding.
+The deployment default (env vars) is trusted and is not checked.
+
+### Privacy and logging
+
+- LiteLLM is locked down. Telemetry is off, all callbacks are cleared, and
+  message logging is off. `LITELLM_LOCAL_MODEL_COST_MAP=True` makes it use its
+  bundled model cost map instead of fetching one from GitHub. Prompts go only
+  to the configured provider.
+- Each call logs one `ai_call` line with provider, model, source, tenant,
+  duration, outcome and, on failure, the exception type and HTTP status.
+  Prompts, responses, error text and secrets are never logged.
 
 ## Email (optional — invitations work without it)
 

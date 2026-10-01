@@ -22,7 +22,8 @@ The active tenant rides in the JWT; switch it from the sidebar picker
 
 ## Investigation Copilot
 
-A global, context-aware assistant powered by a **local** LLM (Ollama).
+A global, context-aware assistant. It runs on the configured AI provider, which is
+local Ollama by default (see [AI providers](#ai-providers)).
 
 - **Auto-scoped** — on a case page it has the full case context; elsewhere it's a
   tenant-level assistant. Conversations persist per case and as one general session.
@@ -37,6 +38,18 @@ A global, context-aware assistant powered by a **local** LLM (Ollama).
 
 See the design notes: [global widget](copilot/A-global-widget-design.md),
 [actions](copilot/B-actions-design.md).
+
+## AI providers
+
+The Copilot, case analysis and triage can run on **Ollama** (the default),
+**OpenAI**, any **OpenAI-compatible** server (vLLM, LM Studio), **Anthropic**,
+**Gemini**, **Vertex AI** or **AWS Bedrock**. The deployment sets a default with
+env vars. Each tenant admin can override it under **Integrations → AI provider**
+and check it with **Test connection**. Credentials are stored encrypted and are
+write-only. Bedrock can use a cross-account role with an External ID. A broken
+tenant config never falls back to the deployment provider. The Copilot header
+shows which provider and model are in use. See
+[configuration](configuration.md#ai-provider).
 
 ## Playbooks (marketplace)
 
