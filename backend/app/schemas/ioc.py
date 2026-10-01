@@ -42,6 +42,7 @@ class IOC(IOCBase):
     tenant_id: int
     created_at: datetime
     created_by: Optional[int] = None
+    enrichment_verdict: Optional[str] = None
 
     class Config:
         from_attributes = True

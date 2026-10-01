@@ -225,6 +225,86 @@ with "AI endpoint redirect refused". Point `api_base` at the final URL.
   duration, outcome and, on failure, the exception type and HTTP status.
   Prompts, responses, error text and secrets are never logged.
 
+## Threat-intel enrichment
+
+SOC Hub can look up IOCs and artifacts in public threat-intelligence services and
+show the verdicts on the IOC/artifact. It is configured per tenant by a tenant
+admin in **Integrations -> Threat intel** (API: `GET/PUT/DELETE /api/v1/enrichment/config`,
+`POST /api/v1/enrichment/config/test`).
+
+**Sources and keys**
+
+| Source | Covers | Key |
+|---|---|---|
+| VirusTotal | IP, domain, URL, file hash | VirusTotal API key |
+| URLhaus | IP, domain, URL, file hash | free abuse.ch Auth-Key (auth.abuse.ch) |
+| ThreatFox | IP, domain, URL, file hash | the same abuse.ch Auth-Key |
+| RDAP | IP, domain | none |
+| crt.sh | domain | none |
+
+A source without its key is simply not run. Keys are stored encrypted, are
+write-only (responses only say whether a key is set) and are never logged. Each
+source can be switched off individually. Only lookups are made: nothing is ever
+uploaded (no files, no submissions).
+
+**Settings** (defaults in brackets)
+
+- `auto_max_tlp` [`green`]: automatic lookups run for indicators up to this TLP
+  (`none`, `white`, `green`, `amber`, `red`; `none` disables automatic lookups).
+- `artifact_tlp` [`amber`]: artifacts have no TLP of their own and are treated as
+  this TLP. With the defaults artifacts are therefore not looked up automatically.
+- `cache_ttl_hours` [24, 1-720]: a fresh `ok`/`not_found` result is reused instead
+  of calling the source again. Manual runs bypass the cache.
+- `vt_per_minute` [4] and `vt_per_day` [500]: VirusTotal limits. The defaults are
+  the VirusTotal free tier (4 requests/minute, 500/day); raise them only with a paid key.
+- `internal_domains` [none]: domains (and their subdomains) that are never sent out.
+- `sources`: per-source on/off switches.
+
+Saving the Threat intel card saves the **full configuration**. Through the API, a
+`PUT` merges the fields sent: any field left out keeps its stored value (or its
+default when nothing is stored yet). Keys are kept unless you send a new one or a
+`clear_*` flag.
+
+**Rate limits.** Counted per tenant in Redis and shared by all workers, except
+crt.sh, which is limited globally. VirusTotal uses the two limits above; URLhaus and
+ThreatFox 60/minute; RDAP 30/minute; crt.sh 1 per 5 seconds. Over the limit, a
+lookup is retried later with a delay (shown as pending); if the wait would be an hour
+or more (VirusTotal daily quota) or retries are exhausted, the result is `rate_limited`.
+
+**TLP rules**
+
+- Automatic lookups happen when an IOC or artifact is created, and when its value,
+  type or (for IOCs) TLP changes. This applies in every process (API, worker and
+  scripts), but only if the TLP is at or below `auto_max_tlp`.
+- A manual **Enrich** run (`POST /api/v1/enrichment/{ioc|artifact}/{id}/run`,
+  analyst or above) works on any TLP, but anything other than white or green needs
+  explicit confirmation (`{"confirm": true}`; the API answers `409` otherwise).
+
+**What is never sent out.** These values are marked `skipped` and no source is called:
+
+- private, reserved, loopback, link-local and multicast IPs, including shorthand
+  or hex forms inside URLs (`127.1`, `0x7f.1`, `2130706433`);
+- single-label hosts such as `localhost` or `intranet`;
+- special-use and private-use names, as a domain or URL host: anything ending in
+  `.local`, `.localhost`, `.internal`, `.lan`, `.home.arpa`, `.corp`, `.intranet`,
+  `.test`, `.invalid` or `.example` (`example.com` itself is a normal domain);
+- anything under `internal_domains`, whether it is a domain or the host of a URL;
+- an IP address stored as a "domain" (not enrichable).
+
+**RDAP redirects.** RDAP goes through the rdap.org redirector. Up to 3 redirects are
+followed; each must be `https` and pass the same internal-address check, and TLS
+verification protects the hostname.
+
+**Kill switch.** `ENRICHMENT_ENABLED=false` (environment, default `true`) stops new
+enqueues (automatic and manual), tasks already queued and pending retries: the worker
+task does nothing, and a manual run answers `503`. Restart the backend and the worker
+after changing it. The seed script (`app.scripts.seed_incidents`) always runs with
+enrichment off.
+
+**Logging.** One `ti_lookup tenant=.. source=.. type=.. outcome=.. duration_ms=..`
+line per source per lookup, and one `ti_config` line per config save, test or delete.
+Indicator values, keys and response bodies are never logged.
+
 ## Email (optional — invitations work without it)
 
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`. When

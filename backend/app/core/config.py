@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     AI_TIMEOUT_SECONDS: float = Field(120, gt=0)
     AI_ALLOW_TENANT_OVERRIDE: bool = True
 
+    # Threat-intel enrichment kill switch: False stops all automatic enqueueing.
+    ENRICHMENT_ENABLED: bool = True
+
     @field_validator("AI_PROVIDER", mode="before")
     @classmethod
     def _blank_provider_is_none(cls, v):

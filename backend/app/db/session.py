@@ -12,6 +12,11 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False,
 )
 
+# Every process (API, Celery worker, scripts) builds sessions from here, so the IOC/artifact
+# auto-enrichment listeners register here too. hooks.py imports its models lazily: no cycle.
+import app.enrichment.hooks as _enrichment_hooks  # noqa: E402,F401
+
+
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
