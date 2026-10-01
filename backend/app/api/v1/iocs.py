@@ -10,6 +10,7 @@ from app.schemas import ioc as ioc_schema
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
+_NOT_NULL = {"ioc_type", "value", "threat_level", "confidence", "status", "tlp", "tags"}
 
 
 @router.get("/", response_model=List[ioc_schema.IOC])
@@ -93,6 +94,10 @@ async def update_ioc(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update an IOC (tenant-scoped)."""
+    # Explicit nulls on non-nullable fields would break IOC list serialisation for the whole tenant.
+    bad = sorted(k for k, v in ioc_in.model_dump(exclude_unset=True).items() if v is None and k in _NOT_NULL)
+    if bad:
+        raise HTTPException(status_code=422, detail=f"{', '.join(bad)} cannot be null")
     result = await db.execute(
         select(IOC).where(IOC.id == ioc_id, IOC.tenant_id == tenant_id)
     )
