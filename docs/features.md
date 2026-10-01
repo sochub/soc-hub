@@ -60,6 +60,16 @@ ones they want and own editable copies. Applying a playbook to a case fills in
 Lessons Learned) with a progress tracker. Super-admins author new marketplace
 templates; tenant admins author their own. See [playbooks](playbooks/A-playbooks-design.md).
 
+## Threat-intel enrichment
+
+IOCs and artifacts are looked up in VirusTotal, URLhaus, ThreatFox, RDAP and crt.sh
+(lookups only, never uploads). Results appear in an enrichment panel with per-source
+verdicts, a verdict dot on the IOC list and, when the evidence is stronger than the
+IOC's current level, a suggestion to raise the threat level or add tags. TLP-aware:
+automatic up to `auto_max_tlp` (default green), manual runs at amber/red need
+confirmation, and private IPs and internal domains are never sent out. Configured per
+tenant in Integrations. See [configuration](configuration.md#threat-intel-enrichment).
+
 ## Telemetry dashboard
 
 A light, developer-centric "Telemetry Console" dashboard:
