@@ -1,8 +1,12 @@
 """Shared pieces for enrichment sources."""
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
+
+# httpx logs every request URL at INFO; the URL carries the indicator, so keep those lines out of logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class SourceError(Exception):

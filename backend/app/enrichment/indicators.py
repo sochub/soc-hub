@@ -51,6 +51,12 @@ def tlp_allows(tlp: str, max_tlp: str) -> bool:
     return TLP_ORDER.index(tlp) <= TLP_ORDER.index(max_tlp)
 
 
+# Special-use / private-use names (RFC 6761, 6762, 8375 and common internal TLDs) never leave the
+# system, whether or not the tenant lists them in internal_domains.
+_SPECIAL_USE = ("local", "localhost", "internal", "lan", "home.arpa", "corp", "intranet", "test", "invalid",
+                "example")
+
+
 def _under(host: str, internal_domains) -> bool:
     host = host.lower().rstrip(".")
     return any(host == d or host.endswith("." + d) for d in (x.lower().strip(".") for x in internal_domains if x))
@@ -62,7 +68,7 @@ def should_skip(itype: str, value: str, internal_domains) -> bool:
         ip = ipaddress.ip_address(value)
         return not ip.is_global or ip.is_multicast
     if itype == "domain":
-        return _under(value, internal_domains)
+        return _under(value, (*_SPECIAL_USE, *internal_domains))
     if itype == "url":
         try:
             host = (urlsplit(value).hostname or "").rstrip(".")
@@ -88,4 +94,4 @@ def _host_blocked(host: str, internal_domains) -> bool:
             pass
     if not host or "." not in host:
         return True  # single-label hosts (localhost, intranet) are internal
-    return _under(host, internal_domains)
+    return _under(host, (*_SPECIAL_USE, *internal_domains))

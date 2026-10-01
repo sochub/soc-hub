@@ -31,7 +31,7 @@ export default function CaseDetail() {
     const [showArtifactModal, setShowArtifactModal] = useState(false);
     const [intelOpen, setIntelOpen] = useState<number | null>(null);
     const canRunIntel = useCanRun();
-    const [newArtifact, setNewArtifact] = useState({ type: 'hash', value: '' });
+    const [newArtifact, setNewArtifact] = useState({ type: 'file_hash', value: '' });
     const [showEditModal, setShowEditModal] = useState(false);
 
     // Timeline state
@@ -84,7 +84,7 @@ export default function CaseDetail() {
             queryClient.invalidateQueries({ queryKey: ['artifacts', 'all'] });
             queryClient.invalidateQueries({ queryKey: ['case', id] });
             setShowArtifactModal(false);
-            setNewArtifact({ type: 'hash', value: '' });
+            setNewArtifact({ type: 'file_hash', value: '' });
         }
     });
 
@@ -591,7 +591,7 @@ export default function CaseDetail() {
                                         onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
                                         className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
                                     >
-                                        <option value="hash">File Hash (MD5/SHA1/SHA256)</option>
+                                        <option value="file_hash">File Hash (MD5/SHA1/SHA256)</option>
                                         <option value="ip">IP Address</option>
                                         <option value="domain">Domain</option>
                                         <option value="url">URL</option>

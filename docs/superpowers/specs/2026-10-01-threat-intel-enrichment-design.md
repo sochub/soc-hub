@@ -198,3 +198,13 @@ The suggestion is worked out from that IOC's current `ok` results.
 - Auto-applying suggestions.
 - Enriching email, registry key, mutex or user-agent values.
 - Uploading files.
+
+## Implementation notes
+
+- Triggers are SQLAlchemy session hooks in `app/enrichment/hooks.py` (registered from
+  `app/db/session.py`, so API, worker and scripts all enqueue), not `schedule.py`.
+- Suggestion **Apply** updates the IOC with `PUT /iocs/{id}`, merging into freshly fetched tags.
+- The RDAP IP summary keys are `name`, `country`, `handle`, `range`.
+- A `PUT /enrichment/config` merges the fields sent; omitted fields keep their stored values.
+- The `ENRICHMENT_ENABLED` kill switch is checked in the Celery task (`_entry`, which covers
+  queued tasks and retries) and in `POST /enrichment/{kind}/{id}/run` (503), as well as at enqueue.

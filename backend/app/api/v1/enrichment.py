@@ -215,9 +215,9 @@ async def run(kind: str, obj_id: int, body: Optional[RunIn] = Body(None),
     norm = normalise(raw_type, value)
     if norm is None:
         raise HTTPException(status_code=422, detail="This value can't be enriched")
-    # Anything but white/green (incl. an unrecognised label) needs explicit confirmation.
+    # Anything but white/green (incl. a missing or unrecognised label) needs explicit confirmation.
     if tlp not in ("white", "green") and not (body and body.confirm):
-        raise HTTPException(status_code=409, detail=_CONFIRM.format(tlp=tlp))
+        raise HTTPException(status_code=409, detail=_CONFIRM.format(tlp=tlp or "unknown"))
     itype, v = norm
     now = datetime.now(timezone.utc)
     rows = []

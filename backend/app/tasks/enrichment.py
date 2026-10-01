@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.ai.errors import scrub
 from app.core.config import settings
@@ -22,18 +23,22 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 10
 _LOG = "ti_lookup tenant=%s source=%s type=%s outcome=%s duration_ms=%d"
 _DECRYPT_MSG = "credentials could not be decrypted — re-enter in Integrations"
+_CLEARS = ("skipped", "error", "rate_limited")
+_RESULT_FIELDS = ("verdict", "score", "summary", "link")
 
 
 async def upsert_result(db, tenant_id, itype, value, source, **fields):
-    row = (await db.execute(select(EnrichmentResult).where(
-        EnrichmentResult.tenant_id == tenant_id, EnrichmentResult.indicator_type == itype,
-        EnrichmentResult.indicator_value == value, EnrichmentResult.source == source))).scalars().first()
-    if row is None:
-        row = EnrichmentResult(tenant_id=tenant_id, indicator_type=itype, indicator_value=value, source=source)
-        db.add(row)
-    for k, v in fields.items():
-        setattr(row, k, v)
-    row.updated_at = datetime.now(timezone.utc)
+    """Race-safe insert-or-update of one (tenant, indicator, source) row; commits."""
+    if fields.get("status") in _CLEARS:
+        # A non-result must not keep showing an older verdict. "pending" keeps it on purpose:
+        # the panel shows the previous result while re-checking.
+        fields.update(dict.fromkeys(_RESULT_FIELDS))
+    fields["updated_at"] = datetime.now(timezone.utc)
+    stmt = pg_insert(EnrichmentResult).values(tenant_id=tenant_id, indicator_type=itype, indicator_value=value,
+                                               source=source, **fields)
+    stmt = stmt.on_conflict_do_update(constraint="uq_enrichment_result",
+                                      set_={k: stmt.excluded[k] for k in fields}).returning(EnrichmentResult)
+    row = (await db.execute(stmt, execution_options={"populate_existing": True})).scalars().one()
     await db.commit()
     return row
 

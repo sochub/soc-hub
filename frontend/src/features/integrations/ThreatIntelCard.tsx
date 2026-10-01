@@ -30,9 +30,11 @@ const errText = (e: unknown, fb: string): string => {
     return fb;
 };
 
-export default function ThreatIntelCard() {
+export default function ThreatIntelCard({ tenantId }: { tenantId: number | null }) {
+    // Tenant-scoped key: switching tenants must never show (or save over) another tenant's config.
+    const key = ['ti-config', tenantId];
     const qc = useQueryClient();
-    const { data } = useQuery({ queryKey: ['ti-config'], queryFn: async () => (await api.get('/enrichment/config')).data as TIConfig });
+    const { data } = useQuery({ queryKey: key, queryFn: async () => (await api.get('/enrichment/config')).data as TIConfig });
     const [draft, setDraft] = useState<Draft>({});
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
     const [tests, setTests] = useState<Record<string, { ok: boolean; message: string }> | null>(null);
@@ -40,7 +42,7 @@ export default function ThreatIntelCard() {
 
     const set = (p: Draft) => { setDraft((d) => ({ ...d, ...p })); setMsg(null); };
 
-    // PUT replaces the whole config, so always send every non-key field (loaded value unless edited).
+    // The card saves the full config: send every non-key field (loaded value unless edited).
     const body = (d: TIConfig) => {
         const b: Record<string, unknown> = {
             auto_max_tlp: draft.auto_max_tlp ?? d.auto_max_tlp,
@@ -61,7 +63,7 @@ export default function ThreatIntelCard() {
 
     const save = useMutation({
         mutationFn: async (d: TIConfig) => (await api.put('/enrichment/config', body(d))).data as TIConfig,
-        onSuccess: (r) => { qc.setQueryData(['ti-config'], r); setDraft({}); setTests(null); setMsg({ ok: true, text: 'Saved' }); },
+        onSuccess: (r) => { qc.setQueryData(key, r); setDraft({}); setTests(null); setMsg({ ok: true, text: 'Saved' }); },
         onError: (e) => setMsg({ ok: false, text: errText(e, 'Save failed') }),
     });
     const test = useMutation({
@@ -73,7 +75,7 @@ export default function ThreatIntelCard() {
         mutationFn: async () => api.delete('/enrichment/config'),
         onSuccess: () => {
             setDraft({}); setTests(null); setConfirmReset(false);
-            qc.invalidateQueries({ queryKey: ['ti-config'] }); setMsg({ ok: true, text: 'Reset to defaults' });
+            qc.invalidateQueries({ queryKey: key }); setMsg({ ok: true, text: 'Reset to defaults' });
         },
         onError: (e) => { setConfirmReset(false); setMsg({ ok: false, text: errText(e, 'Reset failed') }); },
     });

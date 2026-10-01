@@ -285,6 +285,9 @@ or more (VirusTotal daily quota) or retries are exhausted, the result is `rate_l
 - private, reserved, loopback, link-local and multicast IPs, including shorthand
   or hex forms inside URLs (`127.1`, `0x7f.1`, `2130706433`);
 - single-label hosts such as `localhost` or `intranet`;
+- special-use and private-use names, as a domain or URL host: anything ending in
+  `.local`, `.localhost`, `.internal`, `.lan`, `.home.arpa`, `.corp`, `.intranet`,
+  `.test`, `.invalid` or `.example` (`example.com` itself is a normal domain);
 - anything under `internal_domains`, whether it is a domain or the host of a URL;
 - an IP address stored as a "domain" (not enrichable).
 
@@ -295,7 +298,8 @@ verification protects the hostname.
 **Kill switch.** `ENRICHMENT_ENABLED=false` (environment, default `true`) stops new
 enqueues (automatic and manual), tasks already queued and pending retries: the worker
 task does nothing, and a manual run answers `503`. Restart the backend and the worker
-after changing it.
+after changing it. The seed script (`app.scripts.seed_incidents`) always runs with
+enrichment off.
 
 **Logging.** One `ti_lookup tenant=.. source=.. type=.. outcome=.. duration_ms=..`
 line per source per lookup, and one `ti_config` line per config save, test or delete.

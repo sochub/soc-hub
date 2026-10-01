@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import app.db.base  # noqa: F401 — register models
 from sqlalchemy import delete, select
 
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case, CaseStatus, CaseSeverity, TimelineEvent
 from app.models.artifact import Artifact, ArtifactType
@@ -218,6 +219,9 @@ async def main_async(args) -> None:
 
 
 def main():
+    # Seeds must never trigger real threat-intel lookups: the session hooks would otherwise enqueue
+    # enrichment for every seeded IOC/artifact and send synthetic values to external services.
+    settings.ENRICHMENT_ENABLED = False
     parser = argparse.ArgumentParser(description="Seed synthetic incidents for the dashboard")
     parser.add_argument("--tenant-id", type=int, default=None, help="Tenant to seed (default: lowest id)")
     parser.add_argument("--count", type=int, default=40, help="Number of incidents (default 40)")

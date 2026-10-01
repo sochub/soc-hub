@@ -56,3 +56,24 @@ def test_should_skip_disguised_url_hosts(url):
 
 def test_should_not_skip_public_url():
     assert not should_skip("url", "http://8.8.8.8/", ["corp.local"])
+
+
+@pytest.mark.parametrize("value", [
+    "host.local", "foo.localhost", "svc.internal", "nas.lan", "printer.home.arpa", "dc1.corp",
+    "wiki.intranet", "site.test", "x.invalid", "www.example", "local",
+])
+def test_special_use_domains_skipped(value):
+    assert should_skip("domain", value, []) is True
+    assert should_skip("url", f"https://{value}/p", []) is True
+
+
+@pytest.mark.parametrize("value", ["example.com", "localcorp.com", "test.io"])
+def test_special_use_lookalikes_not_skipped(value):
+    assert should_skip("domain", value, []) is False
+    assert should_skip("url", f"https://{value}/p", []) is False
+
+
+def test_httpx_logger_pinned_to_warning():
+    import logging
+    import app.enrichment.sources.base  # noqa: F401
+    assert logging.getLogger("httpx").level >= logging.WARNING

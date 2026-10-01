@@ -75,9 +75,14 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
     });
 
     const apply = useMutation({
+        onMutate: () => setErr(null),
         mutationFn: async () => {
-            const s = data!.suggestion!;
-            return api.put(`/iocs/${id}`, { threat_level: s.threat_level ?? ioc?.threat_level, tags: [...(ioc?.tags ?? []), ...s.tags] });
+            const s = data?.suggestion;
+            if (!ioc || !s) return;
+            // Merge into the IOC as it is now, not the (possibly stale) list row, so no edit is overwritten.
+            const fresh = (await api.get(`/iocs/${id}`)).data as IOC;
+            const tags = Array.from(new Set([...(fresh.tags ?? []), ...s.tags]));
+            return api.put(`/iocs/${id}`, { threat_level: s.threat_level ?? fresh.threat_level, tags });
         },
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['iocs'] });

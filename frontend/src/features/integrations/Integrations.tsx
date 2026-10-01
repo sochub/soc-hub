@@ -103,8 +103,8 @@ export default function Integrations() {
                     </div>
 
                     {/* key: a tenant switch remounts the card so an unsaved draft never leaks across tenants */}
-                    <AIProviderCard key={me?.active_tenant_id ?? 'none'} />
-                    <ThreatIntelCard key={me?.active_tenant_id ?? 'none'} />
+                    <AIProviderCard key={me?.active_tenant_id ?? 'none'} tenantId={me?.active_tenant_id ?? null} />
+                    <ThreatIntelCard key={me?.active_tenant_id ?? 'none'} tenantId={me?.active_tenant_id ?? null} />
 
                     <SlackCard />
 

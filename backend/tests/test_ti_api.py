@@ -204,6 +204,10 @@ async def _scenario(monkeypatch, caplog, recorder):
                 monkeypatch.setattr(settings, "ENRICHMENT_ENABLED", True)
                 assert await n_rows() == before and len(recorder) == n_rec, "g2 rows written or enqueued"
 
+                # g3) a NULL TLP is unknown: needs confirmation, detail says TLP:unknown
+                r = await call("POST", f"/api/v1/enrichment/ioc/{null_id}/run", json={})
+                assert r.status_code == 409, f"g3 {r.status_code} {r.text}"
+                assert "TLP:unknown" in r.json()["detail"] and "None" not in r.json()["detail"], f"g3 {r.text}"
                 # the IOC list schema requires a TLP string, so give it one back before step l
                 await db.execute(update(IOC).where(IOC.id == null_id).values(tlp="green"))
                 await db.commit()

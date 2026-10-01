@@ -256,3 +256,27 @@ async def test_entry_does_nothing_when_disabled(monkeypatch):
     await task._entry(1, "domain", "a.com", "white", False)
     assert seen == []
 
+
+@pytest.mark.asyncio
+async def test_upsert_same_key_twice_one_row(tenant):
+    async with AsyncSessionLocal() as db:
+        await task.upsert_result(db, tenant, "domain", "twice.example", "rdap", status="pending", error=None)
+        row = await task.upsert_result(db, tenant, "domain", "twice.example", "rdap", status="ok", verdict="benign")
+        assert row.status == "ok" and row.verdict == "benign" and row.updated_at is not None
+    rs = await rows(tenant)
+    assert len(rs) == 1 and rs["rdap"].status == "ok" and rs["rdap"].verdict == "benign"
+
+
+@pytest.mark.asyncio
+async def test_non_ok_status_clears_stale_fields_but_pending_keeps_them(tenant):
+    full = dict(verdict="malicious", score="9/90", summary={"a": 1}, link="https://x.example/r")
+    async with AsyncSessionLocal() as db:
+        for status in ("skipped", "error", "rate_limited"):
+            await task.upsert_result(db, tenant, "domain", "stale.example", "rdap", status="ok", **full)
+            await task.upsert_result(db, tenant, "domain", "stale.example", "rdap", status=status, error="e")
+            r = (await rows(tenant))["rdap"]
+            assert (r.verdict, r.score, r.summary, r.link) == (None, None, None, None), status
+        await task.upsert_result(db, tenant, "domain", "stale.example", "rdap", status="ok", **full)
+        await task.upsert_result(db, tenant, "domain", "stale.example", "rdap", status="pending", error=None)
+    r = (await rows(tenant))["rdap"]
+    assert r.status == "pending" and r.verdict == "malicious" and r.link == "https://x.example/r"
