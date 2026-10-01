@@ -20,3 +20,4 @@ from app.models.case_triage import CaseTriageResult  # noqa: F401
 from app.models.sla_policy import SLAPolicy  # noqa: F401
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep  # noqa: F401
 from app.models.slack_integration import SlackIntegration  # noqa: F401
+from app.models.tenant_ai_config import TenantAIConfig  # noqa: F401
