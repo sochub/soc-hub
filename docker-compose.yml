@@ -21,6 +21,7 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
+      - LITELLM_LOCAL_MODEL_COST_MAP=True
     depends_on:
       db:
         condition: service_started
@@ -100,6 +101,7 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
+      - LITELLM_LOCAL_MODEL_COST_MAP=True
     depends_on:
       db:
         condition: service_healthy
