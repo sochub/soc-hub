@@ -63,6 +63,10 @@ unset, invitation links are returned in the API/UI instead of emailed.
 
 - **Network exposure** — only nginx (port 80) listens on all interfaces; db, redis,
   ollama and the backend are bound to `127.0.0.1`.
+- **Login throttling** — 5 failed logins per email or 20 per client IP within 15
+  minutes return `429` with `Retry-After` (Redis-backed; fails open if Redis is
+  down). Unknown emails cost the same Argon2 work as wrong passwords; email
+  lookup is case-insensitive.
 
 > The Postgres credentials (`user`/`password`) and `REDIS_PASSWORD=devredispass`
 > are **local-development defaults**. Change them — and `SECRET_KEY` — before deploying.
