@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -19,8 +19,8 @@ router = APIRouter()
 @router.get("/", response_model=List[UserSchema])
 async def read_users(
     db: AsyncSession = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     current_user: User = Depends(deps.require_admin),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
@@ -52,7 +52,7 @@ async def create_user(
     if user_in.role == UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=400, detail="Cannot create super admin users through this endpoint.")
 
-    result = await db.execute(select(User).where(User.email == user_in.email))
+    result = await db.execute(select(User).where(func.lower(User.email) == user_in.email))
     if result.scalars().first():
         raise HTTPException(status_code=409, detail="A user with this email already exists.")
 

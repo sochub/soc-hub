@@ -120,10 +120,11 @@ docker compose exec backend python -m app.scripts.create_super_admin \
 Then open **http://localhost** and sign in. For the full walkthrough (seeding demo
 data, configuring SSO, etc.) see **[docs/getting-started.md](docs/getting-started.md)**.
 
-> **Heads-up:** copy `backend/.env.example` → `backend/.env` and set a strong
-> `SECRET_KEY` before exposing this anywhere. The app refuses to boot with a weak
-> key unless `DEBUG=true`. The default Postgres credentials in `docker-compose.yml`
-> are for **local development only**.
+> **Heads-up:** copy `.env.example` → `.env` and `backend/.env.example` →
+> `backend/.env`. Before exposing this anywhere, set `ENVIRONMENT=production` and
+> strong `SECRET_KEY`, `POSTGRES_PASSWORD` and `REDIS_PASSWORD` values: in
+> production the app refuses to boot with weak or default credentials. The
+> defaults are for **local development only**.
 
 ## Documentation
 

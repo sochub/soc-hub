@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -15,6 +16,7 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas import invitation as invitation_schema
 from app.services.email_service import send_invitation_email
+from app.utils.emails import normalize_email
 
 router = APIRouter()
 
@@ -36,7 +38,7 @@ async def create_invitation(
         raise HTTPException(status_code=400, detail="Cannot invite super admin users.")
 
     # Existing user → create a membership directly, no token needed.
-    result = await db.execute(select(User).where(User.email == invitation_in.email))
+    result = await db.execute(select(User).where(func.lower(User.email) == invitation_in.email))
     existing_user = result.scalars().first()
     if existing_user:
         dup = await db.execute(
@@ -67,7 +69,7 @@ async def create_invitation(
     # Check for existing pending invitation
     result = await db.execute(
         select(Invitation).where(
-            Invitation.email == invitation_in.email,
+            func.lower(Invitation.email) == invitation_in.email,
             Invitation.tenant_id == tenant_id,
             Invitation.status == InvitationStatus.PENDING,
         )
@@ -242,14 +244,15 @@ async def accept_invitation(
         await db.commit()
         raise HTTPException(status_code=400, detail="This invitation has expired.")
 
-    # Check if user already exists
-    result = await db.execute(select(User).where(User.email == invitation.email))
+    # Check if user already exists (invitations predating normalization may be mixed-case)
+    email = normalize_email(invitation.email)
+    result = await db.execute(select(User).where(func.lower(User.email) == email))
     if result.scalars().first():
         raise HTTPException(status_code=409, detail="A user with this email already exists.")
 
     # Create the account, then add the tenant membership from the invitation.
     user = User(
-        email=invitation.email,
+        email=email,
         hashed_password=security.get_password_hash(accept_in.password),
         full_name=accept_in.full_name,
         is_active=True,
