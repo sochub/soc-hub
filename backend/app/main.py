@@ -49,6 +49,8 @@ if settings.cors_origins:
 
 app.include_router(api_router, prefix="/api/v1")
 
+import app.enrichment.hooks as _enrichment_hooks  # noqa: E402,F401 — alias keeps `app` = FastAPI; registers the IOC/artifact auto-enrichment session listeners
+
 
 @app.get("/health")
 async def health_check():

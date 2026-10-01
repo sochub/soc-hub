@@ -14,6 +14,7 @@ from app.utils.crypto import encrypt
 
 @pytest.mark.asyncio
 async def test_defaults_without_row_and_keyed_sources_inactive():
+    await engine.dispose()  # drop pooled connections a previous test's loop may have left behind
     async with AsyncSessionLocal() as db:
         t = Tenant(name="wf-test", slug=f"wf-test-{secrets.token_hex(3)}-ti")
         db.add(t)
@@ -31,6 +32,7 @@ async def test_defaults_without_row_and_keyed_sources_inactive():
 
 @pytest.mark.asyncio
 async def test_row_with_keys_and_toggles(caplog):
+    await engine.dispose()  # drop pooled connections a previous test's loop may have left behind
     async with AsyncSessionLocal() as db:
         t = Tenant(name="wf-test", slug=f"wf-test-{secrets.token_hex(3)}-ti")
         db.add(t)

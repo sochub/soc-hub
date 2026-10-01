@@ -17,6 +17,7 @@ import app.tasks.jira  # noqa: E402,F401
 import app.tasks.triage  # noqa: E402,F401
 import app.tasks.sla  # noqa: E402,F401
 import app.tasks.workflows  # noqa: E402,F401
+import app.tasks.enrichment  # noqa: E402,F401
 
 # Beat is embedded in the worker process via the `-B` flag on the
 # docker-compose `worker` service — there's only ever one worker replica, so

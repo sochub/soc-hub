@@ -29,6 +29,7 @@ def limits_for(source: str, s) -> List[Tuple[int, int]]:
 class RateLimiter:
     def __init__(self, redis=None, prefix: str = "ti:rl"):
         self._redis = redis
+        self._owns_redis = redis is None
         self.prefix = prefix
 
     @property
@@ -46,3 +47,9 @@ class RateLimiter:
         args = [x for m, w in limits for x in (m, w)]
         ttl = int(await self.redis.eval(ACQUIRE_LUA, len(keys), *keys, *args))
         return None if ttl < 0 else ttl
+
+    async def aclose(self) -> None:
+        """Close the client only if this limiter created it (it belongs to the current event loop)."""
+        if self._owns_redis and self._redis is not None:
+            await self._redis.aclose()
+            self._redis = None

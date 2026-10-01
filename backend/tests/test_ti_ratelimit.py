@@ -38,3 +38,28 @@ async def test_acquire_blocks_and_is_atomic():
         if keys:
             await r.delete(*keys)
         await r.aclose()
+
+
+@pytest.mark.asyncio
+async def test_aclose_closes_only_self_created_client():
+    class FakeRedis:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    injected = FakeRedis()
+    rl = RateLimiter(injected)
+    await rl.aclose()
+    assert injected.closed is False
+
+    own = RateLimiter()
+    client = own.redis  # lazily created by the limiter itself
+    closed = []
+
+    async def fake_aclose():
+        closed.append(True)
+    client.aclose = fake_aclose
+    await own.aclose()
+    assert closed == [True]
+    await RateLimiter().aclose()  # never-used limiter: no client, no error
