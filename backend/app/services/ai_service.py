@@ -46,6 +46,36 @@ def strip_action_blocks(text: str) -> str:
 _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
 
 
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def _parse_json_reply(text: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Parse a JSON object from a model reply. Providers that drop JSON mode
+    (litellm drop_params) may wrap it in a fence or surround it with chatter."""
+    text = text or ""
+    candidates = [text]
+    m = _FENCED_JSON_RE.search(text)
+    if m:
+        candidates.append(m.group(1))
+    start, end = text.find("{"), text.rfind("}")
+    if 0 <= start < end:
+        candidates.append(text[start:end + 1])
+    for c in candidates:
+        try:
+            data = json.loads(c)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _unavailable_text(e: Exception) -> str:
+    # The provider's reason can expose infrastructure (hosts, account ids, resolved IPs) — show only its type.
+    return (f"AI Assistant unavailable ({getattr(e, 'cause', None) or type(e).__name__}). "
+            "Ask an admin to check the AI provider settings.")
+
+
 def parse_triage_payload(data: Any) -> Optional[Dict[str, Any]]:
     """Validate/normalize a triage JSON payload from the model. Pure function
     (no I/O) so it's unit-testable without the AI provider. Returns None if nothing
@@ -290,7 +320,7 @@ class AIService:
                 {"role": "user", "content": user_prompt},
             ])
         except AIError as e:
-            return f"AI Analysis unavailable: {e}"
+            return _unavailable_text(e)
         return text or "No response from AI"
 
     def _format_general_context(self, context: Dict[str, Any]) -> str:
@@ -387,7 +417,7 @@ class AIService:
         try:
             text = await self._complete(chat_messages, temperature=0.3)
         except AIError as e:
-            return f"AI Assistant unavailable: {e}"
+            return _unavailable_text(e)
         return text or "No response from AI"
 
     async def generate_note_content(
@@ -460,11 +490,11 @@ class AIService:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ], temperature=0, json_mode=True)
-            data = json.loads(text or "{}")
         except AIError:
             return None
-        except ValueError as e:
-            logger.warning("Forced action extraction: unparseable reply (%s)", type(e).__name__)
+        data = _parse_json_reply(text)
+        if data is None:
+            logger.warning("Forced action extraction: unparseable reply")
             return None
         if isinstance(data, dict) and data.get("type") in _VALID_ACTION_TYPES:
             return {
@@ -500,10 +530,10 @@ class AIService:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ], temperature=0, json_mode=True)
-            data = json.loads(text or "{}")
         except AIError:
             return None
-        except ValueError as e:
-            logger.warning("Triage generation: unparseable reply (%s)", type(e).__name__)
+        data = _parse_json_reply(text)
+        if data is None:
+            logger.warning("Triage generation: unparseable reply")
             return None
         return parse_triage_payload(data)

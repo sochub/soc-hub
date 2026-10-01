@@ -151,9 +151,14 @@ async def complete(messages: List[dict], *, tenant_id: Optional[int], temperatur
     """Resolve the tenant's (or deployment's) provider and run one completion. No fallback between them."""
     from app.ai.config import resolve_config, tenant_allowlist
     from app.db.session import AsyncSessionLocal
-    async with AsyncSessionLocal() as db:
-        cfg = await resolve_config(db, tenant_id)
-        allow = await tenant_allowlist(db, tenant_id) if cfg.source == "tenant" else []
+    try:
+        async with AsyncSessionLocal() as db:
+            cfg = await resolve_config(db, tenant_id)
+            allow = await tenant_allowlist(db, tenant_id) if cfg.source == "tenant" else []
+    except AIError:
+        raise
+    except Exception:
+        raise AIUnavailable("AI configuration lookup failed") from None
     return await complete_with(cfg, messages, temperature=temperature, json_mode=json_mode, allowlist=allow)
 
 

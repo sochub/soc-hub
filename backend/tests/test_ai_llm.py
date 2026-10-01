@@ -271,3 +271,30 @@ def test_unexpected_and_cancelled_still_log_once(monkeypatch, caplog):
     assert [r.levelno for r in ours] == [logging.ERROR, logging.WARNING]
     assert ours[0].getMessage().endswith("outcome=error type=ValueError")
     assert ours[1].getMessage().endswith("outcome=cancelled type=CancelledError")
+
+
+def test_config_lookup_failure_becomes_unavailable(monkeypatch):
+    import app.ai.config as config_mod
+    import app.db.session as session_mod
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    async def broken(db, tenant_id):
+        raise RuntimeError("db down: postgres://user:pw@db/sicms")
+    monkeypatch.setattr(session_mod, "AsyncSessionLocal", Session)
+    monkeypatch.setattr(config_mod, "resolve_config", broken)
+    with pytest.raises(AIUnavailable) as ei:
+        asyncio.run(llm.complete([{"role": "user", "content": "x"}], tenant_id=1))
+    assert str(ei.value) == "AI configuration lookup failed"
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__
+
+    async def unavailable(db, tenant_id):
+        raise AIUnavailable("tenant override broken")
+    monkeypatch.setattr(config_mod, "resolve_config", unavailable)
+    with pytest.raises(AIUnavailable, match="tenant override broken"):
+        asyncio.run(llm.complete([{"role": "user", "content": "x"}], tenant_id=1))
