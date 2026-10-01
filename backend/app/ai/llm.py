@@ -144,3 +144,23 @@ async def test_connection(cfg: ProviderConfig, *, allowlist: Sequence[str] = ())
     except AIError as e:
         return False, str(e)
     return True, f"Connected — {cfg.provider} / {cfg.model} replied."
+
+
+async def complete(messages: List[dict], *, tenant_id: Optional[int], temperature: Optional[float] = None,
+                   json_mode: bool = False) -> str:
+    """Resolve the tenant's (or deployment's) provider and run one completion. No fallback between them."""
+    from app.ai.config import resolve_config, tenant_allowlist
+    from app.db.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        cfg = await resolve_config(db, tenant_id)
+        allow = await tenant_allowlist(db, tenant_id) if cfg.source == "tenant" else []
+    return await complete_with(cfg, messages, temperature=temperature, json_mode=json_mode, allowlist=allow)
+
+
+async def describe(db, tenant_id: Optional[int]) -> dict:
+    from app.ai.config import resolve_config
+    try:
+        cfg = await resolve_config(db, tenant_id)
+    except AIUnavailable:
+        return {"provider": None, "model": None, "source": "tenant"}
+    return {"provider": cfg.provider, "model": cfg.model, "source": cfg.source}
