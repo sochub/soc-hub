@@ -1,6 +1,6 @@
 import warnings
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings
@@ -59,6 +59,19 @@ class Settings(BaseSettings):
     # Ollama Configuration
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3"
+
+    # --- AI provider (deployment default; see docs/configuration.md) ---
+    # Unset AI_PROVIDER keeps the legacy behaviour: Ollama at OLLAMA_BASE_URL/OLLAMA_MODEL.
+    AI_PROVIDER: Optional[Literal["ollama", "openai", "openai_compatible", "anthropic",
+                                  "gemini", "vertex", "bedrock"]] = None
+    AI_MODEL: Optional[str] = None
+    AI_API_BASE: Optional[str] = None
+    AI_API_KEY: Optional[str] = None
+    AI_AWS_REGION: Optional[str] = None
+    VERTEX_PROJECT: Optional[str] = None
+    VERTEX_LOCATION: Optional[str] = None
+    AI_TIMEOUT_SECONDS: float = Field(120, gt=0)
+    AI_ALLOW_TENANT_OVERRIDE: bool = True
 
     # SMTP (optional — invitations work without it)
     SMTP_HOST: str | None = None

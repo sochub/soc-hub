@@ -13,3 +13,6 @@ redis
 celery
 python3-saml
 jinja2
+litellm==1.103.1
+boto3==1.43.106
+google-auth==2.59.1
