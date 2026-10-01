@@ -99,13 +99,16 @@ def build_kwargs(cfg: ProviderConfig, aws_creds: Optional[dict] = None) -> dict:
         if sa:
             try:
                 parsed = json.loads(sa)
-            except ValueError:
-                raise ConfigError("service account JSON is not valid JSON")
+            except ValueError as e:
+                raise ConfigError("service account JSON is not valid JSON") from None
             if not isinstance(parsed, dict) or "client_email" not in parsed:
                 raise ConfigError("service account JSON must be a Google service-account key")
             kw["vertex_credentials"] = sa
     if p == "bedrock":
         kw["aws_region_name"] = cfg.region
+        if cfg.source == "tenant":
+            if not (aws_creds and aws_creds.get("aws_access_key_id") and aws_creds.get("aws_secret_access_key")):
+                raise ConfigError("tenant Bedrock credentials were not resolved")
         if aws_creds:
             kw.update({k: v for k, v in aws_creds.items() if v})
     return kw

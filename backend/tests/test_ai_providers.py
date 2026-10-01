@@ -90,3 +90,17 @@ def test_model_id_passed_verbatim(model):
 def test_invalid_vertex_json_is_config_error():
     with pytest.raises(ConfigError):
         build_kwargs(cfg("vertex", project="p", location="l", secrets={"service_account_json": "{not json"}))
+
+
+def test_tenant_bedrock_without_resolved_creds_raises():
+    # Without aws_creds
+    with pytest.raises(ConfigError):
+        build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="role", role_arn="arn:aws:iam::1:role/r"))
+    # With incomplete aws_creds (missing access_key_id)
+    with pytest.raises(ConfigError):
+        build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="role", role_arn="arn:aws:iam::1:role/r"),
+                    aws_creds={"aws_secret_access_key": "S"})
+    # With incomplete aws_creds (missing secret_access_key)
+    with pytest.raises(ConfigError):
+        build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="role", role_arn="arn:aws:iam::1:role/r"),
+                    aws_creds={"aws_access_key_id": "A"})
