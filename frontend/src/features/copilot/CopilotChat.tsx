@@ -40,6 +40,11 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
 
     const sessionKey = isCase ? ['copilot-session', caseId] : ['copilot-session', 'general'];
 
+    const { data: aiInfo } = useQuery({
+        queryKey: ['ai-info'],
+        queryFn: async () => (await api.get('/ai/info')).data as { provider: string | null; model: string | null },
+        staleTime: 60_000,
+    });
     const { data: session, isLoading: isLoadingSession } = useQuery<Session>({
         queryKey: sessionKey,
         queryFn: async () => {
@@ -91,6 +96,11 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                     <span className="text-[10px] font-medium text-slate-500 normal-case tracking-normal">
                         {isCase ? `· case #${caseId}` : '· general'}
                     </span>
+                    {aiInfo?.provider && (
+                        <span className="font-mono text-[10px] font-medium text-slate-500 normal-case tracking-normal truncate max-w-[14rem]" title="Where case data is sent">
+                            · AI: {aiInfo.provider} · {aiInfo.model}
+                        </span>
+                    )}
                 </h3>
                 <div className="flex items-center gap-2">
                     {isCase && (
