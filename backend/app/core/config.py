@@ -1,6 +1,7 @@
 import warnings
 
 from typing import List
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings
 from pydantic import model_validator
@@ -12,6 +13,8 @@ _WEAK_SECRET_KEYS = {
     "your-secret-key-here-change-in-production",
 }
 _MIN_SECRET_KEY_LENGTH = 32
+# The docker-compose local-dev Postgres password; never acceptable in production.
+_WEAK_DB_PASSWORDS = {"password"}
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sicms"
@@ -64,26 +67,39 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_secret_key(self) -> "Settings":
-        """Refuse to boot with a weak SECRET_KEY in production.
+        """Refuse to boot with weak secrets in production.
 
-        A predictable HS256 key lets anyone forge tokens for any user/role, so
-        outside DEBUG mode this is a hard failure rather than a warning. In
-        DEBUG we only warn, to keep local development frictionless.
+        "Production" means DEBUG is off. A predictable HS256 key lets anyone
+        forge tokens for any user/role, an unauthenticated Redis lets anyone
+        who reaches it inject Celery tasks, and the compose default DB password
+        is public — so outside DEBUG mode each is a hard failure. In DEBUG we
+        only warn, to keep local development frictionless.
         """
-        is_weak = (
+        problems = []
+        if (
             self.SECRET_KEY in _WEAK_SECRET_KEYS
             or len(self.SECRET_KEY) < _MIN_SECRET_KEY_LENGTH
-        )
-        if is_weak:
-            message = (
+        ):
+            problems.append(
                 "SECRET_KEY is weak: it is a known placeholder or shorter than "
                 f"{_MIN_SECRET_KEY_LENGTH} characters. Generate a strong key, e.g. "
                 "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
             )
+        if not urlsplit(self.REDIS_URL).password:
+            problems.append(
+                "REDIS_URL has no password. Run Redis with --requirepass and use "
+                "redis://:<password>@host:6379/0."
+            )
+        if urlsplit(self.DATABASE_URL).password in _WEAK_DB_PASSWORDS:
+            problems.append(
+                "DATABASE_URL uses the local-development default password. Set a "
+                "strong POSTGRES_PASSWORD."
+            )
+        for message in problems:
             if self.DEBUG:
                 warnings.warn(message, stacklevel=2)
-            else:
-                raise ValueError(message)
+        if problems and not self.DEBUG:
+            raise ValueError(" ".join(problems))
         return self
 
     class Config:

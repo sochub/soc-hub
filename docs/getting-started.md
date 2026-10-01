@@ -8,11 +8,19 @@
 ## 1. Configure environment
 
 ```bash
+# docker-compose variables (Postgres/Redis credentials, DEBUG)
+cp .env.example .env
+# backend settings
 cp backend/.env.example backend/.env
 # Generate a strong SECRET_KEY (required outside DEBUG mode):
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 # paste the result into backend/.env as SECRET_KEY=...
 ```
+
+The root `.env` ships with local-development values (`DEBUG=true`, the default
+Postgres password, `REDIS_PASSWORD=devredispass`). For any shared or production
+deployment set `DEBUG=false` and strong `POSTGRES_PASSWORD` / `REDIS_PASSWORD`
+values — the backend refuses to boot otherwise.
 
 See [configuration.md](configuration.md) for every variable.
 
@@ -26,12 +34,16 @@ This starts six services:
 
 | Service | Port | Purpose |
 |---|---|---|
-| `frontend` | 80 | React app (nginx) |
-| `backend` | 8000 | FastAPI API |
-| `db` | 5432 | PostgreSQL |
-| `redis` | 6379 | Celery broker |
-| `ollama` | 11434 | Local LLM — **auto-pulls** the model on first boot |
+| `frontend` | 80 (all interfaces) | React app (nginx) — the only public entry point |
+| `backend` | 127.0.0.1:8000 | FastAPI API |
+| `db` | 127.0.0.1:5432 | PostgreSQL |
+| `redis` | 127.0.0.1:6379 | Celery broker + login rate limiting (password-protected) |
+| `ollama` | 127.0.0.1:11434 | Local LLM — **auto-pulls** the model on first boot |
 | `worker` | — | Celery worker |
+
+Everything except nginx is published on loopback only, so local tools (psql,
+redis-cli, an IDE) work but other machines on the network cannot reach the
+database, Redis, the LLM or the API directly.
 
 The Ollama container pulls `OLLAMA_MODEL` (default `llama3`, ~4.7 GB) automatically
 on first start and caches it in the `ollama_data` volume. Watch progress with
