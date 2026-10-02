@@ -23,7 +23,8 @@ CHUNK = 65536
 ZIP_PASSWORD = b"infected"
 # Bidi/format controls that can disguise an extension (e.g. U+202E RIGHT-TO-LEFT OVERRIDE).
 _BIDI = {"\u200e", "\u200f", *map(chr, range(0x202A, 0x202F)), *map(chr, range(0x2066, 0x206A))}
-_CONTENT_TYPE = re.compile(r'^[\w.+-]+/[\w.+-]+(;\s*[\w.+-]+=[\w.+"-]+)*$')
+# ASCII-only, no CR/LF anywhere: the value is echoed back in a Content-Type header on download.
+_CONTENT_TYPE = re.compile(r'[\w.+-]+/[\w.+-]+(?:;[ \t]*[\w.+-]+=(?:[\w.+-]+|"[^"\\\r\n]*"))*', re.ASCII)
 
 
 class TooLarge(Exception):
@@ -64,9 +65,28 @@ def build_encrypted_zip(member_name: str, src):
     return out
 
 
+async def _in_worker(fn, *args, close_result: bool = False):
+    """Run blocking file I/O in a worker thread. If we are cancelled meanwhile, wait for the worker to
+    finish before unwinding, so no `with` block closes a file the thread is still using."""
+    fut = asyncio.get_running_loop().run_in_executor(None, fn, *args)
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        while not fut.done():
+            try:
+                await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                break
+        if close_result and not fut.cancelled() and fut.exception() is None:
+            fut.result().close()
+        raise
+
+
 async def _file_chunks(f):
     while True:
-        c = await asyncio.to_thread(f.read, CHUNK)
+        c = await _in_worker(f.read, CHUNK)
         if not c:
             break
         yield c
@@ -95,10 +115,10 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
         if is_malicious:
             with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as raw:
                 async for c in counted():
-                    await asyncio.to_thread(raw.write, c)
+                    await _in_worker(raw.write, c)
                 if size == 0:
                     raise EmptyFile()
-                with await asyncio.to_thread(build_encrypted_zip, name, raw) as z:
+                with await _in_worker(build_encrypted_zip, name, raw, close_result=True) as z:
                     await storage.put(key, _file_chunks(z))
         else:
             await storage.put(key, counted())

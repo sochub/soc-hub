@@ -46,6 +46,9 @@ def test_sanitize_dots_after_trim():
     ('text/plain; charset="utf-8"', 'text/plain; charset="utf-8"'),
     ("text/plain\r\nX-Injected: 1", None), ("text/plain\n", None), ("", None), (None, None),
     ("a/" + "b" * 300, None), ("not a type", None),
+    ("text/plain;\r\nX-Evil=1", None), ("text/plain;\nset-cookie=a", None), ("t\u00e9xt/pla\u00edn", None),
+    ('a="b""', None), ('text/plain; a="b""', None), ('text/plain; a="b\\"', None),
+    ("text/plain;charset=utf-8", "text/plain;charset=utf-8"),
 ])
 def test_clean_content_type(raw, want):
     assert svc.clean_content_type(raw) == want
@@ -252,3 +255,42 @@ async def test_malicious_zip_built_off_event_loop(ctx, monkeypatch):
                                content_type=None, chunks=agen(b"MZ"), is_malicious=True, description=None,
                                storage=ctx["storage"], max_bytes=100)
     assert seen and seen[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_zip_waits_for_worker(ctx, monkeypatch):
+    import threading
+    started, release, outcome = threading.Event(), threading.Event(), {}
+    real = svc.build_encrypted_zip
+
+    def slow_zip(name, src):
+        started.set()
+        release.wait(5)
+        try:
+            z = real(name, src)  # reads src: fails if the loop closed the spool under us
+            outcome["ok"] = True
+            outcome["zip"] = z
+            return z
+        except Exception as e:  # pragma: no cover - the bug this guards against
+            outcome["err"] = e
+            raise
+    monkeypatch.setattr(svc, "build_encrypted_zip", slow_zip)
+
+    async def run():
+        async with AsyncSessionLocal() as db:
+            await svc.store_upload(db, case=await load_case(db, ctx["cid"]), user_id=None, filename="m.exe",
+                                   content_type=None, chunks=agen(b"MZ" * 1000), is_malicious=True,
+                                   description=None, storage=ctx["storage"], max_bytes=10**6)
+    task = asyncio.create_task(run())
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    await asyncio.sleep(0.05)
+    assert not task.done()  # still waiting for the worker rather than unwinding over its files
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert outcome.get("ok") and outcome["zip"].closed
+    async with AsyncSessionLocal() as db:
+        assert (await db.execute(select(func.count()).select_from(CaseAttachment).where(
+            CaseAttachment.tenant_id == ctx["tid"]))).scalar() == 0
+    assert [p for p in ctx["root"].rglob("*") if p.is_file()] == []
