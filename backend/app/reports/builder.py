@@ -24,15 +24,16 @@ from app.utils.sla import compute_sla_state, load_policy_overrides
 SCHEMA = "sochub.incident-report/1"
 APP_VERSION = "0.1.0"  # mirrors FastAPI(version=...) in app/main.py
 TEXT_MAX = 300
+ENRICH_BATCH = 1000  # max (type, value) pairs per enrichment lookup query
 PDF_LIMITS = {"timeline": 500, "iocs": 1000, "evidence": 1000, "audit": 2000}
 PHASES = ("identification", "containment", "eradication", "recovery", "lessons_learned")
 _THREAT_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _LANES = {"comment": "analyst", "status_change": "analyst", "severity_change": "analyst",
           "artifact_added": "indicators", "artifact_removed": "indicators",
           "attachment_added": "evidence", "attachment_deleted": "evidence"}
-_FULL_ONLY = {"artifact_removed", "attachment_deleted"}
+_FULL_ONLY = {"artifact_removed"}  # R5: attachment_deleted stays in key mode (chain of custody)
 
-_aware = milestones._aware
+aware = milestones.aware
 
 
 def _val(x):
@@ -85,27 +86,36 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
                                     .order_by(CaseAttachment.id))).scalars().all()
 
     # --- indicators (case IOCs first, then enrichable artifacts), deduplicated by normalised pair ---
+    # Keys are normalised pairs (dedupe + enrichment matching); displayed values are the stored raw value,
+    # except URLs, which show the normalised form so userinfo (credentials) never reaches a report.
     entries: Dict[tuple, dict] = {}
+
+    def _add(key, n, raw_type, raw_value, tlp_, threat):
+        if key in entries:
+            return
+        shown = n[1] if n and n[0] == "url" else raw_value
+        entries[key] = {"value": shown, "type": n[0] if n else raw_type, "tlp": tlp_, "threat_level": threat,
+                        "verdicts": []}
+
     for i in iocs:
         n = normalise(i.ioc_type, i.value)
-        k = n or (i.ioc_type, i.value)
-        if k not in entries:
-            entries[k] = {"value": k[1], "type": k[0], "tlp": i.tlp, "threat_level": i.threat_level, "verdicts": []}
+        _add(n or (i.ioc_type, i.value), n, i.ioc_type, i.value, i.tlp, i.threat_level)
     for a in arts:
         n = normalise(_val(a.artifact_type), a.value)
-        if n and n not in entries:
-            entries[n] = {"value": n[1], "type": n[0], "tlp": None, "threat_level": None, "verdicts": []}
+        if n:
+            _add(n, n, None, a.value, None, None)
     enrich = []
-    if entries:
-        enrich = (await db.execute(select(EnrichmentResult).where(
-            EnrichmentResult.tenant_id == tid,
+    pairs = list(entries)
+    for start in range(0, len(pairs), ENRICH_BATCH):
+        batch = pairs[start:start + ENRICH_BATCH]
+        enrich += (await db.execute(select(EnrichmentResult).where(
+            EnrichmentResult.tenant_id == tid, EnrichmentResult.status == "ok",
             or_(*[and_(EnrichmentResult.indicator_type == t, EnrichmentResult.indicator_value == v)
-                  for t, v in entries]))
-            .order_by(EnrichmentResult.source, EnrichmentResult.id))).scalars().all()
+                  for t, v in batch])))).scalars().all()
+    enrich.sort(key=lambda r: (r.source, r.id))
     for r in enrich:
-        if r.status == "ok":
-            entries[(r.indicator_type, r.indicator_value)]["verdicts"].append(
-                {"source": r.source, "verdict": r.verdict, "score": r.score})
+        entries[(r.indicator_type, r.indicator_value)]["verdicts"].append(
+            {"source": r.source, "verdict": r.verdict, "score": r.score})
     ioc_list = sorted(entries.values(), key=lambda e: (
         not any(v["verdict"] == "malicious" for v in e["verdicts"]),
         _THREAT_RANK.get((e["threat_level"] or "").lower(), len(_THREAT_RANK)),
@@ -117,25 +127,25 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
                                 *(a.uploaded_by for a in attachments)])
 
     # --- timeline ---
-    tl = [{"at": _aware(case.created_at), "lane": "detection", "kind": "case_created", "text": "Case created",
+    tl = [{"at": aware(case.created_at), "lane": "detection", "kind": "case_created", "text": "Case created",
            "actor": None}]
     for a in alerts:
         if a.created_at is not None:
-            tl.append({"at": _aware(a.created_at), "lane": "detection", "kind": "alert",
+            tl.append({"at": aware(a.created_at), "lane": "detection", "kind": "alert",
                        "text": f"Alert received: {a.title or ''}", "actor": a.source})
     for e in events:
         if e.created_at is None or (not full and e.event_type in _FULL_ONLY):
             continue
-        tl.append({"at": _aware(e.created_at), "lane": _LANES.get(e.event_type, "analyst"), "kind": e.event_type,
+        tl.append({"at": aware(e.created_at), "lane": _LANES.get(e.event_type, "analyst"), "kind": e.event_type,
                    "text": (e.content or "")[:TEXT_MAX], "actor": emails.get(e.user_id)})
     done = [t for t in tasks if t.status == "done"]
     for t in done:
         if t.completed_at is not None:
-            tl.append({"at": _aware(t.completed_at), "lane": "analyst", "kind": "task_completed",
+            tl.append({"at": aware(t.completed_at), "lane": "analyst", "kind": "task_completed",
                        "text": f"Task completed: {t.title}", "actor": emails.get(t.completed_by)})
     for r in enrich:
-        if r.verdict == "malicious" and r.fetched_at is not None:
-            tl.append({"at": _aware(r.fetched_at), "lane": "indicators", "kind": "enrichment",
+        if r.status == "ok" and r.verdict == "malicious" and r.fetched_at is not None:
+            tl.append({"at": aware(r.fetched_at), "lane": "indicators", "kind": "enrichment",
                        "text": f"{r.source} flagged {r.indicator_type} as malicious", "actor": r.source})
     tl.sort(key=lambda e: e["at"])
     for n, e in enumerate(tl, 1):
@@ -156,17 +166,17 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
 
     # --- actions ---
     actions: Dict[str, List[dict]] = {}
-    for t in sorted(done, key=lambda t: (_aware(t.completed_at) or datetime.max.replace(tzinfo=timezone.utc))):
-        actions.setdefault(t.phase, []).append({"title": t.title, "completed_at": _aware(t.completed_at),
+    for t in sorted(done, key=lambda t: (aware(t.completed_at) or datetime.max.replace(tzinfo=timezone.utc))):
+        actions.setdefault(t.phase, []).append({"title": t.title, "completed_at": aware(t.completed_at),
                                                 "completed_by": emails.get(t.completed_by)})
     actions = {p: actions[p] for p in sorted(actions, key=lambda p: (PHASES.index(p) if p in PHASES else len(PHASES), p))}
     outstanding = [{"title": t.title, "phase": t.phase} for t in tasks if t.status != "done"]
 
     evidence = [{"filename": a.filename, "size_bytes": a.size_bytes, "sha256": a.sha256,
                  "is_malicious": bool(a.is_malicious), "uploaded_by": emails.get(a.uploaded_by),
-                 "created_at": _aware(a.created_at)}
+                 "created_at": aware(a.created_at)}
                 for a in sorted((a for a in attachments if a.deleted_at is None),
-                                key=lambda a: (_aware(a.created_at) or datetime.min.replace(tzinfo=timezone.utc), a.id),
+                                key=lambda a: (aware(a.created_at) or datetime.min.replace(tzinfo=timezone.utc), a.id),
                                 reverse=True)]
 
     sla = compute_sla_state(case, await load_policy_overrides(db, tid))
@@ -175,15 +185,15 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
                  "generated_by": {"id": generated_by.id, "email": generated_by.email} if generated_by else None,
                  "app_version": APP_VERSION, "full": full},
         "case": {"id": cid, "title": case.title, "severity": _val(case.severity), "status": _val(case.status),
-                 "owner": emails.get(case.owner_id), "created_at": _aware(case.created_at),
-                 "resolved_at": _aware(case.resolved_at), "tags": list(case.tags or []),
+                 "owner": emails.get(case.owner_id), "created_at": aware(case.created_at),
+                 "resolved_at": aware(case.resolved_at), "tags": list(case.tags or []),
                  "sla": {"response": sla["response_status"], "resolution": sla["resolution_status"]}},
         "report": {"executive_summary": row.executive_summary if row else None,
                    "impact": row.impact if row else None,
                    "lessons_learned": row.lessons_learned if row else None,
                    "tlp": row.tlp if row else "amber",
                    "updated_by": emails.get(row.updated_by) if row else None,
-                   "updated_at": _aware(row.updated_at) if row else None},
+                   "updated_at": aware(row.updated_at) if row else None},
         "milestones": ms,
         "timeline": tl,
         "iocs": ioc_list,
@@ -200,7 +210,7 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
         logs = (await db.execute(select(AuditLog).where(AuditLog.tenant_id == tid, cond)
                                  .order_by(AuditLog.created_at, AuditLog.id))).scalars().all()
         log_emails = await _emails(db, [l.user_id for l in logs])
-        report["audit"] = [{"at": _aware(l.created_at), "actor_email": log_emails.get(l.user_id),
+        report["audit"] = [{"at": aware(l.created_at), "actor_email": log_emails.get(l.user_id),
                             "entity": f"{l.entity_type} #{l.entity_id}", "action": l.action} for l in logs]
 
     report["truncated"] = compute_truncated(report)
@@ -210,7 +220,7 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
 def to_jsonable(obj):
     """Recursively convert datetimes (and dates) to ISO 8601 strings with offset."""
     if isinstance(obj, datetime):
-        return _aware(obj).isoformat()
+        return aware(obj).isoformat()
     if isinstance(obj, date):
         return obj.isoformat()
     if isinstance(obj, dict):

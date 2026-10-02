@@ -4,10 +4,13 @@ from typing import Dict, List, Optional
 KEYS = ("first_seen", "detected", "contained", "recovered")
 
 
-def _aware(dt):
+def aware(dt):
     if dt is not None and dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+_aware = aware  # backwards-compatible alias
 
 
 def _pick(override, computed):
@@ -28,11 +31,11 @@ DURATIONS = (("ttd_seconds", "first_seen", "detected"), ("ttc_seconds", "detecte
 
 def compute(*, ioc_first_seen: List[datetime], alert_created: List[datetime], case_created: datetime,
             contained_candidates: List[datetime], resolved_at: Optional[datetime], overrides: Dict) -> Dict:
-    ioc_first_seen = [_aware(x) for x in ioc_first_seen]
-    alert_created = [_aware(x) for x in alert_created]
-    contained_candidates = [_aware(x) for x in contained_candidates]
-    case_created, resolved_at = _aware(case_created), _aware(resolved_at)
-    overrides = {k: _aware(v) for k, v in overrides.items()}
+    ioc_first_seen = [aware(x) for x in ioc_first_seen]
+    alert_created = [aware(x) for x in alert_created]
+    contained_candidates = [aware(x) for x in contained_candidates]
+    case_created, resolved_at = aware(case_created), aware(resolved_at)
+    overrides = {k: aware(v) for k, v in overrides.items()}
     early = [x for x in (*ioc_first_seen, *alert_created) if x is not None]
     out = {
         "first_seen": _pick(overrides.get("first_seen"), min(early) if early else None),
@@ -52,7 +55,7 @@ def compute(*, ioc_first_seen: List[datetime], alert_created: List[datetime], ca
 
 
 def ordered(overrides: Dict) -> bool:
-    seq = [_aware(overrides.get(k)) for k in KEYS if overrides.get(k) is not None]
+    seq = [aware(overrides.get(k)) for k in KEYS if overrides.get(k) is not None]
     return all(a <= b for a, b in zip(seq, seq[1:]))
 
 

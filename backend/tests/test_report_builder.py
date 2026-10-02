@@ -46,12 +46,14 @@ async def _scenario():
             ids["case"].append(case.id)
 
             dom = f"evil{h}.wfreport.net"
-            mal = IOC(tenant_id=t.id, case_id=case.id, ioc_type="domain", value=dom, threat_level="low",
+            raw_dom = f"Evil{h}.WFReport.net"  # stored raw; normalise() lower-cases it
+            mal = IOC(tenant_id=t.id, case_id=case.id, ioc_type="domain", value=raw_dom, threat_level="low",
                       tlp="amber", first_seen=BASE - timedelta(days=2))
             red = IOC(tenant_id=t.id, case_id=case.id, ioc_type="ip_address", value="10.9.8.7",
                       threat_level="critical", tlp="red", first_seen=BASE - timedelta(days=1))
             db.add_all([mal, red])
-            art = Artifact(tenant_id=t.id, artifact_type=ArtifactType.URL, value=f"http://x{h}.wfreport.net/a")
+            art = Artifact(tenant_id=t.id, artifact_type=ArtifactType.URL,
+                           value=f"http://user:s3cr3t@x{h}.wfreport.net/a")
             db.add(art)
             await db.flush()
             ids["ioc"] += [mal.id, red.id]
@@ -85,8 +87,23 @@ async def _scenario():
             enr = EnrichmentResult(tenant_id=t.id, indicator_type="domain", indicator_value=dom, source="vt",
                                    status="ok", verdict="malicious", score="9/70",
                                    fetched_at=BASE + timedelta(hours=2, minutes=30))
-            db.add(enr)
+            err = EnrichmentResult(tenant_id=t.id, indicator_type="domain", indicator_value=dom, source="otx",
+                                   status="error", verdict="malicious", error="boom",
+                                   fetched_at=BASE + timedelta(hours=2, minutes=40))
+            # Isolation: another tenant with the same indicator and a malicious ok verdict.
+            t2 = Tenant(name="wf-test", slug=f"wf-test-{h}-report2")
+            db.add_all([enr, err, t2])
             await db.flush()
+            ids["tenant"].append(t2.id)
+            ids["enr"].append(err.id)
+            other_ioc = IOC(tenant_id=t2.id, ioc_type="domain", value=dom, tlp="white", threat_level="info")
+            other_enr = EnrichmentResult(tenant_id=t2.id, indicator_type="domain", indicator_value=dom, source="xf",
+                                         status="ok", verdict="malicious", score="99",
+                                         fetched_at=BASE + timedelta(hours=1, minutes=10))
+            db.add_all([other_ioc, other_enr])
+            await db.flush()
+            ids["ioc"].append(other_ioc.id)
+            ids["enr"].append(other_enr.id)
             ids["tl"] += [e.id for e in evs]
             ids["alert"].append(alert.id)
             ids["task"] += [done.id, todo.id]
@@ -110,8 +127,10 @@ async def _scenario():
 
             kinds_key = [e["kind"] for e in key["timeline"]]
             kinds_full = [e["kind"] for e in full["timeline"]]
-            assert "attachment_deleted" not in kinds_key
-            assert "attachment_deleted" in kinds_full
+            # R5: deletions of evidence stay in key mode (chain of custody).
+            assert "attachment_deleted" in kinds_key and "attachment_deleted" in kinds_full
+            enr_events = [e for e in full["timeline"] if e["kind"] == "enrichment"]
+            assert [(e["actor"], e["at"]) for e in enr_events] == [("vt", BASE + timedelta(hours=2, minutes=30))]
             lanes = {e["kind"]: e["lane"] for e in full["timeline"]}
             assert lanes == {"comment": "analyst", "artifact_added": "indicators", "attachment_deleted": "evidence",
                              "case_created": "detection", "alert": "detection", "task_completed": "analyst",
@@ -126,10 +145,19 @@ async def _scenario():
             assert texts["enrichment"] == "vt flagged domain as malicious" and dom not in texts["enrichment"]
 
             iocs = key["iocs"]
-            assert iocs[0]["value"] == dom and iocs[0]["verdicts"] == [
+            assert iocs[0]["value"] == raw_dom and iocs[0]["verdicts"] == [
                 {"source": "vt", "verdict": "malicious", "score": "9/70"}]
             assert iocs[1]["value"] == "10.9.8.7" and iocs[1]["tlp"] == "red"
             assert {i["type"] for i in iocs} == {"domain", "ip", "url"} and len(iocs) == 3
+            url = next(i for i in iocs if i["type"] == "url")
+            assert url["value"] == f"http://x{h}.wfreport.net/a" and "s3cr3t" not in json.dumps(
+                builder.to_jsonable(full))
+            builder.ENRICH_BATCH = 1
+            try:
+                batched = await builder.build_report(db, case, full=False, generated_by=u)
+            finally:
+                builder.ENRICH_BATCH = 1000
+            assert batched["iocs"] == iocs
 
             assert [e["filename"] for e in key["evidence"]] == ["live.eml"]
             assert "audit" not in key
