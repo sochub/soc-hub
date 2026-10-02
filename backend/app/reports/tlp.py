@@ -10,4 +10,4 @@ def floor(tlps) -> str:
 
 
 def at_least(t: str, minimum: str) -> bool:
-    return t in ORDER and ORDER.index(t) >= ORDER.index(minimum)
+    return t in ORDER and minimum in ORDER and ORDER.index(t) >= ORDER.index(minimum)
