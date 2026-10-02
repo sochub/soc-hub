@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Search, X, CheckCircle } from 'lucide-react'
 import { Link } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
 import { AlertRuns } from '../automations/CaseAutomation';
+import PageContainer from '../../components/layout/PageContainer';
 
 interface Alert {
     id: number;
@@ -48,12 +49,12 @@ export default function AlertsList() {
     );
 
     if (isLoading) {
-        return <div className="flex items-center justify-center h-[50vh]">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-300" /></div>;
+        return <PageContainer><div className="flex items-center justify-center h-[50vh]">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-300" /></div></PageContainer>;
     }
 
     return (
-        <div className="space-y-4">
+        <PageContainer className="space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Alerts</h1>
@@ -135,6 +136,6 @@ export default function AlertsList() {
             </div>
 
             {promoting && <PromoteAlertModal alert={promoting} onClose={() => setPromoting(null)} />}
-        </div>
+        </PageContainer>
     );
 }

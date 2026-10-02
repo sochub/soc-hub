@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 
 interface CreateTenantModalProps {
     isOpen: boolean;
@@ -45,56 +45,53 @@ export default function CreateTenantModal({ isOpen, onClose }: CreateTenantModal
         createMutation.mutate({ name, slug });
     };
 
-    if (!isOpen) return null;
-
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="w-full max-w-md bg-white rounded-xl border border-zinc-200 shadow-2xl">
-                <div className="flex items-center justify-between p-6 border-b border-zinc-200">
-                    <h3 className="text-lg font-semibold text-zinc-900">Create Tenant</h3>
-                    <button onClick={handleClose} className="text-zinc-500 hover:text-zinc-800">
-                        <X size={20} />
-                    </button>
+        <Modal
+            open={isOpen}
+            onClose={handleClose}
+            title="Create Tenant"
+            size="lg"
+            footer={<>
+                <button type="button" onClick={handleClose} className={btnSecondary}>Cancel</button>
+                <button
+                    type="submit"
+                    form="create-tenant-form"
+                    disabled={createMutation.isPending}
+                    className={btnPrimary}
+                >
+                    {createMutation.isPending ? 'Creating...' : 'Create Tenant'}
+                </button>
+            </>}
+        >
+            <form id="create-tenant-form" onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label className={modalLabel}>Name</label>
+                    <input
+                        type="text"
+                        required
+                        className={modalInput}
+                        placeholder="Acme Corp"
+                        value={name}
+                        onChange={e => handleNameChange(e.target.value)}
+                    />
                 </div>
 
-                <form onSubmit={handleSubmit} className="p-6 space-y-4">
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-700">Name</label>
-                        <input
-                            type="text"
-                            required
-                            className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-accent-500"
-                            placeholder="Acme Corp"
-                            value={name}
-                            onChange={e => handleNameChange(e.target.value)}
-                        />
-                    </div>
+                <div>
+                    <label className={modalLabel}>Slug</label>
+                    <input
+                        type="text"
+                        required
+                        pattern="[a-z0-9-]+"
+                        className={`${modalInput} font-mono`}
+                        placeholder="acme-corp"
+                        value={slug}
+                        onChange={e => setSlug(e.target.value)}
+                    />
+                    <p className="text-xs text-zinc-400 mt-1">URL-friendly identifier. Lowercase, numbers, hyphens only.</p>
+                </div>
 
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-700">Slug</label>
-                        <input
-                            type="text"
-                            required
-                            pattern="[a-z0-9-]+"
-                            className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-accent-500"
-                            placeholder="acme-corp"
-                            value={slug}
-                            onChange={e => setSlug(e.target.value)}
-                        />
-                        <p className="text-xs text-zinc-400">URL-friendly identifier. Lowercase, numbers, hyphens only.</p>
-                    </div>
-
-                    {error && <p className="text-red-700 text-sm">{error}</p>}
-
-                    <button
-                        type="submit"
-                        disabled={createMutation.isPending}
-                        className="w-full bg-accent-600 hover:bg-accent-700 text-white font-medium py-2 rounded-md transition-colors disabled:opacity-50"
-                    >
-                        {createMutation.isPending ? 'Creating...' : 'Create Tenant'}
-                    </button>
-                </form>
-            </div>
-        </div>
+                {error && <p className="text-red-700 text-sm">{error}</p>}
+            </form>
+        </Modal>
     );
 }

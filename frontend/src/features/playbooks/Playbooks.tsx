@@ -5,6 +5,7 @@ import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { PlaybookSummary, User } from '../../types';
 import TemplateModal from './TemplateModal';
+import PageContainer from '../../components/layout/PageContainer';
 
 type Tab = 'mine' | 'marketplace';
 
@@ -55,7 +56,7 @@ export default function Playbooks() {
     const loading = tab === 'mine' ? mineLoading : marketLoading;
 
     return (
-        <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
+        <PageContainer className="space-y-0">
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
                     <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Playbooks</h1>
@@ -172,6 +173,6 @@ export default function Playbooks() {
                     onSaved={() => { setEditId(null); qc.invalidateQueries({ queryKey: ['playbooks'] }); }}
                 />
             )}
-        </div>
+        </PageContainer>
     );
 }
