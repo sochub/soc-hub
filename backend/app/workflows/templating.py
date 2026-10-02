@@ -15,16 +15,16 @@ class TemplateError(Exception):
     pass
 
 
-def _secret_ref_cls():
-    from app.secrets.refs import SecretRef  # lazy: refs imports TemplateError from here
-    return SecretRef
+def _secret_classes():
+    from app.secrets.refs import SecretRef, SecretsNamespace  # lazy: refs imports TemplateError from here
+    return SecretRef, SecretsNamespace
 
 
 def _guard_secrets(fn):
     """Wrap a filter/test so it refuses SecretRef arguments (secrets can't be transformed)."""
     @functools.wraps(fn)  # also copies jinja_pass_arg (pass_context/pass_environment markers)
     def wrapper(*args, **kwargs):
-        ref = _secret_ref_cls()
+        ref = _secret_classes()[0]
         if any(isinstance(a, ref) for a in args) or any(isinstance(v, ref) for v in kwargs.values()):
             raise TemplateError("secrets can only be inserted, not transformed")
         return fn(*args, **kwargs)
@@ -32,6 +32,8 @@ def _guard_secrets(fn):
 
 
 def _harden(env: ImmutableSandboxedEnvironment) -> ImmutableSandboxedEnvironment:
+    # Wraps the filters/tests present now; anything registered later must be wrapped too
+    # (test_secret_refs asserts every filter/test is guarded).
     env.filters = {k: _guard_secrets(f) for k, f in env.filters.items()}
     env.tests = {k: _guard_secrets(f) for k, f in env.tests.items()}
     return env
@@ -47,7 +49,25 @@ def _force(value: Any) -> Any:
     return value
 
 
+def _holds_secret(value: Any) -> bool:
+    if isinstance(value, _secret_classes()):
+        return True
+    if isinstance(value, dict):
+        return any(_holds_secret(v) for v in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_holds_secret(v) for v in value)
+    return False
+
+
 def eval_expr(expr: str, ctx: dict) -> Any:
+    """Evaluate a bare expression (condition, for_each items). Secret objects may not escape it."""
+    value = _eval(expr, ctx)
+    if _holds_secret(value):
+        raise TemplateError("secrets can only be inserted, not transformed")
+    return value
+
+
+def _eval(expr: str, ctx: dict) -> Any:
     try:
         return _force(_env.compile_expression(expr, undefined_to_none=False)(**ctx))
     except TemplateError:
@@ -58,12 +78,17 @@ def eval_expr(expr: str, ctx: dict) -> Any:
 
 def _placeholders(value: Any) -> Any:
     """A single-expression render can return a SecretRef (or containers of them): emit placeholders."""
-    if isinstance(value, _secret_ref_cls()):
+    ref, ns = _secret_classes()
+    if isinstance(value, ref):
         return str(value)
+    if isinstance(value, ns):
+        raise TemplateError("secrets can only be inserted, not transformed")
     if isinstance(value, dict):
         return {k: _placeholders(v) for k, v in value.items()}
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [_placeholders(v) for v in value]
+    if isinstance(value, (set, frozenset)) and _holds_secret(value):
+        raise TemplateError("secrets can only be inserted, not transformed")
     return value
 
 
@@ -72,7 +97,7 @@ def _render_str(s: str, ctx: dict) -> Any:
         return s
     m = _SINGLE_EXPR.match(s)
     if m:
-        return _placeholders(eval_expr(m.group("expr"), ctx))
+        return _placeholders(_eval(m.group("expr"), ctx))
     try:
         return _env.from_string(s).render(**ctx)
     except Exception as e:

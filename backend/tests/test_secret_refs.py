@@ -85,10 +85,7 @@ def test_b64encode_never_yields_valid_placeholder():
     "secrets.TOK", "secrets.TOK != 'a'", "secrets.TOK | length > 3", "'a' in secrets.TOK", "secrets.bad", "not secrets.TOK",
 ])
 def test_eval_expr_rejects_or_is_opaque(expr):
-    # A bare reference in an expression context is a SecretRef (opaque); anything observing it raises.
-    if expr == "secrets.TOK":
-        assert isinstance(eval_expr(expr, CTX), SecretRef)
-        return
+    # Expression contexts (condition, for_each items) never yield a secret object.
     with pytest.raises(TemplateError):
         eval_expr(expr, CTX)
 
@@ -169,3 +166,25 @@ def test_contexts_without_secrets_fail_as_template_error():
         eval_expr("secrets.TOK", {"case": {"title": "t"}})
     with pytest.raises(TemplateError):
         render("x {{ secrets.TOK }}", {"case": {"title": "t"}})
+
+
+# --- review fix round 1: secret objects must not escape expressions ------------------------------
+
+@pytest.mark.parametrize("expr", ["[secrets.API_TOKEN]", "(secrets.API_TOKEN,)", "secrets",
+                                  "{'a': secrets.API_TOKEN}"])
+def test_bare_expressions_cannot_return_secret_objects(expr):
+    with pytest.raises(TemplateError):
+        eval_expr(expr, CTX)  # e.g. for_each items
+
+
+def test_single_expression_render_containers():
+    assert render("{{ (secrets.API_TOKEN,) }}", CTX) == [f"⟦secret:API_TOKEN#{N}⟧"]
+    with pytest.raises(TemplateError):
+        render("{{ secrets }}", CTX)
+
+
+def test_every_filter_and_test_is_guarded():
+    from app.workflows.templating import _env, _slack_env
+    for env in (_env, _slack_env):
+        for f in list(env.filters.values()) + list(env.tests.values()):
+            assert getattr(f, "__wrapped__", None) is not None, f
