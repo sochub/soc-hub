@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { api } from '../../api/client';
 import type { PlaybookTemplate, PlaybookTaskTemplate } from '../../types';
+import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import { PHASES, PHASE_LABEL, PHASE_COLOR, groupByPhase } from './phases';
 
 interface Props {
@@ -61,14 +62,14 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
     const removeTask = (i: number) => setDraft((d) => d ? { ...d, tasks: d.tasks.filter((_, j) => j !== i) } : d);
 
     const body = () => {
-        if (!isNew && isLoading) return <p className="font-mono text-xs text-zinc-400 p-6">$ loading…</p>;
+        if (!isNew && isLoading) return <p className="font-mono text-xs text-zinc-400">$ loading…</p>;
         if (!draft) return null;
 
         if (!editable) {
             // read-only grouped view (marketplace / system templates)
             const grouped = groupByPhase((template?.tasks ?? []) as PlaybookTaskTemplate[]);
             return (
-                <div className="p-5 space-y-5 overflow-y-auto">
+                <div className="space-y-5">
                     {template?.description && <p className="text-sm text-zinc-600">{template.description}</p>}
                     {grouped.map(([phase, tasks]) => (
                         <div key={phase}>
@@ -92,7 +93,7 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
 
         // editable form
         return (
-            <div className="p-5 space-y-4 overflow-y-auto">
+            <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                     <div>
                         <label className="label-mono block mb-1">name</label>
@@ -130,7 +131,7 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
                                 <input value={t.description ?? ''} placeholder="Description (optional)" onChange={(e) => updateTask(i, { description: e.target.value })}
                                     className="w-full border border-zinc-200 px-2 py-1 text-xs text-zinc-600 focus:outline-none focus:ring-1 focus:ring-accent-500" />
                             </div>
-                            <button onClick={() => removeTask(i)} className="text-zinc-300 hover:text-severity-critical p-1"><Trash2 size={14} /></button>
+                            <button onClick={() => removeTask(i)} aria-label="Remove task" className="text-zinc-300 hover:text-severity-critical p-1"><Trash2 size={14} /></button>
                         </div>
                     ))}
                     {draft.tasks.length === 0 && <p className="text-xs text-zinc-400 font-mono">no tasks — add one</p>}
@@ -140,26 +141,19 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
     };
 
     return (
-        <div className="fixed inset-0 z-[100] bg-zinc-900/40 backdrop-blur-[2px] flex items-center justify-center p-4" onClick={onClose}>
-            <div onClick={(e) => e.stopPropagation()}
-                className="bg-white border border-zinc-200 shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
-                <div className="h-12 px-4 flex items-center justify-between border-b border-zinc-200 shrink-0">
-                    <h2 className="text-sm font-semibold text-zinc-900">
-                        {isNew ? (marketplace ? 'New Marketplace Template' : 'New Playbook') : editable ? `Edit · ${template?.name ?? ''}` : template?.name ?? 'Playbook'}
-                    </h2>
-                    <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-zinc-900"><X size={16} /></button>
-                </div>
-                <div className="flex-1 min-h-0 flex flex-col">{body()}</div>
-                {editable && (
-                    <div className="h-14 px-4 flex items-center justify-end gap-2 border-t border-zinc-200 shrink-0">
-                        <button onClick={onClose} className="px-3 py-1.5 text-sm text-zinc-600 hover:text-zinc-900">Cancel</button>
-                        <button onClick={() => save.mutate()} disabled={!draft?.name || save.isPending}
-                            className="px-4 py-1.5 bg-accent-600 text-white text-sm font-medium hover:bg-accent-700 disabled:opacity-50">
-                            {save.isPending ? 'Saving…' : 'Save'}
-                        </button>
-                    </div>
-                )}
-            </div>
-        </div>
+        <Modal
+            open
+            onClose={onClose}
+            size="xl"
+            title={isNew ? (marketplace ? 'New Marketplace Template' : 'New Playbook') : editable ? `Edit · ${template?.name ?? ''}` : template?.name ?? 'Playbook'}
+            footer={editable ? (<>
+                <button onClick={onClose} className={btnSecondary}>Cancel</button>
+                <button onClick={() => save.mutate()} disabled={!draft?.name || save.isPending} className={btnPrimary}>
+                    {save.isPending ? 'Saving…' : 'Save'}
+                </button>
+            </>) : undefined}
+        >
+            {body()}
+        </Modal>
     );
 }

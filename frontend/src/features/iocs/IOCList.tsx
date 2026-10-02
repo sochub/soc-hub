@@ -1,12 +1,13 @@
 import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { AlertOctagon, ChevronDown, ChevronRight, Plus, Trash2, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AlertOctagon, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { IOC } from '../../types';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
 import { useCanRun } from '../enrichment/useCanRun';
+import PageContainer from '../../components/layout/PageContainer';
+import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 
 const VERDICT_DOT: Record<string, string> = { malicious: 'bg-red-600', suspicious: 'bg-amber-500', harmless: 'bg-green-600' };
 
@@ -96,7 +97,7 @@ export default function IOCList() {
     });
 
     return (
-        <div className="space-y-6">
+        <PageContainer>
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
@@ -222,141 +223,116 @@ export default function IOCList() {
             </div>
 
             {/* Add IOC Modal */}
-            <AnimatePresence>
-                {showModal && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-                        onClick={() => setShowModal(false)}
+            <Modal
+                open={showModal}
+                onClose={() => setShowModal(false)}
+                title="Add Indicator of Compromise"
+                size="lg"
+                footer={<>
+                    <button onClick={() => setShowModal(false)} className={btnSecondary}>
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => createMutation.mutate(form)}
+                        disabled={!form.value.trim() || createMutation.isPending}
+                        className={btnPrimary}
                     >
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="glass-panel p-6 rounded-xl max-w-lg w-full border border-zinc-200 space-y-4"
-                        >
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-xl font-bold text-zinc-900">Add Indicator of Compromise</h2>
-                                <button
-                                    onClick={() => setShowModal(false)}
-                                    className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
-                                >
-                                    <X size={20} />
-                                </button>
-                            </div>
+                        {createMutation.isPending ? 'Adding...' : 'Add IOC'}
+                    </button>
+                </>}
+            >
+                <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className={modalLabel}>Type</label>
+                            <select
+                                value={form.ioc_type}
+                                onChange={(e) => setForm({ ...form, ioc_type: e.target.value })}
+                                className={modalInput}
+                            >
+                                {IOC_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className={modalLabel}>Threat Level</label>
+                            <select
+                                value={form.threat_level}
+                                onChange={(e) => setForm({ ...form, threat_level: e.target.value })}
+                                className={modalInput}
+                            >
+                                {THREAT_LEVELS.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        </div>
+                    </div>
 
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-medium text-zinc-500 mb-1">Type</label>
-                                    <select
-                                        value={form.ioc_type}
-                                        onChange={(e) => setForm({ ...form, ioc_type: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
-                                    >
-                                        {IOC_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-zinc-500 mb-1">Threat Level</label>
-                                    <select
-                                        value={form.threat_level}
-                                        onChange={(e) => setForm({ ...form, threat_level: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
-                                    >
-                                        {THREAT_LEVELS.map(t => <option key={t} value={t}>{t}</option>)}
-                                    </select>
-                                </div>
-                            </div>
+                    <div>
+                        <label className={modalLabel}>Value</label>
+                        <input
+                            type="text"
+                            value={form.value}
+                            onChange={(e) => setForm({ ...form, value: e.target.value })}
+                            placeholder="e.g. 192.168.1.1, malicious.com, sha256..."
+                            className={`${modalInput} font-mono`}
+                        />
+                    </div>
 
-                            <div>
-                                <label className="block text-xs font-medium text-zinc-500 mb-1">Value</label>
-                                <input
-                                    type="text"
-                                    value={form.value}
-                                    onChange={(e) => setForm({ ...form, value: e.target.value })}
-                                    placeholder="e.g. 192.168.1.1, malicious.com, sha256..."
-                                    className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 font-mono focus:outline-none focus:ring-1 focus:ring-white/50"
-                                />
-                            </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div>
+                            <label className={modalLabel}>Confidence ({form.confidence}%)</label>
+                            <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                value={form.confidence}
+                                onChange={(e) => setForm({ ...form, confidence: Number(e.target.value) })}
+                                className={modalInput}
+                            />
+                        </div>
+                        <div>
+                            <label className={modalLabel}>Status</label>
+                            <select
+                                value={form.status}
+                                onChange={(e) => setForm({ ...form, status: e.target.value })}
+                                className={modalInput}
+                            >
+                                {STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className={modalLabel}>TLP</label>
+                            <select
+                                value={form.tlp}
+                                onChange={(e) => setForm({ ...form, tlp: e.target.value })}
+                                className={modalInput}
+                            >
+                                {TLP_LEVELS.map(t => <option key={t} value={t}>TLP:{t}</option>)}
+                            </select>
+                        </div>
+                    </div>
 
-                            <div className="grid grid-cols-3 gap-3">
-                                <div>
-                                    <label className="block text-xs font-medium text-zinc-500 mb-1">Confidence ({form.confidence}%)</label>
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        max={100}
-                                        value={form.confidence}
-                                        onChange={(e) => setForm({ ...form, confidence: Number(e.target.value) })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-zinc-500 mb-1">Status</label>
-                                    <select
-                                        value={form.status}
-                                        onChange={(e) => setForm({ ...form, status: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
-                                    >
-                                        {STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-zinc-500 mb-1">TLP</label>
-                                    <select
-                                        value={form.tlp}
-                                        onChange={(e) => setForm({ ...form, tlp: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
-                                    >
-                                        {TLP_LEVELS.map(t => <option key={t} value={t}>TLP:{t}</option>)}
-                                    </select>
-                                </div>
-                            </div>
+                    <div>
+                        <label className={modalLabel}>Source</label>
+                        <input
+                            type="text"
+                            value={form.source}
+                            onChange={(e) => setForm({ ...form, source: e.target.value })}
+                            placeholder="e.g. VirusTotal, internal, OSINT..."
+                            className={modalInput}
+                        />
+                    </div>
 
-                            <div>
-                                <label className="block text-xs font-medium text-zinc-500 mb-1">Source</label>
-                                <input
-                                    type="text"
-                                    value={form.source}
-                                    onChange={(e) => setForm({ ...form, source: e.target.value })}
-                                    placeholder="e.g. VirusTotal, internal, OSINT..."
-                                    className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-medium text-zinc-500 mb-1">Description</label>
-                                <textarea
-                                    value={form.description}
-                                    onChange={(e) => setForm({ ...form, description: e.target.value })}
-                                    placeholder="Additional context..."
-                                    rows={2}
-                                    className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50 resize-none"
-                                />
-                            </div>
-
-                            <div className="flex gap-3 pt-2">
-                                <button
-                                    onClick={() => setShowModal(false)}
-                                    className="flex-1 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg font-medium transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={() => createMutation.mutate(form)}
-                                    disabled={!form.value.trim() || createMutation.isPending}
-                                    className="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {createMutation.isPending ? 'Adding...' : 'Add IOC'}
-                                </button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </div>
+                    <div>
+                        <label className={modalLabel}>Description</label>
+                        <textarea
+                            value={form.description}
+                            onChange={(e) => setForm({ ...form, description: e.target.value })}
+                            placeholder="Additional context..."
+                            rows={2}
+                            className={`${modalInput} resize-none`}
+                        />
+                    </div>
+                </div>
+            </Modal>
+        </PageContainer>
     );
 }

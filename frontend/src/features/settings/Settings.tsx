@@ -4,6 +4,7 @@ import { KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { SLAPolicyItem, SSOConfig, User } from '../../types';
+import PageContainer from '../../components/layout/PageContainer';
 
 const SEVERITY_LABEL: Record<string, string> = {
     critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info',
@@ -175,7 +176,7 @@ export default function Settings() {
     );
 
     return (
-        <div className="p-4 sm:p-6 max-w-[1000px] mx-auto space-y-6">
+        <PageContainer width="narrow">
             <div>
                 <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Settings</h1>
                 <p className="label-mono mt-1">tenant configuration</p>
@@ -270,6 +271,6 @@ export default function Settings() {
             )}
 
             {isAdmin && <SLAPoliciesSection />}
-        </div>
+        </PageContainer>
     );
 }

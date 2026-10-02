@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import type { Tenant, User, Invitation } from '../../types';
 import InviteUserModal from '../admin/InviteUserModal';
 import DeleteTenantModal from './DeleteTenantModal';
+import PageContainer from '../../components/layout/PageContainer';
 
 const statusColors: Record<string, string> = {
     pending: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -119,18 +120,20 @@ export default function TenantDetail() {
 
     if (tenantLoading) {
         return (
-            <div className="flex justify-center py-16">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500" />
-            </div>
+            <PageContainer>
+                <div className="flex justify-center py-16">
+                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500" />
+                </div>
+            </PageContainer>
         );
     }
 
     if (!tenant) {
-        return <p className="text-zinc-500">Tenant not found.</p>;
+        return <PageContainer><p className="text-zinc-500">Tenant not found.</p></PageContainer>;
     }
 
     return (
-        <div className="space-y-6">
+        <PageContainer>
             <button
                 onClick={() => navigate('/superadmin/tenants')}
                 className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
@@ -378,6 +381,6 @@ export default function TenantDetail() {
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
             />
-        </div>
+        </PageContainer>
     );
 }

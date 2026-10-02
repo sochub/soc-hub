@@ -1,6 +1,17 @@
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.reports import tlp as tlp_mod
+
+
+def _check_tlp(v):
+    if v is None:
+        return v
+    n = tlp_mod.normalize(v)
+    if n is None:
+        raise ValueError("tlp must be one of white/clear, green, amber, red")
+    return n
 
 
 class IOCBase(BaseModel):
@@ -16,6 +27,8 @@ class IOCBase(BaseModel):
     tags: List[str] = []
     description: Optional[str] = None
     case_id: Optional[int] = None
+
+    _tlp = field_validator("tlp", mode="before")(_check_tlp)
 
 
 class IOCCreate(IOCBase):
@@ -36,6 +49,8 @@ class IOCUpdate(BaseModel):
     description: Optional[str] = None
     case_id: Optional[int] = None
 
+    _tlp = field_validator("tlp", mode="before")(_check_tlp)
+
 
 class IOC(IOCBase):
     id: int
@@ -43,6 +58,12 @@ class IOC(IOCBase):
     created_at: datetime
     created_by: Optional[int] = None
     enrichment_verdict: Optional[str] = None
+
+    # Responses show stored values as they are: legacy non-canonical TLPs must not break reads.
+    @field_validator("tlp", mode="before")
+    @classmethod
+    def _tlp(cls, v):
+        return v
 
     class Config:
         from_attributes = True

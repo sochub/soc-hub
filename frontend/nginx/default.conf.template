@@ -5,9 +5,18 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # Serve static files
+    # Serve static files. index.html must never be cached: it names the hashed
+    # bundles, and a stale copy would point at bundles a new build removed.
     location / {
+        add_header Cache-Control "no-cache" always;
         try_files $uri $uri/ /index.html;
+    }
+
+    # Hashed build output: cache forever, and 404 for missing files instead of
+    # falling back to index.html (HTML served as JS fails silently -> blank page).
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
     }
 
     # Evidence uploads only: large, unbuffered bodies with long timeouts. A regex

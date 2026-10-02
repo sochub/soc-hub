@@ -9,6 +9,7 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, BarChart, Bar,
 } from 'recharts';
+import PageContainer from '../../components/layout/PageContainer';
 
 interface CaseItem {
     id: number;
@@ -170,9 +171,11 @@ export default function Dashboard() {
 
     if (casesLoading || statsLoading) {
         return (
-            <div className="flex items-center justify-center h-[60vh]">
-                <p className="font-mono text-xs text-zinc-400 animate-pulse">$ loading telemetry…</p>
-            </div>
+            <PageContainer width="wide">
+                <div className="flex items-center justify-center h-[60vh]">
+                    <p className="font-mono text-xs text-zinc-400 animate-pulse">$ loading telemetry…</p>
+                </div>
+            </PageContainer>
         );
     }
 
@@ -182,7 +185,7 @@ export default function Dashboard() {
     const fmtDate = (s: string) => new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
     return (
-        <div className="p-4 sm:p-6 max-w-[1600px] mx-auto">
+        <PageContainer width="wide" className="space-y-0">
             {/* Header */}
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
@@ -422,6 +425,6 @@ export default function Dashboard() {
                 onSubmit={(data: any) => createCaseMutation.mutate(data)}
                 isSubmitting={createCaseMutation.isPending}
             />
-        </div>
+        </PageContainer>
     );
 }

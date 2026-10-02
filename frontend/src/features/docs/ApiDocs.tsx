@@ -1,6 +1,7 @@
 import { ApiReferenceReact } from '@scalar/api-reference-react';
 import '@scalar/api-reference-react/style.css';
 import { Link } from 'react-router-dom';
+import PageContainer from '../../components/layout/PageContainer';
 
 const ingestUrl = `${window.location.origin}/api/v1/alerts/webhook`;
 const curlSample = `curl -X POST ${ingestUrl} \\
@@ -10,7 +11,7 @@ const curlSample = `curl -X POST ${ingestUrl} \\
 
 export default function ApiDocs() {
     return (
-        <div className="space-y-6">
+        <PageContainer>
             <div>
                 <h1 className="text-3xl font-bold text-zinc-900 tracking-tight">API Docs</h1>
                 <p className="text-zinc-500 mt-1">Build integrations against the SOC Hub API.</p>
@@ -46,6 +47,6 @@ export default function ApiDocs() {
             <div className="glass-panel rounded-xl border border-zinc-200 overflow-hidden">
                 <ApiReferenceReact configuration={{ url: '/api/v1/openapi.json', theme: 'default' }} />
             </div>
-        </div>
+        </PageContainer>
     );
 }

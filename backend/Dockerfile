@@ -14,6 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xmlsec1 \
     && rm -rf /var/lib/apt/lists/*
 
+# WeasyPrint runtime libraries (incident report PDF export)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libharfbuzz-subset0 shared-mime-info \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade "pip>=25.3" "setuptools>=83"
 RUN pip install --no-cache-dir -r requirements.txt

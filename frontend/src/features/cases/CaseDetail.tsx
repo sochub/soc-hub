@@ -7,8 +7,11 @@ import { cn } from '../../lib/utils';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
+import PageContainer from '../../components/layout/PageContainer';
+import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import CaseTasks from './CaseTasks';
 import CaseEvidence from './CaseEvidence';
+import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
@@ -25,10 +28,29 @@ const ARTIFACT_ICONS: Record<string, any> = {
 
 const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigation', 'containment', 'remediation', 'other'];
 
+const CASE_TABS = ['timeline', 'tasks', 'artifacts', 'evidence', 'report', 'network', 'audit', 'automation'] as const;
+type CaseTab = typeof CASE_TABS[number];
+
 export default function CaseDetail() {
     const { id } = useParams();
     const queryClient = useQueryClient();
-    const [activeTab, setActiveTab] = useState<'timeline' | 'tasks' | 'artifacts' | 'evidence' | 'network' | 'audit' | 'automation'>('timeline');
+    const [activeTab, setActiveTab] = useState<CaseTab>('timeline');
+    // The Report tab reports unsaved edits; switching away asks first.
+    const [reportDirty, setReportDirty] = useState(false);
+    const [pendingTab, setPendingTab] = useState<CaseTab | null>(null);
+    const selectTab = (tab: CaseTab) => {
+        if (tab === activeTab) return;
+        if (activeTab === 'report' && reportDirty) { setPendingTab(tab); return; }
+        setPendingTab(null);
+        setActiveTab(tab);
+    };
+    // CaseDetail stays mounted across :id changes; drop the previous case's report guard state.
+    const [guardCaseId, setGuardCaseId] = useState(id);
+    if (guardCaseId !== id) {
+        setGuardCaseId(id);
+        setReportDirty(false);
+        setPendingTab(null);
+    }
     const [showArtifactModal, setShowArtifactModal] = useState(false);
     const [intelOpen, setIntelOpen] = useState<number | null>(null);
     const canRunIntel = useCanRun();
@@ -144,15 +166,17 @@ export default function CaseDetail() {
 
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-[50vh]">
-                <div className="flex flex-col items-center gap-4">
-                    <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+            <PageContainer>
+                <div className="flex items-center justify-center h-[50vh]">
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+                    </div>
                 </div>
-            </div>
+            </PageContainer>
         );
     }
 
-    if (!caseData) return <div className="p-8 text-red-700 font-mono">ERROR: CASE_NOT_FOUND</div>;
+    if (!caseData) return <PageContainer><div className="text-red-700 font-mono">ERROR: CASE_NOT_FOUND</div></PageContainer>;
 
     const severityColor = caseData.severity === 'critical' ? 'text-severity-critical bg-red-50 border-red-200' :
         caseData.severity === 'high' ? 'text-severity-high bg-orange-50 border-orange-200' :
@@ -173,10 +197,10 @@ export default function CaseDetail() {
     };
 
     return (
-        <div className="flex gap-6 h-[calc(100vh-8rem)]">
-            <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl border border-zinc-200 overflow-hidden relative">
+        <PageContainer>
+            <div className="min-w-0 flex flex-col bg-white rounded-2xl border border-zinc-200 relative">
                 {/* Top Decoration */}
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-accent-500 via-accent-400 to-accent-500 opacity-50" />
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl bg-gradient-to-r from-accent-500 via-accent-400 to-accent-500 opacity-50" />
 
                 {/* Header */}
                 <div className="p-6 pb-2">
@@ -228,12 +252,15 @@ export default function CaseDetail() {
                     {id && <TriagePanel caseId={parseInt(id)} />}
                     <SLAPanel caseData={caseData} />
 
-                    {/* Tabs */}
+                </div>
+
+                {/* Tabs (sticky while the page scrolls inside <main>) */}
+                <div className="sticky top-0 z-10 bg-white px-6 pt-3">
                     <div className="flex border-b border-zinc-200 relative space-x-6">
-                        {['timeline', 'tasks', 'artifacts', 'evidence', 'network', 'audit', 'automation'].map((tab) => (
+                        {CASE_TABS.map((tab) => (
                             <button
                                 key={tab}
-                                onClick={() => setActiveTab(tab as any)}
+                                onClick={() => selectTab(tab)}
                                 className={cn(
                                     "pb-3 text-sm font-medium transition-colors relative focus:outline-none",
                                     activeTab === tab ? "text-accent-700" : "text-zinc-400 hover:text-zinc-700"
@@ -249,10 +276,19 @@ export default function CaseDetail() {
                             </button>
                         ))}
                     </div>
+                    {pendingTab && (
+                        <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 mt-2">
+                            <span className="mr-auto">The report has unsaved changes. Discard them and switch to <span className="capitalize font-medium">{pendingTab}</span>?</span>
+                            <button onClick={() => { setReportDirty(false); setActiveTab(pendingTab); setPendingTab(null); }}
+                                className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700">Discard</button>
+                            <button onClick={() => setPendingTab(null)}
+                                className="px-2 py-1 bg-white border border-zinc-300 text-zinc-700 rounded hover:bg-zinc-50">Keep editing</button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Tab Content */}
-                <div className="flex-1 overflow-y-auto p-6 pt-2 scrollbar-thin scrollbar-thumb-zinc-300 scrollbar-track-transparent">
+                <div className="flex-1 min-h-[50vh] p-6 pt-2">
                     <AnimatePresence mode="wait">
                         <motion.div
                             key={activeTab}
@@ -424,6 +460,8 @@ export default function CaseDetail() {
 
                             {activeTab === 'evidence' && id && <CaseEvidence caseId={parseInt(id)} />}
 
+                            {activeTab === 'report' && id && <CaseReport key={id} caseId={parseInt(id)} onDirtyChange={setReportDirty} />}
+
                             {activeTab === 'automation' && id && <CaseAutomation caseId={parseInt(id)} />}
 
                             {activeTab === 'artifacts' && (
@@ -560,78 +598,51 @@ export default function CaseDetail() {
             {/* The copilot is now the global floating widget (auto-scopes to this case). */}
 
             {/* Add Artifact Modal */}
-            <AnimatePresence>
-                {showArtifactModal && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-                        onClick={() => setShowArtifactModal(false)}
+            <Modal
+                open={showArtifactModal}
+                onClose={() => setShowArtifactModal(false)}
+                title="Add New Artifact"
+                size="lg"
+                footer={<>
+                    <button onClick={() => setShowArtifactModal(false)} className={btnSecondary}>
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => addArtifactMutation.mutate(newArtifact)}
+                        disabled={!newArtifact.value || addArtifactMutation.isPending}
+                        className={btnPrimary}
                     >
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="glass-panel p-6 rounded-xl max-w-md w-full border border-zinc-200"
+                        {addArtifactMutation.isPending ? 'Adding...' : 'Add Artifact'}
+                    </button>
+                </>}
+            >
+                <div className="space-y-4">
+                    <div>
+                        <label className={modalLabel}>Type</label>
+                        <select
+                            value={newArtifact.type}
+                            onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
+                            className={modalInput}
                         >
-                            <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-xl font-bold text-zinc-900">Add New Artifact</h2>
-                                <button
-                                    onClick={() => setShowArtifactModal(false)}
-                                    className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
-                                >
-                                    <X size={20} />
-                                </button>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-zinc-700 mb-2">Type</label>
-                                    <select
-                                        value={newArtifact.type}
-                                        onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
-                                    >
-                                        <option value="file_hash">File Hash (MD5/SHA1/SHA256)</option>
-                                        <option value="ip">IP Address</option>
-                                        <option value="domain">Domain</option>
-                                        <option value="url">URL</option>
-                                        <option value="email">Email Address</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-zinc-700 mb-2">Value</label>
-                                    <input
-                                        type="text"
-                                        value={newArtifact.value}
-                                        onChange={(e) => setNewArtifact({ ...newArtifact, value: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 font-mono"
-                                        placeholder="Enter value..."
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex gap-3 mt-8">
-                                <button
-                                    onClick={() => setShowArtifactModal(false)}
-                                    className="flex-1 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg font-medium transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={() => addArtifactMutation.mutate(newArtifact)}
-                                    disabled={!newArtifact.value || addArtifactMutation.isPending}
-                                    className="flex-1 px-4 py-2 bg-white hover:bg-zinc-200 text-black rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {addArtifactMutation.isPending ? 'Adding...' : 'Add Artifact'}
-                                </button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+                            <option value="file_hash">File Hash (MD5/SHA1/SHA256)</option>
+                            <option value="ip">IP Address</option>
+                            <option value="domain">Domain</option>
+                            <option value="url">URL</option>
+                            <option value="email">Email Address</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className={modalLabel}>Value</label>
+                        <input
+                            type="text"
+                            value={newArtifact.value}
+                            onChange={(e) => setNewArtifact({ ...newArtifact, value: e.target.value })}
+                            className={cn(modalInput, 'font-mono')}
+                            placeholder="Enter value..."
+                        />
+                    </div>
+                </div>
+            </Modal>
 
             {/* Edit Case Modal */}
             <EditCaseModal
@@ -641,6 +652,6 @@ export default function CaseDetail() {
                 onSubmit={(data) => updateCaseMutation.mutate(data)}
                 isSubmitting={updateCaseMutation.isPending}
             />
-        </div>
+        </PageContainer>
     );
 }
