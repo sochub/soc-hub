@@ -12,7 +12,7 @@
     <thead><tr><th class="n">#</th><th class="w-dt">Time (UTC)</th><th>Lane</th><th>Event</th><th>Actor</th></tr></thead>
     <tbody>
     {%- for e in rows[:limits.timeline] %}
-      <tr><td class="mono n">{{ e.n }}</td><td class="mono">{{ e.at | dt }}</td><td>{{ e.lane }}</td>
+      <tr><td class="mono n">{{ e.n }}</td><td class="mono">{{ e.at | dt(false) }}</td><td>{{ e.lane }}</td>
           <td class="wrap">{{ e.text }}</td><td class="wrap">{{ e.actor or "—" }}</td></tr>
     {%- endfor %}
     </tbody>
@@ -149,7 +149,7 @@ tr { page-break-inside: avoid; }
     <thead><tr><th>Task</th><th class="w-dt">Completed (UTC)</th><th>By</th></tr></thead>
     <tbody>
     {%- for t in items %}
-      <tr><td class="wrap">{{ t.title }}</td><td class="mono">{{ t.completed_at | dt }}</td><td class="wrap">{{ t.completed_by or "—" }}</td></tr>
+      <tr><td class="wrap">{{ t.title }}</td><td class="mono">{{ t.completed_at | dt(false) }}</td><td class="wrap">{{ t.completed_by or "—" }}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
@@ -176,7 +176,7 @@ tr { page-break-inside: avoid; }
     {%- for e in report.evidence[:limits.evidence] %}
       <tr><td class="wrap">{{ e.filename }}</td><td class="mono">{{ e.size_bytes | filesize }}</td>
           <td class="mono">{{ e.sha256 or "—" }}</td><td class="{{ 'mal' if e.is_malicious else '' }}">{{ "yes" if e.is_malicious else "no" }}</td>
-          <td class="wrap"><span class="mono">{{ e.created_at | dt }}</span><br>{{ e.uploaded_by or "—" }}</td></tr>
+          <td class="wrap"><span class="mono">{{ e.created_at | dt(false) }}</span><br>{{ e.uploaded_by or "—" }}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
@@ -200,7 +200,7 @@ tr { page-break-inside: avoid; }
     <thead><tr><th class="w-dt">Time (UTC)</th><th>Actor</th><th>Entity</th><th>Action</th></tr></thead>
     <tbody>
     {%- for a in audit[:limits.audit] %}
-      <tr><td class="mono">{{ a.at | dt }}</td><td class="wrap">{{ a.get("actor_email") or a.get("actor") or "—" }}</td>
+      <tr><td class="mono">{{ a.at | dt(false) }}</td><td class="wrap">{{ a.get("actor_email") or a.get("actor") or "—" }}</td>
           <td class="wrap">{{ a.entity }}</td><td class="wrap">{{ a.action }}</td></tr>
     {%- endfor %}
     </tbody>

@@ -3,6 +3,7 @@ import asyncio
 import base64
 import logging
 import re
+import weakref
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -66,23 +67,23 @@ def html_to_pdf(html: str) -> bytes:
 
 # --- template filters ---
 
-_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
-_AUTHORITY = re.compile(r"[^/?#]*")
+_SCHEME = re.compile(r"[A-Za-z][\w+.-]*:[/\\]+")
+_LEADING_SEP = re.compile(r"[/\\]+")
 
 
 def _strip_userinfo(v: str) -> str:
-    """Drop everything before the last '@' in the URL authority (any scheme, or none)."""
-    sm = _SCHEME.match(v)
-    if sm:
-        head, rest = sm.group(0), v[sm.end():]
-    elif v.startswith("//"):
-        head, rest = "//", v[2:]
-    else:
-        head, rest = "", v
-    auth = _AUTHORITY.match(rest).group(0)
+    """Drop everything before the last '@' in the URL authority (any scheme, or none).
+
+    The authority ends at the first '/' or '\\' after the scheme, so '#', '?' or ':' inside the
+    userinfo cannot hide credentials."""
+    v = v.strip()
+    sm = _SCHEME.match(v) or _LEADING_SEP.match(v)
+    head, rest = (sm.group(0), v[sm.end():]) if sm else ("", v)
+    end = min((i for i in (rest.find("/"), rest.find("\\")) if i >= 0), default=len(rest))
+    auth = rest[:end]
     if "@" not in auth:
         return v
-    return head + auth.rsplit("@", 1)[1] + rest[len(auth):]
+    return head + auth.rsplit("@", 1)[1] + rest[end:]
 
 
 def _defang_filter(value, itype) -> str:
@@ -92,7 +93,7 @@ def _defang_filter(value, itype) -> str:
     return defang(v, itype)
 
 
-def _dt(value) -> str:
+def _dt(value, suffix=True) -> str:
     if value is None or value == "":
         return "—"
     if isinstance(value, str):
@@ -100,7 +101,8 @@ def _dt(value) -> str:
             value = datetime.fromisoformat(value)
         except ValueError:
             return value
-    return aware(value).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    out = aware(value).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    return f"{out} UTC" if suffix else out
 
 
 def _filesize(n) -> str:
@@ -140,15 +142,47 @@ class RenderTimeout(Exception):
     pass
 
 
-_SEM = asyncio.Semaphore(1)  # one render per process
+# One render at a time per event loop (the API process runs a single loop, so: one per process).
+# asyncio.Semaphore binds to the first loop that contends on it, so a module-level instance would break
+# callers that run several loops over time (asyncio.run per task, tests); keep one per running loop.
+_SEMS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+
+def _sem() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    sem = _SEMS.get(loop)
+    if sem is None:
+        sem = _SEMS[loop] = asyncio.Semaphore(1)
+    return sem
 
 
 async def render_pdf_async(report: dict) -> bytes:
-    """Render off the event loop. On timeout the worker thread keeps running to completion
-    (threads cannot be cancelled) — documented limitation; the semaphore is released regardless."""
+    """Render off the event loop, one render per process.
+
+    The permit is held until the render THREAD finishes, not until the caller stops waiting:
+    threads cannot be cancelled, so on timeout the caller gets RenderTimeout while the thread runs to
+    completion and only then frees the slot. Waiting for the slot and waiting for the render each
+    use the configured timeout (read at call time), so a caller waits at most ~2x the timeout.
+    """
     timeout = settings.REPORT_RENDER_TIMEOUT_SECONDS
-    async with _SEM:
-        try:
-            return await asyncio.wait_for(asyncio.to_thread(render_pdf, report), timeout)
-        except asyncio.TimeoutError:
-            raise RenderTimeout()
+    sem = _sem()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout)
+    except asyncio.TimeoutError:
+        raise RenderTimeout() from None
+
+    def _release(f: asyncio.Future) -> None:
+        sem.release()
+        if not f.cancelled():
+            f.exception()  # mark retrieved: no "exception was never retrieved" noise
+
+    try:
+        fut = asyncio.ensure_future(asyncio.to_thread(render_pdf, report))
+    except BaseException:
+        sem.release()
+        raise
+    fut.add_done_callback(_release)
+    try:
+        return await asyncio.wait_for(asyncio.shield(fut), timeout)
+    except asyncio.TimeoutError:
+        raise RenderTimeout() from None

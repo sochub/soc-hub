@@ -95,3 +95,18 @@ def test_lifecycle_min_segment_width():
     root = ET.fromstring(charts.lifecycle_svg(out))
     rects = [float(r.get("width")) for r in root.iter(NS + "rect") if r.get("height") == "40"]
     assert len(rects) == 3 and all(w >= 0.08 * 720 - 0.2 for w in rects)
+
+
+def test_timeline_last_tick_and_markers_stay_inside():
+    import re
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    evs = [{"n": i + 1, "at": t0 + timedelta(hours=i), "lane": "analyst", "kind": "comment", "text": "x",
+            "actor": None} for i in range(3)]
+    svg = charts.timeline_svg(evs)
+    width = int(re.search(r'width="(\d+)"', svg).group(1))
+    for cx in re.findall(r'<circle cx="([\d.]+)"', svg):
+        assert float(cx) <= width - 9 - 2
+    ticks = re.findall(r'<text x="([\d.]+)" y="\d+" font-size="10" text-anchor="(\w+)"[^>]*>(\d\d-\d\d \d\d:\d\d)<', svg)
+    assert ticks and ticks[-1][1] == "end"
+    assert float(ticks[-1][0]) <= width - 30

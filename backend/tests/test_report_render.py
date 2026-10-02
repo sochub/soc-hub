@@ -124,6 +124,12 @@ def test_iocs_defanged_and_userinfo_stripped():
     ("http://a@b@c.example/p?q=x@y", "hxxp://c[.]example/p?q=x@y"),
     ("//u:p@h.example/x", "//h[.]example/x"),
     ("u:p@h.example/x", "h[.]example/x"),
+    ("https://user:p#ss@host.example/x", "hxxps://host[.]example/x"),
+    ("https://user:p?ss@host.example/x", "hxxps://host[.]example/x"),
+    ("https:/u:p@h.example", "hxxps:/h[.]example"),
+    ("https:\\\\u:p@h.example", "hxxps:\\\\h[.]example"),
+    ("  https://u:p@h.example/x", "hxxps://h[.]example/x"),
+    ("https://h.example/p@x", "hxxps://h[.]example/p@x"),
 ])
 def test_defang_filter_strips_url_userinfo(value, expected):
     assert m._defang_filter(value, "url") == expected
@@ -201,3 +207,54 @@ async def test_render_pdf_async_timeout_then_ok(monkeypatch):
     monkeypatch.setattr(settings, "REPORT_RENDER_TIMEOUT_SECONDS", 60)
     pdf = await render_pdf_async(make_report())
     assert pdf.startswith(b"%PDF")
+
+
+def test_timeline_table_cells_have_no_utc_suffix():
+    html = render_html(make_report())
+    assert "Time (UTC)" in html
+    assert '<td class="mono">2026-09-01 13:00</td>' in html
+    assert '<td class="mono">2026-09-01 13:00 UTC</td>' not in html
+
+
+@pytest.mark.asyncio
+async def test_render_slot_held_until_thread_finishes(monkeypatch):
+    import asyncio
+    import threading
+    monkeypatch.setattr(settings, "REPORT_RENDER_TIMEOUT_SECONDS", 1)
+    lock = threading.Lock()
+    state = {"active": 0, "max": 0, "calls": 0}
+    durations = [1.5, 0.1]
+
+    def fake(report):
+        with lock:
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+            d = durations[state["calls"]]
+            state["calls"] += 1
+        time.sleep(d)
+        with lock:
+            state["active"] -= 1
+        return b"%PDF-fake"
+    monkeypatch.setattr(m, "render_pdf", fake)
+    loop = asyncio.get_running_loop()
+    with pytest.raises(RenderTimeout):
+        await render_pdf_async({})  # times out at ~1s; its thread keeps the slot until ~1.5s
+    assert state["active"] == 1  # thread still running after the caller gave up
+    t = loop.time()
+    assert await render_pdf_async({}) == b"%PDF-fake"
+    assert loop.time() - t >= 0.3  # waited for the first thread to free the slot
+    assert state["max"] == 1 and state["calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_slot_wait_times_out(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(settings, "REPORT_RENDER_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr(m, "render_pdf", lambda report: time.sleep(2.2) or b"%PDF")
+    first = asyncio.ensure_future(render_pdf_async({}))
+    await asyncio.sleep(0.05)
+    with pytest.raises(RenderTimeout):
+        await render_pdf_async({})  # slot still held by the first render's thread
+    with pytest.raises(RenderTimeout):
+        await first
+    await asyncio.sleep(1.3)  # let the thread finish within this loop

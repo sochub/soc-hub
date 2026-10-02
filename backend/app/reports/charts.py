@@ -91,6 +91,8 @@ def _aware(dt):
 
 def timeline_svg(events: list) -> str:
     W, H = 760, 60 + 44 * 4
+    X0, X1, R = 100, 760 - 40, 9  # ~40px right padding keeps the last tick label and markers inside
+    PW = X1 - X0
     head = f'<svg {_NS} viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img">'
     if not events:
         return head + _t(W / 2, H / 2, "No events", 13, fill="#71717a") + "</svg>"
@@ -102,21 +104,22 @@ def timeline_svg(events: list) -> str:
         span = 3600.0
 
     def xpos(t):
-        return 100 + (t - t0).total_seconds() / span * 640
+        return min(X0 + (t - t0).total_seconds() / span * PW, W - R - 2)
 
     top = 20
     parts = [head]
     for i, lane in enumerate(LANES):
         y = top + 44 * i + 22
-        parts.append(f'<line x1="100" y1="{y}" x2="740" y2="{y}" stroke="#e4e4e7"/>')
+        parts.append(f'<line x1="{X0}" y1="{y}" x2="{X1}" y2="{y}" stroke="#e4e4e7"/>')
         parts.append(_t(8, y + 4, LANE_LABELS[lane], 11, "start", "#3f3f46", "bold"))
     axis_y = top + 44 * 4 + 8
-    parts.append(f'<line x1="100" y1="{axis_y}" x2="740" y2="{axis_y}" stroke="#71717a"/>')
+    parts.append(f'<line x1="{X0}" y1="{axis_y}" x2="{X1}" y2="{axis_y}" stroke="#71717a"/>')
     for k in range(5):
-        tx = 100 + 640 * k / 4
+        tx = X0 + PW * k / 4
         tt = t0 + (t1 - t0) * k / 4
         parts.append(f'<line x1="{tx:.1f}" y1="{axis_y}" x2="{tx:.1f}" y2="{axis_y + 5}" stroke="#71717a"/>')
-        parts.append(_t(tx, axis_y + 18, tt.strftime("%m-%d %H:%M"), 10, fill="#52525b", mono=True))
+        parts.append(_t(tx, axis_y + 18, tt.strftime("%m-%d %H:%M"), 10,
+                        "end" if k == 4 else "middle", fill="#52525b", mono=True))
     by_lane = {lane: [] for lane in LANES}
     for e in evs:
         by_lane[e["lane"] if e["lane"] in by_lane else "analyst"].append(e)
@@ -132,7 +135,7 @@ def timeline_svg(events: list) -> str:
         for gx, g in groups:
             label = len(g) if len(g) > 1 else g[0]["n"]
             tip = "; ".join(_xml_safe(e.get("text") or "")[:80] for e in g[:3])
-            parts.append(f'<circle cx="{gx:.1f}" cy="{y}" r="9" fill="#2563eb" stroke="#ffffff">'
+            parts.append(f'<circle cx="{gx:.1f}" cy="{y}" r="{R}" fill="#2563eb" stroke="#ffffff">'
                          f'<title>{escape(tip)}</title></circle>')
             parts.append(_t(gx, y + 3.5, label, 9, fill="#ffffff", weight="bold"))
     parts.append("</svg>")
