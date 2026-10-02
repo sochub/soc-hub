@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from sqlalchemy import select
 
@@ -23,6 +23,8 @@ class NodeContext:
     node: dict
     ctx: dict
     after_commit: List[Callable[[], None]] = field(default_factory=list)
+    # Nonce bound into this step's secret placeholders; send-time resolution only honours this one.
+    secret_nonce: Optional[str] = None
 
 
 EXECUTORS: Dict[str, Callable[[NodeContext, dict], Awaitable[Any]]] = {}

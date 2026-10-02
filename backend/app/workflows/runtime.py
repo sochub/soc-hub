@@ -1,6 +1,7 @@
 """Run lifecycle: create -> advance (schedule ready nodes) -> execute steps -> finalize."""
 import copy
 import logging
+import secrets as _stdlib_secrets
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -8,6 +9,7 @@ from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
+from app.secrets.refs import SecretsNamespace
 from app.utils.audit import create_audit_log
 from app.workflows.context import build_context
 from app.workflows.dryrun import dry_run_behaviour, simulated_output
@@ -31,6 +33,18 @@ def _now():
 
 def _node(graph: dict, node_id: str) -> dict:
     return next(n for n in graph["nodes"] if n["id"] == node_id)
+
+
+def bind_secrets(nctx: NodeContext) -> None:
+    """Give this step render its own `secrets` namespace with a fresh nonce.
+
+    Must run AFTER nctx.ctx is built: the nonce is generated once the case/alert/trigger/step data
+    is fixed, so no data value can carry a placeholder with this nonce (see app/secrets/refs.py).
+    Only the step render gets `secrets`; trigger_filter evaluation has no `secrets` key, so
+    `secrets.X` there is an undefined name and fails as TemplateError.
+    """
+    nctx.secret_nonce = _stdlib_secrets.token_hex(8)
+    nctx.ctx["secrets"] = SecretsNamespace(nctx.secret_nonce)
 
 
 def render_config(node: dict, ctx: dict) -> dict:
@@ -216,6 +230,7 @@ async def execute_step(step_id: int) -> None:
         retry_in = None
         try:
             nctx.ctx = await build_context(db, run)
+            bind_secrets(nctx)
             rendered = render_config(node, nctx.ctx)
             if run.is_dry_run and dry_run_behaviour(node) == "simulate":
                 output = simulated_output(node, rendered, run.dry_run_mocks or {})

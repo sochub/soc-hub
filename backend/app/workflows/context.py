@@ -6,7 +6,6 @@ from app.models.artifact import Artifact
 from app.models.case import Alert, Case
 from app.models.case_artifact import CaseArtifact
 from app.models.workflow import WorkflowRun, WorkflowRunStep
-from app.secrets.refs import SecretsNamespace
 
 
 def _enum(v):
@@ -57,8 +56,7 @@ async def build_context(db, run: WorkflowRun) -> dict:
     steps.update(await _step_outputs(db, run.id))
 
     ctx = {"case": await case_to_dict(db, case), "alert": alert_to_dict(alert),
-           "trigger": run.trigger_payload or {}, "steps": steps, "dry_run": run.is_dry_run,
-           "secrets": SecretsNamespace()}  # placeholders only; values are resolved at HTTP send time
+           "trigger": run.trigger_payload or {}, "steps": steps, "dry_run": run.is_dry_run}
     if run.parent_run_id:
         ctx["loop"] = {"item": run.loop_item, "index": run.loop_index}
     return ctx
