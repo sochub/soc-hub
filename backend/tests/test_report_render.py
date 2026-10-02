@@ -124,8 +124,6 @@ def test_iocs_defanged_and_userinfo_stripped():
     ("http://a@b@c.example/p?q=x@y", "hxxp://c[.]example/p?q=x@y"),
     ("//u:p@h.example/x", "//h[.]example/x"),
     ("u:p@h.example/x", "h[.]example/x"),
-    ("https://user:p#ss@host.example/x", "hxxps://host[.]example/x"),
-    ("https://user:p?ss@host.example/x", "hxxps://host[.]example/x"),
     ("https:/u:p@h.example", "hxxps:/h[.]example"),
     ("https:\\\\u:p@h.example", "hxxps:\\\\h[.]example"),
     ("  https://u:p@h.example/x", "hxxps://h[.]example/x"),
@@ -138,6 +136,20 @@ def test_defang_filter_strips_url_userinfo(value, expected):
 def test_defang_filter_strips_userinfo_when_query_has_scheme():
     out = m._defang_filter("u:p@h.example/r?x=http://y", "url")
     assert "u:p" not in out and out.startswith("h")
+
+
+@pytest.mark.parametrize("value,prefix", [
+    ("https://evil.example?email=victim@corp.com", "hxxps://evil[.]example?email=victim@corp"),
+    ("http://evil.example?next=a@b.com", "hxxp://evil[.]example?next=a@b"),
+    ("https://evil.example#a@b.com", "hxxps://evil[.]example#a@b"),
+    ("evil.example?u=a@b.com", "evil[.]example?u=a@b"),
+    ("https://user:pw@evil.example?x=1", "hxxps://evil[.]example?x=1"),
+    ("https://user:pw@evil.example#frag", "hxxps://evil[.]example#frag"),
+])
+def test_userinfo_strip_never_crosses_query_or_fragment(value, prefix):
+    out = m._defang_filter(value, "url")
+    assert out.startswith(prefix)
+    assert "user:pw" not in out
 
 
 def test_defang_filter_leaves_email_at():

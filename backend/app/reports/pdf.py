@@ -69,17 +69,21 @@ def html_to_pdf(html: str) -> bytes:
 
 _SCHEME = re.compile(r"[A-Za-z][\w+.-]*:[/\\]+")
 _LEADING_SEP = re.compile(r"[/\\]+")
+_AUTH_END = re.compile(r"[/\\?#]")
 
 
 def _strip_userinfo(v: str) -> str:
     """Drop everything before the last '@' in the URL authority (any scheme, or none).
 
-    The authority ends at the first '/' or '\\' after the scheme, so '#', '?' or ':' inside the
-    userinfo cannot hide credentials."""
+    The authority ends at the first '/', '\\', '?' or '#', so an '@' in the query or fragment
+    (e.g. ?email=victim@corp.com) never replaces the real host. Known limitation (R8): a password
+    containing a literal '#' or '?' is only partly stripped; correct hosts matter more, and real
+    credentials in IOC URLs almost always use the plain user:pass@ form."""
     v = v.strip()
     sm = _SCHEME.match(v) or _LEADING_SEP.match(v)
     head, rest = (sm.group(0), v[sm.end():]) if sm else ("", v)
-    end = min((i for i in (rest.find("/"), rest.find("\\")) if i >= 0), default=len(rest))
+    end = _AUTH_END.search(rest)
+    end = end.start() if end else len(rest)
     auth = rest[:end]
     if "@" not in auth:
         return v
