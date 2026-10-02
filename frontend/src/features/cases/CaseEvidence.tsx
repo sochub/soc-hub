@@ -52,7 +52,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
     const [progress, setProgress] = useState<number | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [confirmId, setConfirmId] = useState<number | null>(null);
-    const [busyId, setBusyId] = useState<number | null>(null);
+    const [downloading, setDownloading] = useState(false);
     const fileInput = useRef<HTMLInputElement>(null);
 
     const { data, isLoading } = useQuery({
@@ -69,6 +69,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
             fd.append('description', description);
             setProgress(0);
             await api.post(`/cases/${caseId}/attachments`, fd, {
+                headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (e) => { if (e.total) setProgress(Math.round((e.loaded * 100) / e.total)); },
             });
         },
@@ -78,6 +79,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
             setMalicious(false);
             queryClient.invalidateQueries({ queryKey: ['attachments', caseId] });
             queryClient.invalidateQueries({ queryKey: ['artifacts', String(caseId)] });
+            queryClient.invalidateQueries({ queryKey: ['artifacts', 'all'] });
         },
         onError: async (e) => setError(await errorDetail(e, maxMb)),
         onSettled: () => setProgress(null),
@@ -93,7 +95,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
     });
 
     const startUpload = (file: File | undefined) => {
-        if (!file) return;
+        if (!file || upload.isPending) return;
         if (maxMb && file.size > maxMb * 1024 * 1024) {
             setError(`File exceeds ${maxMb} MB`);
             return;
@@ -103,7 +105,8 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
     };
 
     const download = async (a: Attachment) => {
-        setBusyId(a.id);
+        if (downloading) return;
+        setDownloading(true);
         setError(null);
         try {
             const resp = await api.get(`/cases/${caseId}/attachments/${a.id}/download`, { responseType: 'blob' });
@@ -118,11 +121,11 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
             document.body.appendChild(link);
             link.click();
             link.remove();
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (e) {
             setError(await errorDetail(e));
         } finally {
-            setBusyId(null);
+            setDownloading(false);
         }
     };
 
@@ -150,7 +153,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                         onDragLeave={() => setDragOver(false)}
                         onDrop={(e) => { e.preventDefault(); setDragOver(false); startUpload(e.dataTransfer.files?.[0]); }}
-                        onClick={() => fileInput.current?.click()}
+                        onClick={() => { if (!upload.isPending) fileInput.current?.click(); }}
                         className={cn(
                             'border-2 border-dashed rounded-lg py-8 flex flex-col items-center justify-center gap-2 text-zinc-400 cursor-pointer transition-colors',
                             dragOver ? 'border-accent-600 bg-blue-50' : 'border-zinc-200 hover:border-zinc-300'
@@ -163,6 +166,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                             type="file"
                             className="hidden"
                             aria-label="Choose evidence file"
+                            onClick={(e) => e.stopPropagation()}
                             onChange={(e) => { startUpload(e.target.files?.[0]); e.target.value = ''; }}
                         />
                     </div>
@@ -253,7 +257,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                                                     <span className="inline-flex items-center gap-2">
                                                         <button
                                                             onClick={() => download(a)}
-                                                            disabled={busyId === a.id}
+                                                            disabled={downloading}
                                                             className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded transition-colors flex items-center gap-1.5 disabled:opacity-50"
                                                         >
                                                             <Download size={12} />
