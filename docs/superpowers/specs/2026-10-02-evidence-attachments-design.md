@@ -126,7 +126,7 @@ X-Content-SHA256: <original sha256>
 
 ## nginx (frontend image)
 
-- In `frontend/nginx.conf`, the `location /api/v1/` block gets `client_max_body_size ${MAX_UPLOAD_MB}m;` and `proxy_request_buffering off;`.
+- In `frontend/nginx/default.conf.template`, the `location /api/v1/` block gets `client_max_body_size ${MAX_UPLOAD_MB}m;` and `proxy_request_buffering off;`.
 - Convert it to a template with `envsubst`, following the nginx image's `/etc/nginx/templates/*.template` convention, with `MAX_UPLOAD_MB` defaulting to 100 in compose. Restrict the substitution to that variable, so nginx's own `$host`-style variables are left alone.
 - `proxy_read_timeout` and `proxy_send_timeout` are set to 300s for `/api/v1/`.
 

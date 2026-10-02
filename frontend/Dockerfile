@@ -12,7 +12,7 @@ RUN npm run build
 # Production Stage
 FROM nginx:alpine
 
-# Copy custom nginx config
+# Copy the nginx config template; rendered at start with only MAX_UPLOAD_MB substituted
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 ENV NGINX_ENVSUBST_FILTER=^MAX_UPLOAD_MB$
 ENV MAX_UPLOAD_MB=100
