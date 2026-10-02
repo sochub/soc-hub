@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
 import PageContainer from '../../components/layout/PageContainer';
+import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import CaseTasks from './CaseTasks';
 import CaseEvidence from './CaseEvidence';
 import TriagePanel from './TriagePanel';
@@ -566,78 +567,51 @@ export default function CaseDetail() {
             {/* The copilot is now the global floating widget (auto-scopes to this case). */}
 
             {/* Add Artifact Modal */}
-            <AnimatePresence>
-                {showArtifactModal && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-                        onClick={() => setShowArtifactModal(false)}
+            <Modal
+                open={showArtifactModal}
+                onClose={() => setShowArtifactModal(false)}
+                title="Add New Artifact"
+                size="lg"
+                footer={<>
+                    <button onClick={() => setShowArtifactModal(false)} className={btnSecondary}>
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => addArtifactMutation.mutate(newArtifact)}
+                        disabled={!newArtifact.value || addArtifactMutation.isPending}
+                        className={btnPrimary}
                     >
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="glass-panel p-6 rounded-xl max-w-md w-full border border-zinc-200"
+                        {addArtifactMutation.isPending ? 'Adding...' : 'Add Artifact'}
+                    </button>
+                </>}
+            >
+                <div className="space-y-4">
+                    <div>
+                        <label className={modalLabel}>Type</label>
+                        <select
+                            value={newArtifact.type}
+                            onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
+                            className={modalInput}
                         >
-                            <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-xl font-bold text-zinc-900">Add New Artifact</h2>
-                                <button
-                                    onClick={() => setShowArtifactModal(false)}
-                                    className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
-                                >
-                                    <X size={20} />
-                                </button>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-zinc-700 mb-2">Type</label>
-                                    <select
-                                        value={newArtifact.type}
-                                        onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
-                                    >
-                                        <option value="file_hash">File Hash (MD5/SHA1/SHA256)</option>
-                                        <option value="ip">IP Address</option>
-                                        <option value="domain">Domain</option>
-                                        <option value="url">URL</option>
-                                        <option value="email">Email Address</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-zinc-700 mb-2">Value</label>
-                                    <input
-                                        type="text"
-                                        value={newArtifact.value}
-                                        onChange={(e) => setNewArtifact({ ...newArtifact, value: e.target.value })}
-                                        className="w-full bg-white border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 font-mono"
-                                        placeholder="Enter value..."
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex gap-3 mt-8">
-                                <button
-                                    onClick={() => setShowArtifactModal(false)}
-                                    className="flex-1 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg font-medium transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={() => addArtifactMutation.mutate(newArtifact)}
-                                    disabled={!newArtifact.value || addArtifactMutation.isPending}
-                                    className="flex-1 px-4 py-2 bg-white hover:bg-zinc-200 text-black rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {addArtifactMutation.isPending ? 'Adding...' : 'Add Artifact'}
-                                </button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+                            <option value="file_hash">File Hash (MD5/SHA1/SHA256)</option>
+                            <option value="ip">IP Address</option>
+                            <option value="domain">Domain</option>
+                            <option value="url">URL</option>
+                            <option value="email">Email Address</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className={modalLabel}>Value</label>
+                        <input
+                            type="text"
+                            value={newArtifact.value}
+                            onChange={(e) => setNewArtifact({ ...newArtifact, value: e.target.value })}
+                            className={cn(modalInput, 'font-mono')}
+                            placeholder="Enter value..."
+                        />
+                    </div>
+                </div>
+            </Modal>
 
             {/* Edit Case Modal */}
             <EditCaseModal
