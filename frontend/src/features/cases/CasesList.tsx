@@ -7,6 +7,7 @@ import { useState } from 'react';
 import NewCaseModal from './NewCaseModal';
 import { SLABadge } from './SLABadge';
 import type { SLAStatus } from '../../types';
+import PageContainer from '../../components/layout/PageContainer';
 
 interface Case {
     id: number;
@@ -116,14 +117,16 @@ export default function CasesList() {
 
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-[50vh]">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-300"></div>
-            </div>
+            <PageContainer>
+                <div className="flex items-center justify-center h-[50vh]">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-300"></div>
+                </div>
+            </PageContainer>
         );
     }
 
     return (
-        <div className="space-y-4">
+        <PageContainer className="space-y-4">
             {/* Improved Header with Filters */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
@@ -297,6 +300,6 @@ export default function CasesList() {
                 onSubmit={(data) => createCaseMutation.mutate(data)}
                 isSubmitting={createCaseMutation.isPending}
             />
-        </div>
+        </PageContainer>
     );
 }

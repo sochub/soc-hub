@@ -9,6 +9,7 @@ import type { User } from '../../types';
 import type { WorkflowSummary } from './types';
 import { TRIGGER_LABEL } from './nodeCatalog';
 import RunsTable, { StatusBadge } from './RunsTable';
+import PageContainer from '../../components/layout/PageContainer';
 
 export default function AutomationsList() {
     const qc = useQueryClient();
@@ -41,7 +42,7 @@ export default function AutomationsList() {
     });
 
     return (
-        <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
+        <PageContainer className="space-y-0">
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
                     <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Automations</h1>
@@ -104,6 +105,6 @@ export default function AutomationsList() {
                     </table>
                 </div>
             )}
-        </div>
+        </PageContainer>
     );
 }

@@ -5,6 +5,7 @@ import { Building2, Plus } from 'lucide-react';
 import { api } from '../../api/client';
 import type { Tenant } from '../../types';
 import CreateTenantModal from './CreateTenantModal';
+import PageContainer from '../../components/layout/PageContainer';
 
 export default function TenantManagement() {
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -19,7 +20,7 @@ export default function TenantManagement() {
     });
 
     return (
-        <div className="space-y-6">
+        <PageContainer>
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-zinc-900">Tenants</h1>
@@ -64,6 +65,6 @@ export default function TenantManagement() {
             </div>
 
             <CreateTenantModal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} />
-        </div>
+        </PageContainer>
     );
 }

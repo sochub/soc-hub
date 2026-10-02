@@ -7,6 +7,7 @@ import HttpAllowlistCard from './HttpAllowlistCard';
 import SlackCard from './SlackCard';
 import AIProviderCard from './AIProviderCard';
 import ThreatIntelCard from './ThreatIntelCard';
+import PageContainer from '../../components/layout/PageContainer';
 
 interface Webhook { id: number; name: string; api_key: string; created_at: string; }
 
@@ -45,7 +46,7 @@ export default function Integrations() {
     const ingestUrl = `${window.location.origin}/api/v1/alerts/webhook`;
 
     return (
-        <div className="space-y-6">
+        <PageContainer>
             <div>
                 <h1 className="text-3xl font-bold text-zinc-900 tracking-tight">Integrations</h1>
                 <p className="text-zinc-500 mt-1">Create webhooks so tools like a SIEM can push alerts into a tenant.</p>
@@ -111,6 +112,6 @@ export default function Integrations() {
                     <HttpAllowlistCard />
                 </div>
             )}
-        </div>
+        </PageContainer>
     );
 }

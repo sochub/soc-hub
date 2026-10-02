@@ -79,7 +79,7 @@ function Detail() {
     const step = run.steps.find((s) => s.node_id === selected);
 
     return (
-        <div className="flex flex-col h-[calc(100vh-56px)]">
+        <div className="flex flex-col h-[calc(100vh-3.5rem)]">
             <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-200 bg-white flex-wrap">
                 <Link to={run.parent_run_id ? `/automations/runs/${run.parent_run_id}` : `/automations/${run.workflow_id}`} className="p-1 text-zinc-500 hover:text-zinc-900" aria-label="Back"><ArrowLeft size={18} /></Link>
                 <span className="font-semibold text-zinc-900">{run.workflow_name}</span>

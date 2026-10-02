@@ -7,6 +7,7 @@ import { cn } from '../../lib/utils';
 import type { IOC } from '../../types';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
 import { useCanRun } from '../enrichment/useCanRun';
+import PageContainer from '../../components/layout/PageContainer';
 
 const VERDICT_DOT: Record<string, string> = { malicious: 'bg-red-600', suspicious: 'bg-amber-500', harmless: 'bg-green-600' };
 
@@ -96,7 +97,7 @@ export default function IOCList() {
     });
 
     return (
-        <div className="space-y-6">
+        <PageContainer>
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
@@ -357,6 +358,6 @@ export default function IOCList() {
                     </motion.div>
                 )}
             </AnimatePresence>
-        </div>
+        </PageContainer>
     );
 }

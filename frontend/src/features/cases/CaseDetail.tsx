@@ -7,6 +7,7 @@ import { cn } from '../../lib/utils';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
+import PageContainer from '../../components/layout/PageContainer';
 import CaseTasks from './CaseTasks';
 import CaseEvidence from './CaseEvidence';
 import TriagePanel from './TriagePanel';
@@ -144,15 +145,17 @@ export default function CaseDetail() {
 
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-[50vh]">
-                <div className="flex flex-col items-center gap-4">
-                    <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+            <PageContainer>
+                <div className="flex items-center justify-center h-[50vh]">
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+                    </div>
                 </div>
-            </div>
+            </PageContainer>
         );
     }
 
-    if (!caseData) return <div className="p-8 text-red-700 font-mono">ERROR: CASE_NOT_FOUND</div>;
+    if (!caseData) return <PageContainer><div className="text-red-700 font-mono">ERROR: CASE_NOT_FOUND</div></PageContainer>;
 
     const severityColor = caseData.severity === 'critical' ? 'text-severity-critical bg-red-50 border-red-200' :
         caseData.severity === 'high' ? 'text-severity-high bg-orange-50 border-orange-200' :
@@ -173,10 +176,10 @@ export default function CaseDetail() {
     };
 
     return (
-        <div className="flex gap-6 h-[calc(100vh-8rem)]">
-            <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl border border-zinc-200 overflow-hidden relative">
+        <PageContainer>
+            <div className="min-w-0 flex flex-col bg-white rounded-2xl border border-zinc-200 relative">
                 {/* Top Decoration */}
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-accent-500 via-accent-400 to-accent-500 opacity-50" />
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl bg-gradient-to-r from-accent-500 via-accent-400 to-accent-500 opacity-50" />
 
                 {/* Header */}
                 <div className="p-6 pb-2">
@@ -228,7 +231,10 @@ export default function CaseDetail() {
                     {id && <TriagePanel caseId={parseInt(id)} />}
                     <SLAPanel caseData={caseData} />
 
-                    {/* Tabs */}
+                </div>
+
+                {/* Tabs (sticky while the page scrolls inside <main>) */}
+                <div className="sticky top-0 z-10 bg-white px-6 pt-3">
                     <div className="flex border-b border-zinc-200 relative space-x-6">
                         {['timeline', 'tasks', 'artifacts', 'evidence', 'network', 'audit', 'automation'].map((tab) => (
                             <button
@@ -252,7 +258,7 @@ export default function CaseDetail() {
                 </div>
 
                 {/* Tab Content */}
-                <div className="flex-1 overflow-y-auto p-6 pt-2 scrollbar-thin scrollbar-thumb-zinc-300 scrollbar-track-transparent">
+                <div className="flex-1 min-h-[50vh] p-6 pt-2">
                     <AnimatePresence mode="wait">
                         <motion.div
                             key={activeTab}
@@ -641,6 +647,6 @@ export default function CaseDetail() {
                 onSubmit={(data) => updateCaseMutation.mutate(data)}
                 isSubmitting={updateCaseMutation.isPending}
             />
-        </div>
+        </PageContainer>
     );
 }

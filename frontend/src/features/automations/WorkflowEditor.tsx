@@ -163,7 +163,7 @@ function Editor() {
     const palette = NODE_DEFS.filter((d) => d.type !== 'trigger' && (!d.alertOnly || meta.trigger_type === 'alert.ingested'));
 
     return (
-        <div className="flex flex-col h-[calc(100vh-56px)]">
+        <div className="flex flex-col h-[calc(100vh-3.5rem)]">
             <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-200 bg-white flex-wrap">
                 <Link to="/automations" className="p-1 text-zinc-500 hover:text-zinc-900" aria-label="Back"><ArrowLeft size={18} /></Link>
                 <input className="text-base font-semibold text-zinc-900 border-b border-transparent focus:border-accent-500 outline-none min-w-[220px]"
