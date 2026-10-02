@@ -64,7 +64,7 @@ export default function Modal({ open, onClose, title, size = 'lg', footer, child
                                 <X size={16} />
                             </button>
                         </div>
-                        <div data-modal-body className="flex-1 overflow-y-auto p-5">{children}</div>
+                        <div data-modal-body className="min-h-0 overflow-y-auto p-5">{children}</div>
                         {footer && (
                             <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-200 bg-zinc-50 shrink-0">
                                 {footer}
