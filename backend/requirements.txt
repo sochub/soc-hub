@@ -18,3 +18,4 @@ litellm==1.103.1
 boto3==1.43.106
 google-auth==2.59.1
 pyzipper==0.4.0
+weasyprint==70.0

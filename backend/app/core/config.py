@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     S3_ENDPOINT_URL: Optional[str] = None
     S3_PREFIX: str = ""
     MAX_UPLOAD_MB: int = Field(100, ge=1, le=5120)
+    REPORT_RENDER_TIMEOUT_SECONDS: int = Field(60, ge=5, le=600)
 
     @field_validator("AI_PROVIDER", mode="before")
     @classmethod
