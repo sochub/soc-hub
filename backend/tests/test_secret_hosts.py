@@ -32,3 +32,25 @@ def test_ip_and_single_label_only_if_on_tenant_allowlist():
 ])
 def test_host_allowed(host, patterns, ok):
     assert host_allowed(host, patterns) is ok
+
+
+@pytest.mark.parametrize("host", [
+    "evil.com@api.example.com", "evil.com/.example.com", ".example.com", "..example.com",
+    "a.example.com..", "api.example.com:evil.com", "[::1]evil", " api.example.com\n", "ſ.example.com",
+    "0x7f.1", "api.example.com:",
+])
+def test_malformed_hosts_rejected(host):
+    assert host_allowed(host, ["*.example.com", "api.example.com", "example.com"]) is False
+
+
+@pytest.mark.parametrize("p", ["a.-c", "a.c-", "*.x.-c", "*.", "*"])
+def test_hyphen_tld_and_bare_wildcard_invalid(p):
+    assert not valid_host_pattern(p, [])
+
+
+def test_pattern_edge_cases():
+    assert host_allowed("api.example.com", ["API.EXAMPLE.COM"]) is False
+    assert host_allowed("api.example.com", ["*."]) is False
+    assert host_allowed("[::1]:80", ["::1"]) is True
+    assert host_allowed("10.0.0.1", ["10.0.0.1"]) is True
+    assert host_allowed("intranet", ["intranet"]) is True
