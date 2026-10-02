@@ -44,6 +44,13 @@ export default function CaseDetail() {
         setPendingTab(null);
         setActiveTab(tab);
     };
+    // CaseDetail stays mounted across :id changes; drop the previous case's report guard state.
+    const [guardCaseId, setGuardCaseId] = useState(id);
+    if (guardCaseId !== id) {
+        setGuardCaseId(id);
+        setReportDirty(false);
+        setPendingTab(null);
+    }
     const [showArtifactModal, setShowArtifactModal] = useState(false);
     const [intelOpen, setIntelOpen] = useState<number | null>(null);
     const canRunIntel = useCanRun();
@@ -453,7 +460,7 @@ export default function CaseDetail() {
 
                             {activeTab === 'evidence' && id && <CaseEvidence caseId={parseInt(id)} />}
 
-                            {activeTab === 'report' && id && <CaseReport caseId={parseInt(id)} onDirtyChange={setReportDirty} />}
+                            {activeTab === 'report' && id && <CaseReport key={id} caseId={parseInt(id)} onDirtyChange={setReportDirty} />}
 
                             {activeTab === 'automation' && id && <CaseAutomation caseId={parseInt(id)} />}
 

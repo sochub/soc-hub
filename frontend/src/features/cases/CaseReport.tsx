@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, FileDown, FileJson, Save, Sparkles } from 'lucide-react';
 import { api } from '../../api/client';
@@ -39,6 +39,7 @@ const DURATIONS = [
 type Form = Record<TextKey, string> & Record<MilestoneKey, string> & { tlp: TLPLevel };
 
 const tlpIndex = (t: TLPLevel) => TLP_ORDER.indexOf(t);
+const clampTlp = (t: TLPLevel, min: TLPLevel): TLPLevel => (tlpIndex(t) < tlpIndex(min) ? min : t);
 
 /** UTC ISO → value for a datetime-local input (local wall time, minute precision). */
 function isoToLocal(iso: string | null): string {
@@ -181,6 +182,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     const [exportTlp, setExportTlp] = useState<TLPLevel | null>(null);
     const [full, setFull] = useState(false);
     const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
+    const exportingRef = useRef(false);
 
     const baseline = data ? formFrom(data) : null;
     const form = edited ?? baseline;
@@ -243,11 +245,12 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     };
 
     const runExport = async (format: 'pdf' | 'json') => {
-        if (exporting || !data) return;
+        if (exportingRef.current || !data) return;
+        exportingRef.current = true;
         setExporting(format);
         setError(null);
         try {
-            const tlp = exportTlp ?? data.report.tlp;
+            const tlp = clampTlp(exportTlp ?? data.report.tlp, data.min_tlp);
             const resp = await api.get(`/cases/${caseId}/report/export`, {
                 params: { format, full, tlp },
                 responseType: 'blob',
@@ -267,6 +270,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
         } catch (e) {
             setError(await errorDetail(e));
         } finally {
+            exportingRef.current = false;
             setExporting(null);
         }
     };
@@ -279,7 +283,8 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     const ms = data.milestones;
     const readOnly = !canWrite;
     const chartVersion = data.report.updated_at ?? 'none';
-    const exportValue = exportTlp ?? data.report.tlp;
+    // Never below the floor, also when min_tlp rises after a refetch.
+    const exportValue = clampTlp(exportTlp ?? data.report.tlp, data.min_tlp);
     const outOfOrder = ms.out_of_order ?? [];
 
     return (
@@ -391,7 +396,12 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                                             )}
                                         </>
                                     ) : (
-                                        <span title="Computed from case data">Computed: <span className="num">{computedText ?? 'unknown'}</span></span>
+                                        m.source === 'override' ? (
+                                            // The saved value is an override, so the computed one is not known until the save.
+                                            <span>Computed value shown after saving</span>
+                                        ) : (
+                                            <span title="Computed from case data">Computed: <span className="num">{computedText ?? 'unknown'}</span></span>
+                                        )
                                     )}
                                 </div>
                             </div>
