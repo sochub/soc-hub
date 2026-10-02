@@ -305,6 +305,99 @@ enrichment off.
 line per source per lookup, and one `ti_config` line per config save, test or delete.
 Indicator values, keys and response bodies are never logged.
 
+## Evidence attachments
+
+Analysts can attach files (logs, screenshots, samples) to a case from its **Evidence**
+tab. Files live outside the database, in local disk or S3; the database only holds
+metadata (name, size, SHA-256, flags).
+
+**Settings** (environment; `docker-compose.yml` passes them to backend and worker)
+
+| Variable | Description | Default |
+|---|---|---|
+| `STORAGE_BACKEND` | `local` or `s3` | `local` |
+| `STORAGE_LOCAL_PATH` | Root directory for `local` storage. Fixed to `/data/attachments` in `docker-compose.yml` | `/data/attachments` |
+| `S3_BUCKET` | Bucket name. Required when `STORAGE_BACKEND=s3` (the backend refuses to boot without it, in every environment) | unset |
+| `S3_REGION` | Region (optional) | unset |
+| `S3_ENDPOINT_URL` | Custom endpoint for S3-compatible stores (optional) | unset |
+| `S3_PREFIX` | Prefix prepended to every object key | empty |
+| `MAX_UPLOAD_MB` | Maximum size of one upload, 1-5120 | `100` |
+
+**Local storage and backups.** Files are kept in the `attachments_data` Docker volume,
+mounted at `/data/attachments` in the backend and worker. **Back this volume up**
+together with the database: the database rows point at objects that exist only there.
+Files are written with mode 0600 (opened with `O_EXCL|O_NOFOLLOW`) and directories
+0700. Each file is first written to a `.part` file and atomically renamed on completion.
+The storage root is strict: a key can never resolve outside it.
+
+**S3.** Credentials come from the standard AWS chain (environment, shared config, then
+an IAM role); prefer an IAM role. No keys are configured in SOC Hub. Uploads are sent
+with server-side encryption (`AES256`).
+
+**Upload size limit.** It is enforced twice: by nginx (`client_max_body_size` follows
+`MAX_UPLOAD_MB`, so set the variable once and recreate the frontend container) and again
+by the backend while it streams the body (`413` when exceeded). Empty files are rejected
+(`422`). The large limit applies only to the upload endpoint
+(`/api/v1/cases/{id}/attachments`); every other API route keeps nginx's default 1 MB.
+
+**Upload pipeline**
+
+- The file name is sanitised: basename only (any directory part dropped), C0/C1 control
+  characters and bidi controls stripped, trimmed to 255 UTF-8 bytes; a name that is empty
+  or made only of dots becomes `attachment`.
+- The client `content_type` is kept only if it is a valid printable-ASCII media type;
+  otherwise it is stored empty.
+- Each upload adds a SHA-256 `file_hash` artifact to the case, plus a timeline event.
+  Artifacts have no TLP of their own, so they follow the threat-intel rules: they are
+  treated as `artifact_tlp` (default amber) and are not looked up automatically with the
+  defaults. See [Threat-intel enrichment](#threat-intel-enrichment).
+
+**Malicious samples.** Tick "malicious sample" on upload and the file is stored as an
+AES-encrypted ZIP with the password `infected`; the download is named `<name>.zip`. The
+hash recorded is that of the original file.
+
+**Plaintext temp files.** Uploads pass through the backend container's temp directory
+(`/tmp`) in plaintext before they are stored:
+
+- The web framework (Starlette) buffers **any** upload larger than 1 MB in the temp
+  directory for the whole request.
+- While zipping, a malicious sample larger than 8 MB is also spooled there (mode 0600).
+- With S3 storage, any upload larger than 8 MB is also spooled there before the
+  multipart upload.
+
+Malicious samples are therefore plaintext in temp until they are zipped and stored; the
+files are removed when the request ends. Host antivirus may quarantine them, and an upload
+that fails that way fails cleanly (error, no row, no stored object). Add an antivirus
+exclusion for the backend container's temp directory, or mount a `tmpfs` there.
+
+**Downloads.** Every response is `application/octet-stream` with
+`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`,
+`Content-Security-Policy: sandbox`, `Cache-Control: no-store` and `X-Content-SHA256`.
+The stored object is checked before the download is audited: if it is missing, the
+answer is `500 Attachment content unavailable` and no audit row is written. The download
+audit row is written before streaming starts, so it means "download started", not
+"download completed". The UI buffers the whole file in browser memory (as a Blob) before
+saving it, so very large downloads are limited by the browser's memory.
+
+**Auditing.** Uploads, downloads and deletes are audited, each with the file name,
+SHA-256, malicious flag and case id. Attachment audit events are stored under the
+attachment, not the case: read them at `/api/v1/audit-logs/attachment/{id}`. They do not
+appear in the case's Audit tab (the case timeline does show uploads and deletes).
+
+**Soft delete.** Deleting an attachment (analyst or above) marks it deleted, adds a
+timeline event and writes a `delete` audit row, but the stored object is kept. The delete
+is atomic: if two requests race, one gets `204` and the other `404`, and only one is
+audited. Deleted attachments disappear from the list; only admins can list them
+(`?include_deleted=true`).
+
+**Deleting a tenant** does not remove its stored objects (under `tenants/{id}/` in the
+storage root or bucket). Operators must purge them by hand.
+
+**Logging.** One line per operation:
+`attachment <op> tenant= case= id= size= malicious= outcome=`, where `<op>` is
+`upload`, `download` or `delete` and `outcome` is one of `ok`, `too_large`, `empty`,
+`error`, `missing`, `not_found`. File names, contents and storage keys are never logged.
+
 ## Email (optional — invitations work without it)
 
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`. When

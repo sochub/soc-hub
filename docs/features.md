@@ -70,6 +70,15 @@ automatic up to `auto_max_tlp` (default green), manual runs at amber/red need
 confirmation, and private IPs and internal domains are never sent out. Configured per
 tenant in Integrations. See [configuration](configuration.md#threat-intel-enrichment).
 
+## Evidence attachments
+
+An **Evidence** tab on each case holds uploaded files (local disk or S3, up to
+`MAX_UPLOAD_MB`). Every upload is SHA-256 hashed and added as a `file_hash` artifact;
+samples can be flagged malicious and are then stored as an AES ZIP (password
+`infected`). Downloads are forced, never rendered; uploads, downloads and deletes are
+audited; deletes are soft and only admins can see deleted files. File names and contents are never logged. See
+[configuration](configuration.md#evidence-attachments).
+
 ## Telemetry dashboard
 
 A light, developer-centric "Telemetry Console" dashboard:
