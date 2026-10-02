@@ -11,6 +11,7 @@ import PageContainer from '../../components/layout/PageContainer';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import CaseTasks from './CaseTasks';
 import CaseEvidence from './CaseEvidence';
+import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
@@ -27,10 +28,22 @@ const ARTIFACT_ICONS: Record<string, any> = {
 
 const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigation', 'containment', 'remediation', 'other'];
 
+const CASE_TABS = ['timeline', 'tasks', 'artifacts', 'evidence', 'report', 'network', 'audit', 'automation'] as const;
+type CaseTab = typeof CASE_TABS[number];
+
 export default function CaseDetail() {
     const { id } = useParams();
     const queryClient = useQueryClient();
-    const [activeTab, setActiveTab] = useState<'timeline' | 'tasks' | 'artifacts' | 'evidence' | 'network' | 'audit' | 'automation'>('timeline');
+    const [activeTab, setActiveTab] = useState<CaseTab>('timeline');
+    // The Report tab reports unsaved edits; switching away asks first.
+    const [reportDirty, setReportDirty] = useState(false);
+    const [pendingTab, setPendingTab] = useState<CaseTab | null>(null);
+    const selectTab = (tab: CaseTab) => {
+        if (tab === activeTab) return;
+        if (activeTab === 'report' && reportDirty) { setPendingTab(tab); return; }
+        setPendingTab(null);
+        setActiveTab(tab);
+    };
     const [showArtifactModal, setShowArtifactModal] = useState(false);
     const [intelOpen, setIntelOpen] = useState<number | null>(null);
     const canRunIntel = useCanRun();
@@ -237,10 +250,10 @@ export default function CaseDetail() {
                 {/* Tabs (sticky while the page scrolls inside <main>) */}
                 <div className="sticky top-0 z-10 bg-white px-6 pt-3">
                     <div className="flex border-b border-zinc-200 relative space-x-6">
-                        {['timeline', 'tasks', 'artifacts', 'evidence', 'network', 'audit', 'automation'].map((tab) => (
+                        {CASE_TABS.map((tab) => (
                             <button
                                 key={tab}
-                                onClick={() => setActiveTab(tab as any)}
+                                onClick={() => selectTab(tab)}
                                 className={cn(
                                     "pb-3 text-sm font-medium transition-colors relative focus:outline-none",
                                     activeTab === tab ? "text-accent-700" : "text-zinc-400 hover:text-zinc-700"
@@ -256,6 +269,15 @@ export default function CaseDetail() {
                             </button>
                         ))}
                     </div>
+                    {pendingTab && (
+                        <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 mt-2">
+                            <span className="mr-auto">The report has unsaved changes. Discard them and switch to <span className="capitalize font-medium">{pendingTab}</span>?</span>
+                            <button onClick={() => { setReportDirty(false); setActiveTab(pendingTab); setPendingTab(null); }}
+                                className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700">Discard</button>
+                            <button onClick={() => setPendingTab(null)}
+                                className="px-2 py-1 bg-white border border-zinc-300 text-zinc-700 rounded hover:bg-zinc-50">Keep editing</button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Tab Content */}
@@ -430,6 +452,8 @@ export default function CaseDetail() {
                             )}
 
                             {activeTab === 'evidence' && id && <CaseEvidence caseId={parseInt(id)} />}
+
+                            {activeTab === 'report' && id && <CaseReport caseId={parseInt(id)} onDirtyChange={setReportDirty} />}
 
                             {activeTab === 'automation' && id && <CaseAutomation caseId={parseInt(id)} />}
 
