@@ -1,8 +1,10 @@
 """Evidence upload pipeline: stream -> hash/limit -> (zip if malicious) -> store -> rows."""
+import asyncio
 import hashlib
 import logging
 import re
 import tempfile
+import unicodedata
 import uuid
 from typing import AsyncIterator, Optional
 
@@ -19,7 +21,9 @@ from app.utils.audit import create_audit_log
 logger = logging.getLogger(__name__)
 CHUNK = 65536
 ZIP_PASSWORD = b"infected"
-_CTRL = re.compile(r"[\x00-\x1f\x7f]")
+# Bidi/format controls that can disguise an extension (e.g. U+202E RIGHT-TO-LEFT OVERRIDE).
+_BIDI = {"\u200e", "\u200f", *map(chr, range(0x202A, 0x202F)), *map(chr, range(0x2066, 0x206A))}
+_CONTENT_TYPE = re.compile(r'^[\w.+-]+/[\w.+-]+(;\s*[\w.+-]+=[\w.+"-]+)*$')
 
 
 class TooLarge(Exception):
@@ -32,11 +36,17 @@ class EmptyFile(Exception):
 
 def sanitize_filename(name: str) -> str:
     base = re.split(r"[\\/]", name or "")[-1]
-    base = _CTRL.sub("", base).strip()
+    base = "".join(ch for ch in base if unicodedata.category(ch) != "Cc" and ch not in _BIDI).strip()
+    base = base.encode("utf-8")[:255].decode("utf-8", errors="ignore").strip()
     if base.strip(".") == "":
         return "attachment"
-    raw = base.encode("utf-8")[:255]
-    return raw.decode("utf-8", errors="ignore") or "attachment"
+    return base
+
+
+def clean_content_type(value: Optional[str]) -> Optional[str]:
+    if value and len(value) <= 255 and _CONTENT_TYPE.fullmatch(value):
+        return value
+    return None
 
 
 def build_encrypted_zip(member_name: str, src):
@@ -44,7 +54,7 @@ def build_encrypted_zip(member_name: str, src):
     src.seek(0)
     with pyzipper.AESZipFile(out, "w", compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
         zf.setpassword(ZIP_PASSWORD)
-        with zf.open(member_name, "w") as dst:  # streams; never loads the whole file into memory
+        with zf.open(member_name, "w", force_zip64=True) as dst:  # streams; never loads the whole file into memory
             while True:
                 c = src.read(CHUNK)
                 if not c:
@@ -56,7 +66,7 @@ def build_encrypted_zip(member_name: str, src):
 
 async def _file_chunks(f):
     while True:
-        c = f.read(CHUNK)
+        c = await asyncio.to_thread(f.read, CHUNK)
         if not c:
             break
         yield c
@@ -67,7 +77,9 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
     storage = storage or get_storage()
     max_bytes = max_bytes if max_bytes is not None else settings.MAX_UPLOAD_MB * 1024 * 1024
     name = sanitize_filename(filename)
-    key = f"tenants/{case.tenant_id}/cases/{case.id}/{uuid.uuid4().hex}"
+    # Captured up front: the rollback in the failure path expires `case`, so it must not be touched there.
+    tenant_id, case_id = case.tenant_id, case.id
+    key = f"tenants/{tenant_id}/cases/{case_id}/{uuid.uuid4().hex}"
     h, size = hashlib.sha256(), 0
 
     async def counted():
@@ -83,17 +95,17 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
         if is_malicious:
             with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as raw:
                 async for c in counted():
-                    raw.write(c)
+                    await asyncio.to_thread(raw.write, c)
                 if size == 0:
                     raise EmptyFile()
-                with build_encrypted_zip(name, raw) as z:
+                with await asyncio.to_thread(build_encrypted_zip, name, raw) as z:
                     await storage.put(key, _file_chunks(z))
         else:
             await storage.put(key, counted())
             if size == 0:
                 raise EmptyFile()
         row = CaseAttachment(tenant_id=case.tenant_id, case_id=case.id, filename=name,
-                             content_type=(content_type or None) and content_type[:255], size_bytes=size,
+                             content_type=clean_content_type(content_type), size_bytes=size,
                              sha256=h.hexdigest(), is_malicious=bool(is_malicious), storage_key=key,
                              description=description, uploaded_by=user_id)
         db.add(row)
@@ -110,9 +122,13 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
         await db.refresh(row)
         return row
     except BaseException:
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning("attachment rollback failed tenant=%s case=%s", tenant_id, case_id)
         # Best effort: put may have written (part of) the object before the failure, including cancellation.
         try:
             await storage.delete(key)
         except Exception:
-            logger.warning("attachment cleanup failed tenant=%s case=%s", case.tenant_id, case.id)
+            logger.warning("attachment cleanup failed tenant=%s case=%s", tenant_id, case_id)
         raise
