@@ -79,8 +79,7 @@ def test_string_body_and_no_nonce_noop():
         _, _, bd, _ = await resolve_for_request(db, tid, "https://api.example.com/", {}, f"x{P_TOK}", H, N)
         assert bd == f"x{TOK_V}"
         args = ("https://api.example.com/", {"A": P_TOK}, {"b": P_TOK})
-        url, hd, b, used = await resolve_for_request(db, tid, *args[:1], *args[1:], H, None)
-        assert (url, hd, b, used) == (args[0], args[1], args[2], {})
+        assert await resolve_for_request(db, tid, *args, H, None) == (*args, {})
     run(body)
 
 
@@ -91,7 +90,9 @@ def test_forged_placeholders_inert():
             url, hd, bd, used = await resolve_for_request(
                 db, tid, f"https://api.example.com/?q={f}", {"A": f}, {"b": f}, "evil.example.org", N)
             assert hd == {"A": f} and bd == {"b": f} and used == {}
-            assert f in url or f.replace("⟦", "%E2%9F%A6") in url or "secret" in url
+            assert TOK_V not in url and "s3cr3t" not in url
+            if "#" not in f:
+                assert f in url  # inert text stays verbatim (a '#' nonce form lands in the stripped fragment)
         r = (await db.execute(select(TenantSecret).where(TenantSecret.id == rows["TOK"]))).scalar_one()
         assert r.last_used_at is None
     run(body)
@@ -149,3 +150,34 @@ def test_redact_overlap_and_empty():
     used = {"A": "abc", "B": "abcdef", "E": ""}
     assert redact_text("xx abcdef yy abc", used) == "xx •••• yy ••••"
     assert redact_text("hello", {"E": ""}) == "hello"
+
+
+def test_port_ipv6_scheme_placeholders_rejected():
+    msg = "secrets are not allowed in the URL host or credentials"
+    _err(msg, url=f"https://api.example.com:{P_TOK}/")
+    _err(msg, url=f"https://[{P_TOK}]/")
+    _err(msg, url=f"{P_TOK}://api.example.com/", headers={"A": P_TOK})
+
+
+def test_nul_in_header_secret():
+    async def body(db, tid, rows):
+        await db.execute(update(TenantSecret).where(TenantSecret.id == rows["TOK"]).values(value_enc=encrypt("x\x00y")))
+        await db.commit()
+        with pytest.raises(NodeError) as e:
+            await resolve_for_request(db, tid, "https://api.example.com/", {"A": P_TOK}, None, H, N)
+        assert str(e.value) == "secret TOK contains a control character and cannot be used in a header"
+    run(body)
+
+
+def test_body_key_placeholder_rejected():
+    _err("secrets are not allowed in body keys", body={P_TOK: 1})
+
+
+def test_final_host_mismatch_defense():
+    _err("secret host check mismatch", url=f"https://evil.example.org/?k={P_TOK}", headers={"A": P_TOK})
+
+
+def test_redact_keys_variants_and_numbers():
+    used = {"TOK": TOK_V, "N": "12345", "J": 'a"b/c'}
+    out = redact({TOK_V: 1, "k": "a\\\"b/c", "p": "a%22b/c", "n": 12345, "f": 1.5, "t": ("12345",)}, used)
+    assert out == {"••••": 1, "k": "••••", "p": "••••", "n": "••••", "f": 1.5, "t": ("••••",)}
