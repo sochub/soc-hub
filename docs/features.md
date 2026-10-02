@@ -79,6 +79,15 @@ samples can be flagged malicious and are then stored as an AES ZIP (password
 audited; deletes are soft and only admins can see deleted files. File names and contents are never logged. See
 [configuration](configuration.md#evidence-attachments).
 
+## Incident reports
+
+A **Report** tab on each case drafts and exports an incident report: executive summary, impact, lessons learned,
+lifecycle milestones with TTD/TTC/TTR, timeline, indicators (defanged in the PDF), actions, and evidence with hashes.
+Export as PDF or JSON, as a key report or a full one with the audit trail. The TLP marking can't go below the
+case's highest IOC TLP. "Draft with AI" proposes the text but nothing is saved until you review it. Every export is
+audited with its SHA-256, also sent in `X-Content-SHA256`. Viewers can't export. PDFs render offline with embedded
+fonts. See [configuration](configuration.md#incident-reports).
+
 ## Telemetry dashboard
 
 A light, developer-centric "Telemetry Console" dashboard:
