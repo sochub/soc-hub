@@ -189,6 +189,33 @@ async def test_commit_failure_deletes_object(ctx, monkeypatch, malicious):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("malicious", [False, True])
+async def test_failure_after_commit_keeps_object(ctx, monkeypatch, malicious):
+    deleted = []
+
+    class Spy(LocalStorage):
+        async def delete(self, key):
+            deleted.append(key)
+            await super().delete(key)
+    storage = Spy(str(ctx["root"]))
+    async with AsyncSessionLocal() as db:
+        case = await load_case(db, ctx["cid"])
+
+        async def boom(*a, **k):
+            raise RuntimeError("refresh failed")
+        monkeypatch.setattr(db, "refresh", boom)
+        with pytest.raises(RuntimeError):
+            await svc.store_upload(db, case=case, user_id=None, filename="a.txt", content_type=None,
+                                   chunks=agen(b"abc"), is_malicious=malicious, description=None,
+                                   storage=storage, max_bytes=100)
+    assert deleted == []
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(CaseAttachment).where(CaseAttachment.tenant_id == ctx["tid"]))).scalars().all()
+    assert len(rows) == 1
+    assert (ctx["root"] / rows[0].storage_key).is_file()
+
+
+@pytest.mark.asyncio
 async def test_store_upload_rejects_bad_content_type(ctx):
     async with AsyncSessionLocal() as db:
         a = await svc.store_upload(db, case=await load_case(db, ctx["cid"]), user_id=None, filename="a.txt",

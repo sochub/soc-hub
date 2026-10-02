@@ -221,6 +221,11 @@ async def _scenario(monkeypatch, caplog, tmp_path):
                         AuditLog.entity_type == "attachment", AuditLog.entity_id == att1,
                         AuditLog.tenant_id == tid).order_by(AuditLog.id))).scalars().all()
                     assert acts == ["upload", "download", "delete"], f"j audit {acts}"
+                    det = dict((await db2.execute(select(AuditLog.action, AuditLog.changes).where(
+                        AuditLog.entity_type == "attachment", AuditLog.entity_id == att1,
+                        AuditLog.tenant_id == tid))).all())
+                    want = {"filename": "e vil.txt", "sha256": sha, "is_malicious": False, "case_id": cid}
+                    assert det["download"] == want and det["delete"] == want, f"j audit details {det}"
                     row = (await db2.execute(select(CaseAttachment).where(CaseAttachment.id == att1))).scalars().one()
                     assert row.deleted_at is not None and row.deleted_by == uid, "j row not soft-deleted"
 
@@ -251,10 +256,58 @@ async def _scenario(monkeypatch, caplog, tmp_path):
                         f"m {r.status_code} {r.text}"
                     assert await n_downloads() == before, "m audit row written for missing object"
 
+                # n) any other error opening storage: stream closed, one outcome=error line, re-raised
+                import app.api.v1.attachments as att_mod
+                closed = []
+
+                class BadIt:
+                    def __aiter__(self):
+                        return self
+
+                    async def __anext__(self):
+                        raise RuntimeError("storage exploded")
+
+                    async def aclose(self):
+                        closed.append(True)
+
+                class BadStorage:
+                    def open(self, key):
+                        return BadIt()
+                monkeypatch.setattr(att_mod, "get_storage", lambda: BadStorage())
+                try:
+                    await call("GET", f"{base}/{att2}/download", "download", "error")
+                    raise AssertionError("n no exception")
+                except RuntimeError as e:
+                    assert str(e) == "storage exploded", f"n {e}"
+                assert closed == [True], f"n stream not closed {closed}"
+
+                # o) two concurrent deletes both pass the existence check; the atomic UPDATE lets only one win
+                orig_found = att_mod._found
+
+                async def slow_found(*a, **k):
+                    row = await orig_found(*a, **k)
+                    await asyncio.sleep(0.2)
+                    return row
+                monkeypatch.setattr(att_mod, "_found", slow_found)
+                n0 = len(att_lines())
+                r1, r2 = await asyncio.gather(client.delete(f"{base}/{att2}"), client.delete(f"{base}/{att2}"))
+                assert sorted([r1.status_code, r2.status_code]) == [204, 404], f"o {r1.status_code} {r2.status_code}"
+                new_lines = att_lines()[n0:]
+                assert sorted(x.rsplit("=", 1)[1] for x in new_lines) == ["not_found", "ok"], f"o log {new_lines}"
+                monkeypatch.setattr(att_mod, "_found", orig_found)
+                async with AsyncSessionLocal() as db2:
+                    n_del = (await db2.execute(select(func.count()).select_from(AuditLog).where(
+                        AuditLog.entity_type == "attachment", AuditLog.entity_id == att2,
+                        AuditLog.action == "delete"))).scalar()
+                    n_ev = (await db2.execute(select(func.count()).select_from(TimelineEvent).where(
+                        TimelineEvent.case_id == cid, TimelineEvent.event_type == "attachment_deleted",
+                        TimelineEvent.content == "Deleted attachment ab.txt"))).scalar()
+                    assert n_del == 1 and n_ev == 1, f"o audit {n_del} timeline {n_ev}"
+
             # l) no file name in any log record
             msgs = [rec.getMessage() for rec in caplog.records]
             assert all(n not in m for n in NAMES for m in msgs), "l file name logged"
-            assert len(att_lines()) == 18, f"l total {att_lines()}"
+            assert len(att_lines()) == 21, f"l total {att_lines()}"
         finally:
             app.dependency_overrides.clear()
             await db.rollback()

@@ -112,6 +112,7 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
             h.update(c)
             yield c
 
+    committed = False
     try:
         if is_malicious:
             with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as raw:
@@ -140,9 +141,13 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
                                changes={"filename": name, "sha256": row.sha256, "is_malicious": row.is_malicious,
                                         "case_id": case.id})
         await db.commit()
+        committed = True
         await db.refresh(row)
         return row
     except BaseException:
+        if committed:
+            # The row and its object are durable: never roll back or delete a committed object.
+            raise
         try:
             await db.rollback()
         except Exception:

@@ -60,13 +60,18 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
         queryFn: async () => (await api.get(`/cases/${caseId}/attachments`, { params: { include_deleted: showDeleted } })).data as AttachmentList,
     });
     const maxMb = data?.max_upload_mb;
+    // CaseDetail keys its case and audit queries by the route param (a string); refresh the timeline and audit tab.
+    const invalidateCase = () => {
+        queryClient.invalidateQueries({ queryKey: ['case', String(caseId)] });
+        queryClient.invalidateQueries({ queryKey: ['audit-logs', 'case', String(caseId)] });
+    };
 
     const upload = useMutation({
         mutationFn: async (file: File) => {
             const fd = new FormData();
             fd.append('file', file);
             fd.append('is_malicious', String(malicious));
-            fd.append('description', description);
+            if (description.trim()) fd.append('description', description);
             setProgress(0);
             await api.post(`/cases/${caseId}/attachments`, fd, {
                 headers: { 'Content-Type': 'multipart/form-data' },
@@ -80,6 +85,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
             queryClient.invalidateQueries({ queryKey: ['attachments', caseId] });
             queryClient.invalidateQueries({ queryKey: ['artifacts', String(caseId)] });
             queryClient.invalidateQueries({ queryKey: ['artifacts', 'all'] });
+            invalidateCase();
         },
         onError: async (e) => setError(await errorDetail(e, maxMb)),
         onSettled: () => setProgress(null),
@@ -90,6 +96,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
         onSuccess: () => {
             setConfirmId(null);
             queryClient.invalidateQueries({ queryKey: ['attachments', caseId] });
+            invalidateCase();
         },
         onError: async (e) => { setConfirmId(null); setError(await errorDetail(e)); },
     });

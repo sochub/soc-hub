@@ -126,9 +126,10 @@ X-Content-SHA256: <original sha256>
 
 ## nginx (frontend image)
 
-- In `frontend/nginx/default.conf.template`, the `location /api/v1/` block gets `client_max_body_size ${MAX_UPLOAD_MB}m;` and `proxy_request_buffering off;`.
+- `frontend/nginx/default.conf.template` keeps `location /api/v1/` at nginx's default body limit (1 MB), with default buffering and timeouts. The large-body settings never apply to other API routes.
+- A dedicated regex location, `location ~ ^/api/v1/cases/[0-9]+/attachments/?$`, matches only the upload (and list) endpoint. It has `proxy_pass http://backend:8000;` with no URI part, so the request URI passes through unchanged, plus the same `proxy_set_header` lines as `/api/v1/`, `client_max_body_size ${MAX_UPLOAD_MB}m;`, `proxy_request_buffering off;`, and `proxy_read_timeout`/`proxy_send_timeout` of 300s.
+- Downloads (`/attachments/{id}/download`) do not need a large request body and stay on the default `/api/v1/` location.
 - Convert it to a template with `envsubst`, following the nginx image's `/etc/nginx/templates/*.template` convention, with `MAX_UPLOAD_MB` defaulting to 100 in compose. Restrict the substitution to that variable, so nginx's own `$host`-style variables are left alone.
-- `proxy_read_timeout` and `proxy_send_timeout` are set to 300s for `/api/v1/`.
 
 ## UI
 

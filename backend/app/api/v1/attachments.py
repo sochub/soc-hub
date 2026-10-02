@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import func
@@ -48,6 +48,10 @@ async def _found(db: AsyncSession, op: str, case_id: int, att_id: int, tid: int)
     except HTTPException:
         logger.info(_LOG, op, tid, case_id, att_id, None, None, "not_found")
         raise
+
+
+def _details(a: CaseAttachment, case_id: int) -> dict:
+    return {"filename": a.filename, "sha256": a.sha256, "is_malicious": a.is_malicious, "case_id": case_id}
 
 
 async def _chain(first: bytes, it):
@@ -143,19 +147,28 @@ async def download_attachment(
     name = a.filename + (".zip" if a.is_malicious else "")
     key, sha, size, malicious = a.storage_key, a.sha256, a.size_bytes, a.is_malicious
     user_id = current_user.id
+    details = _details(a, case_id)
     # Prime the stream first, so a missing object is a 500 with no (false) download audit row.
-    it = get_storage().open(key)
+    it = None
     try:
+        it = get_storage().open(key)
         first = await it.__anext__()
     except StopAsyncIteration:
         first = b""
     except (FileNotFoundError, StorageError):
-        await it.aclose()
+        if it is not None:
+            await it.aclose()
         logger.info(_LOG, "download", tenant_id, case_id, att_id, size, malicious, "missing")
         raise HTTPException(status_code=500, detail="Attachment content unavailable")
+    except BaseException:
+        if it is not None:
+            await it.aclose()
+        logger.info(_LOG, "download", tenant_id, case_id, att_id, size, malicious, "error")
+        raise
     try:
+        # Written before streaming: a download audit row means "download started".
         await create_audit_log(db=db, entity_type="attachment", entity_id=att_id, action="download",
-                               tenant_id=tenant_id, user_id=user_id, changes={"case_id": case_id})
+                               tenant_id=tenant_id, user_id=user_id, changes=details)
         await db.commit()
     except BaseException:
         await it.aclose()
@@ -180,13 +193,23 @@ async def delete_attachment(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Response:
     a = await _found(db, "delete", case_id, att_id, tenant_id)
-    user_id, size, malicious = current_user.id, a.size_bytes, a.is_malicious
-    a.deleted_at = func.now()
-    a.deleted_by = user_id
+    user_id, size, malicious, filename = current_user.id, a.size_bytes, a.is_malicious, a.filename
+    details = _details(a, case_id)
+    # Atomic: of two concurrent deletes only one matches `deleted_at IS NULL`; the other gets a 404.
+    res = await db.execute(
+        update(CaseAttachment)
+        .where(CaseAttachment.id == att_id, CaseAttachment.tenant_id == tenant_id,
+               CaseAttachment.case_id == case_id, CaseAttachment.deleted_at.is_(None))
+        .values(deleted_at=func.now(), deleted_by=user_id)
+        .execution_options(synchronize_session=False))
+    if res.rowcount == 0:
+        await db.rollback()
+        logger.info(_LOG, "delete", tenant_id, case_id, att_id, None, None, "not_found")
+        raise HTTPException(status_code=404, detail="Attachment not found")
     db.add(TimelineEvent(case_id=case_id, user_id=user_id, event_type="attachment_deleted",
-                         content=f"Deleted attachment {a.filename}"))
+                         content=f"Deleted attachment {filename}"))
     await create_audit_log(db=db, entity_type="attachment", entity_id=att_id, action="delete",
-                           tenant_id=tenant_id, user_id=user_id, changes={"case_id": case_id})
+                           tenant_id=tenant_id, user_id=user_id, changes=details)
     await db.commit()
     logger.info(_LOG, "delete", tenant_id, case_id, att_id, size, malicious, "ok")
     return Response(status_code=204)
