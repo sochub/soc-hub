@@ -72,7 +72,7 @@ _LEADING_SEP = re.compile(r"[/\\]+")
 _AUTH_END = re.compile(r"[/\\?#]")
 
 
-def _strip_userinfo(v: str) -> str:
+def strip_userinfo(v: str) -> str:
     """Drop everything before the last '@' in the URL authority (any scheme, or none).
 
     The authority ends at the first '/', '\\', '?' or '#', so an '@' in the query or fragment
@@ -90,10 +90,13 @@ def _strip_userinfo(v: str) -> str:
     return head + auth.rsplit("@", 1)[1] + rest[end:]
 
 
+_strip_userinfo = strip_userinfo  # backwards-compatible alias
+
+
 def _defang_filter(value, itype) -> str:
     v = "" if value is None else str(value)
     if (itype or "").lower() == "url":
-        v = _strip_userinfo(v)
+        v = strip_userinfo(v)
     return defang(v, itype)
 
 
