@@ -59,11 +59,12 @@ async def _scenario(monkeypatch, caplog, tmp_path):
             await db.commit()
             tid, tid2 = ids["tenants"]
             ca, cb = Case(title="att-a", tenant_id=tid), Case(title="att-b", tenant_id=tid2)
-            db.add_all([ca, cb])
+            ca2 = Case(title="att-a2", tenant_id=tid)
+            db.add_all([ca, cb, ca2])
             await db.flush()
-            ids["cases"] += [int(ca.id), int(cb.id)]
+            ids["cases"] += [int(ca.id), int(cb.id), int(ca2.id)]
             await db.commit()
-            cid, cid2 = ids["cases"]
+            cid, cid2, cid3 = ids["cases"]
             uid, email = int(user.id), user.email
 
             state["tenant"], state["user"] = tid, user
@@ -185,27 +186,37 @@ async def _scenario(monkeypatch, caplog, tmp_path):
                 state["tenant"] = tid2
                 r = await call("GET", base)
                 assert r.status_code == 404, f"i list {r.status_code}"
-                r = await call("GET", f"/api/v1/cases/{cid2}/attachments/{att1}/download")
+                r = await call("GET", f"/api/v1/cases/{cid2}/attachments/{att1}/download", "download", "not_found")
                 assert r.status_code == 404, f"i via B case {r.status_code}"
-                r = await call("GET", f"{base}/{att1}/download")
+                r = await call("GET", f"{base}/{att1}/download", "download", "not_found")
                 assert r.status_code == 404, f"i A case as B {r.status_code}"
-                r = await call("DELETE", f"{base}/{att1}")
+                r = await call("DELETE", f"{base}/{att1}", "delete", "not_found")
                 assert r.status_code == 404, f"i delete as B {r.status_code}"
                 state["tenant"] = tid
+
+                # i2) same tenant, wrong case: case 1's attachment id under case 2 -> 404 for download and delete
+                other = f"/api/v1/cases/{cid3}/attachments/{att1}"
+                r = await call("GET", f"{other}/download", "download", "not_found")
+                assert r.status_code == 404, f"i2 download {r.status_code}"
+                r = await call("DELETE", other, "delete", "not_found")
+                assert r.status_code == 404, f"i2 delete {r.status_code}"
 
                 # j) soft delete
                 r = await call("DELETE", f"{base}/{att1}", "delete", "ok")
                 assert r.status_code == 204, f"j {r.status_code} {r.text}"
                 r = await call("GET", base)
                 assert att1 not in [i["id"] for i in r.json()["items"]], "j still listed"
-                r = await call("GET", f"{base}/{att1}/download")
+                r = await call("GET", f"{base}/{att1}/download", "download", "not_found")
                 assert r.status_code == 404, f"j download {r.status_code}"
-                r = await call("DELETE", f"{base}/{att1}")
+                r = await call("DELETE", f"{base}/{att1}", "delete", "not_found")
                 assert r.status_code == 404, f"j delete again {r.status_code}"
                 async with AsyncSessionLocal() as db2:
                     ev = (await db2.execute(select(TimelineEvent.event_type).where(
                         TimelineEvent.case_id == cid))).scalars().all()
                     assert "attachment_deleted" in ev, f"j timeline {ev}"
+                    content = (await db2.execute(select(TimelineEvent.content).where(
+                        TimelineEvent.case_id == cid, TimelineEvent.event_type == "attachment_deleted"))).scalars().all()
+                    assert content == ["Deleted attachment e vil.txt"], f"j timeline content {content}"
                     acts = (await db2.execute(select(AuditLog.action).where(
                         AuditLog.entity_type == "attachment", AuditLog.entity_id == att1,
                         AuditLog.tenant_id == tid).order_by(AuditLog.id))).scalars().all()
@@ -224,10 +235,26 @@ async def _scenario(monkeypatch, caplog, tmp_path):
                 assert dele[0]["deleted_by_email"] == email, f"k email {dele}"
                 state["role"] = "analyst"
 
+                # m) stored object missing -> 500, no download audit row, one outcome=missing line
+                async with AsyncSessionLocal() as db2:
+                    key = (await db2.execute(select(CaseAttachment.storage_key).where(
+                        CaseAttachment.id == att3))).scalar_one()
+
+                    async def n_downloads():
+                        return (await db2.execute(select(func.count()).select_from(AuditLog).where(
+                            AuditLog.entity_type == "attachment", AuditLog.entity_id == att3,
+                            AuditLog.action == "download"))).scalar()
+                    before = await n_downloads()
+                    (tmp_path / key).unlink()
+                    r = await call("GET", f"{base}/{att3}/download", "download", "missing")
+                    assert r.status_code == 500 and r.json()["detail"] == "Attachment content unavailable", \
+                        f"m {r.status_code} {r.text}"
+                    assert await n_downloads() == before, "m audit row written for missing object"
+
             # l) no file name in any log record
             msgs = [rec.getMessage() for rec in caplog.records]
             assert all(n not in m for n in NAMES for m in msgs), "l file name logged"
-            assert len(att_lines()) == 10, f"l total {att_lines()}"
+            assert len(att_lines()) == 18, f"l total {att_lines()}"
         finally:
             app.dependency_overrides.clear()
             await db.rollback()

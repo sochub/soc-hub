@@ -16,7 +16,7 @@ from app.models.case_attachment import CaseAttachment
 from app.models.user import User
 from app.schemas.attachment import AttachmentList, AttachmentOut
 from app.services.attachments import CHUNK, EmptyFile, TooLarge, store_upload
-from app.storage import get_storage
+from app.storage import StorageError, get_storage
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
@@ -39,6 +39,25 @@ async def _att(db: AsyncSession, case_id: int, att_id: int, tid: int) -> CaseAtt
     if a is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
     return a
+
+
+async def _found(db: AsyncSession, op: str, case_id: int, att_id: int, tid: int) -> CaseAttachment:
+    try:
+        await _case(db, case_id, tid)
+        return await _att(db, case_id, att_id, tid)
+    except HTTPException:
+        logger.info(_LOG, op, tid, case_id, att_id, None, None, "not_found")
+        raise
+
+
+async def _chain(first: bytes, it):
+    try:
+        if first:
+            yield first
+        async for c in it:
+            yield c
+    finally:
+        await it.aclose()
 
 
 async def _upload_chunks(f: UploadFile):
@@ -120,15 +139,29 @@ async def download_attachment(
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    await _case(db, case_id, tenant_id)
-    a = await _att(db, case_id, att_id, tenant_id)
+    a = await _found(db, "download", case_id, att_id, tenant_id)
     name = a.filename + (".zip" if a.is_malicious else "")
     key, sha, size, malicious = a.storage_key, a.sha256, a.size_bytes, a.is_malicious
-    await create_audit_log(db=db, entity_type="attachment", entity_id=att_id, action="download",
-                           tenant_id=tenant_id, user_id=current_user.id, changes={"case_id": case_id})
-    await db.commit()
+    user_id = current_user.id
+    # Prime the stream first, so a missing object is a 500 with no (false) download audit row.
+    it = get_storage().open(key)
+    try:
+        first = await it.__anext__()
+    except StopAsyncIteration:
+        first = b""
+    except (FileNotFoundError, StorageError):
+        await it.aclose()
+        logger.info(_LOG, "download", tenant_id, case_id, att_id, size, malicious, "missing")
+        raise HTTPException(status_code=500, detail="Attachment content unavailable")
+    try:
+        await create_audit_log(db=db, entity_type="attachment", entity_id=att_id, action="download",
+                               tenant_id=tenant_id, user_id=user_id, changes={"case_id": case_id})
+        await db.commit()
+    except BaseException:
+        await it.aclose()
+        raise
     logger.info(_LOG, "download", tenant_id, case_id, att_id, size, malicious, "ok")
-    return StreamingResponse(get_storage().open(key), media_type="application/octet-stream", headers={
+    return StreamingResponse(_chain(first, it), media_type="application/octet-stream", headers={
         "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name, safe='')}",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox",
@@ -146,8 +179,7 @@ async def delete_attachment(
     current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Response:
-    await _case(db, case_id, tenant_id)
-    a = await _att(db, case_id, att_id, tenant_id)
+    a = await _found(db, "delete", case_id, att_id, tenant_id)
     user_id, size, malicious = current_user.id, a.size_bytes, a.is_malicious
     a.deleted_at = func.now()
     a.deleted_by = user_id
