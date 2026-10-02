@@ -19,13 +19,14 @@ from app.models.enrichment_result import EnrichmentResult
 from app.models.ioc import IOC
 from app.models.user import User
 from app.reports import milestones, tlp
+from app.reports.defang import scrub_userinfo
 from app.utils.sla import compute_sla_state, load_policy_overrides
 
 SCHEMA = "sochub.incident-report/1"
 APP_VERSION = "0.1.0"  # mirrors FastAPI(version=...) in app/main.py
 TEXT_MAX = 300
 ENRICH_BATCH = 1000  # max (type, value) pairs per enrichment lookup query
-PDF_LIMITS = {"timeline": 500, "iocs": 1000, "evidence": 1000, "audit": 2000}
+PDF_LIMITS = {"timeline": 500, "iocs": 1000, "evidence": 1000, "audit": 2000, "tasks": 1000}
 PHASES = ("identification", "containment", "eradication", "recovery", "lessons_learned")
 _THREAT_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _LANES = {"comment": "analyst", "status_change": "analyst", "severity_change": "analyst",
@@ -59,10 +60,17 @@ async def _emails(db, user_ids) -> Dict[int, str]:
 
 def compute_truncated(report: dict) -> Dict[str, int]:
     out = {}
-    for section, limit in PDF_LIMITS.items():
-        extra = len(report.get(section) or []) - limit
+    for section in ("timeline", "iocs", "evidence", "audit"):
+        extra = len(report.get(section) or []) - PDF_LIMITS[section]
         if extra > 0:
             out[section] = extra
+    # Tasks: the cap applies to each actions phase table and to the outstanding table.
+    extra = sum(max(len(v) - PDF_LIMITS["tasks"], 0) for v in (report.get("actions") or {}).values())
+    if extra > 0:
+        out["actions"] = extra
+    extra = len(report.get("outstanding") or []) - PDF_LIMITS["tasks"]
+    if extra > 0:
+        out["outstanding"] = extra
     return out
 
 
@@ -147,6 +155,10 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
         if r.status == "ok" and r.verdict == "malicious" and r.fetched_at is not None:
             tl.append({"at": aware(r.fetched_at), "lane": "indicators", "kind": "enrichment",
                        "text": f"{r.source} flagged {r.indicator_type} as malicious", "actor": r.source})
+    # I1: event text (e.g. "Added artifact: <url>") must never carry URL credentials. Scrub before
+    # truncating too (on a bounded prefix), so a cut can't leave a credential fragment that no longer looks like userinfo.
+    for e in tl:
+        e["text"] = scrub_userinfo(scrub_userinfo(e["text"][:TEXT_MAX + 512])[:TEXT_MAX])
     tl.sort(key=lambda e: e["at"])
     for n, e in enumerate(tl, 1):
         e["n"] = n

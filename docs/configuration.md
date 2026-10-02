@@ -424,20 +424,26 @@ never log narrative text, IOC values or file contents.
 **TLP.** The export marking is CLEAR, GREEN, AMBER or RED, shown in the FIRST TLP 2.0 colours (white text on RED,
 black text on the others). A report is never marked below the highest TLP of the case's IOCs. Saving the report or
 exporting with a lower value returns **422** (`TLP must be at least <LABEL>`). New reports default to AMBER. The
-floor is enforced on the server, so the UI limits are not the only guard.
+floor is enforced on the server, so the UI limits are not the only guard. IOC TLP values are normalised when they
+are saved (case-insensitive, an optional `TLP:` prefix is dropped, `clear` is stored as `white`); any other value is
+rejected with 422. When computing the floor, older stored values are normalised the same way, and a value that is
+not a TLP counts as RED (fail closed).
 
 **Content rules.**
 - Defanging (`hxxp`, `[.]`, `[@]`) applies to the PDF only. JSON carries raw values.
-- URL userinfo (`user:pass@`) is stripped in both PDF and JSON. Known limitation: a password that itself
-  contains `#` or `?` may be only partly stripped.
+- URL userinfo (`user:pass@`) is stripped in both PDF and JSON, including URLs inside timeline event text (for
+  example "Added artifact: http://user:pass@host/…" or a URL pasted into a comment). This also covers the
+  timeline chart and the AI draft prompt. In the PDF, URLs in timeline text are defanged as well. Known
+  limitation: a password that itself contains `#` or `?` may be only partly stripped.
+- Timeline event text is capped at 300 characters, in both the PDF and the JSON.
 - Milestones (first seen, detected, contained, recovered) use your override when set and otherwise a computed
   value (earliest IOC or alert, case creation, latest completed containment task, case resolution). Time to
   detect, contain and recover (TTD/TTC/TTR) come from them. If milestones are out of order, the affected duration
   shows as "unknown" with a warning, and saving out-of-order overrides is rejected with 422.
 - The **key** report includes evidence uploads and deletions (chain of custody). The **full** report adds the
   complete timeline and the audit trail.
-- Large cases are truncated in the PDF (500 timeline events, 1000 IOCs, 1000 evidence files, 2000 audit rows) and
-  the report says so. JSON is not truncated by those limits.
+- Large cases are truncated in the PDF (500 timeline events, 1000 IOCs, 1000 evidence files, 2000 audit rows,
+  1000 tasks per actions phase and 1000 outstanding tasks) and the report says so. JSON is not truncated by those limits.
 
 **Export audit trail.** Every export writes an `export_report` audit entry (case id, user, format, full/key, TLP,
 size and the **SHA-256** of the exact bytes). The same hash is returned in the `X-Content-SHA256` response
@@ -454,6 +460,12 @@ Nothing is stored until the analyst reviews and saves. The prompt contains struc
 milestones, timeline text, IOC values (**including TLP:RED IOCs**), user emails, completed and outstanding tasks,
 and evidence file names and hashes. It never contains file contents or the existing narrative text. Draft
 requests return 409 when no AI provider is configured and 503 when the provider fails.
+
+The prompt is size-bounded. It holds the first 100 and the last 100 timeline events, the first 200 IOCs
+(malicious first), at most 200 completed tasks (all phases together), 200 outstanding tasks and 200 evidence
+files. When something is dropped, the input carries a `truncated` object with the dropped counts per section.
+If the case data is still over 60,000 characters, the timeline and IOC caps are halved until it fits (and then
+the task and evidence caps).
 
 > **Warning:** if the tenant's AI provider is external (OpenAI, Anthropic, Gemini, Bedrock, etc.), drafting sends
 > that case data, including TLP:RED IOC values, to that provider. If you can't allow that, leave AI unconfigured

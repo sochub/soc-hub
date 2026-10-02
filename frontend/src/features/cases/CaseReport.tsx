@@ -97,7 +97,7 @@ function formFrom(v: CaseReportView): Form {
         executive_summary: r.executive_summary ?? '',
         impact: r.impact ?? '',
         lessons_learned: r.lessons_learned ?? '',
-        tlp: r.tlp,
+        tlp: clampTlp(r.tlp, v.min_tlp),
         first_seen: isoToLocal(r.first_seen_at),
         detected: isoToLocal(r.detected_at),
         contained: isoToLocal(r.contained_at),

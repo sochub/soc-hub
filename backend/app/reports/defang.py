@@ -1,5 +1,14 @@
 import re
 
+# Linear and bounded (C1): the lookbehind anchors a scheme at the start of a run (a plain \b matches
+# around every '.', '+' and '-', which made the scan quadratic), and the scheme/userinfo lengths are capped.
+_USERINFO = re.compile(r"(?i)(?<![\w+.-])([a-z][\w+.-]{0,31}:[/\\]+)[^\s/\\?#@]{0,256}@")
+
+
+def scrub_userinfo(text: str) -> str:
+    """Remove `user:pass@` after any URL scheme anywhere in free text (timeline events, comments)."""
+    return _USERINFO.sub(r"\1", text)
+
 
 def defang(value: str, itype: str) -> str:
     t = (itype or "").lower()

@@ -114,11 +114,12 @@ def timeline_svg(events: list) -> str:
         parts.append(_t(8, y + 4, LANE_LABELS[lane], 11, "start", "#3f3f46", "bold"))
     axis_y = top + 44 * 4 + 8
     parts.append(f'<line x1="{X0}" y1="{axis_y}" x2="{X1}" y2="{axis_y}" stroke="#71717a"/>')
+    tick_fmt = "%H:%M:%S" if span < 600 else "%m-%d %H:%M"
     for k in range(5):
         tx = X0 + PW * k / 4
         tt = t0 + (t1 - t0) * k / 4
         parts.append(f'<line x1="{tx:.1f}" y1="{axis_y}" x2="{tx:.1f}" y2="{axis_y + 5}" stroke="#71717a"/>')
-        parts.append(_t(tx, axis_y + 18, tt.strftime("%m-%d %H:%M"), 10,
+        parts.append(_t(tx, axis_y + 18, tt.strftime(tick_fmt), 10,
                         "end" if k == 4 else "middle", fill="#52525b", mono=True))
     by_lane = {lane: [] for lane in LANES}
     for e in evs:

@@ -139,18 +139,64 @@ async def put_report(
     return out
 
 
-def _draft_input(rep: dict) -> dict:
+# I3: the draft prompt is bounded. Timeline: first + last DRAFT_TIMELINE_EACH events; IOCs (malicious first):
+# first DRAFT_IOCS; completed tasks (all phases together), outstanding tasks and evidence: DRAFT_ITEMS each.
+# If the JSON is still over DRAFT_MAX_CHARS, the timeline and IOC caps halve until it fits (then the others).
+DRAFT_TIMELINE_EACH = 100
+DRAFT_IOCS = 200
+DRAFT_ITEMS = 200
+DRAFT_MAX_CHARS = 60_000
+
+
+def _draft_payload(rep: dict, tl_each: int, n_iocs: int, n_items: int) -> dict:
+    dropped = {}
+
+    def cap(name, items, n):
+        if len(items) > n:
+            dropped[name] = len(items) - n
+            return items[:n]
+        return items
+
+    tl = rep["timeline"]
+    if len(tl) > 2 * tl_each:
+        dropped["timeline"] = len(tl) - 2 * tl_each
+        tl = tl[:tl_each] + tl[len(tl) - tl_each:]
     iocs = [{**i, "value": strip_userinfo(str(i["value"])) if (i.get("type") or "").lower() == "url" else i["value"]}
-            for i in rep["iocs"]]
-    return to_jsonable({
+            for i in cap("iocs", rep["iocs"], n_iocs)]
+    actions, left, cut = {}, n_items, 0
+    for phase, items in rep["actions"].items():
+        kept = items[:left]
+        cut += len(items) - len(kept)
+        left -= len(kept)
+        if kept:
+            actions[phase] = kept
+    if cut:
+        dropped["actions"] = cut
+    out = {
         "case": rep["case"],
         "milestones": {k: rep["milestones"][k] for k in ms_mod.KEYS},
-        "timeline": [{k: e[k] for k in ("n", "at", "lane", "kind", "text")} for e in rep["timeline"]],
+        "timeline": [{k: e[k] for k in ("n", "at", "lane", "kind", "text")} for e in tl],
         "iocs": iocs,
-        "actions": rep["actions"],
-        "outstanding": rep["outstanding"],
-        "evidence": [{"filename": e["filename"], "sha256": e["sha256"]} for e in rep["evidence"]],
-    })
+        "actions": actions,
+        "outstanding": cap("outstanding", rep["outstanding"], n_items),
+        "evidence": [{"filename": e["filename"], "sha256": e["sha256"]}
+                     for e in cap("evidence", rep["evidence"], n_items)],
+    }
+    if dropped:
+        out["truncated"] = dropped
+    return to_jsonable(out)
+
+
+def _draft_input(rep: dict) -> dict:
+    tl_each, n_iocs, n_items = DRAFT_TIMELINE_EACH, DRAFT_IOCS, DRAFT_ITEMS
+    while True:
+        out = _draft_payload(rep, tl_each, n_iocs, n_items)
+        if len(json.dumps(out, ensure_ascii=False)) <= DRAFT_MAX_CHARS or not (tl_each or n_iocs or n_items):
+            return out
+        if tl_each or n_iocs:
+            tl_each, n_iocs = tl_each // 2, n_iocs // 2
+        else:
+            n_items //= 2
 
 
 @router.post("/{case_id}/report/draft", response_model=ReportDraft)

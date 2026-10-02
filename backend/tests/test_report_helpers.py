@@ -8,7 +8,7 @@ T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def test_tlp_floor_and_at_least():
-    assert tlp.floor([]) == "white" and tlp.floor([None, "bogus"]) == "white"
+    assert tlp.floor([]) == "white" and tlp.floor([None, ""]) == "white" and tlp.floor(["bogus"]) == "red"
     assert tlp.floor(["green", "red", "amber"]) == "red"
     assert tlp.at_least("amber", "green") and not tlp.at_least("green", "amber")
     assert tlp.LABEL["white"] == "CLEAR" and tlp.COLORS["red"] == ("#FF2B2B", "#FFFFFF")

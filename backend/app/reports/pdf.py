@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from markupsafe import Markup
+from markupsafe import Markup, escape
 from weasyprint import HTML, URLFetcher
 from weasyprint.urls import URLFetcherResponse
 
@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.reports import tlp as tlp_mod
 from app.reports.builder import PDF_LIMITS, compute_truncated
 from app.reports.charts import lifecycle_svg, timeline_svg
-from app.reports.defang import defang
+from app.reports.defang import defang, scrub_userinfo
 from app.reports.milestones import aware, fmt_duration
 
 # R3: WeasyPrint logs blocked URLs (attacker-influenced case content) at ERROR; never let them reach logs.
@@ -100,6 +100,20 @@ def _defang_filter(value, itype) -> str:
     return defang(v, itype)
 
 
+_TEXT_URL = re.compile(r"(?:https?|ftp)://\S+", re.I)
+
+
+def _defang_text_filter(value) -> Markup:
+    """Free text with every http(s)/ftp URL defanged; everything else escaped as usual."""
+    s = "" if value is None else str(value)
+    out, pos = [], 0
+    for m in _TEXT_URL.finditer(s):
+        out += [escape(s[pos:m.start()]), escape(defang(scrub_userinfo(m.group(0)), "url"))]
+        pos = m.end()
+    out.append(escape(s[pos:]))
+    return Markup("".join(out))
+
+
 def _dt(value, suffix=True) -> str:
     if value is None or value == "":
         return "—"
@@ -124,7 +138,7 @@ def _filesize(n) -> str:
 
 
 _ENV = Environment(loader=FileSystemLoader(str(TEMPLATES)), autoescape=True, undefined=StrictUndefined)
-_ENV.filters.update(defang=_defang_filter, dt=_dt, duration=fmt_duration, filesize=_filesize)
+_ENV.filters.update(defang=_defang_filter, defang_text=_defang_text_filter, dt=_dt, duration=fmt_duration, filesize=_filesize)
 
 
 def render_html(report: dict) -> str:

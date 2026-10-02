@@ -147,6 +147,8 @@ async def _scenario(monkeypatch, caplog):
                 assert r.status_code == 403, f"d draft {r.status_code}"
                 r = await call("GET", f"{base}/export", params={"format": "pdf"})
                 assert r.status_code == 403, f"d export {r.status_code}"
+                r = await call("GET", f"{base}/export", params={"format": "json"})
+                assert r.status_code == 403, f"d export json {r.status_code}"
                 r = await call("GET", base, "get", "ok")
                 assert r.status_code == 200, f"d viewer get {r.status_code}"
                 r = await call("GET", f"{base}/charts/lifecycle.svg", "chart", "ok")
@@ -302,6 +304,8 @@ async def _scenario(monkeypatch, caplog):
                 prompt = json.dumps(ai["calls"][0]["messages"])
                 assert "executive_summary" in prompt and "lessons_learned" in prompt, "f system prompt keys"
                 assert "user:pw" not in prompt, "f credentials in prompt"
+                assert all(x not in prompt for x in (SECRET_SUMMARY, SECRET_IMPACT, SECRET_LESSONS)), \
+                    "f saved narrative in prompt"
                 after = await report_row()
                 assert (after.executive_summary, after.impact, after.lessons_learned, after.updated_at) == (
                     before.executive_summary, before.impact, before.lessons_learned, before.updated_at), "f saved"
