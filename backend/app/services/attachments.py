@@ -23,8 +23,9 @@ CHUNK = 65536
 ZIP_PASSWORD = b"infected"
 # Bidi/format controls that can disguise an extension (e.g. U+202E RIGHT-TO-LEFT OVERRIDE).
 _BIDI = {"\u200e", "\u200f", *map(chr, range(0x202A, 0x202F)), *map(chr, range(0x2066, 0x206A))}
-# ASCII-only, no CR/LF anywhere: the value is echoed back in a Content-Type header on download.
-_CONTENT_TYPE = re.compile(r'[\w.+-]+/[\w.+-]+(?:;[ \t]*[\w.+-]+=(?:[\w.+-]+|"[^"\\\r\n]*"))*', re.ASCII)
+# Echoed back in a Content-Type header on download, so every character must be header-safe: tokens are
+# ASCII word chars (re.ASCII), quoted values are printable ASCII (0x20-0x7E) minus `"` and `\`; no CR/LF/controls.
+_CONTENT_TYPE = re.compile(r'[\w.+-]+/[\w.+-]+(?:;[ \t]*[\w.+-]+=(?:[\w.+-]+|"[ !#-\[\]-~]*"))*', re.ASCII)
 
 
 class TooLarge(Exception):

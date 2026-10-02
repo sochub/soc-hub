@@ -49,6 +49,9 @@ def test_sanitize_dots_after_trim():
     ("text/plain;\r\nX-Evil=1", None), ("text/plain;\nset-cookie=a", None), ("t\u00e9xt/pla\u00edn", None),
     ('a="b""', None), ('text/plain; a="b""', None), ('text/plain; a="b\\"', None),
     ("text/plain;charset=utf-8", "text/plain;charset=utf-8"),
+    ('text/plain; a="\x00"', None), ('text/plain; a="\x7f"', None), ('text/plain; a="\x85"', None),
+    ('text/plain; a="\u00e9"', None), ('text/plain; a="\U0001f4ce"', None), ('text/plain; a="\u00a0"', None),
+    ('text/plain; a="x y"', 'text/plain; a="x y"'),
 ])
 def test_clean_content_type(raw, want):
     assert svc.clean_content_type(raw) == want
