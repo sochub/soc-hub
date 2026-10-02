@@ -1,5 +1,6 @@
 """Server-side SVG charts (no scripts, no external references)."""
-from datetime import timezone
+import re
+from datetime import timedelta, timezone
 from xml.sax.saxutils import escape, quoteattr
 
 from app.reports.milestones import fmt_duration
@@ -7,8 +8,16 @@ from app.reports.milestones import fmt_duration
 LANES = ("detection", "analyst", "indicators", "evidence")
 LANE_LABELS = {"detection": "Detection", "analyst": "Analyst", "indicators": "Indicators", "evidence": "Evidence"}
 
+_ILLEGAL = re.compile("[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def _xml_safe(s) -> str:
+    return _ILLEGAL.sub("", str(s))
+
+
 _NS = 'xmlns="http://www.w3.org/2000/svg"'
-_FONT = 'font-family="Helvetica, Arial, sans-serif"'
+_FONT = 'font-family="IBM Plex Sans, sans-serif"'
+_MONO = 'font-family="Roboto Mono, monospace"'
 _HATCH = ('<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" '
           'patternTransform="rotate(45)"><rect width="6" height="6" fill="#f4f4f5"/>'
           '<line x1="0" y1="0" x2="0" y2="6" stroke="#a1a1aa" stroke-width="2"/></pattern></defs>')
@@ -18,9 +27,10 @@ _BOUNDARIES = (("first_seen", "First seen"), ("detected", "Detected"),
                ("contained", "Contained"), ("recovered", "Recovered"))
 
 
-def _t(x, y, s, size=11, anchor="middle", fill="#27272a", weight="normal"):
+def _t(x, y, s, size=11, anchor="middle", fill="#27272a", weight="normal", mono=False):
+    font = _MONO if mono else _FONT
     return (f'<text x="{x:.1f}" y="{y}" font-size="{size}" text-anchor="{anchor}" fill="{fill}" '
-            f'font-weight="{weight}" {_FONT}>{escape(str(s))}</text>')
+            f'font-weight="{weight}" {font}>{escape(_xml_safe(s))}</text>')
 
 
 def _fmt_dt(dt):
@@ -35,6 +45,7 @@ def lifecycle_svg(m: dict) -> str:
     W, H, X0, BW, BY, BH, MIN = 760, 120, 20, 720, 22, 40, 0.08
     out_of_order = set(m.get("out_of_order") or [])
     durs = [m.get(key) for _, key, _ in _SEGMENTS]
+    durs = [None if d is None or d < 0 else d for d in durs]
     known = [d for d in durs if d is not None]
     unknown_n = len(durs) - len(known)
     ksum = sum(known)
@@ -69,7 +80,7 @@ def lifecycle_svg(m: dict) -> str:
         anchor = "start" if i == 0 else ("end" if i == len(_BOUNDARIES) - 1 else "middle")
         parts.append(f'<line x1="{ex:.1f}" y1="{BY + BH}" x2="{ex:.1f}" y2="{BY + BH + 6}" stroke="#71717a"/>')
         parts.append(_t(ex, BY + BH + 20, name, 11, anchor, weight="bold"))
-        parts.append(_t(ex, BY + BH + 34, _fmt_dt(m.get(key, {}).get("at")), 10, anchor, fill="#52525b"))
+        parts.append(_t(ex, BY + BH + 34, _fmt_dt((m.get(key) or {}).get("at")), 10, anchor, fill="#52525b", mono=True))
     parts.append("</svg>")
     return "".join(parts)
 
@@ -87,7 +98,6 @@ def timeline_svg(events: list) -> str:
     t0, t1 = evs[0]["at"], evs[-1]["at"]
     span = (t1 - t0).total_seconds()
     if span <= 0:
-        from datetime import timedelta
         t1 = t0 + timedelta(hours=1)
         span = 3600.0
 
@@ -106,7 +116,7 @@ def timeline_svg(events: list) -> str:
         tx = 100 + 640 * k / 4
         tt = t0 + (t1 - t0) * k / 4
         parts.append(f'<line x1="{tx:.1f}" y1="{axis_y}" x2="{tx:.1f}" y2="{axis_y + 5}" stroke="#71717a"/>')
-        parts.append(_t(tx, axis_y + 18, tt.strftime("%m-%d %H:%M"), 10, fill="#52525b"))
+        parts.append(_t(tx, axis_y + 18, tt.strftime("%m-%d %H:%M"), 10, fill="#52525b", mono=True))
     by_lane = {lane: [] for lane in LANES}
     for e in evs:
         by_lane[e["lane"] if e["lane"] in by_lane else "analyst"].append(e)
@@ -115,13 +125,13 @@ def timeline_svg(events: list) -> str:
         groups = []
         for e in by_lane[lane]:
             x = xpos(e["at"])
-            if groups and x - groups[-1][0] <= 14:
+            if groups and x - groups[-1][0] < 14:
                 groups[-1][1].append(e)
             else:
                 groups.append((x, [e]))
         for gx, g in groups:
             label = len(g) if len(g) > 1 else g[0]["n"]
-            tip = "; ".join(str(e.get("text", ""))[:80] for e in g[:3])
+            tip = "; ".join(_xml_safe(e.get("text") or "")[:80] for e in g[:3])
             parts.append(f'<circle cx="{gx:.1f}" cy="{y}" r="9" fill="#2563eb" stroke="#ffffff">'
                          f'<title>{escape(tip)}</title></circle>')
             parts.append(_t(gx, y + 3.5, label, 9, fill="#ffffff", weight="bold"))
