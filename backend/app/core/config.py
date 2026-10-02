@@ -76,9 +76,23 @@ class Settings(BaseSettings):
     # Threat-intel enrichment kill switch: False stops all automatic enqueueing.
     ENRICHMENT_ENABLED: bool = True
 
+    # --- Evidence attachment storage ---
+    STORAGE_BACKEND: Literal["local", "s3"] = "local"
+    STORAGE_LOCAL_PATH: str = "/data/attachments"
+    S3_BUCKET: Optional[str] = None
+    S3_REGION: Optional[str] = None
+    S3_ENDPOINT_URL: Optional[str] = None
+    S3_PREFIX: str = ""
+    MAX_UPLOAD_MB: int = Field(100, ge=1, le=5120)
+
     @field_validator("AI_PROVIDER", mode="before")
     @classmethod
     def _blank_provider_is_none(cls, v):
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("S3_BUCKET", "S3_REGION", "S3_ENDPOINT_URL", mode="before")
+    @classmethod
+    def _blank_s3_is_none(cls, v):
         return None if isinstance(v, str) and not v.strip() else v
 
     # SMTP (optional — invitations work without it)
@@ -112,8 +126,11 @@ class Settings(BaseSettings):
         unauthenticated (or default-password) Redis lets anyone who reaches it
         inject Celery tasks, and the compose default DB password is public — so
         in production each is a hard failure. Outside production we only warn,
-        to keep local development frictionless.
+        to keep local development frictionless. Separately (any environment),
+        STORAGE_BACKEND=s3 without S3_BUCKET is always a hard error.
         """
+        if self.STORAGE_BACKEND == "s3" and not self.S3_BUCKET:
+            raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")
         problems = []
         if (
             self.SECRET_KEY in _WEAK_SECRET_KEYS

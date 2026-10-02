@@ -10,6 +10,7 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
+      - attachments_data:/data/attachments
     # Published on loopback only: db/redis/ollama/backend are reachable from this
     # machine (local dev tools) but not from the network. nginx (frontend) is
     # the only public entry point.
@@ -22,6 +23,13 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
       - LITELLM_LOCAL_MODEL_COST_MAP=True
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - STORAGE_LOCAL_PATH=/data/attachments
+      - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-100}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_REGION=${S3_REGION:-}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
+      - S3_PREFIX=${S3_PREFIX:-}
     depends_on:
       db:
         condition: service_started
@@ -95,6 +103,7 @@ services:
     command: celery -A app.worker.celery_app worker -B --loglevel=info
     volumes:
       - ./backend:/app
+      - attachments_data:/data/attachments
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-sicms}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
@@ -102,6 +111,13 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=llama3
       - LITELLM_LOCAL_MODEL_COST_MAP=True
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - STORAGE_LOCAL_PATH=/data/attachments
+      - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-100}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_REGION=${S3_REGION:-}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
+      - S3_PREFIX=${S3_PREFIX:-}
     depends_on:
       db:
         condition: service_healthy
@@ -117,6 +133,8 @@ services:
     build: ./frontend
     ports:
       - "80:80"
+    environment:
+      - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-100}
     depends_on:
       - backend
     networks:
@@ -125,3 +143,4 @@ services:
 volumes:
   postgres_data:
   ollama_data:
+  attachments_data:

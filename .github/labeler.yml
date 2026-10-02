@@ -62,7 +62,7 @@ docker:
       - any-glob-to-any-file:
           - 'docker-compose*.yml'
           - '**/Dockerfile'
-          - 'frontend/nginx.conf'
+          - 'frontend/nginx/**'
 
 tests:
   - changed-files:
