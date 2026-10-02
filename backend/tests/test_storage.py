@@ -21,7 +21,8 @@ async def test_local_round_trip_and_delete(tmp_path):
     s = LocalStorage(str(tmp_path))
     n = await s.put("tenants/1/cases/2/abc", agen(b"hello ", b"world"))
     assert n == 11 and await collect(s.open("tenants/1/cases/2/abc")) == b"hello world"
-    assert oct(os.stat(tmp_path / "tenants/1/cases/2").st_mode & 0o777) == "0o700"
+    for d in ("tenants", "tenants/1", "tenants/1/cases", "tenants/1/cases/2"):
+        assert oct(os.stat(tmp_path / d).st_mode & 0o777) == "0o700", d
     await s.delete("tenants/1/cases/2/abc")
     await s.delete("tenants/1/cases/2/abc")  # missing is fine
     assert not (tmp_path / "tenants/1/cases/2/abc").exists()
@@ -32,6 +33,21 @@ async def test_local_round_trip_and_delete(tmp_path):
 async def test_local_rejects_escape(tmp_path, key):
     with pytest.raises(StorageError):
         await LocalStorage(str(tmp_path)).put(key, agen(b"x"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [".", "a/.."])
+async def test_local_rejects_root_key(tmp_path, key):
+    root = tmp_path / "root"
+    root.mkdir()
+    s = LocalStorage(str(root))
+    with pytest.raises(StorageError):
+        await s.put(key, agen(b"x"))
+    with pytest.raises(StorageError):
+        await collect(s.open(key))
+    with pytest.raises(StorageError):
+        await s.delete(key)
+    assert not list(tmp_path.rglob("*.part"))
 
 
 @pytest.mark.asyncio
@@ -66,6 +82,9 @@ class FakeBody:
         for i in range(0, len(self.data), size):
             yield self.data[i:i + size]
 
+    def close(self):
+        pass
+
 
 class FakeS3:
     def __init__(self):
@@ -99,6 +118,18 @@ async def test_s3_put_open_delete(monkeypatch):
     assert await collect(s.open("tenants/1/x")) == b"abcd"
     await s.delete("tenants/1/x")
     assert fake.calls[-1] == ("delete", "bkt", "soc/tenants/1/x")
+
+
+@pytest.mark.asyncio
+async def test_s3_open_missing_key_is_storage_error(monkeypatch):
+    from botocore.exceptions import ClientError
+
+    class Missing(FakeS3):
+        def get_object(self, Bucket, Key):
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+    monkeypatch.setattr("app.storage.s3.boto3.session.Session", lambda: type("S", (), {"client": lambda *a, **k: Missing()})())
+    with pytest.raises(StorageError):
+        await collect(S3Storage("b").open("k"))
 
 
 def test_get_storage_selects_backend(monkeypatch, tmp_path):

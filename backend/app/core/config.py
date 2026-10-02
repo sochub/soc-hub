@@ -126,7 +126,8 @@ class Settings(BaseSettings):
         unauthenticated (or default-password) Redis lets anyone who reaches it
         inject Celery tasks, and the compose default DB password is public — so
         in production each is a hard failure. Outside production we only warn,
-        to keep local development frictionless.
+        to keep local development frictionless. Separately (any environment),
+        STORAGE_BACKEND=s3 without S3_BUCKET is always a hard error.
         """
         if self.STORAGE_BACKEND == "s3" and not self.S3_BUCKET:
             raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")

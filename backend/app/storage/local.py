@@ -16,16 +16,27 @@ class LocalStorage:
             raise StorageError("invalid storage key")
         root = self.root.resolve()
         p = (root / key).resolve()
-        if root != p and root not in p.parents:
+        if root not in p.parents:
             raise StorageError("invalid storage key")
         return p
 
+    def _mkdirs(self, parent: Path) -> None:
+        root = self.root.resolve()
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for comp in parent.relative_to(root).parts:
+            root = root / comp
+            if not root.exists():
+                root.mkdir()
+                os.chmod(root, 0o700)
+
     async def put(self, key, chunks) -> int:
         path = self._path(key)
-        await asyncio.to_thread(os.makedirs, path.parent, 0o700, True)
+        await asyncio.to_thread(self._mkdirs, path.parent)
         self._path(key)  # re-check after mkdir: a symlinked parent must still resolve inside root
         part = path.with_name(path.name + ".part")
-        f = await asyncio.to_thread(open, part, "wb")
+        fd = await asyncio.to_thread(
+            os.open, part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        f = os.fdopen(fd, "wb")
         n = 0
         try:
             async for c in chunks:
@@ -33,12 +44,15 @@ class LocalStorage:
                 n += len(c)
             await asyncio.to_thread(f.flush)
             await asyncio.to_thread(os.fsync, f.fileno())
-        except BaseException:
             f.close()
+            await asyncio.to_thread(os.replace, part, path)
+        except BaseException:
+            try:
+                f.close()
+            except Exception:
+                pass
             await asyncio.to_thread(lambda: part.unlink(missing_ok=True))
             raise
-        f.close()
-        await asyncio.to_thread(os.replace, part, path)
         return n
 
     async def open(self, key):
