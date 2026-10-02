@@ -249,3 +249,25 @@ export type EnrichmentView = {
   effective_tlp: string | null; auto: boolean; results: EnrichmentResultRow[];
   suggestion: { threat_level: string | null; tags: string[] } | null;
 };
+
+export interface Attachment {
+  id: number;
+  case_id: number;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number;
+  sha256: string;
+  is_malicious: boolean;
+  description: string | null;
+  uploaded_by: number | null;
+  uploaded_by_email: string | null;
+  created_at: string;
+  deleted_at: string | null;
+  deleted_by: number | null;
+  deleted_by_email: string | null;
+}
+
+export interface AttachmentList {
+  max_upload_mb: number;
+  items: Attachment[];
+}

@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
 import CaseTasks from './CaseTasks';
+import CaseEvidence from './CaseEvidence';
 import TriagePanel from './TriagePanel';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
@@ -27,7 +28,7 @@ const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigatio
 export default function CaseDetail() {
     const { id } = useParams();
     const queryClient = useQueryClient();
-    const [activeTab, setActiveTab] = useState<'timeline' | 'tasks' | 'artifacts' | 'network' | 'audit' | 'automation'>('timeline');
+    const [activeTab, setActiveTab] = useState<'timeline' | 'tasks' | 'artifacts' | 'evidence' | 'network' | 'audit' | 'automation'>('timeline');
     const [showArtifactModal, setShowArtifactModal] = useState(false);
     const [intelOpen, setIntelOpen] = useState<number | null>(null);
     const canRunIntel = useCanRun();
@@ -229,7 +230,7 @@ export default function CaseDetail() {
 
                     {/* Tabs */}
                     <div className="flex border-b border-zinc-200 relative space-x-6">
-                        {['timeline', 'tasks', 'artifacts', 'network', 'audit', 'automation'].map((tab) => (
+                        {['timeline', 'tasks', 'artifacts', 'evidence', 'network', 'audit', 'automation'].map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => setActiveTab(tab as any)}
@@ -420,6 +421,8 @@ export default function CaseDetail() {
                             {activeTab === 'tasks' && id && (
                                 <CaseTasks caseId={parseInt(id)} />
                             )}
+
+                            {activeTab === 'evidence' && id && <CaseEvidence caseId={parseInt(id)} />}
 
                             {activeTab === 'automation' && id && <CaseAutomation caseId={parseInt(id)} />}
 
