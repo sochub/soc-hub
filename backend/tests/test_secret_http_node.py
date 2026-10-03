@@ -22,13 +22,14 @@ from app.workflows import runtime
 from app.workflows.nodes import NodeContext, NodeError, RetryableNodeError
 from app.workflows.nodes import http as http_node
 
+_REAL_CLIENT = httpx.AsyncClient
 TOK = "s3cr3t&tok en/1"
 N = "0123456789abcdef"
 PH = placeholder("TOK", N)
 
 
 def _install(monkeypatch, handler):
-    real = httpx.AsyncClient
+    real = _REAL_CLIENT
     monkeypatch.setattr(http_node.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     monkeypatch.setattr(http_node, "assert_url_allowed", lambda url, allow: None)
 
@@ -115,9 +116,46 @@ def test_transport_error_redacted_and_logged(monkeypatch, caplog):
             with pytest.raises(RetryableNodeError) as ei:
                 await http_node.run_http(_nctx(db, tid), cfg)
         msg = str(ei.value)
-        assert "••••" in msg and TOK not in msg and quote_plus(TOK) not in msg
+        assert msg == "request failed: ConnectError"
         logs = [r.getMessage() for r in caplog.records if "secret use" in r.getMessage()]
         assert "outcome=error" in logs[0] and "host=api.example.com" in logs[0]
+
+    asyncio.run(_with_tenant(body))
+
+
+def test_unexpected_exceptions_generic_and_logged_error(monkeypatch, caplog):
+    for exc in (UnicodeEncodeError("ascii", TOK, 0, 1, f"bad {TOK}"), httpx.DecodingError(f"decode {TOK}", request=httpx.Request("GET", "https://api.example.com/"))):
+        def handler(request, exc=exc):
+            raise exc
+
+        async def body(db, tid, ids):
+            _install(monkeypatch, handler)
+            caplog.clear()
+            with caplog.at_level(logging.INFO, logger=http_node.logger.name):
+                with pytest.raises(NodeError) as ei:
+                    await http_node.run_http(_nctx(db, tid), {"url": "https://api.example.com/x", "headers": {"A": PH}})
+            assert str(ei.value) == f"request failed: {type(exc).__name__}" and TOK not in str(ei.value)
+            logs = [r.getMessage() for r in caplog.records if "secret use" in r.getMessage()]
+            assert len(logs) == 1 and "outcome=error" in logs[0]
+
+        asyncio.run(_with_tenant(body))
+
+
+def test_header_value_and_name_rules(monkeypatch):
+    calls = []
+
+    async def body(db, tid, ids):
+        _install(monkeypatch, lambda r: calls.append(r) or httpx.Response(200))
+        for name, val in (("WSP", 'p\'w"d '), ("UNI", "tökén")):
+            row = TenantSecret(tenant_id=tid, name=name, value_enc=encrypt(val), allowed_hosts=["api.example.com"])
+            db.add(row)
+            await db.flush()
+            ids["s"].append(row.id)
+            with pytest.raises(NodeError, match="whitespace or non-ASCII"):
+                await http_node.run_http(_nctx(db, tid), {"url": "https://api.example.com/", "headers": {"A": placeholder(name, N)}})
+        with pytest.raises(NodeError, match="header names"):
+            await http_node.run_http(_nctx(db, tid), {"url": "https://api.example.com/", "headers": {PH: "x"}})
+        assert not calls
 
     asyncio.run(_with_tenant(body))
 
@@ -127,7 +165,7 @@ def test_5xx_message_redacted(monkeypatch):
         _install(monkeypatch, lambda r: httpx.Response(502))
         with pytest.raises(RetryableNodeError) as ei:
             await http_node.run_http(_nctx(db, tid), {"url": "https://api.example.com/x?k=" + PH})
-        assert "HTTP 502" in str(ei.value) and quote_plus(TOK) not in str(ei.value)
+        assert "HTTP 502" in str(ei.value) and "api.example.com" not in str(ei.value) and quote_plus(TOK) not in str(ei.value)
 
     asyncio.run(_with_tenant(body))
 

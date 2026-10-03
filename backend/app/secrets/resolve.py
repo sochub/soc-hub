@@ -14,7 +14,7 @@ from app.models.tenant_secret import TenantSecret
 from app.secrets.hosts import host_allowed
 from app.secrets.refs import placeholder_re
 from app.utils.crypto import decrypt
-from app.workflows.nodes import NodeError
+from app.workflows.errors import NodeError
 
 MASK = "••••"
 _MARK_RE = re.compile("\ue000(\\d+)\ue001")
@@ -85,6 +85,8 @@ async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce):
         return s
 
     _walk(body, collect)
+    if any(rx.search(k) for k in headers):
+        raise NodeError("secrets are not allowed in header names")
     if any(isinstance(k, str) and rx.search(k) for k in _body_keys(body)):
         raise NodeError("secrets are not allowed in body keys")
     if not names:
@@ -123,6 +125,8 @@ async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce):
         for n in rx.findall(v):
             if "\r" in used[n] or "\n" in used[n]:
                 raise NodeError(f"secret {n} contains a line break and cannot be used in a header")
+            if used[n] != used[n].strip() or not used[n].isascii():
+                raise NodeError(f"secret {n} has leading/trailing whitespace or non-ASCII characters and cannot be used in a header")
             if _CTRL_RE.search(used[n]):
                 raise NodeError(f"secret {n} contains a control character and cannot be used in a header")
         new_headers[k] = sub(v)
@@ -153,6 +157,8 @@ def _mask(s, vs):
     return s
 
 
+# Limits: redaction is exact-substring only over the raw/URL/form/JSON-escaped variants. A value that a
+# server echoes truncated, re-encoded (base64, hex, HTML entities...) or split is NOT masked.
 def redact_text(s, used):
     return _mask(s, _variants(used))
 

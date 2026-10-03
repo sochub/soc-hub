@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def _strings(o):
+    """All strings in o, including dict keys."""
     if isinstance(o, str):
         yield o
     elif isinstance(o, dict):
-        for v in o.values():
+        for k, v in o.items():
+            yield from _strings(k)
             yield from _strings(v)
     elif isinstance(o, (list, tuple)):
         for v in o:
@@ -51,7 +53,7 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
     host = ""
     nonce = nctx.secret_nonce
     rx = placeholder_re(nonce) if nonce else None
-    if rx and any(rx.search(x) for x in [url, *headers.values(), *_strings(body)]):
+    if rx and any(rx.search(x) for x in [url, *headers.keys(), *headers.values(), *_strings(body)]):
         try:
             host = urlsplit(url).hostname or ""
         except ValueError:
@@ -60,21 +62,26 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             url, headers, body, used = await resolve_for_request(
                 nctx.db, nctx.run.tenant_id, url, headers, body, host, nonce)
         except NodeError:
-            names = {n for x in [url, *headers.values(), *_strings(body)] for n in rx.findall(x)}
+            names = {n for x in [url, *headers.keys(), *headers.values(), *_strings(body)] for n in rx.findall(x)}
             _log_secret_use(nctx.run.tenant_id, names, host, "blocked")
             raise
     outcome = "ok"
     try:
-        return redact(await _send(url, method, headers, body, pinned_ip), used)
+        return redact(await _send(url, method, headers, body, pinned_ip, bool(used)), used)
     except NodeError as e:
         outcome = "error"
         raise type(e)(redact_text(str(e), used)) from None
+    except Exception as e:  # unexpected library error after substitution: never echo its text
+        outcome = "error"
+        if not used:
+            raise
+        raise NodeError(f"request failed: {type(e).__name__}") from None
     finally:
         if used:
             _log_secret_use(nctx.run.tenant_id, used, host, outcome)
 
 
-async def _send(url, method, headers, body, pinned_ip) -> dict:
+async def _send(url, method, headers, body, pinned_ip, secret=False) -> dict:
     # target / Host / SNI are all built from the URL after substitution
     target, extensions = url, {}
     try:
@@ -85,7 +92,7 @@ async def _send(url, method, headers, body, pinned_ip) -> dict:
             # certificate verification are still against the original name.
             target = parsed.copy_with(host=pinned_ip)
     except httpx.InvalidURL as e:
-        raise NodeError(f"invalid URL: {e}")
+        raise NodeError("invalid URL" if secret else f"invalid URL: {e}")
     if pinned_ip:
         headers = {k: v for k, v in headers.items() if k.lower() != "host"}
         headers["Host"] = parsed.netloc.decode("ascii")
@@ -107,13 +114,15 @@ async def _send(url, method, headers, body, pinned_ip) -> dict:
     try:
         status, resp_headers, raw, truncated = await asyncio.wait_for(_fetch(), timeout=15)
     except asyncio.TimeoutError:
-        raise RetryableNodeError(f"request to {url} timed out after 15s")
+        raise RetryableNodeError(f"request to {'<redacted url>' if secret else url} timed out after 15s")
     except httpx.InvalidURL as e:
-        raise NodeError(f"invalid URL: {e}")
+        raise NodeError("invalid URL" if secret else f"invalid URL: {e}")
     except httpx.TransportError as e:
-        raise RetryableNodeError(f"request failed: {e}")
+        raise RetryableNodeError(f"request failed: {type(e).__name__ if secret else e}")
+    except httpx.HTTPError as e:
+        raise NodeError(f"request failed: {type(e).__name__ if secret else e}")
     if status >= 500:
-        raise RetryableNodeError(f"HTTP {status} from {url}")
+        raise RetryableNodeError(f"HTTP {status} from {'<redacted url>' if secret else url}")
 
     try:
         parsed_body = json.loads(raw)

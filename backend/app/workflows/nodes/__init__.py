@@ -4,12 +4,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from sqlalchemy import select
 
 
-class NodeError(Exception):
-    pass
-
-
-class RetryableNodeError(NodeError):
-    pass
+from app.workflows.errors import NodeError, RetryableNodeError  # noqa: F401  (re-exported)
 
 
 WAIT = object()  # returned by nodes that pause the step (slack_ask_user, for_each)
