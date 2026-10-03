@@ -159,50 +159,52 @@ def _walk_strings(value: Any, is_key: bool = False) -> Iterator[Tuple[str, bool]
             yield from _walk_strings(v)
 
 
-def _transforms_secret(text: str) -> bool:
-    """True when a template span or raw string uses secrets other than plain insertion."""
-    if _SECRET_DYNAMIC_RE.search(text):
+def _segments(text: str, raw: bool) -> List[str]:
+    """The parts of a string that are evaluated: the whole string for raw expressions, else template spans."""
+    return [text] if raw else _SPAN_RE.findall(text)
+
+
+def _transforms_secret(seg: str, raw: bool) -> bool:
+    """True when an evaluated segment uses secrets other than plain insertion."""
+    if _SECRET_DYNAMIC_RE.search(seg) or _SECRET_BARE_RE.search(seg):
         return True
-    for span in _SPAN_RE.findall(text):
-        if not _SECRET_REF_RE.search(span) and not _SECRET_BARE_RE.search(span):
-            continue
-        if _SECRET_BARE_RE.search(span) or span.startswith("{%"):
-            return True
-        after = span[_SECRET_REF_RE.search(span).end():]
-        if _TRANSFORM_RE.search(span) or "(" in after:
-            return True
-    return False
+    ref = _SECRET_REF_RE.search(seg)
+    if not ref or raw:
+        return False
+    if seg.startswith("{%"):
+        return True
+    return bool(_TRANSFORM_RE.search(seg) or "(" in seg[ref.end():])
 
 
 def _check_secrets(errors: List[dict], node: dict, secret_names: Optional[Set[str]]) -> None:
     nid, cfg = node["id"], node.get("config") or {}
     seen: Set[str] = set()
+    raw_keys = NODE_TYPES[node["type"]]["raw"]
 
     def report(msg: str) -> None:
         if msg not in seen:
             seen.add(msg)
             _err(errors, nid, msg)
 
-    def scan(text: str, is_key: bool, allowed: bool) -> None:
-        refs = _SECRET_REF_RE.findall(text)
-        if _transforms_secret(text):
-            report(_SECRETS_NO_TRANSFORM)
-        if not refs:
-            return
-        if not allowed or is_key:
-            report(_SECRETS_ONLY_HTTP)
-            return
-        for name in refs:
-            if not SECRET_NAME_RE.match(name):
-                report(f"Invalid secret name {name}")
-            elif secret_names is not None and name not in secret_names:
-                report(f"Unknown secret {name}")
+    def scan(text: str, is_key: bool, allowed: bool, raw: bool) -> None:
+        for seg in _segments(text, raw):
+            if _transforms_secret(seg, raw):
+                report(_SECRETS_NO_TRANSFORM)
+            refs = _SECRET_REF_RE.findall(seg)
+            if refs and (not allowed or is_key):
+                report(_SECRETS_ONLY_HTTP)
+                continue
+            for name in refs:
+                if not SECRET_NAME_RE.match(name):
+                    report(f"Invalid secret name {name}")
+                elif secret_names is not None and name not in secret_names:
+                    report(f"Unknown secret {name}")
 
     is_http = node.get("type") == "http_request"
     for key, value in cfg.items():
         allowed = is_http and key in _HTTP_SECRET_KEYS
         for text, is_key in _walk_strings(value):
-            scan(text, is_key, allowed)
+            scan(text, is_key, allowed, key in raw_keys)
 
 
 def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> None:

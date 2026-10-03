@@ -114,8 +114,9 @@ async def update_workflow(workflow_id: int, body: WorkflowIn, db: AsyncSession =
                           current_user: User = Depends(deps.require_admin),
                           tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     wf = await _get_workflow(db, workflow_id, tenant_id)
+    names = await _secret_names(db, tenant_id)
     if wf.enabled:
-        errors = workflow_errors(body.graph, body.trigger_type, body.trigger_filter, await _secret_names(db, tenant_id))
+        errors = workflow_errors(body.graph, body.trigger_type, body.trigger_filter, names)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors, "message": "Disable the workflow to save an invalid graph"})
     wf.name, wf.description, wf.trigger_type = body.name, body.description, body.trigger_type
@@ -124,7 +125,7 @@ async def update_workflow(workflow_id: int, body: WorkflowIn, db: AsyncSession =
                            user_id=current_user.id, changes={"version": wf.version})
     await db.commit()
     await db.refresh(wf)
-    return _out(wf, await _run_stats(db, [wf.id]), await _secret_names(db, tenant_id))
+    return _out(wf, await _run_stats(db, [wf.id]), names)
 
 
 @router.delete("/{workflow_id}", status_code=204)
@@ -150,9 +151,9 @@ async def validate_workflow(workflow_id: int, db: AsyncSession = Depends(deps.ge
     return {"errors": workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter, await _secret_names(db, tenant_id))}
 
 
-async def _set_enabled(db, wf: Workflow, enabled: bool, user_id: int, tenant_id: int) -> None:
+async def _set_enabled(db, wf: Workflow, enabled: bool, user_id: int, tenant_id: int, names: Optional[set] = None) -> None:
     if enabled:
-        errors = workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter, await _secret_names(db, tenant_id))
+        errors = workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter, names)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
     wf.enabled = enabled
@@ -167,8 +168,9 @@ async def enable_workflow(workflow_id: int, db: AsyncSession = Depends(deps.get_
                           current_user: User = Depends(deps.require_admin),
                           tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     wf = await _get_workflow(db, workflow_id, tenant_id)
-    await _set_enabled(db, wf, True, current_user.id, tenant_id)
-    return _out(wf, await _run_stats(db, [wf.id]), await _secret_names(db, tenant_id))
+    names = await _secret_names(db, tenant_id)
+    await _set_enabled(db, wf, True, current_user.id, tenant_id, names)
+    return _out(wf, await _run_stats(db, [wf.id]), names)
 
 
 @router.post("/{workflow_id}/disable", response_model=WorkflowOut)

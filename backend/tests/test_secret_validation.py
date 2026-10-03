@@ -85,6 +85,19 @@ def test_unrelated_text_and_fields_ok():
     assert msgs(graph("case_add_note", {"content": "rotate the secrets today; {{ case.secrets }}"})) == []
 
 
+@pytest.mark.parametrize("prose", [
+    "| secrets | value |", "rotate secrets [urgent]", "audit secrets.json", "see secrets.md", "secrets | list",
+])
+def test_prose_outside_spans_accepted(prose):
+    assert msgs(graph("case_add_note", {"content": prose})) == []
+    assert msgs(http(body={"text": prose})) == []
+
+
+def test_dedupe_per_node():
+    g = http(headers={"A": "{{ secrets.NOPE }}", "B": "{{ secrets.NOPE }}"}, body="{{ secrets.NOPE }}")
+    assert msgs(g).count("Unknown secret NOPE") == 1
+
+
 def test_trigger_filter():
     g = http()
     assert {"node_id": None, "message": ONLY} in [
@@ -100,12 +113,15 @@ async def _api_scenario():
     async with AsyncSessionLocal() as db:
         try:
             t = Tenant(name="wf-test", slug=f"wf-test-{h}-sv")
+            t2 = Tenant(name="wf-test", slug=f"wf-test-{h}-sw")
             user = User(email=f"wf-sv-{h}@example.test", hashed_password=get_password_hash(pysecrets.token_hex(8)), is_active=True)
-            db.add_all([t, user])
+            db.add_all([t, t2, user])
             await db.flush()
+            ids["tenants"] += [t2.id]
             ids["tenants"].append(t.id)
             ids["users"].append(user.id)
             db.add(TenantSecret(tenant_id=t.id, name="KNOWN", value_enc="x", allowed_hosts=[]))
+            db.add(TenantSecret(tenant_id=t2.id, name="OTHER", value_enc="x", allowed_hosts=[]))
             await db.commit()
             app.dependency_overrides[deps.get_current_active_user] = lambda: user
             app.dependency_overrides[deps.require_admin] = lambda: user
@@ -127,6 +143,14 @@ async def _api_scenario():
                 assert "Unknown secret NOPE" in str(r.json()), r.text
                 r = await c.post(f"/api/v1/workflows/{wid}/validate")
                 assert r.json()["errors"] == []
+                # tenant B's secret name is unknown to tenant A
+                r = await c.post("/api/v1/workflows/", json=body("OTHER"))
+                assert r.status_code == 201, r.text
+                other = r.json()
+                ids["workflows"].append(other["id"])
+                assert [e["message"] for e in other["validation_errors"]] == ["Unknown secret OTHER"], other
+                r = await c.post(f"/api/v1/workflows/{other['id']}/enable")
+                assert r.status_code == 422 and "Unknown secret OTHER" in str(r.json()), r.text
         finally:
             app.dependency_overrides.clear()
             await db.rollback()
