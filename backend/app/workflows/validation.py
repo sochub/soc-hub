@@ -1,13 +1,24 @@
 """Pure save-time validation of a workflow graph."""
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
+from app.secrets.refs import NAME_RE as SECRET_NAME_RE
 from app.services.slack_service import parse_button_labels
 from app.workflows.loops import MAX_CONCURRENCY, MAX_ITEMS_CAP
 from app.workflows.node_types import NODE_TYPES, TRIGGER_TYPES, MAX_NODES
 from app.workflows.templating import syntax_errors
 
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+_SECRET_REF_RE = re.compile(r"\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)")
+_SECRET_BARE_RE = re.compile(r"(?<![\w.])secrets\b(?!\.[A-Za-z_])")  # `secrets` not used as secrets.NAME
+_SECRET_DYNAMIC_RE = re.compile(r"(?<![\w.])secrets\s*[\[|]")
+_SPAN_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
+_TRANSFORM_RE = re.compile(r"\||\[|==|!=|\+| in ")
+_SECRETS_ONLY_HTTP = "Secrets are only allowed in HTTP request URL, headers and body"
+_SECRETS_NO_TRANSFORM = "secrets can only be inserted, not transformed"
+_HTTP_SECRET_KEYS = ("url", "headers", "body")
 
 
 def _err(errors: List[dict], node_id: Optional[str], message: str) -> None:
@@ -135,6 +146,65 @@ def _has_cycle(node_ids: List[str], edges: List[dict]) -> bool:
     return False
 
 
+def _walk_strings(value: Any, is_key: bool = False) -> Iterator[Tuple[str, bool]]:
+    """Yield (string, is_dict_key) for every string in a nested config value."""
+    if isinstance(value, str):
+        yield value, is_key
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from _walk_strings(str(k), True)
+            yield from _walk_strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _walk_strings(v)
+
+
+def _transforms_secret(text: str) -> bool:
+    """True when a template span or raw string uses secrets other than plain insertion."""
+    if _SECRET_DYNAMIC_RE.search(text):
+        return True
+    for span in _SPAN_RE.findall(text):
+        if not _SECRET_REF_RE.search(span) and not _SECRET_BARE_RE.search(span):
+            continue
+        if _SECRET_BARE_RE.search(span) or span.startswith("{%"):
+            return True
+        after = span[_SECRET_REF_RE.search(span).end():]
+        if _TRANSFORM_RE.search(span) or "(" in after:
+            return True
+    return False
+
+
+def _check_secrets(errors: List[dict], node: dict, secret_names: Optional[Set[str]]) -> None:
+    nid, cfg = node["id"], node.get("config") or {}
+    seen: Set[str] = set()
+
+    def report(msg: str) -> None:
+        if msg not in seen:
+            seen.add(msg)
+            _err(errors, nid, msg)
+
+    def scan(text: str, is_key: bool, allowed: bool) -> None:
+        refs = _SECRET_REF_RE.findall(text)
+        if _transforms_secret(text):
+            report(_SECRETS_NO_TRANSFORM)
+        if not refs:
+            return
+        if not allowed or is_key:
+            report(_SECRETS_ONLY_HTTP)
+            return
+        for name in refs:
+            if not SECRET_NAME_RE.match(name):
+                report(f"Invalid secret name {name}")
+            elif secret_names is not None and name not in secret_names:
+                report(f"Unknown secret {name}")
+
+    is_http = node.get("type") == "http_request"
+    for key, value in cfg.items():
+        allowed = is_http and key in _HTTP_SECRET_KEYS
+        for text, is_key in _walk_strings(value):
+            scan(text, is_key, allowed)
+
+
 def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> None:
     nid, spec, cfg = node["id"], NODE_TYPES[node["type"]], node.get("config") or {}
     for key in spec["required"]:
@@ -171,7 +241,7 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             _err(errors, nid, f"template error in '{key}': {msg}")
 
 
-def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
+def validate_graph(graph: Any, trigger_type: str, secret_names: Optional[Set[str]] = None) -> List[dict]:
     """Validate a workflow graph. Returns list of error dicts, empty list if valid.
 
     Handles malformed input gracefully by returning errors instead of raising.
@@ -198,6 +268,7 @@ def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
             _err(errors, nid, f"unknown node type '{node.get('type')}'")
             continue
         _check_node_config(errors, node, trigger_type)
+        _check_secrets(errors, node, secret_names)
 
     triggers = [n for n in nodes if n.get("type") == "trigger"]
     if len(triggers) != 1:
@@ -278,8 +349,12 @@ def validate_trigger_filter(expr: Optional[str]) -> List[dict]:
     """Syntax-check the optional trigger filter expression."""
     if not expr or not expr.strip():
         return []
-    return [{"node_id": None, "message": f"trigger filter: {msg}"} for msg in syntax_errors(expr, raw=True)]
+    errors = [{"node_id": None, "message": f"trigger filter: {msg}"} for msg in syntax_errors(expr, raw=True)]
+    if _SECRET_REF_RE.search(expr) or _SECRET_BARE_RE.search(expr):
+        errors.append({"node_id": None, "message": _SECRETS_ONLY_HTTP})
+    return errors
 
 
-def workflow_errors(graph: Any, trigger_type: str, trigger_filter: Optional[str]) -> List[dict]:
-    return validate_trigger_filter(trigger_filter) + validate_graph(graph, trigger_type)
+def workflow_errors(graph: Any, trigger_type: str, trigger_filter: Optional[str],
+                    secret_names: Optional[Set[str]] = None) -> List[dict]:
+    return validate_trigger_filter(trigger_filter) + validate_graph(graph, trigger_type, secret_names)
