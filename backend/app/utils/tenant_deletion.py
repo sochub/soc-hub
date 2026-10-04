@@ -9,6 +9,7 @@ from app.models.audit_log import AuditLog
 from app.models.invitation import Invitation
 from app.models.ioc import IOC
 from app.models.copilot_session import CopilotSession
+from app.models.notification import Notification, CaseFollower
 
 
 async def delete_tenant_cascade(db: AsyncSession, tenant: Tenant) -> None:
@@ -28,6 +29,9 @@ async def delete_tenant_cascade(db: AsyncSession, tenant: Tenant) -> None:
     case_ids = (
         await db.execute(select(Case.id).where(Case.tenant_id == tenant.id))
     ).scalars().all()
+
+    await db.execute(delete(Notification).where(Notification.tenant_id == tenant.id))
+    await db.execute(delete(CaseFollower).where(CaseFollower.tenant_id == tenant.id))
 
     if case_ids:
         await db.execute(delete(CaseArtifact).where(CaseArtifact.case_id.in_(case_ids)))
