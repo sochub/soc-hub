@@ -224,6 +224,8 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             _err(errors, nid, "missing required field 'case_id'")
         if mode == "group" and not cfg.get("group_key"):
             _err(errors, nid, "missing required field 'group_key'")
+    if node["type"] == "http_request" and cfg.get("headers") is not None and not isinstance(cfg["headers"], dict):
+        _err(errors, nid, "Headers must be a JSON object")
     if node["type"] == "slack_ask_user":
         try:
             if len(parse_button_labels(cfg.get("buttons"))) > 5:

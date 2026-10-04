@@ -29,18 +29,12 @@ export function SecretDialog({ secret, prefill, tenantId, onClose, onSaved }: {
     const valueOk = edit || value.trim().length > 0;
 
     const save = useMutation({
-        mutationFn: async () => {
-            if (edit) {
-                const b: Record<string, unknown> = { allowed_hosts: list, description: desc.trim() };
-                if (value.trim()) b.value = value;
-                return api.put(`/secrets/${secret!.name}`, b);
-            }
-            return api.post('/secrets/', { name, value, allowed_hosts: list, description: desc.trim() || null });
-        },
+        mutationFn: async (b: Record<string, unknown>) =>
+            edit ? api.put(`/secrets/${secret!.name}`, b) : api.post('/secrets/', b),
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['secrets', tenantId] });
             qc.invalidateQueries({ queryKey: ['secret-names'] });
-            setValue('');
+            setValue(''); save.reset();
             onSaved?.(edit ? secret!.name : name);
             onClose();
         },
@@ -52,7 +46,14 @@ export function SecretDialog({ secret, prefill, tenantId, onClose, onSaved }: {
             footer={<>
                 <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
                 <button type="button" className={btnPrimary} disabled={save.isPending || !nameOk || !valueOk || anyBad}
-                    onClick={() => { setErr(null); save.mutate(); }}>{save.isPending ? 'Saving…' : 'Save'}</button>
+                    onClick={() => {
+                        setErr(null);
+                        if (edit) {
+                            const b: Record<string, unknown> = { allowed_hosts: list, description: desc.trim() };
+                            if (value.trim()) b.value = value;
+                            save.mutate(b);
+                        } else save.mutate({ name, value, allowed_hosts: list, description: desc.trim() || null });
+                    }}>{save.isPending ? 'Saving…' : 'Save'}</button>
             </>}>
             <form className="space-y-3" onSubmit={(e) => e.preventDefault()} autoComplete="off">
                 <label className="block"><span className={modalLabel}>Name</span>
@@ -91,7 +92,7 @@ export function SecretDialog({ secret, prefill, tenantId, onClose, onSaved }: {
 export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
     const key = ['secrets', tenantId];
     const qc = useQueryClient();
-    const { data } = useQuery({ queryKey: key, queryFn: async () => (await api.get('/secrets/')).data as Secret[] });
+    const { data, isError, error } = useQuery({ queryKey: key, queryFn: async () => (await api.get('/secrets/')).data as Secret[] });
     const [dialog, setDialog] = useState<{ secret: Secret | null } | null>(null);
     const [confirm, setConfirm] = useState<string | null>(null);
     const [inUse, setInUse] = useState<{ name: string; workflows: { id: number; name: string }[] } | null>(null);
@@ -112,6 +113,7 @@ export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
         },
     });
 
+    if (isError) return <div role="alert" className="bg-white border border-zinc-200 p-5 text-sm text-red-700">Secrets: {errText(error, 'could not load secrets')}</div>;
     if (!data) return null;
     const btn = 'h-8 px-3 text-sm';
 

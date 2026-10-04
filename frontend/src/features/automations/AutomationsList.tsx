@@ -21,6 +21,7 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
         Object.fromEntries(items.map((i) => [`${i.workflow_id}|${itemKey(i)}`, i.suggested_name])));
     const [busy, setBusy] = useState<number | null>(null);
     const [res, setRes] = useState<Record<number, { ok: boolean; text: string }>>({});
+    const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
     const byWf = new Map<number, SecretScanItem[]>();
     items.forEach((i) => byWf.set(i.workflow_id, [...(byWf.get(i.workflow_id) ?? []), i]));
 
@@ -30,7 +31,8 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
             const r = (await api.post(`/secrets/convert/${wid}`, {
                 items: its.map((i) => ({ node_id: i.node_id, location: i.location, key: i.key, secret_name: names[`${wid}|${itemKey(i)}`] })),
             })).data as { created: string[]; reused: string[] };
-            setRes((p) => ({ ...p, [wid]: { ok: true, text: `Converted. Created ${r.created.length}, reused ${r.reused.length}.` } }));
+            const text = `Converted ${its[0].workflow_name}: created ${r.created.length}, reused ${r.reused.length}.`;
+            setRes((p) => ({ ...p, [wid]: { ok: true, text } })); setStatus({ ok: true, text });
             qc.invalidateQueries({ queryKey: ['secrets-scan'] });
             qc.invalidateQueries({ queryKey: ['secrets'] });
             qc.invalidateQueries({ queryKey: ['secret-names'] });
@@ -38,7 +40,8 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
             qc.invalidateQueries({ queryKey: ['workflow', wid] });
             onDone();
         } catch (e) {
-            setRes((p) => ({ ...p, [wid]: { ok: false, text: errText(e, 'Convert failed') } }));
+            const text = errText(e, 'Convert failed');
+            setRes((p) => ({ ...p, [wid]: { ok: false, text } })); setStatus({ ok: false, text: `${its[0].workflow_name}: ${text}` });
         } finally { setBusy(null); }
     };
 
@@ -46,6 +49,7 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
         <Modal open onClose={onClose} size="lg" title="Plaintext credentials in workflows"
             footer={<button type="button" className={btnSecondary} onClick={onClose}>Close</button>}>
             <p className="text-xs text-zinc-500 mb-3">Each credential becomes a secret restricted to the request host, and the workflow is rewritten to reference it. Pick the names, then convert per workflow.</p>
+            {status && <p role="status" className={`mb-3 text-xs ${status.ok ? 'text-emerald-700' : 'text-red-700'}`}>{status.text}</p>}
             <div className="space-y-4">
                 {[...byWf.entries()].map(([wid, its]) => {
                     const valid = its.every((i) => NAME_RE.test(names[`${wid}|${itemKey(i)}`] ?? ''));

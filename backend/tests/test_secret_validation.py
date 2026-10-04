@@ -37,6 +37,13 @@ def msgs(g, names=frozenset({"TOK"}), trigger="manual"):
     return [x["message"] for x in validate_graph(g, trigger, names)]
 
 
+def test_headers_must_be_object():
+    for bad in ("Authorization: {{ secrets.TOK }}", ["a"], 5):
+        assert "Headers must be a JSON object" in msgs(http(headers=bad))
+    assert "Headers must be a JSON object" not in msgs(http(headers={"A": "b"}))
+    assert "Headers must be a JSON object" not in msgs(http())
+
+
 def test_valid_uses():
     assert msgs(http(headers={"Authorization": "Bearer {{ secrets.TOK }}"})) == []
     assert msgs(http(url="https://a.example/?k={{ secrets.TOK }}")) == []

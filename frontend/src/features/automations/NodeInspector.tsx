@@ -24,8 +24,12 @@ const CRED_HEADERS = new Set(['authorization', 'x-api-key', 'api-key', 'apikey',
 const SCHEME_RE = /^((?:Bearer|Token)\s+)(\S[\s\S]*)$/i;
 
 function urlHost(url: unknown): string {
-    const m = typeof url === 'string' ? /^https?:\/\/([^/{?#:@]+)/i.exec(url) : null;
-    return m ? m[1].toLowerCase() : '';
+    if (typeof url !== 'string' || url.includes('{{')) {
+        // templated URL: take only the literal host before any placeholder/path
+        const m = typeof url === 'string' ? /^https?:\/\/([^/{?#:@]+)(?=[/?#:]|$)/i.exec(url) : null;
+        return m ? m[1].toLowerCase() : '';
+    }
+    try { return new URL(url).hostname.toLowerCase(); } catch { return ''; }
 }
 
 /** "Insert secret" select: picks a tenant secret name; the caller inserts `{{ secrets.NAME }}`. */
@@ -59,21 +63,48 @@ function insertAt(el: HTMLInputElement | HTMLTextAreaElement | null, text: strin
     return text.slice(0, a) + tpl + text.slice(b);
 }
 
-function JsonField({ value, disabled, onChange, secrets }: { value: unknown; disabled: boolean; onChange: (v: unknown) => void; secrets?: boolean }) {
+/** Insert `{{ secrets.NAME }}` into JSON text: quoted unless the caret is already inside a string. */
+function jsonInsert(el: HTMLTextAreaElement | null, text: string, name: string, headers: boolean): string {
+    const tpl = secretTemplate(name);
+    if (headers && !text.trim()) return `{"Authorization": "${tpl}"}`;
+    const a = el?.selectionStart ?? text.length;
+    const b = el?.selectionEnd ?? a;
+    let quotes = 0;
+    for (let i = 0; i < a; i++) {
+        if (text[i] === '\\') i++;
+        else if (text[i] === '"') quotes++;
+    }
+    const ins = quotes % 2 === 0 ? `"${tpl}"` : tpl;
+    return text.slice(0, a) + ins + text.slice(b);
+}
+
+function JsonField({ value, disabled, onChange, secrets, object }: { value: unknown; disabled: boolean; onChange: (v: unknown) => void; secrets?: boolean; object?: boolean }) {
     const ref = useRef<HTMLTextAreaElement>(null);
     const [text, setText] = useState(value === undefined || value === null ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2));
-    const [err, setErr] = useState<string | null>(null);
+    const [err, setErr] = useState<{ hard: boolean; text: string } | null>(() => {
+        if (typeof value !== 'string' || !value.trim()) return null;
+        try { JSON.parse(value); return null; } catch {
+            return object ? { hard: true, text: 'Headers must be a JSON object' } : { hard: false, text: 'Not valid JSON — saved as a text template' };
+        }
+    });
     const commit = (t: string) => {
         if (!t.trim()) { setErr(null); onChange(undefined); return; }
-        try { onChange(JSON.parse(t)); setErr(null); }
-        catch { onChange(t); setErr('Not valid JSON — saved as a text template'); }
+        let parsed: unknown;
+        try { parsed = JSON.parse(t); } catch {
+            if (object) { setErr({ hard: true, text: 'Headers must be a valid JSON object — not saved' }); return; }
+            onChange(t); setErr({ hard: false, text: 'Not valid JSON — saved as a text template' }); return;
+        }
+        if (object && (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))) {
+            setErr({ hard: true, text: 'Headers must be a JSON object — not saved' }); return;
+        }
+        onChange(parsed); setErr(null);
     };
     return (
         <>
             <textarea ref={ref} rows={4} className={monoCls} disabled={disabled} value={text} onChange={(e) => setText(e.target.value)}
                 onBlur={() => commit(text)} />
-            {secrets && <SecretPicker disabled={disabled} onPick={(n) => { const t = insertAt(ref.current, text, n); setText(t); commit(t); }} />}
-            {err && <p className="text-[11px] text-amber-700 mt-0.5">{err}</p>}
+            {secrets && <SecretPicker disabled={disabled} onPick={(n) => { const t = jsonInsert(ref.current, text, n, !!object); setText(t); commit(t); }} />}
+            {err && <p role={err.hard ? 'alert' : undefined} className={`text-[11px] mt-0.5 ${err.hard ? 'text-red-700' : 'text-amber-700'}`}>{err.text}</p>}
         </>
     );
 }
@@ -89,7 +120,7 @@ function Field({ f, value, disabled, onChange, secrets }: { f: FieldDef; value: 
         case 'textarea':
             return <textarea rows={4} className={monoCls} disabled={disabled} value={str} placeholder={f.placeholder} onChange={(e) => onChange(e.target.value)} />;
         case 'json':
-            return <JsonField key={JSON.stringify(value) ?? ''} value={value} disabled={disabled} onChange={onChange} secrets={secrets} />;
+            return <JsonField key={JSON.stringify(value) ?? ''} value={value} disabled={disabled} onChange={onChange} secrets={secrets} object={f.key === 'headers'} />;
         default:
             return <>
                 <input ref={ref} className={f.kind === 'number' ? inputCls : monoCls} disabled={disabled} value={str} placeholder={f.placeholder}
@@ -104,6 +135,7 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
     const [idDraft, setIdDraft] = useState(node.id);
     const [move, setMove] = useState<{ key: string; prefix: string; prefill: SecretPrefill } | null>(null);
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
+    const isAdmin = me?.role === 'admin' || !!me?.is_super_admin;
     const headers = node.type === 'http_request' && node.config.headers && typeof node.config.headers === 'object' && !Array.isArray(node.config.headers)
         ? node.config.headers as Record<string, unknown> : {};
     const literalHeaders = Object.entries(headers).filter(([k, v]) =>
@@ -140,13 +172,13 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
                     {f.key === 'headers' && !readOnly && literalHeaders.map(([k, v]) => (
                         <div key={k} className="mt-1 flex items-center gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1">
                             <span className="flex-1"><span className="font-mono">{k}</span> holds a literal credential.</span>
-                            <button type="button" className="px-2 py-0.5 border border-amber-300 bg-white hover:bg-amber-100"
+                            {isAdmin && <button type="button" className="px-2 py-0.5 border border-amber-300 bg-white hover:bg-amber-100"
                                 onClick={(ev) => {
                                     ev.preventDefault();
                                     const m = k.toLowerCase() === 'authorization' ? SCHEME_RE.exec(v as string) : null;
                                     const host = urlHost(node.config.url);
                                     setMove({ key: k, prefix: m ? m[1] : '', prefill: { name: suggestName(host || 'secret', k), value: m ? m[2] : (v as string), host } });
-                                }}>Move to secret</button>
+                                }}>Move to secret</button>}
                         </div>
                     ))}
                 </label>
