@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, or_
+from sqlalchemy import delete, or_, select
 
 from app.db.session import AsyncSessionLocal, engine
 from app.models.notification import Notification
@@ -43,14 +43,22 @@ def deliver_notifications_task(self, ids):
         raise self.retry(args=[[nid for nid, _ in retry]], countdown=30 * 2 ** self.request.retries)
 
 
-async def _prune():
+async def _prune(only_ids=None):
+    """Age-bounded retention delete in batches; only_ids further restricts it (tests)."""
     now = datetime.now(timezone.utc)
+    cond = or_(Notification.created_at < now - timedelta(days=180),
+               (Notification.read_at.isnot(None)) & (Notification.created_at < now - timedelta(days=90)))
+    sub = select(Notification.id).where(cond)
+    if only_ids is not None:
+        sub = sub.where(Notification.id.in_(list(only_ids)))
+    sub = sub.limit(5000)
     try:
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(Notification).where(or_(
-                Notification.created_at < now - timedelta(days=180),
-                (Notification.read_at.isnot(None)) & (Notification.created_at < now - timedelta(days=90)))))
-            await db.commit()
+            while True:
+                res = await db.execute(delete(Notification).where(Notification.id.in_(sub)))
+                await db.commit()
+                if not res.rowcount:
+                    break
     finally:
         await engine.dispose()
 

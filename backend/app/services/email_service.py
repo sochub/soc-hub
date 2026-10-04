@@ -20,7 +20,8 @@ def _smtp_configured() -> bool:
     return bool(settings.SMTP_HOST and settings.SMTP_FROM_EMAIL)
 
 
-def _send_email(to_email: str, subject: str, html_body: str) -> bool:
+def _send_email(to_email: str, subject: str, html_body: str, log_recipient: bool = True) -> bool:
+    """log_recipient=False logs only the outcome and exception class (no address, subject or traceback)."""
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = settings.SMTP_FROM_EMAIL
@@ -35,10 +36,16 @@ def _send_email(to_email: str, subject: str, html_body: str) -> bool:
             if settings.SMTP_USER and settings.SMTP_PASSWORD:
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.send_message(msg)
-        logger.info("Email sent to %s: %s", to_email, subject)
+        if log_recipient:
+            logger.info("Email sent to %s: %s", to_email, subject)
+        else:
+            logger.info("email sent")
         return True
-    except Exception:
-        logger.exception("Failed to send email to %s", to_email)
+    except Exception as e:
+        if log_recipient:
+            logger.exception("Failed to send email to %s", to_email)
+        else:
+            logger.warning("email failed reason=%s", type(e).__name__)
         return False
 
 

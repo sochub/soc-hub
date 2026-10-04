@@ -3,7 +3,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
+
+from app.models.membership import TenantMembership
+from app.models.user import User
 
 from app.models.case import Case
 from app.models.notification import Notification
@@ -52,7 +55,7 @@ def wire(monkeypatch, slack=None, smtp=False, sent=None):
     monkeypatch.setattr(delivery, "load_integration", li)
     monkeypatch.setattr(delivery, "slack_call", slack or FakeSlack())
     monkeypatch.setattr(delivery, "_smtp_configured", lambda: smtp)
-    monkeypatch.setattr(delivery, "_send_email", lambda to, subj, body: (sent.append((to, subj, body)) if sent is not None else None) or True)
+    monkeypatch.setattr(delivery, "_send_email", lambda to, subj, body, **kw: (sent.append((to, subj, body)) if sent is not None else None) or True)
 
 
 async def make_mention(db, ctx):
@@ -92,7 +95,7 @@ async def test_slack_first(db, ctx, mp):
 async def test_email_fallback_on_users_not_found(db, ctx, mp):
     n = await make_mention(db, ctx)
     sent = []
-    wire(mp, slack=FakeSlack("users.lookupByEmail", SlackError("users.lookupByEmail: users_not_found")), smtp=True, sent=sent)
+    wire(mp, slack=FakeSlack("users.lookupByEmail", SlackError("users.lookupByEmail: users_not_found", code="users_not_found")), smtp=True, sent=sent)
     assert await delivery.deliver_one(db, n.id, FakeRedis()) == "email"
     assert len(sent) == 1 and SENTINEL not in sent[0][2] and "Evil &lt;b&gt;&amp;title" in sent[0][2]
 
@@ -125,7 +128,7 @@ async def test_rate_limited(db, ctx, mp):
 @run
 async def test_transient_retries(db, ctx, mp):
     n = await make_mention(db, ctx)
-    for exc in (SlackError("chat.postMessage: ratelimited"), SlackError("chat.postMessage: [Errno 8] boom")):
+    for exc in (SlackError("chat.postMessage: ratelimited", code="ratelimited"), SlackError("chat.postMessage: [Errno 8] boom")):
         wire(mp, slack=FakeSlack("chat.postMessage", exc))
         r = FakeRedis()
         with pytest.raises(delivery.TransientDeliveryError):
@@ -145,30 +148,90 @@ async def test_non_external_type_skipped(db, ctx, mp):
     assert await delivery.deliver_one(db, n.id, FakeRedis()) == "skipped"
 
 
+class FakeSMTP:
+    fail = False
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def ehlo(self):
+        pass
+
+    def starttls(self):
+        pass
+
+    def login(self, *a):
+        pass
+
+    def send_message(self, msg):
+        if FakeSMTP.fail:
+            raise OSError("smtp down for " + msg["To"])
+
+
 @run
 async def test_logs_have_no_pii(db, ctx, mp):
+    import smtplib
+    from app.services import email_service
     n = await make_mention(db, ctx)
-    email = f"trig-c-"  # prefix of the recipient address
-    wire(mp, slack=FakeSlack("chat.postMessage", SlackError("chat.postMessage: ratelimited")))
-    logger = logging.getLogger()
+    email = (await db.execute(select(User.email).where(User.id == n.user_id))).scalar_one()
+    mp.setattr(smtplib, "SMTP", FakeSMTP)
+    mp.setattr(email_service.settings, "SMTP_HOST", "smtp.invalid", raising=False)
+    mp.setattr(email_service.settings, "SMTP_FROM_EMAIL", "from@example.test", raising=False)
+    mp.setattr(email_service.settings, "SMTP_USER", "", raising=False)
     records = []
     h = logging.Handler()
     h.emit = records.append
-    logger.addHandler(h)
-    old = logger.level
-    logger.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    root.addHandler(h)
+    old = root.level
+    root.setLevel(logging.DEBUG)
     try:
+        for fail in (False, True):
+            FakeSMTP.fail = fail
+            mp.setattr(delivery, "load_integration", lambda db, t: (_ for _ in ()).throw(SlackError("Slack is not configured")))
+            mp.setattr(delivery, "_smtp_configured", lambda: True)
+            mp.setattr(delivery, "_send_email", email_service._send_email)
+            assert await delivery.deliver_one(db, n.id, FakeRedis()) == ("none" if fail else "email")
+        wire(mp, slack=FakeSlack("chat.postMessage", SlackError("chat.postMessage: ratelimited", code="ratelimited")))
         with pytest.raises(delivery.TransientDeliveryError):
             await delivery.deliver_one(db, n.id, FakeRedis())
-        wire(mp, slack=None, smtp=True, sent=[])
-        await delivery.deliver_one(db, n.id, FakeRedis())
         await tasks._deliver([n.id, 10 ** 9])
     finally:
-        logger.removeHandler(h)
-        logger.setLevel(old)
+        FakeSMTP.fail = False
+        root.removeHandler(h)
+        root.setLevel(old)
+    assert any("email sent" in r.getMessage() for r in records) and any("email failed" in r.getMessage() for r in records)
     for r in records:
         m = r.getMessage()
-        assert email not in m and n.summary not in m and SENTINEL not in m and "@example.test" not in m
+        assert r.exc_info is None or "email" not in m
+        assert email not in m and "@example.test" not in m and n.summary not in m and SENTINEL not in m
+
+
+@run
+async def test_removed_member_skipped(db, ctx, mp):
+    n = await make_mention(db, ctx)
+    await db.execute(delete(TenantMembership).where(TenantMembership.user_id == n.user_id, TenantMembership.tenant_id == n.tenant_id))
+    await db.commit()
+    slack = FakeSlack()
+    wire(mp, slack=slack)
+    assert await delivery.deliver_one(db, n.id, FakeRedis()) == "skipped"
+    assert slack.calls == []
+
+
+@run
+async def test_unexpected_error_releases_rate_key(db, ctx, mp):
+    n = await make_mention(db, ctx)
+    wire(mp, slack=FakeSlack("conversations.open", RuntimeError("boom")))
+    r = FakeRedis()
+    with pytest.raises(RuntimeError):
+        await delivery.deliver_one(db, n.id, r)
+    assert r.keys == set()
 
 
 @run
@@ -222,6 +285,6 @@ async def test_prune(db, ctx):
     await db.commit()
     ids = [old_read.id, old_unread.id, fresh.id]
     fresh_id = fresh.id
-    await tasks._prune()
+    await tasks._prune(only_ids=ids)
     left = (await db.execute(select(Notification.id).where(Notification.id.in_(ids)))).scalars().all()
     assert left == [fresh_id]

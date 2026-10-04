@@ -21,7 +21,9 @@ _CASE_RE = re.compile(r"case:([0-9]{1,10}):([0-9]{1,10}):([a-z]{1,10})")
 
 
 class SlackError(Exception):
-    pass
+    def __init__(self, message: str = "", code: Optional[str] = None):
+        super().__init__(message)
+        self.code = code  # Slack API error code; None for transport/other errors
 
 
 def verify_signature(signing_secret: str, timestamp: str, body: bytes, signature: str, now: Optional[float] = None) -> bool:
@@ -48,7 +50,8 @@ async def slack_call(token: str, method: str, **args) -> dict:
     except (httpx.HTTPError, ValueError) as e:
         raise SlackError(f"{method}: {e}") from e
     if not body.get("ok"):
-        raise SlackError(f"{method}: {body.get('error', 'unknown_error')}")
+        code = body.get("error", "unknown_error")
+        raise SlackError(f"{method}: {code}", code=code)
     return body
 
 
