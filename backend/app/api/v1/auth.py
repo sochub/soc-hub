@@ -26,18 +26,7 @@ logger = logging.getLogger(__name__)
 _DUMMY_HASH = security.get_password_hash(secrets.token_urlsafe(32))
 
 
-async def _default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int]:
-    """Pick the tenant a freshly-issued token should start in."""
-    if user.is_super_admin:
-        res = await db.execute(select(Tenant.id).order_by(Tenant.id).limit(1))
-        return res.scalars().first()
-    res = await db.execute(
-        select(TenantMembership.tenant_id)
-        .where(TenantMembership.user_id == user.id)
-        .order_by(TenantMembership.tenant_id)
-        .limit(1)
-    )
-    return res.scalars().first()
+_default_active_tenant_id = deps.default_active_tenant_id
 
 
 @router.post("/login/access-token", response_model=Token)

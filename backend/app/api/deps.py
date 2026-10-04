@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.session import get_db
+from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
@@ -158,3 +159,51 @@ async def get_webhook_from_key(
             detail="Invalid API key",
         )
     return webhook
+
+
+async def default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int]:
+    """Pick the tenant a freshly-issued token should start in."""
+    if user.is_super_admin:
+        res = await db.execute(select(Tenant.id).order_by(Tenant.id).limit(1))
+        return res.scalars().first()
+    res = await db.execute(
+        select(TenantMembership.tenant_id)
+        .where(TenantMembership.user_id == user.id)
+        .order_by(TenantMembership.tenant_id)
+        .limit(1)
+    )
+    return res.scalars().first()
+
+
+async def get_user_for_mfa_setup(
+    db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
+) -> tuple[User, bool]:
+    """Caller for MFA setup/enable: a normal access token, OR an MFA challenge
+    token for a user who has not enabled MFA yet (forced enrolment at login).
+    Returns (user, via_challenge)."""
+    from app.core.security import decode_mfa_challenge
+
+    bad = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except PyJWTError:
+        raise bad
+    if not payload.get("purpose"):
+        return get_current_active_user(await get_current_user(db=db, token=token)), False
+    try:
+        payload = decode_mfa_challenge(token)
+    except PyJWTError:
+        raise bad
+    email = payload.get("sub")
+    user = (await db.execute(
+        select(User).options(selectinload(User.memberships)).where(User.email == email)
+    )).scalars().first() if email else None
+    if (user is None or not user.is_active or payload.get("tv", 0) != (user.token_version or 0)
+            or user.mfa_enabled_at is not None):
+        raise bad
+    user._active_tenant_id = None
+    return user, True
