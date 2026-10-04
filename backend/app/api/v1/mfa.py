@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.api.v1.users import _audit_tenant
@@ -28,6 +29,23 @@ security_router = APIRouter()  # mounted under /tenants
 logger = logging.getLogger(__name__)
 
 INVALID_CODE = "Invalid or expired code"
+
+
+_mfa_throttle = LoginThrottle(max_email_ip=5, max_email=5)  # 5 failures per window, per user
+
+
+def get_mfa_throttle() -> LoginThrottle:
+    """Dedicated throttle for MFA code attempts; tests override it."""
+    return _mfa_throttle
+
+
+async def _lock_user(db: AsyncSession, user_id: int) -> User:
+    """Re-read the user row under FOR UPDATE so MFA state changes serialize."""
+    return (await db.execute(
+        select(User).options(selectinload(User.memberships)).where(User.id == user_id)
+        .with_for_update(of=User)
+        .execution_options(populate_existing=True)
+    )).scalars().one()
 
 
 def get_redis():
@@ -71,11 +89,13 @@ class SetupOut(BaseModel):
 async def _audit(db, user: User, action: str, *, entity_type="user", entity_id=None, tenant_id=None,
                  actor_id=None):
     tid = tenant_id if tenant_id is not None else _audit_tenant(user)
-    if tid is not None:  # audit_logs.tenant_id is NOT NULL
-        await create_audit_log(db=db, entity_type=entity_type,
-                               entity_id=entity_id if entity_id is not None else user.id,
-                               action=action, tenant_id=tid,
-                               user_id=actor_id if actor_id is not None else user.id, changes=None)
+    eid = entity_id if entity_id is not None else user.id
+    if tid is None:  # audit_logs.tenant_id is NOT NULL
+        logger.warning("mfa audit skipped user_id=%s action=%s", eid, action)
+        return
+    await create_audit_log(db=db, entity_type=entity_type, entity_id=eid, action=action,
+                           tenant_id=tid, user_id=actor_id if actor_id is not None else user.id,
+                           changes=None)
 
 
 @router.post("/me/mfa/setup", response_model=SetupOut)
@@ -84,6 +104,7 @@ async def mfa_setup(
     caller: tuple = Depends(deps.get_user_for_mfa_setup),
 ) -> Any:
     user, _ = caller
+    user = await _lock_user(db, user.id)
     if user.mfa_enabled_at is not None:
         raise HTTPException(status_code=409, detail="Two-factor authentication is already enabled")
     secret = totp.new_secret()
@@ -100,9 +121,10 @@ async def mfa_enable(
     db: AsyncSession = Depends(deps.get_db),
     caller: tuple = Depends(deps.get_user_for_mfa_setup),
     redis=Depends(get_redis),
-    throttle: LoginThrottle = Depends(get_login_throttle),
+    throttle: LoginThrottle = Depends(get_mfa_throttle),
 ) -> Any:
     user, via_challenge = caller
+    user = await _lock_user(db, user.id)  # verify against the secret as stored under the lock
     if user.mfa_enabled_at is not None:
         raise HTTPException(status_code=409, detail="Two-factor authentication is already enabled")
     if not user.mfa_secret_enc:
@@ -125,8 +147,13 @@ async def mfa_disable(
     db: AsyncSession = Depends(deps.get_db),
     user: User = Depends(deps.get_current_active_user),
     redis=Depends(get_redis),
-    throttle: LoginThrottle = Depends(get_login_throttle),
+    login_throttle: LoginThrottle = Depends(get_login_throttle),
+    throttle: LoginThrottle = Depends(get_mfa_throttle),
 ) -> Any:
+    if not user.password_login_enabled:
+        raise HTTPException(status_code=400,
+                            detail="Two-factor for SSO-only accounts can only be reset by an admin")
+    user = await _lock_user(db, user.id)
     if user.mfa_enabled_at is None:
         raise HTTPException(status_code=400, detail="Two-factor authentication is not enabled")
     required = (await db.execute(
@@ -138,13 +165,13 @@ async def mfa_disable(
         raise HTTPException(status_code=403, detail="Your organization requires two-factor authentication")
     ip = client_ip(request)
     pkey = f"pwd:{user.id}"
-    retry_after = await throttle.reserve(pkey, ip)
+    retry_after = await login_throttle.reserve(pkey, ip)
     if retry_after:
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
                             headers={"Retry-After": str(retry_after)})
     if not security.verify_password(body.current_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
-    await throttle.reset(pkey, ip)
+    await login_throttle.reset(pkey, ip)
     await verify_user_code(db, redis, throttle, user, body.code, ip)
     active = getattr(user, "_active_tenant_id", None)
     user.mfa_secret_enc = None
@@ -166,18 +193,26 @@ async def mfa_reset(
     active = getattr(actor, "_active_tenant_id", None)
     if role not in ("super_admin", "admin"):
         raise HTTPException(status_code=404, detail="Not found")
+    if actor.id == user_id:
+        raise HTTPException(status_code=400, detail="Use Turn off two-factor in your profile")
     target = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
-    if target is None:
+    if target is None or (target.is_super_admin and not actor.is_super_admin):
         raise HTTPException(status_code=404, detail="Not found")
-    if not actor.is_super_admin:
+    if actor.is_super_admin:
+        audit_tid = (await db.execute(
+            select(func.min(TenantMembership.tenant_id)).where(TenantMembership.user_id == user_id)
+        )).scalar() or (await db.execute(select(func.min(Tenant.id)))).scalar()
+    else:
         member = (await db.execute(select(TenantMembership.id).where(
             TenantMembership.user_id == user_id, TenantMembership.tenant_id == active))).first()
         if member is None:
             raise HTTPException(status_code=404, detail="Not found")
+        audit_tid = active
+    target = await _lock_user(db, user_id)
     target.mfa_secret_enc = None
     target.mfa_enabled_at = None
     security.bump_token_version(target)
-    await _audit(db, actor, "mfa_reset", entity_id=target.id, actor_id=actor.id)
+    await _audit(db, actor, "mfa_reset", entity_id=target.id, tenant_id=audit_tid, actor_id=actor.id)
     await db.commit()
     return Response(status_code=204)
 

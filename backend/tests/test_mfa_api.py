@@ -91,12 +91,14 @@ def _scenario(body):
         redis = _FakeRedis()
         app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
         app.dependency_overrides[mfa_mod.get_redis] = lambda: redis
+        app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: _FakeThrottle()
         try:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
                 await body(c, ids)
         finally:
             app.dependency_overrides.pop(login_throttle.get_login_throttle, None)
             app.dependency_overrides.pop(mfa_mod.get_redis, None)
+            app.dependency_overrides.pop(mfa_mod.get_mfa_throttle, None)
             await _cleanup(ids)
             await engine.dispose()
     asyncio.run(go())
@@ -276,7 +278,65 @@ def test_throttle_429():
     async def body(c, ids):
         hdr = await _hdr(ids["member"], ids["ta"])
         await c.post("/api/v1/users/me/mfa/setup", headers=hdr)
-        app.dependency_overrides[login_throttle.get_login_throttle] = lambda: Blocked()
+        app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: Blocked()
         r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": "123456"})
         assert r.status_code == 429 and r.headers["retry-after"] == "42"
+    _scenario(body)
+
+
+def test_challenge_after_enable_rejected():
+    async def body(c, ids):
+        await _enable(c, ids)
+        u = await _user(ids["member"])  # token_version already bumped; challenge is current
+        ch = {"Authorization": f"Bearer {security.issue_mfa_challenge(u)}"}
+        assert u.mfa_enabled_at is not None
+        assert (await c.post("/api/v1/users/me/mfa/setup", headers=ch)).status_code == 401
+        assert (await c.post("/api/v1/users/me/mfa/enable", headers=ch, json={"code": "123456"})).status_code == 401
+    _scenario(body)
+
+
+def test_reset_protections_and_no_secret_leak():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(User).where(User.id.in_([ids["sa"], ids["admin"]])).values(
+                mfa_secret_enc=encrypt("JBSWY3DPEHPK3PXP"), mfa_enabled_at=datetime.now(timezone.utc)))
+            await db.execute(update(User).where(User.id == ids["sa"]).values(is_super_admin=True))
+            # super admin also a member of tenant A, so a tenant admin could otherwise reach them
+            db.add(TenantMembership(user_id=ids["sa"], tenant_id=ids["ta"], role="viewer"))
+            await db.commit()
+        adm = await _hdr(ids["admin"], ids["ta"])
+        r = await c.post(f"/api/v1/users/{ids['sa']}/mfa/reset", headers=adm)
+        assert r.status_code == 404
+        assert (await _user(ids["sa"])).mfa_enabled_at is not None
+        r = await c.post(f"/api/v1/users/{ids['admin']}/mfa/reset", headers=adm)
+        assert r.status_code == 400 and r.json()["detail"] == "Use Turn off two-factor in your profile"
+        assert (await _user(ids["admin"])).mfa_enabled_at is not None
+        sa = await _hdr(ids["sa"], ids["ta"])
+        r = await c.post(f"/api/v1/users/{ids['admin']}/mfa/reset", headers=sa)
+        assert r.status_code == 204 and r.text == ""
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(select(AuditLog).where(
+                AuditLog.entity_id == ids["admin"], AuditLog.action == "mfa_reset"))).scalars().one()
+        assert row.tenant_id == ids["ta"]
+    _scenario(body)
+
+
+def test_disable_sso_only_and_responses_hide_secret():
+    async def body(c, ids):
+        _, secret, _, _, r2 = await _enable(c, ids)
+        new = {"Authorization": f"Bearer {r2.json()['access_token']}"}
+        r = await c.post("/api/v1/users/me/mfa/disable", headers=new,
+                         json={"current_password": PW, "code": totp.totp_at(secret, time.time() + 30)})
+        assert r.status_code == 200 and secret not in r.text
+        r = await c.get("/api/v1/tenants/current/security", headers=await _hdr(ids["admin"], ids["ta"]))
+        assert secret not in r.text
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(User).where(User.id == ids["analyst"]).values(
+                password_login_enabled=False, mfa_secret_enc=encrypt("JBSWY3DPEHPK3PXP"),
+                mfa_enabled_at=datetime.now(timezone.utc)))
+            await db.commit()
+        r = await c.post("/api/v1/users/me/mfa/disable", headers=await _hdr(ids["analyst"], ids["ta"]),
+                         json={"current_password": "x", "code": "123456"})
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Two-factor for SSO-only accounts can only be reset by an admin"
     _scenario(body)
