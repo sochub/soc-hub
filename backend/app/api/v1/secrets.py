@@ -287,6 +287,9 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
                         names=names, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
     logger.info(
+        "secret convert tenant=%s workflow=%s created_count=%d reused_count=%d outcome=ok",
+        tenant_id, workflow_id, len(created), len(reused)
+    )
         "secret convert tenant=%s workflow=%s created_count=%s reused_count=%s outcome=ok",
         tenant_id,
         workflow_id,
