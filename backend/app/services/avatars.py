@@ -14,10 +14,17 @@ def reencode_avatar(data: bytes) -> bytes:
         with Image.open(BytesIO(data)) as im:
             if im.format not in _ALLOWED:
                 raise ValueError("format")
+            if im.size[0] * im.size[1] > Image.MAX_IMAGE_PIXELS:  # before any decode
+                raise ValueError("size")
             im = ImageOps.exif_transpose(im)
-            im = ImageOps.fit(im.convert("RGB"), (256, 256), Image.LANCZOS)
+            rgba = im.convert("RGBA")
+            bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            rgb = Image.alpha_composite(bg, rgba).convert("RGB")
+            rgb = ImageOps.fit(rgb, (256, 256), Image.LANCZOS)
             out = BytesIO()
-            im.save(out, "WEBP", quality=85)  # fresh image: no EXIF/ICC carried over
+            rgb.save(out, "WEBP", quality=85)  # fresh image: no EXIF/ICC carried over
             return out.getvalue()
-    except (Image.DecompressionBombError, Image.DecompressionBombWarning, OSError, SyntaxError) as e:
+    except ValueError:
+        raise
+    except Exception as e:
         raise ValueError("decode") from e

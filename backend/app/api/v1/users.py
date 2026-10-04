@@ -1,12 +1,10 @@
 import asyncio
 import logging
 import secrets
-import warnings
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
-from PIL import Image
 from sqlalchemy.orm import aliased
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,10 +166,7 @@ def _audit_tenant(user: User):
     return active
 
 
-def _reencode_strict(data: bytes) -> bytes:
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", Image.DecompressionBombWarning)
-        return reencode_avatar(data)
+AVATAR_ERROR = "Image must be PNG, JPEG or WebP up to 2 MB"
 
 
 @router.put("/me/avatar", response_model=UserMe)
@@ -183,10 +178,13 @@ async def upload_avatar(
 ) -> Any:
     data = await file.read(MAX_BYTES + 1)
     try:
-        webp = await asyncio.to_thread(_reencode_strict, data)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    uid, old_key = current_user.id, current_user.avatar_key
+        webp = await asyncio.to_thread(reencode_avatar, data)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=AVATAR_ERROR)
+    uid = current_user.id
+    # Lock the row so concurrent uploads serialize and never orphan a key.
+    old_key = (await db.execute(
+        select(User.avatar_key).where(User.id == uid).with_for_update())).scalar_one()
     audit_tenant = _audit_tenant(current_user)
     key = f"avatars/{uid}/{secrets.token_hex(16)}.webp"
     storage = get_storage()
@@ -227,7 +225,7 @@ async def delete_avatar(
         audit_tenant = _audit_tenant(current_user)
         current_user.avatar_key = None
         if audit_tenant is not None:
-            await create_audit_log(db=db, entity_type="user", entity_id=uid, action="avatar_changed",
+            await create_audit_log(db=db, entity_type="user", entity_id=uid, action="avatar_removed",
                                    tenant_id=audit_tenant, user_id=uid, changes=None)
         await db.commit()
         try:

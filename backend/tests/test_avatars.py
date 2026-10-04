@@ -131,6 +131,7 @@ def test_avatar_rejects_fake_and_bomb():
         for data, name, ct in cases:
             r = await c.put(URL, headers=hdr, files=_up(data, name, ct))
             assert r.status_code == 422, (name, r.status_code, r.text)
+            assert r.json()["detail"] == "Image must be PNG, JPEG or WebP up to 2 MB"
         assert not (await _user(uids[0])).avatar_key
     _scenario(body)
 
@@ -166,6 +167,12 @@ def test_avatar_replace_deletes_old(monkeypatch):
         assert (await c.put(URL, headers=hdr, files=_up(_png()))).status_code == 200
         second = (await _user(uids[0])).avatar_key
         assert second != first and first in deleted and second not in deleted
+        keys.append(second)
+        import pytest
+        with pytest.raises(Exception):
+            async for _ in st.open(first):
+                pass
+        assert [x async for x in st.open(second)]
     _scenario(body)
 
 
@@ -177,4 +184,33 @@ def test_avatar_delete():
         assert (await c.delete(URL, headers=hdr)).status_code == 204
         assert (await c.get(f"/api/v1/users/{uids[0]}/avatar", headers=hdr)).status_code == 404
         assert (await _user(uids[0])).avatar_key is None
+        async with AsyncSessionLocal() as db:
+            acts = (await db.execute(select(AuditLog.action).where(
+                AuditLog.entity_type == "user", AuditLog.entity_id == uids[0]))).scalars().all()
+        assert "avatar_changed" in acts and "avatar_removed" in acts
+    _scenario(body)
+
+
+def test_avatar_exif_orientation_and_transparency():
+    async def body(c, tids, uids, keys):
+        hdr = _hdr(await _user(uids[0]), tids[0])
+        # 600x200 source, red on the left half, blue on the right; tag 6 = rotate 90 CW on display
+        im = Image.new("RGB", (600, 200), "blue")
+        im.paste("red", (0, 0, 300, 200))
+        ex = Image.Exif()
+        ex[0x0112] = 6
+        b = BytesIO()
+        im.save(b, "JPEG", exif=ex, quality=95)
+        assert (await c.put(URL, headers=hdr, files=_up(b.getvalue(), "o.jpg", "image/jpeg"))).status_code == 200
+        g = await c.get(f"/api/v1/users/{uids[0]}/avatar", headers=hdr)
+        out = Image.open(BytesIO(g.content)).convert("RGB")
+        # after rotating 90 CW the red half is on top, blue on the bottom
+        top, bottom = out.getpixel((128, 20)), out.getpixel((128, 236))
+        assert top[0] > 200 and top[2] < 80 and bottom[2] > 200 and bottom[0] < 80
+        # fully transparent PNG becomes white, not black
+        t = BytesIO()
+        Image.new("RGBA", (64, 64), (0, 0, 0, 0)).save(t, "PNG")
+        assert (await c.put(URL, headers=hdr, files=_up(t.getvalue()))).status_code == 200
+        g = await c.get(f"/api/v1/users/{uids[0]}/avatar", headers=hdr)
+        assert min(Image.open(BytesIO(g.content)).convert("RGB").getpixel((128, 128))) > 240
     _scenario(body)
