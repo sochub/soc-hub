@@ -3,12 +3,13 @@ import { Bell, BellOff } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 
-export default function FollowButton({ caseId, isOwner }: { caseId: number; isOwner: boolean }) {
+export default function FollowButton({ caseId, isOwner, ready }: { caseId: number; isOwner: boolean; ready: boolean }) {
     const qc = useQueryClient();
     const key = ['case-follow', String(caseId)];
     const { data, isLoading } = useQuery({
         queryKey: key,
         queryFn: async () => (await api.get(`/cases/${caseId}/follow`)).data.following as boolean,
+        enabled: ready && !isOwner,
     });
     const toggle = useMutation({
         mutationFn: async (follow: boolean) => {
@@ -18,6 +19,8 @@ export default function FollowButton({ caseId, isOwner }: { caseId: number; isOw
         onSettled: () => qc.invalidateQueries({ queryKey: key }),
     });
 
+    // Wait for /users/me so owners never flash a Follow button.
+    if (!ready) return null;
     const following = !!data;
     if (isOwner) {
         return (
@@ -42,12 +45,12 @@ export default function FollowButton({ caseId, isOwner }: { caseId: number; isOw
                     : 'bg-white text-accent border-accent hover:bg-accent/10'
             )}
         >
-            {following ? <Bell size={14} className="group-hover:hidden" /> : <Bell size={14} />}
-            {following && <BellOff size={14} className="hidden group-hover:block" />}
+            {following ? <Bell size={14} className="group-hover:hidden group-focus-visible:hidden" /> : <Bell size={14} />}
+            {following && <BellOff size={14} className="hidden group-hover:block group-focus-visible:block" />}
             {following ? (
                 <>
-                    <span className="group-hover:hidden">Following</span>
-                    <span className="hidden group-hover:inline">Unfollow</span>
+                    <span className="group-hover:hidden group-focus-visible:hidden">Following</span>
+                    <span className="hidden group-hover:inline group-focus-visible:inline">Unfollow</span>
                 </>
             ) : 'Follow'}
         </button>

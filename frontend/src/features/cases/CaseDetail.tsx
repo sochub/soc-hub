@@ -4,7 +4,7 @@ import { api } from '../../api/client';
 import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
 import PageContainer from '../../components/layout/PageContainer';
@@ -93,20 +93,22 @@ export default function CaseDetail() {
         staleTime: 300_000,
     });
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
+    // Mirrors the backend rule for editing/deleting timeline entries: admin, or the analyst who wrote it.
+    const canModify = (event: { user_id: number | null }) =>
+        isAdmin || (!!me && me.role === 'analyst' && event.user_id === me.id);
 
     // Deep link from a notification: /cases/:id#event-<id> -> scroll to and briefly highlight the event.
     const { hash } = useLocation();
+    const handledHash = useRef<string | null>(null);
     const eventsReady = !!caseData;
     useEffect(() => {
-        if (!eventsReady || !/^#event-\d+$/.test(hash)) return;
-        const elId = hash.slice(1);
-        if (activeTab !== 'timeline') return;
-        const el = document.getElementById(elId);
+        if (!eventsReady || activeTab !== 'timeline' || !/^#event-\d+$/.test(hash) || handledHash.current === hash) return;
+        const el = document.getElementById(hash.slice(1));
         if (!el) return;
+        handledHash.current = hash; // once per hash value
         el.scrollIntoView({ block: 'center' });
         el.classList.add('ring-2', 'ring-accent');
-        const t = setTimeout(() => el.classList.remove('ring-2', 'ring-accent'), 2000);
-        return () => { clearTimeout(t); el.classList.remove('ring-2', 'ring-accent'); };
+        setTimeout(() => el.classList.remove('ring-2', 'ring-accent'), 2000);
     }, [eventsReady, hash, activeTab, caseData?.timeline_events?.length]);
 
     const { data: artifacts, isLoading: isLoadingArtifacts } = useQuery({
@@ -259,7 +261,7 @@ export default function CaseDetail() {
                                 </span>
                             </div>
                         </div>
-                        {id && <FollowButton caseId={parseInt(id)} isOwner={!!me && caseData.owner_id === me.id} />}
+                        {id && <FollowButton caseId={parseInt(id)} ready={!!me} isOwner={!!me && caseData.owner_id === me.id} />}
                         <button
                             onClick={() => setShowEditModal(true)}
                             className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
@@ -468,7 +470,7 @@ export default function CaseDetail() {
                                                             </p>
                                                             {/* Edit/Delete buttons - visible on hover */}
                                                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                {(isAdmin || (!!me && event.user_id === me.id)) && (
+                                                                {canModify(event) && (
                                                                 <button
                                                                     onClick={() => startEditing(event)}
                                                                     className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded transition-colors"
@@ -477,6 +479,7 @@ export default function CaseDetail() {
                                                                     <Pencil size={12} />
                                                                 </button>
                                                                 )}
+                                                                {canModify(event) && (
                                                                 <button
                                                                     onClick={() => {
                                                                         if (confirm('Delete this timeline event?')) {
@@ -488,6 +491,7 @@ export default function CaseDetail() {
                                                                 >
                                                                     <Trash2 size={12} />
                                                                 </button>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     )}

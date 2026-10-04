@@ -316,6 +316,11 @@ async def delete_timeline_event(
     if not event:
         raise HTTPException(status_code=404, detail="Timeline event not found")
 
+    role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
+                               current_user.memberships)
+    if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
+        raise HTTPException(status_code=403, detail="Only the author or an admin can delete this entry")
+
     await db.delete(event)
     await db.commit()
     return {"ok": True}

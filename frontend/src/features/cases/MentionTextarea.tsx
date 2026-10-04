@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { useTenantId } from '../notifications/api';
@@ -6,7 +6,8 @@ import { useCanRun } from '../enrichment/useCanRun';
 import { MENTION_RE } from './mentionRe';
 
 interface Mentionable { id: number; name: string; email: string }
-interface Tracked { name: string; id: number }
+/** A picked mention, tracked by its position in the visible text (range [start, start + 1 + name.length)). */
+interface Chip { name: string; id: number; start: number }
 
 interface Props {
     value: string;
@@ -17,87 +18,112 @@ interface Props {
     className?: string;
 }
 
-/** Turn serialized text into visible text (@Name) plus the tracked mention list. */
-function parse(serialized: string): { display: string; tracked: Tracked[] } {
-    const tracked: Tracked[] = [];
-    const display = serialized.replace(MENTION_RE, (_m, name: string, id: string) => {
-        tracked.push({ name, id: Number(id) });
-        return `@${name}`;
-    });
-    return { display, tracked };
+/** Turn serialized text into visible text (@Name) plus position-tracked chips. */
+function parse(serialized: string): { display: string; chips: Chip[] } {
+    const chips: Chip[] = [];
+    let display = '';
+    let last = 0;
+    for (const m of serialized.matchAll(MENTION_RE)) {
+        const at = m.index ?? 0;
+        display += serialized.slice(last, at);
+        chips.push({ name: m[1], id: Number(m[2]), start: display.length });
+        display += `@${m[1]}`;
+        last = at + m[0].length;
+    }
+    return { display: display + serialized.slice(last), chips };
 }
 
-/** Replace each tracked @Name still present, left to right, by its token. */
-function serialize(display: string, tracked: Tracked[]): { text: string; kept: Tracked[] } {
+/** Replace exactly each chip's range by its token; everything else (incl. hand-typed @Name) stays plain. */
+function serialize(display: string, chips: Chip[]): string {
     let out = '';
     let pos = 0;
-    const kept: Tracked[] = [];
-    for (const t of tracked) {
-        const needle = `@${t.name}`;
-        const at = display.indexOf(needle, pos);
-        if (at === -1) continue;
-        out += display.slice(pos, at) + `@[${t.name}](user:${t.id})`;
-        pos = at + needle.length;
-        kept.push(t);
+    for (const c of chips) {
+        out += display.slice(pos, c.start) + `@[${c.name}](user:${c.id})`;
+        pos = c.start + c.name.length + 1;
     }
-    return { text: out + display.slice(pos), kept };
+    return out + display.slice(pos);
+}
+
+/** Shift or drop chips for an edit old -> next, found by common prefix/suffix. */
+function applyEdit(oldText: string, next: string, chips: Chip[]): Chip[] {
+    const max = Math.min(oldText.length, next.length);
+    let p = 0;
+    while (p < max && oldText[p] === next[p]) p++;
+    let s = 0;
+    while (s < max - p && oldText[oldText.length - 1 - s] === next[next.length - 1 - s]) s++;
+    const removedEnd = oldText.length - s;
+    const delta = next.length - oldText.length;
+    const out: Chip[] = [];
+    for (const c of chips) {
+        const end = c.start + c.name.length + 1;
+        let start: number;
+        if (end <= p) start = c.start;
+        else if (c.start >= removedEnd) start = c.start + delta;
+        else continue; // the edit touches this chip
+        if (next.slice(start, start + c.name.length + 1) === `@${c.name}`) out.push({ ...c, start });
+    }
+    return out;
 }
 
 const TRIGGER_RE = /(?:^|\s)@(\S{0,30})$/;
 
 export default function MentionTextarea({ value, onChange, disabled, placeholder, rows = 3, className }: Props) {
-    // display text, tracked mentions and the last serialized value we reported, kept together.
+    // display text, chips and the last serialized value we reported, kept together.
     const [st, setSt] = useState(() => ({ ...parse(value), emitted: value }));
-    const { display, tracked } = st;
+    const { display, chips } = st;
     const ref = useRef<HTMLTextAreaElement>(null);
     const [caret, setCaret] = useState(0);
     const [dismissed, setDismissed] = useState(false);
     const [active, setActive] = useState(0);
-    const [debounced, setDebounced] = useState('');
+    const [debounced, setDebounced] = useState<string | null>(null);
     const canMention = useCanRun();
     const { tenantId } = useTenantId();
+    const listId = useId();
 
     // External resets (e.g. clearing after submit) re-seed the display (adjust state during render).
-    if (value !== st.emitted) {
-        const p = parse(value);
-        setSt({ display: p.display, tracked: p.tracked, emitted: value });
-    }
+    if (value !== st.emitted) setSt({ ...parse(value), emitted: value });
 
     const trigger = !disabled && canMention && !dismissed ? TRIGGER_RE.exec(display.slice(0, caret)) : null;
     const query = trigger ? trigger[1] : null;
 
     useEffect(() => {
-        if (query === null) return;
-        const t = setTimeout(() => setDebounced(query), 150);
+        const t = setTimeout(() => setDebounced(query), query === null ? 0 : 150);
         return () => clearTimeout(t);
     }, [query]);
 
     const { data: options = [] } = useQuery({
         queryKey: ['mentionable', tenantId, debounced],
         queryFn: async () => (await api.get('/users/mentionable', { params: { q: debounced } })).data as Mentionable[],
-        enabled: query !== null,
+        enabled: debounced !== null,
         staleTime: 30_000,
     });
-    const open = query !== null && options.length > 0;
-    const listId = 'mention-list';
+    // Only open (and only pick) from a list that belongs to the current query.
+    const open = query !== null && debounced === query && options.length > 0;
 
-    const emit = (nextDisplay: string, nextTracked: Tracked[]) => {
-        const { text, kept } = serialize(nextDisplay, nextTracked);
-        setSt({ display: nextDisplay, tracked: kept, emitted: text });
+    const emit = (nextDisplay: string, nextChips: Chip[]) => {
+        const text = serialize(nextDisplay, nextChips);
+        setSt({ display: nextDisplay, chips: nextChips, emitted: text });
         onChange(text);
     };
 
     const pick = (u: Mentionable) => {
-        if (!trigger) return;
+        if (!trigger || !open) return;
         const atIdx = caret - trigger[1].length - 1;
-        const next = display.slice(0, atIdx) + `@${u.name} ` + display.slice(caret);
-        const newCaret = atIdx + u.name.length + 2;
-        // Insert into the tracked list in text order so left-to-right replacement stays aligned.
-        const before = serialize(display.slice(0, atIdx), tracked).kept.length;
-        const list = tracked.slice();
-        const canTrack = !/[\]\n]/.test(u.name) && u.name.length <= 100;
-        if (canTrack) list.splice(before, 0, { name: u.name, id: u.id });
+        const insert = `@${u.name} `;
+        const delta = insert.length - (caret - atIdx);
+        const next = display.slice(0, atIdx) + insert + display.slice(caret);
+        const list: Chip[] = [];
+        for (const c of chips) {
+            const end = c.start + c.name.length + 1;
+            if (end <= atIdx) list.push(c);
+            else if (c.start >= caret) list.push({ ...c, start: c.start + delta });
+        }
+        if (!/[\]\n]/.test(u.name) && u.name.length <= 100) {
+            list.push({ name: u.name, id: u.id, start: atIdx });
+            list.sort((a, b) => a.start - b.start);
+        }
         emit(next, list);
+        const newCaret = atIdx + insert.length;
         setCaret(newCaret);
         setActive(0);
         requestAnimationFrame(() => {
@@ -115,6 +141,7 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
     };
 
     const syncCaret = (el: HTMLTextAreaElement) => setCaret(el.selectionStart ?? 0);
+    const activeIdx = Math.min(active, Math.max(options.length - 1, 0));
 
     return (
         <div className="relative">
@@ -128,12 +155,12 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
                 aria-expanded={open}
                 aria-controls={open ? listId : undefined}
                 aria-autocomplete="list"
-                aria-activedescendant={open ? `${listId}-${Math.min(active, options.length - 1)}` : undefined}
+                aria-activedescendant={open ? `${listId}-${activeIdx}` : undefined}
                 onChange={(e) => {
                     setDismissed(false);
                     setActive(0);
                     syncCaret(e.target);
-                    emit(e.target.value, tracked);
+                    emit(e.target.value, applyEdit(display, e.target.value, chips));
                 }}
                 onKeyDown={onKeyDown}
                 onKeyUp={(e) => { if (!['Enter', 'Tab', 'Escape'].includes(e.key)) { setDismissed(false); syncCaret(e.currentTarget); } }}
@@ -153,10 +180,10 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
                             key={u.id}
                             id={`${listId}-${i}`}
                             role="option"
-                            aria-selected={i === active}
+                            aria-selected={i === activeIdx}
                             onMouseDown={(e) => { e.preventDefault(); pick(u); }}
                             onMouseEnter={() => setActive(i)}
-                            className={`px-3 py-1.5 cursor-pointer flex items-baseline gap-2 ${i === active ? 'bg-accent/10' : ''}`}
+                            className={`px-3 py-1.5 cursor-pointer flex items-baseline gap-2 ${i === activeIdx ? 'bg-accent/10' : ''}`}
                         >
                             <span className="font-medium text-zinc-900">{u.name}</span>
                             <span className="text-xs text-zinc-500 truncate">{u.email}</span>

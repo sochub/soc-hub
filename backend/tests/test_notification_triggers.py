@@ -359,6 +359,31 @@ async def test_edit_endpoint_permissions_and_mentions(db, ctx):
 
 
 @scenario
+async def test_delete_endpoint_permissions(db, ctx):
+    i = ctx["ids"]
+    case = await case_of(db, ctx)
+    ev = await case_service.add_timeline_note(db, case=case, user_id=i["A"], content="to delete")
+    await db.commit()
+    url = f"/api/v1/cases/{case.id}/timeline/{ev.id}"
+    try:
+        for key, expect in (("B", 403), ("V", 403)):
+            async with await _client(db, ctx, key) as c:
+                r = await c.delete(url)
+            assert r.status_code == expect, (key, r.status_code, r.text)
+        await db.execute(TenantMembership.__table__.update().where(TenantMembership.id == ctx["mem"]["C"]).values(role="admin"))
+        await db.commit()
+        async with await _client(db, ctx, "C") as c:
+            assert (await c.delete(url)).status_code == 200
+        ev2 = await case_service.add_timeline_note(db, case=case, user_id=i["A"], content="author deletes")
+        await db.commit()
+        async with await _client(db, ctx, "A") as c:
+            assert (await c.delete(f"/api/v1/cases/{case.id}/timeline/{ev2.id}")).status_code == 200
+    finally:
+        app.dependency_overrides.pop(deps.get_current_active_user, None)
+        app.dependency_overrides.pop(deps.get_effective_tenant_id, None)
+
+
+@scenario
 async def test_copilot_create_case_owner_follows(db, ctx, monkeypatch=None):
     from app.tasks import triage as triage_mod
     i = ctx["ids"]
