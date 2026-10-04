@@ -78,6 +78,7 @@ def test_names():
     "{{ secrets.TOK + 'a' }}", "{{ 'a' in secrets.TOK }}", "{{ secrets.TOK.upper() }}",
     "{{ secrets['TOK'] }}", "{{ secrets | list }}", "{{ secrets|attr('TOK') }}", "{{ secrets }}",
     "{% set x = secrets.TOK %}{{ x }}", "{% if secrets.TOK %}y{% endif %}",
+    "{% block b %}{{ secrets.TOK }}{% endblock %}{{ self.b()|replace('TOK', 'TOK_2') }}",
 ])
 def test_transforms_and_dynamic_rejected(expr):
     assert XFORM in msgs(http(headers={"A": expr}))

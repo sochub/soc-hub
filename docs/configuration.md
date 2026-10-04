@@ -514,7 +514,9 @@ The following are all rejected:
 - `secrets['X']`;
 - filters, tests or method calls on a secret;
 - comparisons, arithmetic or `if`-expressions;
-- `{% set %}`, `{% if %}`, `{% for %}`, macros or filter blocks around a secret.
+- a secret used in a `{% set %}`, `{% if %}`, `{% for %}` or `{% with %}` expression, or inside
+  macro, call, filter, set or `{% block %}` bodies (outputting a secret inside an `{% if %}` or
+  `{% for %}` body is fine).
 
 Secrets are allowed only in these parts of an `http_request` node:
 

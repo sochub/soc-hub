@@ -158,7 +158,7 @@ def _walk_strings(value: Any, is_key: bool = False) -> Iterator[Tuple[str, bool]
 
 
 # Blocks whose body output is captured/transformed rather than emitted as-is.
-_CAPTURING = (jnodes.AssignBlock, jnodes.FilterBlock, jnodes.Macro, jnodes.CallBlock)
+_CAPTURING = (jnodes.AssignBlock, jnodes.FilterBlock, jnodes.Macro, jnodes.CallBlock, jnodes.Block)  # Block: self.b() can re-render it through filters
 
 
 def _parse(text: str, raw: bool):
@@ -183,7 +183,8 @@ def _secret_uses(tree) -> List[Tuple[Optional[str], bool]]:
 
     ok only for `secrets.NAME` emitted directly by an output tag, alone or as an operand of `~`
     concatenation whose result is itself emitted directly. Anything else (item access, filters, tests,
-    calls, comparisons, arithmetic, conditionals, {% set %}/{% if %}/{% for %}/macros, bare `secrets`)
+    calls, comparisons, arithmetic, conditionals, use in a {% set %}/{% if %}/{% for %}/{% with %} expression,
+    or inside macro/call/filter/set/block bodies, bare `secrets`)
     transforms or moves the secret. `x.secrets.y` is an attribute of `x`, not the variable, so it is ignored.
     """
     out: List[Tuple[Optional[str], bool]] = []
