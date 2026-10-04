@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -11,6 +11,7 @@ from app.schemas import case as case_schema
 from app.services.case_service import (
     add_timeline_note, apply_case_update, create_case_record, edit_timeline_note,
 )
+from app.notifications import service as notif_service
 from app.utils.roles import resolve_active_role
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
@@ -102,6 +103,52 @@ async def create_case(
     await _attach_sla(db, tenant_id, [case])
 
     return case
+
+async def _follow_case(db, case_id: int, tenant_id: int) -> Case:
+    case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@router.get("/{case_id}/follow")
+async def get_follow(
+    case_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    case = await _follow_case(db, case_id, tenant_id)
+    # The case owner is an implicit follower for notifications.
+    following = case.owner_id == current_user.id or await notif_service.is_following(db, case.id, current_user.id)
+    return {"following": bool(following)}
+
+
+@router.put("/{case_id}/follow", status_code=204)
+async def put_follow(
+    case_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Response:
+    case = await _follow_case(db, case_id, tenant_id)
+    await notif_service.follow(db, case, current_user.id)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/{case_id}/follow", status_code=204)
+async def delete_follow(
+    case_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Response:
+    case = await _follow_case(db, case_id, tenant_id)
+    await notif_service.unfollow(db, case, current_user.id)  # owner stays implicitly followed
+    await db.commit()
+    return Response(status_code=204)
+
 
 @router.get("/{case_id}", response_model=case_schema.Case)
 async def read_case(
