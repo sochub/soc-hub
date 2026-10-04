@@ -1,5 +1,13 @@
+import asyncio
+import logging
+import secrets
+import warnings
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
+from PIL import Image
+from sqlalchemy.orm import aliased
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -12,11 +20,14 @@ from app.models.user import User, UserRole
 from app.schemas.membership import MembershipOut
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserMe, PasswordChange, TokenOnly
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
+from app.services.avatars import MAX_BYTES, reencode_avatar
+from app.storage import StorageError, get_storage
 from app.utils.audit import create_audit_log
 from app.schemas.notification import MentionableUser
 from app.utils.roles import resolve_active_role
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=List[UserSchema])
@@ -149,6 +160,123 @@ async def update_user_me(
     return await read_user_me(db=db, current_user=current_user)
 
 
+def _audit_tenant(user: User):
+    """Tenant for self-service audit rows (audit_logs.tenant_id is NOT NULL); None if no membership."""
+    active = getattr(user, "_active_tenant_id", None)
+    if active is None and user.memberships:
+        return min(m.tenant_id for m in user.memberships)
+    return active
+
+
+def _reencode_strict(data: bytes) -> bytes:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        return reencode_avatar(data)
+
+
+@router.put("/me/avatar", response_model=UserMe)
+async def upload_avatar(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    file: UploadFile = File(...),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    data = await file.read(MAX_BYTES + 1)
+    try:
+        webp = await asyncio.to_thread(_reencode_strict, data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    uid, old_key = current_user.id, current_user.avatar_key
+    audit_tenant = _audit_tenant(current_user)
+    key = f"avatars/{uid}/{secrets.token_hex(16)}.webp"
+    storage = get_storage()
+
+    async def _one():
+        yield webp
+
+    await storage.put(key, _one())
+    try:
+        current_user.avatar_key = key
+        if audit_tenant is not None:
+            await create_audit_log(db=db, entity_type="user", entity_id=uid, action="avatar_changed",
+                                   tenant_id=audit_tenant, user_id=uid, changes=None)
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        try:
+            await storage.delete(key)
+        except Exception:
+            pass
+        raise
+    if old_key:
+        try:
+            await storage.delete(old_key)
+        except Exception:
+            logger.warning("avatar cleanup failed user_id=%s", uid)
+    return await read_user_me(db=db, current_user=current_user)
+
+
+@router.delete("/me/avatar", status_code=204)
+async def delete_avatar(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Response:
+    uid, old_key = current_user.id, current_user.avatar_key
+    if old_key:
+        audit_tenant = _audit_tenant(current_user)
+        current_user.avatar_key = None
+        if audit_tenant is not None:
+            await create_audit_log(db=db, entity_type="user", entity_id=uid, action="avatar_changed",
+                                   tenant_id=audit_tenant, user_id=uid, changes=None)
+        await db.commit()
+        try:
+            await get_storage().delete(old_key)
+        except Exception:
+            logger.warning("avatar cleanup failed user_id=%s", uid)
+    return Response(status_code=204)
+
+
+@router.get("/{user_id}/avatar")
+async def get_avatar(
+    *,
+    user_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    target = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    if target is None or not target.avatar_key:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not current_user.is_super_admin and current_user.id != user_id:
+        mine, theirs = aliased(TenantMembership), aliased(TenantMembership)
+        shared = (await db.execute(
+            select(mine.id).join(theirs, theirs.tenant_id == mine.tenant_id)
+            .where(mine.user_id == current_user.id, theirs.user_id == user_id).limit(1)
+        )).first()
+        if shared is None:
+            raise HTTPException(status_code=404, detail="Not found")
+    it = get_storage().open(target.avatar_key)
+    try:
+        first = await it.__anext__()
+    except (StopAsyncIteration, FileNotFoundError, StorageError):
+        await it.aclose()
+        raise HTTPException(status_code=404, detail="Not found")
+    except BaseException:
+        await it.aclose()
+        raise
+
+    async def _chain():
+        try:
+            yield first
+            async for c in it:
+                yield c
+        finally:
+            await it.aclose()
+
+    return StreamingResponse(_chain(), media_type="image/webp", headers={
+        "Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"})
+
+
 @router.post("/me/password", response_model=TokenOnly)
 async def change_password(
     *,
@@ -172,9 +300,7 @@ async def change_password(
     await throttle.reset(key, ip)
 
     active = getattr(current_user, "_active_tenant_id", None)
-    audit_tenant = active
-    if audit_tenant is None and current_user.memberships:
-        audit_tenant = min(m.tenant_id for m in current_user.memberships)
+    audit_tenant = _audit_tenant(current_user)
     current_user.hashed_password = security.get_password_hash(body.new_password)
     security.bump_token_version(current_user)
     if audit_tenant is not None:  # audit_logs.tenant_id is NOT NULL
