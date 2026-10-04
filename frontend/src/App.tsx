@@ -1,3 +1,4 @@
+import NotificationsPage from './features/notifications/NotificationsPage';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -49,6 +50,7 @@ function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="cases" element={<CasesList />} />
                 <Route path="cases/:id" element={<CaseDetail />} />
+                <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="alerts" element={<AlertsList />} />
                 <Route path="artifacts" element={<ArtifactsList />} />
                 <Route path="iocs" element={<IOCList />} />
