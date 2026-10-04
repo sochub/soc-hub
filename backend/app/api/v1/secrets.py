@@ -286,5 +286,11 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
                         trigger_filter=wf.trigger_filter, graph=apply_conversion(wf.graph, todo),
                         names=names, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
-    logger.info("secret convert tenant=%s workflow=%s created=%s reused=%s outcome=ok", tenant_id, workflow_id, created, reused)
+    logger.info(
+        "secret convert tenant=%s workflow=%s created_count=%s reused_count=%s outcome=ok",
+        tenant_id,
+        workflow_id,
+        len(created),
+        len(reused),
+    )
     return {"workflow_id": workflow_id, "version": wf.version, "created": created, "reused": reused}
