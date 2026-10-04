@@ -2,7 +2,9 @@
 import copy
 import re
 from typing import List
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote_plus, urlsplit
+
+from app.secrets.resolve import header_value_problem
 
 HEADER_KEYS = {"authorization", "x-api-key", "api-key", "apikey", "x-auth-token", "x-apikey", "private-token"}
 QUERY_KEYS = {"apikey", "api_key", "key", "token", "access_token"}
@@ -53,19 +55,20 @@ def scan_graph(graph: dict) -> List[dict]:
         for k, v in (headers.items() if isinstance(headers, dict) else []):
             if isinstance(k, str) and isinstance(v, str) and k.lower() in HEADER_KEYS and "{{" not in v:
                 lit = _split_header(k, v)[1]
-                if lit.strip():
+                if lit.strip() and not header_value_problem(lit):
                     add("header", k, lit)
         base, _, query = url.partition("#")[0].partition("?")
+        # ponytail: one finding per distinct query key (first occurrence); repeats with other values stay plaintext until re-scanned
         seen = set()
         for pair in query.split("&") if query else []:
             k, eq, v = pair.partition("=")
-            if eq and k.lower() in QUERY_KEYS and k not in seen and "{{" not in v and unquote(v).strip():
+            if eq and k.lower() in QUERY_KEYS and k not in seen and "{{" not in v and unquote_plus(v).strip():
                 seen.add(k)
-                add("query", k, unquote(v))
+                add("query", k, unquote_plus(v))
     return out
 
 
-def apply_conversion(graph: dict, items: List[dict], names=None) -> dict:
+def apply_conversion(graph: dict, items: List[dict]) -> dict:
     """items: findings (node_id, location, key, literal) plus `secret_name`. Returns a modified deep copy."""
     g = copy.deepcopy(graph)
     for it in items:
@@ -83,7 +86,7 @@ def apply_conversion(graph: dict, items: List[dict], names=None) -> dict:
                 pairs = []
                 for pair in query.split("&"):
                     k, eq, v = pair.partition("=")
-                    if eq and k == it["key"] and "{{" not in v and unquote(v) == it["literal"]:
+                    if eq and k == it["key"] and "{{" not in v and unquote_plus(v) == it["literal"]:
                         pair = f"{k}={tpl}"
                     pairs.append(pair)
                 cfg["url"] = base + q + "&".join(pairs) + hash_ + frag

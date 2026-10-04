@@ -19,6 +19,17 @@ from app.workflows.errors import NodeError
 MASK = "••••"
 _MARK_RE = re.compile("\ue000(\\d+)\ue001")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+def header_value_problem(v: str, n: str = "value"):
+    """Why `v` can't go in an HTTP header (None if fine). Shared with the plaintext-credential scan."""
+    if "\r" in v or "\n" in v:
+        return f"secret {n} contains a line break and cannot be used in a header"
+    if v != v.strip() or not v.isascii():
+        return f"secret {n} has leading/trailing whitespace or non-ASCII characters and cannot be used in a header"
+    if _CTRL_RE.search(v):
+        return f"secret {n} contains a control character and cannot be used in a header"
+    return None
+
+
 _URL_ERR = "secrets are not allowed in the URL host or credentials"
 
 
@@ -123,12 +134,9 @@ async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce):
     new_headers = {}
     for k, v in headers.items():
         for n in rx.findall(v):
-            if "\r" in used[n] or "\n" in used[n]:
-                raise NodeError(f"secret {n} contains a line break and cannot be used in a header")
-            if used[n] != used[n].strip() or not used[n].isascii():
-                raise NodeError(f"secret {n} has leading/trailing whitespace or non-ASCII characters and cannot be used in a header")
-            if _CTRL_RE.search(used[n]):
-                raise NodeError(f"secret {n} contains a control character and cannot be used in a header")
+            problem = header_value_problem(used[n], n)
+            if problem:
+                raise NodeError(problem)
         new_headers[k] = sub(v)
 
     def usub(seg, enc):

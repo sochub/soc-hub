@@ -21,8 +21,9 @@ router = APIRouter()
 runs_router = APIRouter()
 
 
-async def _get_workflow(db, workflow_id: int, tenant_id: int) -> Workflow:
-    wf = (await db.execute(select(Workflow).where(Workflow.id == workflow_id, Workflow.tenant_id == tenant_id))).scalars().first()
+async def _get_workflow(db, workflow_id: int, tenant_id: int, lock: bool = False) -> Workflow:
+    q = select(Workflow).where(Workflow.id == workflow_id, Workflow.tenant_id == tenant_id)
+    wf = (await db.execute(q.with_for_update() if lock else q)).scalars().first()
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return wf

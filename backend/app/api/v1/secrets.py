@@ -1,3 +1,4 @@
+import hmac
 import json
 import logging
 import re
@@ -10,23 +11,20 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import Text, select
 from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.api.v1.workflows import _get_workflow, _secret_names, save_workflow
 from app.models.tenant import Tenant
 from app.models.tenant_secret import TenantSecret
 from app.models.user import User
 from app.models.workflow import Workflow
 from app.schemas.secret import SecretCreate, SecretNameOut, SecretOut, SecretUpdate
-from app.secrets.hosts import valid_host_pattern
-from app.utils.audit import create_audit_log
-import hmac
-
-from pydantic import BaseModel
-
-from app.api.v1.workflows import _get_workflow, _secret_names, save_workflow
+from app.secrets.hosts import host_allowed, valid_host_pattern
 from app.secrets.refs import NAME_RE
 from app.secrets.scan import apply_conversion, scan_graph
+from app.utils.audit import create_audit_log
 from app.utils.crypto import decrypt, encrypt
 
 
@@ -93,6 +91,8 @@ async def _check_hosts(db: AsyncSession, tenant_id: int, hosts: List[str]) -> No
 async def _insert(db: AsyncSession, tenant_id: int, user_id: int, name: str, value: str, hosts: List[str],
                   description) -> TenantSecret:
     """Create + flush + audit (no commit). 409 on duplicate name."""
+    if not value.strip() or len(value) > 8192:
+        raise HTTPException(status_code=422, detail=VALUE_ERR)
     exists = (await db.execute(select(TenantSecret.id).where(
         TenantSecret.tenant_id == tenant_id, TenantSecret.name == name))).first()
     if exists:
@@ -192,7 +192,7 @@ async def delete_secret(name: str, force: bool = False, db: AsyncSession = Depen
     return Response(status_code=204)
 
 
-async def _scan_workflow(wf: Workflow, allow: List[str]) -> List[dict]:
+def _scan_workflow(wf: Workflow, allow: List[str]) -> List[dict]:
     return [f for f in scan_graph(wf.graph) if valid_host_pattern(f["host"], allow)]
 
 
@@ -207,7 +207,7 @@ async def scan_workflows(db: AsyncSession = Depends(deps.get_db), current_user: 
     allow = await _allowlist(db, tenant_id)
     wfs = (await db.execute(select(Workflow).where(Workflow.tenant_id == tenant_id).order_by(Workflow.name))).scalars().all()
     return [{"workflow_id": w.id, "workflow_name": w.name, **{k: v for k, v in f.items() if k != "literal"}}
-            for w in wfs for f in await _scan_workflow(w, allow)]
+            for w in wfs for f in _scan_workflow(w, allow)]
 
 
 class ConvertItem(BaseModel):
@@ -233,9 +233,9 @@ async def convert_workflow(workflow_id: int, body: ConvertIn, db: AsyncSession =
 
 
 async def _convert(db, workflow_id, body, current_user, tenant_id):
-    wf = await _get_workflow(db, workflow_id, tenant_id)
+    wf = await _get_workflow(db, workflow_id, tenant_id, lock=True)
     findings = {(f["node_id"], f["location"], f["key"]): f
-                for f in await _scan_workflow(wf, await _allowlist(db, tenant_id))}
+                for f in _scan_workflow(wf, await _allowlist(db, tenant_id))}
     if not body.items:
         raise HTTPException(status_code=422, detail="No items to convert")
     todo, seen = [], set()
@@ -257,6 +257,8 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
                           "Converted from plaintext workflow credential")
             created.append(it["secret_name"])
         elif hmac.compare_digest(decrypt(row.value_enc).encode(), it["literal"].encode()):
+            if not host_allowed(it["host"], row.allowed_hosts or []):
+                raise HTTPException(status_code=409, detail=f"Secret {it['secret_name']} is not allowed for host {it['host']} — add the host to the secret or choose another name")
             if it["secret_name"] not in created and it["secret_name"] not in reused:
                 reused.append(it["secret_name"])
         else:
@@ -264,7 +266,7 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
             raise HTTPException(status_code=409, detail=f"Secret {it['secret_name']} already exists with a different value")
     names = await _secret_names(db, tenant_id) | {i["secret_name"] for i in todo}
     await save_workflow(db, wf, name=wf.name, description=wf.description, trigger_type=wf.trigger_type,
-                        trigger_filter=wf.trigger_filter, graph=apply_conversion(wf.graph, todo, names),
+                        trigger_filter=wf.trigger_filter, graph=apply_conversion(wf.graph, todo),
                         names=names, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
     logger.info("secret convert tenant=%s workflow=%s created=%s reused=%s outcome=ok", tenant_id, workflow_id, created, reused)

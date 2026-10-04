@@ -39,6 +39,7 @@ def test_scan_pure():
     assert scan_graph(_g(headers={"Authorization": "Bearer {{ secrets.A }}", "x-api-key": "{{ case.id }}"},
                          url="https://api.example.com/x?token={{ secrets.T }}")) == []
     assert scan_graph(_g(url="https://{{ trigger.host }}/x", headers={"x-api-key": "k"})) == []
+    assert scan_graph(_g(headers={"x-api-key": "k\u00e9", "Authorization": " Bearer x ", "apikey": "a\x01b"})) == []
     n = scan_graph(_g(url="https://1.2.3.4/x", headers={"x-api-key": "k"}))[0]["suggested_name"]
     assert n == "S_1_2_3_4_X_API_KEY" and NAME_RE.match(n)
     long = scan_graph(_g(url="https://" + "a" * 60 + ".com/x", headers={"x-api-key": "k"}))[0]["suggested_name"]
@@ -48,7 +49,7 @@ def test_scan_pure():
 def test_apply_conversion():
     g = _g(url="https://api.example.com/x?a=1&apikey=zzz&b=2#f", headers={"Authorization": "bearer abc", "X-Api-Key": "k"})
     items = [{**f, "secret_name": "S" + str(i) + "X"} for i, f in enumerate(scan_graph(g))]
-    out = apply_conversion(g, items, set())
+    out = apply_conversion(g, items)
     cfg = out["nodes"][1]["config"]
     assert cfg["headers"] == {"Authorization": "bearer {{ secrets.S0X }}", "X-Api-Key": "{{ secrets.S1X }}"}
     assert cfg["url"] == "https://api.example.com/x?a=1&apikey={{ secrets.S2X }}&b=2#f"
@@ -110,8 +111,7 @@ async def _scenario(caplog):
                 state["role"] = "admin"
 
                 # conflict: existing secret with a different value -> 409, nothing created, workflow unchanged
-                db.add(TenantSecret(tenant_id=ta_id, name="API_QKEY", value_enc=encrypt("other-value"), allowed_hosts=[],
-                                    created_by=user.id, updated_by=user.id))
+                db.add(TenantSecret(tenant_id=ta_id, name="API_QKEY", value_enc=encrypt("other-value"), allowed_hosts=[], created_by=user.id, updated_by=user.id))
                 await db.commit()
                 two = items + [{"node_id": "h", "location": "query", "key": "apikey", "secret_name": "API_QKEY"}]
                 r = await call("POST", f"{BASE}/convert/{wf_id}", json={"items": two})
@@ -131,6 +131,16 @@ async def _scenario(caplog):
                     row = (await d2.execute(select(TenantSecret).where(TenantSecret.name == "API_QKEY", TenantSecret.tenant_id == ta_id))).scalars().one()
                     row.value_enc = encrypt(lit2)
                     await d2.commit()
+                # same value but host not bound -> 409, nothing changes
+                caplog.clear()
+                r = await call("POST", f"{BASE}/convert/{wf_id}", json={"items": two})
+                assert r.status_code == 409 and "not allowed for host api.example.com" in r.text, r.text
+                async with AsyncSessionLocal() as d2:
+                    assert set((await d2.execute(select(TenantSecret.name).where(TenantSecret.tenant_id == ta_id))).scalars()) == {"API_QKEY"}
+                    row = (await d2.execute(select(TenantSecret).where(TenantSecret.name == "API_QKEY", TenantSecret.tenant_id == ta_id))).scalars().one()
+                    assert row.allowed_hosts == []
+                    row.allowed_hosts = ["*.example.com"]
+                    await d2.commit()
                 caplog.clear()
                 r = await call("POST", f"{BASE}/convert/{wf_id}", json={"items": two})
                 assert r.status_code == 200, r.text
@@ -146,6 +156,33 @@ async def _scenario(caplog):
                     assert {(a.entity_type, a.action) for a in logs} == {("secret", "create"), ("workflow", "update")}
                     assert lit not in str([a.changes for a in logs])
                 assert lit not in caplog.text and lit2 not in caplog.text
+                # converted workflow is valid when read back
+                r = await call("GET", f"/api/v1/workflows/{wf_id}")
+                assert r.status_code == 200 and r.json()["validation_errors"] == [], r.text
+                # disabled workflow + Token prefix + '+' in a query literal; secret allowed_hosts bound to the host
+                lit3 = "tok-" + pysecrets.token_hex(8)
+                g2 = _g(url="https://api.example.com/y?key=a+b", headers={"Authorization": f"Token {lit3}"})
+                wf2 = Workflow(tenant_id=ta_id, name="w2", trigger_type="manual", trigger_filter=None, graph=g2, enabled=False,
+                               version=1, created_by=user.id)
+                tb = Tenant(name="wf-test", slug=f"wf-test-{h}-b")
+                db.add_all([wf2, tb])
+                await db.flush()
+                ids["workflows"].append(wf2.id)
+                ids["tenants"].append(tb.id)
+                await db.commit()
+                it2 = [{"node_id": "h", "location": "header", "key": "Authorization", "secret_name": "T_AUTH"},
+                       {"node_id": "h", "location": "query", "key": "key", "secret_name": "T_KEY"}]
+                state["tenant"] = tb.id
+                assert (await call("POST", f"{BASE}/convert/{wf2.id}", json={"items": it2})).status_code == 404
+                state["tenant"] = ta_id
+                r = await call("POST", f"{BASE}/convert/{wf2.id}", json={"items": it2})
+                assert r.status_code == 200 and r.json()["created"] == ["T_AUTH", "T_KEY"], r.text
+                async with AsyncSessionLocal() as d2:
+                    w = (await d2.execute(select(Workflow).where(Workflow.id == wf2.id))).scalars().one()
+                    assert w.graph["nodes"][1]["config"]["headers"]["Authorization"] == "Token {{ secrets.T_AUTH }}"
+                    assert w.graph["nodes"][1]["config"]["url"] == "https://api.example.com/y?key={{ secrets.T_KEY }}"
+                    k = (await d2.execute(select(TenantSecret).where(TenantSecret.name == "T_KEY", TenantSecret.tenant_id == ta_id))).scalars().one()
+                    assert decrypt(k.value_enc) == "a b"
                 assert (await call("GET", BASE + "/scan")).json() == []
             assert not any(lit in t or lit2 in t for t in texts), "literal leaked in a response"
         finally:
