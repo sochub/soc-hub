@@ -17,6 +17,12 @@ updates:
     groups:
       npm-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # Majors that need a deliberate migration: TypeScript 7 is the Go rewrite; @types/node tracks the runtime.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: pip
     directory: /backend
@@ -44,3 +50,7 @@ updates:
     groups:
       docker-frontend-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # Move Node by hand, LTS to LTS (even majors only).
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

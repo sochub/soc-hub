@@ -94,7 +94,7 @@ async def _insert(db: AsyncSession, tenant_id: int, user_id: int, name: str, val
     exists = (await db.execute(select(TenantSecret.id).where(
         TenantSecret.tenant_id == tenant_id, TenantSecret.name == name))).first()
     if exists:
-        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)
+        logger.info("secret create tenant=%s outcome=duplicate", tenant_id)
         raise HTTPException(status_code=409, detail="A secret with this name already exists")
     row = TenantSecret(tenant_id=tenant_id, name=name, value_enc=encrypt(value), allowed_hosts=hosts,
                        description=description, created_by=user_id, updated_by=user_id)
@@ -103,7 +103,7 @@ async def _insert(db: AsyncSession, tenant_id: int, user_id: int, name: str, val
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)
+        logger.info("secret create tenant=%s outcome=duplicate", tenant_id)
         raise HTTPException(status_code=409, detail="A secret with this name already exists")
     await create_audit_log(db=db, entity_type="secret", entity_id=row.id, action="create", tenant_id=tenant_id,
                            user_id=user_id, changes={"name": row.name, "fields": ["value", "allowed_hosts", "description"]})
@@ -279,12 +279,21 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
             if it["secret_name"] not in created and it["secret_name"] not in reused:
                 reused.append(it["secret_name"])
         else:
-            logger.info("secret convert tenant=%s name=%s outcome=conflict", tenant_id, it["secret_name"])
+            logger.info("secret convert tenant=%s outcome=conflict", tenant_id)
             raise HTTPException(status_code=409, detail=f"Secret {it['secret_name']} already exists with a different value")
     names = await _secret_names(db, tenant_id) | {i["secret_name"] for i in todo}
     await save_workflow(db, wf, name=wf.name, description=wf.description, trigger_type=wf.trigger_type,
                         trigger_filter=wf.trigger_filter, graph=apply_conversion(wf.graph, todo),
                         names=names, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
-    logger.info("secret convert tenant=%s workflow=%s created=%s reused=%s outcome=ok", tenant_id, workflow_id, created, reused)
+    logger.info(
+        "secret convert tenant=%s workflow=%s created_count=%d reused_count=%d outcome=ok",
+        tenant_id, workflow_id, len(created), len(reused)
+    )
+        "secret convert tenant=%s workflow=%s created_count=%s reused_count=%s outcome=ok",
+        tenant_id,
+        workflow_id,
+        len(created),
+        len(reused),
+    )
     return {"workflow_id": workflow_id, "version": wf.version, "created": created, "reused": reused}
