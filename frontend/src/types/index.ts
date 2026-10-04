@@ -183,6 +183,8 @@ export interface TimelineEventUser {
   id: number;
   email: string;
   full_name: string | null;
+  has_avatar?: boolean;
+  avatar_version?: string | null;
 }
 
 export interface TimelineEvent {

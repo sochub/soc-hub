@@ -149,7 +149,7 @@ async def _scenario():
                 r = await c.get(M, params={"q": f"al{h}"})
                 assert r.status_code == 200, r.text
                 assert len(r.json()) == 10, "e limit"
-                assert all(set(x) == {"id", "name", "email"} for x in r.json())
+                assert all(set(x) == {"id", "name", "email", "has_avatar", "avatar_version"} for x in r.json())
                 r = await c.get(M, params={"q": f"al{h}x"})
                 assert r.json() == [], "e other tenant"
                 r = await c.get(M, params={"q": f"al{h}dead"})

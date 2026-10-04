@@ -104,6 +104,9 @@ class User(BaseModel):
     is_active: bool = True
     is_super_admin: bool = False
     role: Optional[str] = None
+    has_avatar: bool = False
+    avatar_version: Optional[str] = None
+    mfa_enabled: bool = False
 
     class Config:
         from_attributes = True

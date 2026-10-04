@@ -5,6 +5,9 @@ import { api } from '../../api/client';
 import type { User } from '../../types';
 import InviteUserModal from './InviteUserModal';
 import PageContainer from '../../components/layout/PageContainer';
+import Modal, { btnDanger, btnSecondary } from '../../components/layout/Modal';
+import Avatar from '../../components/Avatar';
+import { mfaErrorMessage } from '../profile/mfaErrors';
 
 const roleBadgeColors: Record<string, string> = {
     admin: 'bg-purple-50 text-purple-700 border-purple-200',
@@ -23,7 +26,15 @@ const roleIcons: Record<string, typeof Shield> = {
 export default function UserManagement() {
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [editingRoleUser, setEditingRoleUser] = useState<number | null>(null);
+    const [resetTarget, setResetTarget] = useState<User | null>(null);
+    const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
     const queryClient = useQueryClient();
+
+    const { data: me } = useQuery({
+        queryKey: ['currentUser'],
+        queryFn: async () => (await api.get('/users/me')).data as User,
+        staleTime: 5 * 60 * 1000,
+    });
 
     const { data: users = [], isLoading } = useQuery({
         queryKey: ['users'],
@@ -52,6 +63,19 @@ export default function UserManagement() {
         },
     });
 
+    const resetMfa = useMutation({
+        mutationFn: async (u: User) => { await api.post(`/users/${u.id}/mfa/reset`); },
+        onSuccess: (_d, u) => {
+            queryClient.invalidateQueries({ queryKey: ['users'] });
+            setNotice({ ok: true, text: `Two-factor authentication reset for ${u.full_name || u.email}.` });
+            setResetTarget(null);
+        },
+        onError: (err) => {
+            setNotice({ ok: false, text: mfaErrorMessage(err, 'Could not reset two-factor authentication.') });
+            setResetTarget(null);
+        },
+    });
+
     return (
         <PageContainer>
             <div className="flex items-center justify-between">
@@ -68,6 +92,14 @@ export default function UserManagement() {
                 </button>
             </div>
 
+            {notice && (
+                <div role={notice.ok ? 'status' : 'alert'}
+                    className={`flex items-center justify-between gap-3 px-4 py-2.5 text-sm border ${notice.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                    <span>{notice.text}</span>
+                    <button onClick={() => setNotice(null)} className="text-xs underline">Dismiss</button>
+                </div>
+            )}
+
             <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
                 <table className="w-full">
                     <thead>
@@ -75,13 +107,14 @@ export default function UserManagement() {
                             <th className="text-left px-6 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">User</th>
                             <th className="text-left px-6 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Role</th>
                             <th className="text-left px-6 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Status</th>
+                            <th className="text-left px-6 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">MFA</th>
                             <th className="text-right px-6 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200">
                         {isLoading ? (
                             <tr>
-                                <td colSpan={4} className="px-6 py-8 text-center text-zinc-400">
+                                <td colSpan={5} className="px-6 py-8 text-center text-zinc-400">
                                     <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500 mx-auto" />
                                 </td>
                             </tr>
@@ -91,9 +124,12 @@ export default function UserManagement() {
                             return (
                                 <tr key={user.id} className="hover:bg-zinc-100 transition-colors">
                                     <td className="px-6 py-4">
-                                        <div>
-                                            <p className="text-sm font-medium text-zinc-800">{user.full_name || 'Unnamed'}</p>
-                                            <p className="text-xs text-zinc-400">{user.email}</p>
+                                        <div className="flex items-center gap-3">
+                                            <Avatar userId={user.id} name={user.full_name || user.email} hasAvatar={user.has_avatar} version={user.avatar_version} size={32} />
+                                            <div>
+                                                <p className="text-sm font-medium text-zinc-800">{user.full_name || 'Unnamed'}</p>
+                                                <p className="text-xs text-zinc-400">{user.email}</p>
+                                            </div>
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
@@ -130,7 +166,24 @@ export default function UserManagement() {
                                             {user.is_active ? 'Active' : 'Inactive'}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 text-right">
+                                    <td className="px-6 py-4">
+                                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border ${
+                                            user.mfa_enabled
+                                                ? 'bg-green-50 text-green-700 border-green-200'
+                                                : 'bg-zinc-100 text-zinc-500 border-zinc-200'
+                                        }`}>
+                                            MFA {user.mfa_enabled ? 'on' : 'off'}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-right space-x-4">
+                                        {user.mfa_enabled && user.id !== me?.id && (
+                                            <button
+                                                onClick={() => setResetTarget(user)}
+                                                className="text-xs text-red-600 hover:text-red-800 transition-colors"
+                                            >
+                                                Reset MFA
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => toggleActiveMutation.mutate({ userId: user.id, activate: !user.is_active })}
                                             className="text-xs text-zinc-500 hover:text-zinc-800 transition-colors"
@@ -144,6 +197,25 @@ export default function UserManagement() {
                     </tbody>
                 </table>
             </div>
+
+            <Modal
+                open={!!resetTarget}
+                onClose={() => setResetTarget(null)}
+                title="Reset two-factor authentication"
+                size="md"
+                footer={<>
+                    <button className={btnSecondary} onClick={() => setResetTarget(null)} disabled={resetMfa.isPending}>Cancel</button>
+                    <button className={btnDanger} onClick={() => resetTarget && resetMfa.mutate(resetTarget)} disabled={resetMfa.isPending}>
+                        {resetMfa.isPending ? 'Resetting…' : 'Reset MFA'}
+                    </button>
+                </>}
+            >
+                <p className="text-sm text-zinc-700">
+                    Remove two-factor authentication for <strong>{resetTarget?.full_name || resetTarget?.email}</strong>?
+                    Their active sessions will be signed out, and they will need to set it up again
+                    {' '}if your organization requires it.
+                </p>
+            </Modal>
 
             <InviteUserModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} />
         </PageContainer>

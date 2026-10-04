@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
+import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { SLAPolicyItem, SSOConfig, User } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
+import { mfaErrorMessage } from '../profile/mfaErrors';
 
 const SEVERITY_LABEL: Record<string, string> = {
     critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info',
@@ -96,6 +97,49 @@ function SLAPoliciesSection() {
                         {save.isPending ? <Loader2 size={14} className="animate-spin" /> : savedFlash ? <Check size={14} /> : <Save size={14} />}
                         {savedFlash ? 'Saved' : 'Save SLA policies'}
                     </button>
+                </div>
+            )}
+        </section>
+    );
+}
+
+function MfaRequirementSection() {
+    const qc = useQueryClient();
+    const [error, setError] = useState<string | null>(null);
+    const { data, isLoading } = useQuery({
+        queryKey: ['tenant-security'],
+        queryFn: async () => (await api.get('/tenants/current/security')).data as { require_mfa: boolean; members_without_mfa: number },
+    });
+    const toggle = useMutation({
+        mutationFn: async (require_mfa: boolean) => (await api.put('/tenants/current/security', { require_mfa })).data,
+        onSuccess: (d) => { setError(null); qc.setQueryData(['tenant-security'], d); },
+        onError: (err) => setError(mfaErrorMessage(err, 'Could not update the setting.')),
+    });
+    const n = data?.members_without_mfa ?? 0;
+    return (
+        <section className="bg-white border border-zinc-200">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-zinc-200">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+                    <ShieldCheck size={15} className="text-accent-600" /> Two-factor authentication
+                </h2>
+            </div>
+            {isLoading || !data ? (
+                <p className="p-4 font-mono text-xs text-zinc-400">$ loading…</p>
+            ) : (
+                <div className="p-4 space-y-3">
+                    <label className="flex items-center gap-2 text-sm text-zinc-800 cursor-pointer">
+                        <input type="checkbox" checked={data.require_mfa} disabled={toggle.isPending}
+                            onChange={(e) => toggle.mutate(e.target.checked)}
+                            className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                        Require two-factor authentication
+                    </label>
+                    <p className="text-xs text-zinc-500">
+                        {n === 0
+                            ? 'All members have two-factor authentication enabled.'
+                            : `${n} member${n === 1 ? '' : 's'} ${n === 1 ? "doesn't" : "don't"} have MFA yet.`}
+                        {data.require_mfa && n > 0 && ' They will be asked to set it up at their next sign-in.'}
+                    </p>
+                    {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
                 </div>
             )}
         </section>
@@ -270,6 +314,7 @@ export default function Settings() {
                 </section>
             )}
 
+            {isAdmin && <MfaRequirementSection />}
             {isAdmin && <SLAPoliciesSection />}
         </PageContainer>
     );

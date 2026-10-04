@@ -1,6 +1,7 @@
 from typing import Optional, List, Any
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
+from app.services.avatars import avatar_version
 from app.models.case import CaseStatus, CaseSeverity
 
 
@@ -8,6 +9,17 @@ class TimelineEventUser(BaseModel):
     id: int
     email: str
     full_name: Optional[str] = None
+    has_avatar: bool = False
+    avatar_version: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _avatar(cls, v):
+        key = getattr(v, "avatar_key", None)
+        if isinstance(v, dict) or not hasattr(v, "avatar_key"):
+            return v
+        return {"id": v.id, "email": v.email, "full_name": v.full_name,
+                "has_avatar": bool(key), "avatar_version": avatar_version(key)}
 
     class Config:
         from_attributes = True

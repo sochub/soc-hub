@@ -1,4 +1,5 @@
 import { useParams, useLocation } from 'react-router-dom';
+import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink } from 'lucide-react';
@@ -427,7 +428,9 @@ export default function CaseDetail() {
                                                             {event.event_type?.replace('_', ' ')}
                                                         </span>
                                                         {event.user && (
-                                                            <span className="text-[10px] font-mono text-zinc-400">
+                                                            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-zinc-400">
+                                                                <Avatar userId={event.user.id} name={event.user.full_name || event.user.email}
+                                                                    hasAvatar={event.user.has_avatar} version={event.user.avatar_version} size={18} />
                                                                 by {event.user.full_name || event.user.email}
                                                             </span>
                                                         )}

@@ -18,7 +18,7 @@ from app.models.user import User, UserRole
 from app.schemas.membership import MembershipOut
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserMe, PasswordChange, TokenOnly
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
-from app.services.avatars import MAX_BYTES, reencode_avatar
+from app.services.avatars import MAX_BYTES, avatar_version, reencode_avatar
 from app.storage import StorageError, get_storage
 from app.utils.audit import create_audit_log
 from app.schemas.notification import MentionableUser
@@ -47,6 +47,8 @@ async def read_users(
         UserSchema(
             id=u.id, email=u.email, full_name=u.full_name,
             is_active=u.is_active, is_super_admin=u.is_super_admin, role=role,
+            has_avatar=bool(u.avatar_key), avatar_version=avatar_version(u.avatar_key),
+            mfa_enabled=u.mfa_enabled_at is not None,
         )
         for u, role in rows.all()
     ]
@@ -67,7 +69,8 @@ async def mentionable_users(
                (User.full_name.ilike(esc, escape="\\")) | (User.email.ilike(esc, escape="\\")))
         .order_by(User.full_name, User.id).limit(10)
     )
-    return [MentionableUser(id=u.id, name=u.full_name or (u.email or "").split("@")[0], email=u.email) for u in rows.scalars().all()]
+    return [MentionableUser(id=u.id, name=u.full_name or (u.email or "").split("@")[0], email=u.email,
+                           has_avatar=bool(u.avatar_key), avatar_version=avatar_version(u.avatar_key)) for u in rows.scalars().all()]
 
 
 @router.post("/", response_model=UserSchema)
@@ -141,7 +144,7 @@ async def read_user_me(
         mfa_enabled=current_user.mfa_enabled_at is not None,
         has_password=bool(current_user.password_login_enabled),
         mfa_required_by_tenant=mfa_required,
-        avatar_version=(current_user.avatar_key.rsplit('/', 1)[-1].split('.')[0][:16] if current_user.avatar_key else None),
+        avatar_version=avatar_version(current_user.avatar_key),
     )
 
 

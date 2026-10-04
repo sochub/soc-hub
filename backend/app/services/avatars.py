@@ -28,3 +28,8 @@ def reencode_avatar(data: bytes) -> bytes:
         raise
     except Exception as e:
         raise ValueError("decode") from e
+
+
+def avatar_version(avatar_key):
+    """Opaque cache-buster derived from the stored avatar key (None when no avatar)."""
+    return avatar_key.rsplit('/', 1)[-1].split('.')[0][:16] if avatar_key else None
