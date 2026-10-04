@@ -143,6 +143,14 @@ senders can safely retry. Consequences:
   that want each firing recorded must make `external_id` unique per firing
   (e.g. append a timestamp or occurrence id).
 
+## Profile and two-factor authentication
+
+Each user has a Profile page: name, job title, time zone, photo (shown across the
+app to people who share a tenant), password change (signs out other sessions) and
+authenticator-app two-factor sign-in. Tenant admins can require two-factor for their
+tenant and reset a member's two-factor if they lose their device. See
+[configuration.md](configuration.md#profile-and-two-factor-authentication).
+
 ## Single Sign-On (SAML)
 
 Tenant admins configure their own IdP (Okta, Entra ID, Google, …) under
