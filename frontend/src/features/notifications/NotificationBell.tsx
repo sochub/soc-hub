@@ -7,6 +7,8 @@ import { cn } from '../../lib/utils';
 import type { AppNotification } from '../../types';
 import { useOpenNotification } from './useOpenNotification';
 import { fetchNotifications, markAllRead, relativeTime, useTenantId, useUnreadCount } from './api';
+import { formatDateTime } from '../../utils/datetime';
+import { useMyTimezone } from '../../utils/useMyTimezone';
 
 const ICONS: Record<string, LucideIcon> = {
     mention: AtSign, assigned: UserPlus, comment: MessageSquare,
@@ -16,6 +18,7 @@ const ICONS: Record<string, LucideIcon> = {
 export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpen: (n: AppNotification) => void; role?: 'menuitem' }) {
     const Icon = ICONS[n.type] ?? Bell;
     const unread = !n.read_at;
+    const tz = useMyTimezone();
     return (
         <button type="button" role={role} onClick={() => onOpen(n)}
             className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-zinc-100 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-none',
@@ -26,7 +29,7 @@ export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpe
                 <span className="block label-mono truncate mt-0.5">#{n.case_id} · {n.case_title ?? ''}</span>
             </span>
             <span className="shrink-0 flex items-center gap-2">
-                <span className="num text-xs text-zinc-400">{relativeTime(n.created_at)}</span>
+                <time dateTime={n.created_at} title={formatDateTime(n.created_at, tz)} className="num text-xs text-zinc-400">{relativeTime(n.created_at, tz)}</time>
                 {unread
                     ? <span className="w-1.5 h-1.5 bg-accent-600"><span className="sr-only">Unread</span></span>
                     : <span className="w-1.5 h-1.5" aria-hidden />}

@@ -176,7 +176,7 @@ export default function UserManagement() {
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 text-right space-x-4">
-                                        {user.mfa_enabled && user.id !== me?.id && (
+                                        {me && user.mfa_enabled && user.id !== me.id && (!user.is_super_admin || me.is_super_admin) && (
                                             <button
                                                 onClick={() => setResetTarget(user)}
                                                 className="text-xs text-red-600 hover:text-red-800 transition-colors"

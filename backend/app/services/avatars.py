@@ -16,7 +16,10 @@ def reencode_avatar(data: bytes) -> bytes:
                 raise ValueError("format")
             if im.size[0] * im.size[1] > Image.MAX_IMAGE_PIXELS:  # before any decode
                 raise ValueError("size")
+            if im.format == "JPEG":
+                im.draft("RGB", (512, 512))  # decode at reduced scale (DCT), bounding memory
             im = ImageOps.exif_transpose(im)
+            im.thumbnail((1024, 1024))  # shrink before the full-size RGBA copy
             rgba = im.convert("RGBA")
             bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
             rgb = Image.alpha_composite(bg, rgba).convert("RGB")

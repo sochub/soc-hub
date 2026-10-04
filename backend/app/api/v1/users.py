@@ -178,6 +178,10 @@ def _audit_tenant(user: User):
 AVATAR_ERROR = "Image must be PNG, JPEG or WebP up to 2 MB"
 
 
+# At most two avatar re-encodes run at once per process; the rest wait.
+_REENCODE_SLOTS = asyncio.Semaphore(2)
+
+
 @router.put("/me/avatar", response_model=UserMe)
 async def upload_avatar(
     *,
@@ -187,7 +191,8 @@ async def upload_avatar(
 ) -> Any:
     data = await file.read(MAX_BYTES + 1)
     try:
-        webp = await asyncio.to_thread(reencode_avatar, data)
+        async with _REENCODE_SLOTS:  # bound concurrent decodes (memory)
+            webp = await asyncio.to_thread(reencode_avatar, data)
     except ValueError:
         raise HTTPException(status_code=422, detail=AVATAR_ERROR)
     uid = current_user.id
@@ -229,7 +234,10 @@ async def delete_avatar(
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Response:
-    uid, old_key = current_user.id, current_user.avatar_key
+    uid = current_user.id
+    # Lock the row so a concurrent upload/delete can't race this one.
+    old_key = (await db.execute(
+        select(User.avatar_key).where(User.id == uid).with_for_update())).scalar_one()
     if old_key:
         audit_tenant = _audit_tenant(current_user)
         current_user.avatar_key = None

@@ -60,6 +60,7 @@ export default function Login() {
             if (response.data.mfa_required || response.data.mfa_setup_required) {
                 setChallenge({ token: response.data.mfa_token, kind: response.data.mfa_required ? 'code' : 'setup' });
                 setCode('');
+                setPassword(''); // not needed past this step; don't keep it in memory
                 return;
             }
             const { access_token } = response.data;
@@ -68,6 +69,8 @@ export default function Login() {
         } catch (err: any) {
             if (err.response?.status === 401) {
                 setError('Invalid email or password.');
+            } else if (err.response?.status === 429) {
+                setError(mfaErrorMessage(err));
             } else if (!err.response) {
                 setError('Unable to connect to server. Please try again later.');
             } else {
@@ -158,6 +161,7 @@ export default function Login() {
                                 open
                                 authToken={challenge.token}
                                 onClose={() => resetChallenge()}
+                                onExpired={() => resetChallenge('Your sign-in expired — please sign in again')}
                                 onEnabled={(token) => {
                                     localStorage.setItem('token', token);
                                     setChallenge(null);

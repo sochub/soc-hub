@@ -9,6 +9,7 @@ import Avatar from '../../components/Avatar';
 import type { User } from '../../types';
 import MfaSetupDialog from './MfaSetupDialog';
 import { mfaErrorMessage } from './mfaErrors';
+import { formatDateTime } from '../../utils/datetime';
 
 const card = 'bg-white border border-zinc-200';
 const cardHead = 'px-4 h-11 flex items-center border-b border-zinc-200 text-sm font-semibold text-zinc-900';
@@ -28,6 +29,7 @@ function ProfileCard({ me }: { me: User }) {
     const [title, setTitle] = useState(me.job_title ?? '');
     const [tz, setTz] = useState(me.timezone ?? '');
     const [tzFilter, setTzFilter] = useState('');
+    const [now] = useState(() => new Date()); // sample instant for the timezone preview
     const [preview, setPreview] = useState<string | null>(null);
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -113,6 +115,7 @@ function ProfileCard({ me }: { me: User }) {
                             <option value="">Browser default</option>
                             {shown.map((z) => <option key={z} value={z}>{z}</option>)}
                         </select>
+                        <p className="text-xs text-zinc-500 mt-1">Times will show as <span className="num">{formatDateTime(now, tz || null)}</span></p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -228,7 +231,10 @@ function MfaCard({ me }: { me: User }) {
                     {enabled ? <ShieldCheck size={16} className="text-emerald-600" /> : <ShieldOff size={16} className="text-zinc-400" />}
                     <span className="text-zinc-700">{enabled ? 'Two-factor authentication is on.' : 'Two-factor authentication is off.'}</span>
                 </div>
-                {!enabled && <button type="button" className={btnPrimary} onClick={() => setSetupOpen(true)}>Turn on</button>}
+                {!enabled && me.has_password !== false && <button type="button" className={btnPrimary} onClick={() => setSetupOpen(true)}>Turn on</button>}
+                {!enabled && me.has_password === false && (
+                    <p className="text-xs text-zinc-500 w-full">This account signs in through single sign-on; your identity provider handles two-factor.</p>
+                )}
                 {enabled && !me.mfa_required_by_tenant && me.has_password !== false && (
                     <button type="button" className={btnSecondary} onClick={() => setOffOpen(true)}>Turn off</button>
                 )}
@@ -239,7 +245,7 @@ function MfaCard({ me }: { me: User }) {
                     <p className="text-xs text-zinc-500 w-full">Two-factor for single sign-on accounts can only be reset by an admin.</p>
                 )}
             </div>
-            <MfaSetupDialog open={setupOpen} onClose={() => setSetupOpen(false)}
+            <MfaSetupDialog open={setupOpen} requirePassword onClose={() => setSetupOpen(false)}
                 onEnabled={() => { setSetupOpen(false); void qc.invalidateQueries({ queryKey: ['currentUser'] }); }} />
             {/* Mounted only while open so password/code state is discarded on close. */}
             {offOpen && <DisableMfaModal open onClose={() => setOffOpen(false)} />}

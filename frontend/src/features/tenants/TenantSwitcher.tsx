@@ -18,6 +18,7 @@ export default function TenantSwitcher() {
     const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [mfaBlocked, setMfaBlocked] = useState(false);
+    const [switchError, setSwitchError] = useState<string | null>(null);
 
     const { data: me } = useQuery({
         queryKey: ['currentUser'],
@@ -53,6 +54,7 @@ export default function TenantSwitcher() {
         }
         setBusy(true);
         setMfaBlocked(false);
+        setSwitchError(null);
         try {
             await switchTenant(id);
             setOpen(false);
@@ -62,7 +64,8 @@ export default function TenantSwitcher() {
             if (e.response?.status === 403 && e.response.data?.detail === 'mfa_setup_required') {
                 setMfaBlocked(true);
             } else {
-                throw err;
+                const d = e.response?.data?.detail;
+                setSwitchError(typeof d === 'string' ? d : 'Could not switch tenant. Try again.');
             }
         } finally {
             setBusy(false);
@@ -73,7 +76,7 @@ export default function TenantSwitcher() {
         <div className="relative">
             <p className="label-mono mb-1.5 px-1">{isSuper ? 'viewing tenant' : 'tenant'}</p>
             <button
-                onClick={() => setOpen((o) => !o)}
+                onClick={() => { setOpen((o) => !o); setMfaBlocked(false); setSwitchError(null); }}
                 disabled={busy}
                 aria-haspopup="listbox"
                 aria-expanded={open}
@@ -95,6 +98,10 @@ export default function TenantSwitcher() {
                         Set it up in your profile
                     </Link>{' '}then try again.
                 </p>
+            )}
+
+            {switchError && (
+                <p role="alert" className="mt-1.5 px-1 text-xs text-red-700">{switchError}</p>
             )}
 
             {open && (

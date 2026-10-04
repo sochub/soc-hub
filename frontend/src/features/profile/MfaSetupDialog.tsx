@@ -12,10 +12,17 @@ interface Props {
     onEnabled: (token: string) => void;
     /** Forced setup during login: sent as the Bearer token instead of the stored one. */
     authToken?: string;
+    /** Ask for the current password (enabling from a normal session on a password account). */
+    requirePassword?: boolean;
+    /** Forced setup only: the login challenge expired or was already used (401). */
+    onExpired?: () => void;
 }
 
-export default function MfaSetupDialog({ open, onClose, onEnabled, authToken }: Props) {
+const isUnauthorized = (err: unknown) => (err as { response?: { status?: number } })?.response?.status === 401;
+
+export default function MfaSetupDialog({ open, onClose, onEnabled, authToken, requirePassword, onExpired }: Props) {
     const [qr, setQr] = useState<string | null>(null);
+    const [pw, setPw] = useState('');
     const [secret, setSecret] = useState<string | null>(null);
     const [code, setCode] = useState('');
     const [error, setError] = useState<string | null>(null);
@@ -37,7 +44,9 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken }: 
                 setSecret(data.secret as string);
                 setQr(img);
             } catch (err) {
-                if (!cancelled) setError(mfaErrorMessage(err, 'Could not start two-factor setup.'));
+                if (cancelled) return;
+                if (authToken && isUnauthorized(err) && onExpired) { onExpired(); return; }
+                setError(mfaErrorMessage(err, 'Could not start two-factor setup.'));
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -45,7 +54,7 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken }: 
         return () => {
             cancelled = true;
             // Drop all sensitive state when closed or unmounted.
-            setQr(null); setSecret(null); setCode(''); setError(null); setCopied(false);
+            setQr(null); setSecret(null); setCode(''); setPw(''); setError(null); setCopied(false);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, authToken]);
@@ -65,11 +74,13 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken }: 
         setBusy(true);
         setError(null);
         try {
-            const { data } = await api.post('/users/me/mfa/enable', { code }, { headers });
+            const body = requirePassword ? { code, current_password: pw } : { code };
+            const { data } = await api.post('/users/me/mfa/enable', body, { headers });
             const token = data.access_token as string;
             if (!authToken) setSessionToken(token);
             onEnabled(token);
         } catch (err) {
+            if (authToken && isUnauthorized(err) && onExpired) { onExpired(); return; }
             setError(mfaErrorMessage(err));
             setCode('');
         } finally {
@@ -81,7 +92,7 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken }: 
         <Modal open={open} onClose={onClose} title="Turn on two-factor authentication" size="md"
             footer={<>
                 <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
-                <button type="submit" form="mfa-setup-form" className={btnPrimary} disabled={busy || loading || !secret || code.length !== 6}>
+                <button type="submit" form="mfa-setup-form" className={btnPrimary} disabled={busy || loading || !secret || code.length !== 6 || (!!requirePassword && !pw)}>
                     {busy && <Loader2 size={14} className="animate-spin" />} Confirm
                 </button>
             </>}>
@@ -100,6 +111,13 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken }: 
                                 {copied ? <Check size={14} /> : <Copy size={14} />}
                             </button>
                         </div>
+                    </div>
+                )}
+                {requirePassword && (
+                    <div>
+                        <label htmlFor="mfa-pw" className={modalLabel}>Current password</label>
+                        <input id="mfa-pw" type="password" autoComplete="current-password" className={modalInput}
+                            value={pw} onChange={(e) => setPw(e.target.value)} />
                     </div>
                 )}
                 <div>
