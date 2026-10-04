@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Index, Integer, String, func
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 import enum
@@ -25,6 +25,13 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     # Global super-admin flag. Tenant-scoped roles live on TenantMembership.
     is_super_admin = Column(Boolean, nullable=False, default=False)
+    job_title = Column(String(100), nullable=True)
+    timezone = Column(String(64), nullable=True)
+    avatar_key = Column(String(255), nullable=True)
+    # Bumped to invalidate every outstanding access token for this user.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
+    mfa_secret_enc = Column(Text, nullable=True)
+    mfa_enabled_at = Column(DateTime(timezone=True), nullable=True)
 
     # Case-insensitive uniqueness (emails are also stored lower-cased; see
     # app.utils.emails.normalize_email).

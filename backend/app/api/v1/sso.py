@@ -170,7 +170,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
                            tenant_id=tenant.id, user_id=user.id)
     await db.commit()
 
-    token = security.create_access_token({"sub": user.email, "active_tenant_id": tenant.id})
+    token = security.issue_access_token(user, tenant.id)
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     return RedirectResponse(f"{base}/login#sso_token={quote(token)}", status_code=303)
 

@@ -86,12 +86,8 @@ async def login_access_token(
 
     await throttle.reset(email, ip)
     active_tenant_id = await _default_active_tenant_id(db, user)
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {
-        "access_token": security.create_access_token(
-            {"sub": user.email, "active_tenant_id": active_tenant_id},
-            expires_delta=access_token_expires,
-        ),
+        "access_token": security.issue_access_token(user, active_tenant_id),
         "token_type": "bearer",
     }
 
@@ -126,11 +122,7 @@ async def switch_tenant(
         if not res.scalars().first():
             raise HTTPException(status_code=403, detail="You are not a member of that tenant.")
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {
-        "access_token": security.create_access_token(
-            {"sub": current_user.email, "active_tenant_id": body.tenant_id},
-            expires_delta=access_token_expires,
-        ),
+        "access_token": security.issue_access_token(current_user, body.tenant_id),
         "token_type": "bearer",
     }

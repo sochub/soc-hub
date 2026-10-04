@@ -218,6 +218,7 @@ async def deactivate_user(
         raise HTTPException(status_code=400, detail="Cannot deactivate yourself.")
     user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     user.is_active = False
+    security.bump_token_version(user)
     await db.commit()
     return UserSchema(
         id=user.id, email=user.email, full_name=user.full_name,

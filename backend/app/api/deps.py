@@ -29,7 +29,7 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
-        if email is None:
+        if email is None or payload.get("purpose"):
             raise credentials_exception
         token_data = user_schema.TokenData(
             email=email, active_tenant_id=payload.get("active_tenant_id")
@@ -41,7 +41,7 @@ async def get_current_user(
         select(User).options(selectinload(User.memberships)).where(User.email == token_data.email)
     )
     user = result.scalars().first()
-    if user is None:
+    if user is None or payload.get("tv", 0) != (user.token_version or 0):
         raise credentials_exception
     # Transient, request-scoped: the active tenant chosen for this token.
     user._active_tenant_id = token_data.active_tenant_id
