@@ -162,7 +162,7 @@ export default function Layout() {
                         <Link to="/profile" className="flex items-center gap-2.5 min-w-0 flex-1 hover:opacity-80"
                             aria-label="Your profile" title="Your profile">
                             <Avatar userId={currentUser?.id} name={displayName}
-                                hasAvatar={currentUser?.has_avatar} size={32} />
+                                hasAvatar={currentUser?.has_avatar} version={currentUser?.avatar_version} size={32} />
                             {(showLabels || mobileOpen) && (
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-zinc-900 truncate leading-tight">{displayName}</p>

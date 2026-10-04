@@ -161,3 +161,17 @@ def test_me_reports_mfa_required_by_tenant():
         r = await c.get("/api/v1/users/me", headers=hdr)
         assert r.json()["mfa_required_by_tenant"] is True
     _scenario(body)
+
+
+def test_me_avatar_version_is_opaque_stem():
+    async def body(c, ids, hdr):
+        r = await c.get("/api/v1/users/me", headers=hdr)
+        assert r.json()["avatar_version"] is None
+        async with AsyncSessionLocal() as db:
+            u = (await db.execute(select(User).where(User.id == ids["u"]))).scalars().one()
+            u.avatar_key = f"avatars/{ids['u']}/abcdef0123456789abcdef.webp"
+            await db.commit()
+        r = await c.get("/api/v1/users/me", headers=hdr)
+        v = r.json()["avatar_version"]
+        assert v == "abcdef0123456789" and "avatars" not in v
+    _scenario(body)

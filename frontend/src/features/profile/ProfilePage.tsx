@@ -54,13 +54,13 @@ function ProfileCard({ me }: { me: User }) {
             fd.append('file', file);
             return (await api.put('/users/me/avatar', fd, { headers: { 'Content-Type': 'multipart/form-data' } })).data;
         },
-        onSuccess: () => { setPreview(null); void qc.invalidateQueries({ queryKey: ['currentUser'] }); },
+        onSuccess: () => { setPreview(null); qc.removeQueries({ queryKey: ['avatar', me.id] }); void qc.invalidateQueries({ queryKey: ['currentUser'] }); },
         onError: (e) => { setPreview(null); setMsg({ ok: false, text: apiError(e, 'Could not upload image.') }); },
     });
 
     const remove = useMutation({
         mutationFn: async () => { await api.delete('/users/me/avatar'); },
-        onSuccess: () => void qc.invalidateQueries({ queryKey: ['currentUser'] }),
+        onSuccess: () => { qc.removeQueries({ queryKey: ['avatar', me.id] }); void qc.invalidateQueries({ queryKey: ['currentUser'] }); },
         onError: (e) => setMsg({ ok: false, text: apiError(e, 'Could not remove image.') }),
     });
 
@@ -80,7 +80,7 @@ function ProfileCard({ me }: { me: User }) {
                 <div className="flex items-center gap-4">
                     {preview
                         ? <img src={preview} alt="" className="w-16 h-16 object-cover" />
-                        : <Avatar userId={me.id} name={me.full_name || me.email} hasAvatar={me.has_avatar} size={64} />}
+                        : <Avatar userId={me.id} name={me.full_name || me.email} hasAvatar={me.has_avatar} version={me.avatar_version} size={64} />}
                     <div className="flex flex-wrap gap-2">
                         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
                             aria-label="Choose avatar image" onChange={(e) => onFile(e.target.files?.[0])} />
@@ -107,7 +107,7 @@ function ProfileCard({ me }: { me: User }) {
                     </div>
                     <div>
                         <label htmlFor="pf-tzf" className={modalLabel}>Timezone</label>
-                        <input id="pf-tzf" className={`${modalInput} mb-1.5`} placeholder="Filter timezones…" value={tzFilter}
+                        <input id="pf-tzf" aria-label="Filter timezones" className={`${modalInput} mb-1.5`} placeholder="Filter timezones…" value={tzFilter}
                             onChange={(e) => setTzFilter(e.target.value)} />
                         <select aria-label="Timezone" className={modalInput} value={tz} onChange={(e) => setTz(e.target.value)}>
                             <option value="">Browser default</option>

@@ -143,6 +143,7 @@ export interface User {
   mfa_enabled?: boolean;
   has_password?: boolean;
   mfa_required_by_tenant?: boolean;
+  avatar_version?: string | null;
 }
 
 export interface Invitation {

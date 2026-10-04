@@ -29,8 +29,13 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
-            localStorage.removeItem('token');
-            window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+            const sent = error.config?.headers?.Authorization;
+            const stored = localStorage.getItem('token');
+            // A request carrying an explicit, different token (e.g. MFA setup challenge) must not wipe the session.
+            if (!sent || !stored || sent === `Bearer ${stored}`) {
+                localStorage.removeItem('token');
+                window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+            }
         }
         return Promise.reject(error);
     }

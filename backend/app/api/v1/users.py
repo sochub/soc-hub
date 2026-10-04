@@ -141,6 +141,7 @@ async def read_user_me(
         mfa_enabled=current_user.mfa_enabled_at is not None,
         has_password=bool(current_user.password_login_enabled),
         mfa_required_by_tenant=mfa_required,
+        avatar_version=(current_user.avatar_key.rsplit('/', 1)[-1].split('.')[0][:16] if current_user.avatar_key else None),
     )
 
 

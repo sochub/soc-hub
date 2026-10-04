@@ -71,6 +71,7 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken }: 
             onEnabled(token);
         } catch (err) {
             setError(mfaErrorMessage(err));
+            setCode('');
         } finally {
             setBusy(false);
         }

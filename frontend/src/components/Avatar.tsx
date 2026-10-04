@@ -7,6 +7,8 @@ interface AvatarProps {
     userId: number | null | undefined;
     name?: string | null;
     hasAvatar?: boolean;
+    /** Opaque cache-buster; changes when the user's image changes. */
+    version?: string | null;
     size?: number;
     className?: string;
 }
@@ -18,10 +20,10 @@ function initials(name?: string | null): string {
 }
 
 /** User avatar: authenticated blob fetch with an initials fallback. */
-export default function Avatar({ userId, name, hasAvatar, size = 32, className }: AvatarProps) {
+export default function Avatar({ userId, name, hasAvatar, version, size = 32, className }: AvatarProps) {
     const { data: blob } = useQuery({
-        queryKey: ['avatar', userId, hasAvatar],
-        queryFn: async () => (await api.get(`/users/${userId}/avatar`, { responseType: 'blob' })).data as Blob,
+        queryKey: ['avatar', userId, hasAvatar, version ?? null],
+        queryFn: async () => (await api.get(`/users/${userId}/avatar`, { responseType: 'blob', params: version ? { v: version } : undefined })).data as Blob,
         enabled: !!userId && !!hasAvatar,
         staleTime: 5 * 60_000,
         retry: false,
