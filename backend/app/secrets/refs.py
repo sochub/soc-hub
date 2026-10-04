@@ -16,8 +16,8 @@ import re
 
 from app.workflows.templating import TemplateError
 
-NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
-NONCE_RE = re.compile(r"^[0-9a-f]{16}$")
+NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}\Z")
+NONCE_RE = re.compile(r"^[0-9a-f]{16}\Z")
 ANY_PLACEHOLDER_RE = re.compile(r"⟦secret:([A-Z][A-Z0-9_]{1,63})(?:#[0-9a-f]{16})?⟧")  # display only
 _MSG = "secrets can only be inserted, not transformed"
 

@@ -3,7 +3,10 @@ import logging
 import re
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import Text, select
 from sqlalchemy.exc import IntegrityError
@@ -19,7 +22,25 @@ from app.secrets.hosts import valid_host_pattern
 from app.utils.audit import create_audit_log
 from app.utils.crypto import encrypt
 
-router = APIRouter()
+
+
+class _NoEchoRoute(APIRoute):
+    """Strip `input`/`ctx` from 422s on this router: pydantic's `missing` errors echo the whole body, value included."""
+
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def wrapped(request: Request):
+            try:
+                return await handler(request)
+            except RequestValidationError as exc:
+                errs = [{k: v for k, v in e.items() if k not in ("input", "ctx", "url")} for e in exc.errors()]
+                return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errs)})
+        return wrapped
+
+
+router = APIRouter(route_class=_NoEchoRoute)
+VALUE_ERR = "Secret value must be 1-8192 characters"
 logger = logging.getLogger(__name__)
 
 
@@ -68,6 +89,7 @@ async def list_secrets(db: AsyncSession = Depends(deps.get_db), current_user: Us
     rows = (await db.execute(select(TenantSecret).where(TenantSecret.tenant_id == tenant_id)
                              .order_by(TenantSecret.name))).scalars().all()
     emails = await _emails(db, rows)
+    # ponytail: N+1 (one in_use query per secret); fine up to ~100 secrets/tenant, batch it beyond that
     return [_out(r, emails, await _in_use_by(db, tenant_id, r.name)) for r in rows]
 
 
@@ -84,6 +106,8 @@ async def secret_names(db: AsyncSession = Depends(deps.get_db),
 async def create_secret(body: SecretCreate, db: AsyncSession = Depends(deps.get_db),
                         current_user: User = Depends(deps.require_admin),
                         tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    if not body.value.strip() or len(body.value) > 8192:
+        raise HTTPException(status_code=422, detail=VALUE_ERR)
     await _check_hosts(db, tenant_id, body.allowed_hosts)
     exists = (await db.execute(select(TenantSecret.id).where(
         TenantSecret.tenant_id == tenant_id, TenantSecret.name == body.name))).first()
@@ -114,20 +138,24 @@ async def update_secret(name: str, body: SecretUpdate, db: AsyncSession = Depend
                         current_user: User = Depends(deps.require_admin),
                         tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     row = await _get(db, tenant_id, name)
+    if body.value is not None and len(body.value) > 8192:
+        raise HTTPException(status_code=422, detail=VALUE_ERR)
     fields = []
     if body.allowed_hosts is not None:
         await _check_hosts(db, tenant_id, body.allowed_hosts)
-        row.allowed_hosts = body.allowed_hosts
-        fields.append("allowed_hosts")
-    if body.description is not None:
+        if body.allowed_hosts != (row.allowed_hosts or []):
+            row.allowed_hosts = body.allowed_hosts
+            fields.append("allowed_hosts")
+    if body.description is not None and body.description != row.description:
         row.description = body.description
         fields.append("description")
     if body.value is not None and body.value.strip():
         row.value_enc = encrypt(body.value)
         fields.append("value")
-    row.updated_by = current_user.id
-    await create_audit_log(db=db, entity_type="secret", entity_id=row.id, action="update", tenant_id=tenant_id,
-                           user_id=current_user.id, changes={"name": row.name, "fields": fields})
+    if fields:
+        row.updated_by = current_user.id
+        await create_audit_log(db=db, entity_type="secret", entity_id=row.id, action="update", tenant_id=tenant_id,
+                               user_id=current_user.id, changes={"name": row.name, "fields": fields})
     await db.commit()
     await db.refresh(row)
     logger.info("secret update tenant=%s name=%s outcome=ok", tenant_id, name)

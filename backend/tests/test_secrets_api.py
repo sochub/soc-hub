@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 import secrets as pysecrets
 
 import httpx
@@ -110,6 +111,37 @@ async def _scenario(caplog):
                 r = await call("POST", BASE + "/", json={"name": "IP_H", "value": "x", "allowed_hosts": ["10.1.2.3"]})
                 assert r.status_code == 201, f"c ip allowlisted {r.status_code}"
 
+                # (l) 422s never echo the value; "ABC\n" is rejected; missing-field errors don't echo the body
+                lv = "LEAK-" + pysecrets.token_hex(8)
+                for label, method, url, body in [
+                    ("long", "POST", BASE + "/", {"name": "LEAK_A", "value": lv + "x" * 8200, "allowed_hosts": []}),
+                    ("ws", "POST", BASE + "/", {"name": "LEAK_A", "value": " \t ", "allowed_hosts": []}),
+                    ("bad name", "POST", BASE + "/", {"name": "bad", "value": lv, "allowed_hosts": []}),
+                    ("bad host", "POST", BASE + "/", {"name": "LEAK_A", "value": lv, "allowed_hosts": ["Bad Host"]}),
+                    ("missing name", "POST", BASE + "/", {"value": lv, "allowed_hosts": []}),
+                    ("nl name", "POST", BASE + "/", {"name": "ABC\n", "value": lv, "allowed_hosts": []}),
+                    ("put long", "PUT", BASE + "/API_KEY", {"value": lv + "x" * 8200}),
+                    ("put bad", "PUT", BASE + "/API_KEY", {"value": lv, "allowed_hosts": "nope"}),
+                ]:
+                    r = await call(method, url, json=body)
+                    assert r.status_code == 422, f"l {label} {r.status_code}"
+                    assert lv not in r.text and " \t " not in r.text, f"l {label} echoed"
+
+                # (m) TOK vs TOK_2 and cross-tenant workflows don't leak into in_use_by
+                for n in ("TOK", "TOK_2"):
+                    assert (await call("POST", BASE + "/", json={"name": n, "value": "x", "allowed_hosts": []})).status_code == 201
+                async with AsyncSessionLocal() as db2:
+                    wt = Workflow(tenant_id=ta_id, name="uses-tok2", trigger_type="manual", graph=_graph("secrets.TOK_2"), enabled=False, version=1)
+                    wo = Workflow(tenant_id=tb_id, name="other-tenant", trigger_type="manual", graph=_graph("secrets.TOK"), enabled=False, version=1)
+                    db2.add_all([wt, wo])
+                    await db2.flush()
+                    ids["workflows"] += [wt.id, wo.id]
+                    await db2.commit()
+                    wt_id = wt.id
+                by = {x["name"]: x for x in (await call("GET", BASE + "/")).json()}
+                assert by["TOK"]["in_use_by"] == [], f"m TOK {by['TOK']['in_use_by']}"
+                assert by["TOK_2"]["in_use_by"] == [{"id": wt_id, "name": "uses-tok2"}], "m TOK_2"
+
                 # (e) in_use_by (exact name; FOO_BAR must not count for API_KEY prefix-wise, nor API_KEY2)
                 async with AsyncSessionLocal() as db2:
                     w1 = Workflow(tenant_id=ta_id, name="uses-api-key", trigger_type="manual", graph=_graph("secrets.API_KEY"), enabled=False, version=1)
@@ -138,12 +170,19 @@ async def _scenario(caplog):
                 async with AsyncSessionLocal() as db2:
                     row = (await db2.execute(select(TenantSecret).where(TenantSecret.tenant_id == ta_id, TenantSecret.name == "API_KEY"))).scalars().one()
                     assert decrypt(row.value_enc) == val2, "f replaced"
+                async with AsyncSessionLocal() as db2:
+                    n0 = (await db2.execute(select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == ta_id, AuditLog.entity_type == "secret"))).scalar()
+                r = await call("PUT", BASE + "/API_KEY", json={"description": "nd", "allowed_hosts": ["api.example.com"], "value": ""})
+                assert r.status_code == 200, "f noop"
+                async with AsyncSessionLocal() as db2:
+                    n1 = (await db2.execute(select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == ta_id, AuditLog.entity_type == "secret"))).scalar()
+                assert n1 == n0, "f noop audit"
                 r = await call("PUT", BASE + "/NOPE_X", json={"description": "x"})
                 assert r.status_code == 404, "f unknown"
                 r = await call("PUT", BASE + "/API_KEY", json={"allowed_hosts": ["10.9.9.9"]})
                 assert r.status_code == 422, "f bad host"
                 upd = [x for x in caplog.messages if x.startswith("secret update")]
-                assert len(upd) == 2, f"j update {upd}"
+                assert len(upd) == 3, f"j update {upd}"
 
                 # (g) delete in use
                 caplog.clear()
@@ -176,8 +215,8 @@ async def _scenario(caplog):
                     r = await call(m, u, **kw)
                     assert r.status_code == 403, f"d analyst {m}"
                 r = await call("GET", BASE + "/names")
-                assert r.status_code == 200 and [x["name"] for x in r.json()] == ["IP_H"], "d names"
-                assert set(r.json()[0]) == {"name", "description", "allowed_hosts"}, "d names shape"
+                assert r.status_code == 200 and "IP_H" in {x["name"] for x in r.json()}, "d names"
+                assert all(set(x) == {"name", "description", "allowed_hosts"} for x in r.json()), "d names shape"
                 state["role"] = "viewer"
                 assert (await call("GET", BASE + "/names")).status_code == 403, "d viewer"
                 state["role"] = "admin"
@@ -208,7 +247,8 @@ async def _scenario(caplog):
             await db.execute(delete(Tenant).where(Tenant.id.in_(tids)))
             await db.commit()
             left = (await db.execute(select(func.count()).select_from(Tenant).where(Tenant.slug.like("wf-test-%")))).scalar()
-            assert left == 0
+            if sys.exc_info()[0] is None:
+                assert left == 0
     await engine.dispose()
 
 
