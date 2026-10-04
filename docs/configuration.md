@@ -769,7 +769,8 @@ session it is spent (tracked in Redis), and reusing it returns
   members of **another tenant**, and existing users who are **not a member** of the
   tenant (it never adds a membership to an existing account). Those users sign in
   with their password (and two-factor). Auto-provisioning only creates **new**
-  users.
+  users. Accounts created by SSO have no SOC Hub password, so they can't be added
+  to another tenant (inviting one is refused with 409) — that would lock them out.
 
 **Tenant requirement.** A tenant admin can enable **Settings → Two-factor
 authentication → Require two-factor authentication** (the UI asks for confirmation
