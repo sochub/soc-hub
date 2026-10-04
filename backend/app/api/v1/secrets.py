@@ -279,7 +279,7 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
             if it["secret_name"] not in created and it["secret_name"] not in reused:
                 reused.append(it["secret_name"])
         else:
-            logger.info("secret convert tenant=%s name=%s outcome=conflict", tenant_id, it["secret_name"])
+            logger.info("secret convert tenant=%s outcome=conflict", tenant_id)
             raise HTTPException(status_code=409, detail=f"Secret {it['secret_name']} already exists with a different value")
     names = await _secret_names(db, tenant_id) | {i["secret_name"] for i in todo}
     await save_workflow(db, wf, name=wf.name, description=wf.description, trigger_type=wf.trigger_type,
