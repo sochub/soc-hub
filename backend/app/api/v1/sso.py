@@ -74,6 +74,7 @@ async def _resolve_sso_user(
             full_name=full_name or email.split("@")[0],
             is_active=True,
             is_super_admin=False,
+            password_login_enabled=False,
         )
         db.add(user)
         await db.flush()

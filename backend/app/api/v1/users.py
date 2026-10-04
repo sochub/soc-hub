@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -10,7 +10,9 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.membership import MembershipOut
-from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserMe
+from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserMe, PasswordChange, TokenOnly
+from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
+from app.utils.audit import create_audit_log
 from app.schemas.notification import MentionableUser
 from app.utils.roles import resolve_active_role
 
@@ -122,6 +124,11 @@ async def read_user_me(
         role=role,
         active_tenant_id=active,
         memberships=memberships,
+        job_title=current_user.job_title,
+        timezone=current_user.timezone,
+        has_avatar=bool(current_user.avatar_key),
+        mfa_enabled=current_user.mfa_enabled_at is not None,
+        has_password=bool(current_user.password_login_enabled),
     )
 
 
@@ -132,14 +139,50 @@ async def update_user_me(
     user_in: UserUpdate,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
-    """Update own profile (name / password)."""
-    if user_in.full_name is not None:
-        current_user.full_name = user_in.full_name
-    if user_in.password is not None:
-        current_user.hashed_password = security.get_password_hash(user_in.password)
+    """Update own profile (name, job title, timezone)."""
+    data = user_in.model_dump(exclude_unset=True)
+    for field in ("full_name", "job_title", "timezone"):
+        if field in data:
+            setattr(current_user, field, data[field])
     await db.commit()
     # Reuse the /me builder for a consistent response.
     return await read_user_me(db=db, current_user=current_user)
+
+
+@router.post("/me/password", response_model=TokenOnly)
+async def change_password(
+    *,
+    request: Request,
+    db: AsyncSession = Depends(deps.get_db),
+    body: PasswordChange,
+    current_user: User = Depends(deps.get_current_active_user),
+    throttle: LoginThrottle = Depends(get_login_throttle),
+) -> Any:
+    """Change own password (requires the current one). Revokes all other sessions
+    and returns a fresh token for this one."""
+    if not current_user.password_login_enabled:
+        raise HTTPException(status_code=400, detail="This account signs in through SSO and has no password.")
+    key, ip = f"pwd:{current_user.id}", client_ip(request)
+    retry_after = await throttle.reserve(key, ip)
+    if retry_after:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
+                            headers={"Retry-After": str(retry_after)})
+    if not security.verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    await throttle.reset(key, ip)
+
+    active = getattr(current_user, "_active_tenant_id", None)
+    audit_tenant = active
+    if audit_tenant is None and current_user.memberships:
+        audit_tenant = min(m.tenant_id for m in current_user.memberships)
+    current_user.hashed_password = security.get_password_hash(body.new_password)
+    security.bump_token_version(current_user)
+    if audit_tenant is not None:  # audit_logs.tenant_id is NOT NULL
+        await create_audit_log(db=db, entity_type="user", entity_id=current_user.id,
+                               action="password_changed", tenant_id=audit_tenant,
+                               user_id=current_user.id, changes=None)
+    await db.commit()
+    return TokenOnly(access_token=security.issue_access_token(current_user, active))
 
 
 async def _membership_in_tenant(db: AsyncSession, user_id: int, tenant_id: int) -> TenantMembership:

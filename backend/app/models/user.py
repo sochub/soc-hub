@@ -1,3 +1,4 @@
+import sqlalchemy as sa
 from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
@@ -27,6 +28,8 @@ class User(Base):
     is_super_admin = Column(Boolean, nullable=False, default=False)
     job_title = Column(String(100), nullable=True)
     timezone = Column(String(64), nullable=True)
+    # False for SSO-provisioned users (random unusable password).
+    password_login_enabled = Column(Boolean, nullable=False, default=True, server_default=sa.true())
     avatar_key = Column(String(255), nullable=True)
     # Bumped to invalidate every outstanding access token for this user.
     token_version = Column(Integer, nullable=False, default=0, server_default="0")
