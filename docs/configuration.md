@@ -472,6 +472,106 @@ the task and evidence caps).
 > for the tenant (a local Ollama stays on your network) or don't use drafting. See
 > [AI provider](#ai-provider).
 
+## Workflow secrets
+
+Store API tokens once, per tenant, and reference them from workflow HTTP nodes
+instead of pasting them into the graph. Managed by tenant admins in
+**Integrations -> Secrets** (API: `/api/v1/secrets`).
+
+**Model.** A secret is a name (`^[A-Z][A-Z0-9_]{1,63}$`), a value (max 8 KB),
+an optional description and a list of **allowed hosts**. The value is encrypted at
+rest with `SECRET_KEY` (same rule as the AI credentials: if the key changes,
+re-enter the values) and is write-only: no endpoint ever returns it. Create,
+update and delete are audit-logged (names and changed field names, never values).
+Deleting a secret that workflows still reference answers `409` with the list of
+workflows, unless `?force=true`.
+
+**Allowed hosts.** A secret is only ever sent to hosts matching its list (up to
+50 entries): an exact hostname (`api.example.com`), or a wildcard `*.example.com`
+that matches subdomains but not `example.com` itself. Patterns are lowercase, no
+port, scheme or path. A bare single-label or IP entry is accepted only if it is
+already on the tenant's HTTP allowlist. The check runs at send time against the
+final hostname, fails closed on anything malformed, and a secret with an empty
+list is never sent anywhere. The SSRF guard and the tenant HTTP allowlist still
+apply on top.
+
+**Using a secret.** Write `{{ secrets.NAME }}`, e.g. header
+`Authorization: Bearer {{ secrets.VT_API_KEY }}`. The node editor has an
+"Insert secret" picker. Only that exact form is accepted: no `secrets['X']`, no
+`|filter`, no `{% %}` blocks, no transforms or method calls (`~` concatenation is
+fine). Allowed only in an `http_request` node's:
+
+- URL path and query (values are percent-encoded on substitution);
+- header values;
+- body string values.
+
+Rejected at save time (and again at run time): URL scheme/host/credentials,
+header names, body keys, trigger filters, conditions, and every other node type.
+A secret used in a header must not contain line breaks, control characters,
+leading/trailing whitespace or non-ASCII characters.
+
+**Placeholder and redaction.** The template context never holds the real value.
+`{{ secrets.NAME }}` renders to `⟦secret:NAME#<16 hex>⟧`, which is what is stored
+in the run history (`workflow_run_steps.input`). The nonce is fresh for every step
+render (including retries), and only the current render's nonce is resolved at
+send time, so placeholder-looking text that arrives in alert or case data stays
+inert literal text. The real value is substituted at the last moment, after the
+SSRF check, and the response is stored with every occurrence replaced by `••••`:
+the raw value and its percent-encoded (`quote`/`quote_plus`) and JSON-escaped
+forms, in outputs and error messages. Once a secret has been used, transport
+errors are reported generically (`request failed: <ExceptionType>`, URL hidden).
+Each use is logged as names, host and outcome only, and updates `last_used_at`.
+
+**Scan and convert (existing workflows).** In **Automations**, "Scan for plaintext
+credentials" lists `http_request` nodes holding what looks like a literal
+credential: headers `Authorization`, `X-API-Key`, `Api-Key`, `ApiKey`,
+`X-Auth-Token`, `X-ApiKey`, `Private-Token`, and URL query keys `apikey`,
+`api_key`, `key`, `token`, `access_token`, on nodes with a literal host. Review
+the suggested names and convert: the value becomes a secret allowed only for that
+node's host, and the node is rewritten to `{{ secrets.NAME }}` (an `Authorization`
+`Bearer`/`Token` prefix is kept) as a new workflow version. Conversion is atomic.
+An existing secret with the same name is reused only if it has the same value
+**and** its allowed hosts already cover the host (otherwise `409`); convert never
+widens a secret's hosts. The node editor's "Move to secret" does the same for a
+single header.
+
+**Roles.** Tenant admins manage secrets and run scan/convert. Analysts and above
+can list names, descriptions and allowed hosts (for the picker) via
+`GET /secrets/names`. Viewers have no access. Validation errors from the secrets
+API never echo the submitted input.
+
+**Limitations.**
+
+- HTTP request nodes only; no other node type can read a secret.
+- Insert-only: no transforms, so no base64/HMAC of a secret inside a template.
+- Redaction is exact-substring over the raw, URL-encoded and JSON-escaped forms. A
+  value echoed back base64-, hex- or HTML-encoded, truncated or split is not
+  detected. Allowed hosts are the main defense: only send secrets to endpoints you
+  trust not to reflect them.
+- Historical runs are not rewritten. Runs created before a credential was
+  converted keep the plaintext in their stored step input; the graph snapshot of
+  old runs and old workflow versions may also still contain it. Rotate the
+  credential at the provider.
+
+**Purging old plaintext from run history.** Take a backup first
+(`pg_dump -t workflow_run_steps ...`); this is destructive. Scope it to one
+workflow by explicit id, and check the row count before deleting:
+
+```sql
+-- Review first
+SELECT count(*) FROM workflow_run_steps
+WHERE run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = 42 AND tenant_id = 7);
+
+-- Then blank the stored request/response/error of just those steps
+UPDATE workflow_run_steps
+SET input = NULL, output = NULL, error = NULL
+WHERE run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = 42 AND tenant_id = 7)
+  AND node_id = 'call_api';   -- the http node that held the credential
+```
+
+Old workflow versions and `workflow_runs.graph_snapshot` for those runs can carry
+the same plaintext; clear them the same way (explicit `WHERE`) if needed.
+
 ## Email (optional — invitations work without it)
 
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`. When

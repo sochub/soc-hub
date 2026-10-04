@@ -70,6 +70,14 @@ automatic up to `auto_max_tlp` (default green), manual runs at amber/red need
 confirmation, and private IPs and internal domains are never sent out. Configured per
 tenant in Integrations. See [configuration](configuration.md#threat-intel-enrichment).
 
+## Workflow secrets
+
+Tenant admins store API tokens in Integrations -> Secrets and reference them in
+workflow HTTP nodes as `{{ secrets.NAME }}`. Values are encrypted, write-only,
+restricted to allowed hosts, and never appear in run history (placeholders and
+`••••` instead). A scan finds plaintext credentials in existing workflows and
+converts them in one step. See [configuration](configuration.md#workflow-secrets).
+
 ## Evidence attachments
 
 An **Evidence** tab on each case holds uploaded files (local disk or S3, up to
