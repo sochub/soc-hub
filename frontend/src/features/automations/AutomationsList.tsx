@@ -2,14 +2,88 @@ import { useState } from 'react';
 import { isAxiosError } from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Workflow as WorkflowIcon } from 'lucide-react';
+import { KeyRound, Plus, Workflow as WorkflowIcon } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
-import type { User } from '../../types';
+import type { SecretScanItem, User } from '../../types';
+import Modal, { btnPrimary, btnSecondary, modalInput } from '../../components/layout/Modal';
+import { NAME_RE, errText } from '../integrations/secretsUtil';
 import type { WorkflowSummary } from './types';
 import { TRIGGER_LABEL } from './nodeCatalog';
 import RunsTable, { StatusBadge } from './RunsTable';
 import PageContainer from '../../components/layout/PageContainer';
+
+const itemKey = (i: SecretScanItem) => `${i.node_id}|${i.location}|${i.key}`;
+
+function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClose: () => void; onDone: () => void }) {
+    const qc = useQueryClient();
+    const [names, setNames] = useState<Record<string, string>>(
+        Object.fromEntries(items.map((i) => [`${i.workflow_id}|${itemKey(i)}`, i.suggested_name])));
+    const [busy, setBusy] = useState<number | null>(null);
+    const [res, setRes] = useState<Record<number, { ok: boolean; text: string }>>({});
+    const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+    const byWf = new Map<number, SecretScanItem[]>();
+    items.forEach((i) => byWf.set(i.workflow_id, [...(byWf.get(i.workflow_id) ?? []), i]));
+
+    const convert = async (wid: number, its: SecretScanItem[]) => {
+        setBusy(wid);
+        try {
+            const r = (await api.post(`/secrets/convert/${wid}`, {
+                items: its.map((i) => ({ node_id: i.node_id, location: i.location, key: i.key, secret_name: names[`${wid}|${itemKey(i)}`] })),
+            })).data as { created: string[]; reused: string[] };
+            const text = `Converted ${its[0].workflow_name}: created ${r.created.length}, reused ${r.reused.length}.`;
+            setRes((p) => ({ ...p, [wid]: { ok: true, text } })); setStatus({ ok: true, text });
+            qc.invalidateQueries({ queryKey: ['secrets-scan'] });
+            qc.invalidateQueries({ queryKey: ['secrets'] });
+            qc.invalidateQueries({ queryKey: ['secret-names'] });
+            qc.invalidateQueries({ queryKey: ['workflows'] });
+            qc.invalidateQueries({ queryKey: ['workflow', wid] });
+            onDone();
+        } catch (e) {
+            const text = errText(e, 'Convert failed');
+            setRes((p) => ({ ...p, [wid]: { ok: false, text } })); setStatus({ ok: false, text: `${its[0].workflow_name}: ${text}` });
+        } finally { setBusy(null); }
+    };
+
+    return (
+        <Modal open onClose={onClose} size="lg" title="Plaintext credentials in workflows"
+            footer={<button type="button" className={btnSecondary} onClick={onClose}>Close</button>}>
+            <p className="text-xs text-zinc-500 mb-3">Each credential becomes a secret restricted to the request host, and the workflow is rewritten to reference it. Pick the names, then convert per workflow.</p>
+            {status && <p role="status" className={`mb-3 text-xs ${status.ok ? 'text-emerald-700' : 'text-red-700'}`}>{status.text}</p>}
+            <div className="space-y-4">
+                {[...byWf.entries()].map(([wid, its]) => {
+                    const todo = its.filter((i) => i.convertible);
+                    const valid = todo.length > 0 && todo.every((i) => NAME_RE.test(names[`${wid}|${itemKey(i)}`] ?? ''));
+                    return (
+                        <div key={wid} className="border border-zinc-200">
+                            <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-200">
+                                <span className="font-medium text-sm text-zinc-900">{its[0].workflow_name}</span>
+                                <button type="button" className={`${btnPrimary} ml-auto !h-8`} disabled={busy !== null || !valid} onClick={() => convert(wid, todo)}>
+                                    {busy === wid ? 'Converting…' : 'Convert'}</button>
+                            </div>
+                            <ul className="divide-y divide-zinc-100">
+                                {its.map((i) => {
+                                    const k = `${wid}|${itemKey(i)}`;
+                                    return (
+                                        <li key={k} className={`px-3 py-2 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-2 items-center ${i.convertible ? '' : 'bg-zinc-50'}`}>
+                                            <div className="text-xs text-zinc-600"><span className="font-mono">{i.node_id}</span> · {i.location} <span className="font-mono">{i.key}</span> · <span className="font-mono">{i.host}</span>
+                                                {!i.convertible && <div className="mt-0.5 text-amber-700">Not convertible: {i.reason ?? 'host not supported'}</div>}</div>
+                                            <input aria-label="Secret name" disabled={!i.convertible} title={i.convertible ? undefined : i.reason}
+                                                className={`${modalInput} font-mono !py-1 !text-xs disabled:opacity-50 disabled:cursor-not-allowed`} value={names[k] ?? ''}
+                                                onChange={(e) => setNames((p) => ({ ...p, [k]: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') }))} />
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                            {res[wid] && <p role="status" className={`px-3 py-2 text-xs ${res[wid].ok ? 'text-emerald-700' : 'text-red-700'}`}>{res[wid].text}</p>}
+                        </div>
+                    );
+                })}
+                {items.length === 0 && <p className="text-sm text-zinc-500">Nothing left to convert.</p>}
+            </div>
+        </Modal>
+    );
+}
 
 export default function AutomationsList() {
     const qc = useQueryClient();
@@ -19,6 +93,18 @@ export default function AutomationsList() {
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const isAdmin = me?.role === 'admin' || !!me?.is_super_admin;
+
+    const tenantId = me?.active_tenant_id ?? null;
+    const dismissKey = `secrets-scan-dismissed:${tenantId}`;
+    const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+    const [review, setReview] = useState(false);
+    const dismissed = dismissedKey === dismissKey || (() => { try { return localStorage.getItem(dismissKey) === '1'; } catch { return false; } })();
+    const { data: scan = [] } = useQuery({
+        queryKey: ['secrets-scan', tenantId],
+        queryFn: async () => (await api.get('/secrets/scan')).data as SecretScanItem[],
+        enabled: isAdmin && !!me,
+    });
+    const scanWfCount = new Set(scan.map((i) => i.workflow_id)).size;
 
     const { data: workflows = [], isLoading } = useQuery({
         queryKey: ['workflows'],
@@ -62,6 +148,17 @@ export default function AutomationsList() {
                         className={cn('pb-2 text-sm capitalize', tab === t ? 'text-accent-700 border-b-2 border-accent-600' : 'text-zinc-500 hover:text-zinc-800')}>{t}</button>
                 ))}
             </div>
+
+            {isAdmin && scan.length > 0 && !dismissed && (
+                <div className="mb-3 px-3 py-2 text-sm border border-amber-200 bg-amber-50 text-amber-900 flex items-center gap-3 flex-wrap">
+                    <KeyRound size={15} />
+                    <span>{scanWfCount} workflow{scanWfCount === 1 ? '' : 's'} contain{scanWfCount === 1 ? 's' : ''} plaintext credentials — move them to Secrets</span>
+                    <button onClick={() => setReview(true)} className="ml-auto h-8 px-3 border border-amber-300 bg-white text-sm hover:bg-amber-100">Review</button>
+                    <button onClick={() => { try { localStorage.setItem(dismissKey, '1'); } catch { /* storage unavailable */ } setDismissedKey(dismissKey); }}
+                        className="h-8 px-3 text-sm text-amber-800 hover:underline">Dismiss</button>
+                </div>
+            )}
+            {review && <ScanReview items={scan} onClose={() => setReview(false)} onDone={() => undefined} />}
 
             {toggleError && <div role="alert" className="mb-3 px-3 py-2 text-sm border border-red-200 bg-red-50 text-red-700">{toggleError}</div>}
 

@@ -1,5 +1,10 @@
-import { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Lock, Trash2 } from 'lucide-react';
+import { api } from '../../api/client';
+import type { SecretName, User } from '../../types';
+import { SecretDialog, type SecretPrefill } from '../integrations/SecretsCard';
+import { secretTemplate, suggestName } from '../integrations/secretsUtil';
 import { NODE_DEF, type FieldDef } from './nodeCatalog';
 import type { WfNode } from './types';
 
@@ -15,24 +20,98 @@ interface Props {
 const inputCls = 'w-full border border-zinc-300 px-2 py-1.5 text-sm bg-white focus:outline-none focus:border-accent-500 disabled:bg-zinc-50';
 const monoCls = inputCls + ' font-mono text-xs';
 
-function JsonField({ value, disabled, onChange }: { value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
+const CRED_HEADERS = new Set(['authorization', 'x-api-key', 'api-key', 'apikey', 'x-auth-token', 'x-apikey', 'private-token']);
+const SCHEME_RE = /^((?:Bearer|Token)\s+)(\S[\s\S]*)$/i;
+
+function urlHost(url: unknown): string {
+    if (typeof url !== 'string' || url.includes('{{')) {
+        // templated URL: take only the literal host before any placeholder/path
+        const m = typeof url === 'string' ? /^https?:\/\/([^/{?#:@]+)(?=[/?#:]|$)/i.exec(url) : null;
+        return m ? m[1].toLowerCase() : '';
+    }
+    try { return new URL(url).hostname.toLowerCase(); } catch { return ''; }
+}
+
+/** "Insert secret" select: picks a tenant secret name; the caller inserts `{{ secrets.NAME }}`. */
+function SecretPicker({ onPick, disabled }: { onPick: (name: string) => void; disabled: boolean }) {
+    const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
+    const { data: names = [] } = useQuery({
+        queryKey: ['secret-names', me?.active_tenant_id ?? null],
+        queryFn: async () => (await api.get('/secrets/names')).data as SecretName[],
+        enabled: !disabled,
+    });
+    const [picked, setPicked] = useState<string>('');
+    if (disabled) return null;
+    const cur = names.find((n) => n.name === picked);
+    return (
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <Lock size={12} className="text-zinc-400" />
+            <select aria-label="Insert secret" className="border border-zinc-300 px-1.5 py-0.5 text-xs bg-white font-mono" value=""
+                onChange={(e) => { if (e.target.value) { setPicked(e.target.value); onPick(e.target.value); } }}>
+                <option value="">{names.length ? 'Insert secret…' : 'No secrets defined'}</option>
+                {names.map((n) => <option key={n.name} value={n.name}>{n.name}</option>)}
+            </select>
+            {cur && <span className="text-[11px] text-zinc-500">allowed: <span className="font-mono">{cur.allowed_hosts.join(', ') || 'no hosts'}</span></span>}
+        </div>
+    );
+}
+
+function insertAt(el: HTMLInputElement | HTMLTextAreaElement | null, text: string, name: string): string {
+    const tpl = secretTemplate(name);
+    const a = el?.selectionStart ?? text.length;
+    const b = el?.selectionEnd ?? a;
+    return text.slice(0, a) + tpl + text.slice(b);
+}
+
+/** Insert `{{ secrets.NAME }}` into JSON text: quoted unless the caret is already inside a string. */
+function jsonInsert(el: HTMLTextAreaElement | null, text: string, name: string, headers: boolean): string {
+    const tpl = secretTemplate(name);
+    if (headers && !text.trim()) return `{"Authorization": "${tpl}"}`;
+    const a = el?.selectionStart ?? text.length;
+    const b = el?.selectionEnd ?? a;
+    let quotes = 0;
+    for (let i = 0; i < a; i++) {
+        if (text[i] === '\\') i++;
+        else if (text[i] === '"') quotes++;
+    }
+    const ins = quotes % 2 === 0 ? `"${tpl}"` : tpl;
+    return text.slice(0, a) + ins + text.slice(b);
+}
+
+function JsonField({ value, disabled, onChange, secrets, object }: { value: unknown; disabled: boolean; onChange: (v: unknown) => void; secrets?: boolean; object?: boolean }) {
+    const ref = useRef<HTMLTextAreaElement>(null);
     const [text, setText] = useState(value === undefined || value === null ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2));
-    const [err, setErr] = useState<string | null>(null);
+    const [err, setErr] = useState<{ hard: boolean; text: string } | null>(() => {
+        if (typeof value !== 'string' || !value.trim()) return null;
+        try { JSON.parse(value); return null; } catch {
+            return object ? { hard: true, text: 'Headers must be a JSON object' } : { hard: false, text: 'Not valid JSON — saved as a text template' };
+        }
+    });
+    const commit = (t: string) => {
+        if (!t.trim()) { setErr(null); onChange(undefined); return; }
+        let parsed: unknown;
+        try { parsed = JSON.parse(t); } catch {
+            if (object) { setErr({ hard: true, text: 'Headers must be a valid JSON object — not saved' }); return; }
+            onChange(t); setErr({ hard: false, text: 'Not valid JSON — saved as a text template' }); return;
+        }
+        if (object && (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))) {
+            setErr({ hard: true, text: 'Headers must be a JSON object — not saved' }); return;
+        }
+        onChange(parsed); setErr(null);
+    };
     return (
         <>
-            <textarea rows={4} className={monoCls} disabled={disabled} value={text} onChange={(e) => setText(e.target.value)}
-                onBlur={() => {
-                    if (!text.trim()) { setErr(null); onChange(undefined); return; }
-                    try { onChange(JSON.parse(text)); setErr(null); }
-                    catch { onChange(text); setErr('Not valid JSON — saved as a text template'); }
-                }} />
-            {err && <p className="text-[11px] text-amber-700 mt-0.5">{err}</p>}
+            <textarea ref={ref} rows={4} className={monoCls} disabled={disabled} value={text} onChange={(e) => setText(e.target.value)}
+                onBlur={() => commit(text)} />
+            {secrets && <SecretPicker disabled={disabled} onPick={(n) => { const t = jsonInsert(ref.current, text, n, !!object); setText(t); commit(t); }} />}
+            {err && <p role={err.hard ? 'alert' : undefined} className={`text-[11px] mt-0.5 ${err.hard ? 'text-red-700' : 'text-amber-700'}`}>{err.text}</p>}
         </>
     );
 }
 
-function Field({ f, value, disabled, onChange }: { f: FieldDef; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
+function Field({ f, value, disabled, onChange, secrets }: { f: FieldDef; value: unknown; disabled: boolean; onChange: (v: unknown) => void; secrets?: boolean }) {
     const str = value === undefined || value === null ? '' : String(value);
+    const ref = useRef<HTMLInputElement>(null);
     switch (f.kind) {
         case 'select':
             return <select className={inputCls} disabled={disabled} value={str} onChange={(e) => onChange(e.target.value || undefined)}>
@@ -41,16 +120,26 @@ function Field({ f, value, disabled, onChange }: { f: FieldDef; value: unknown; 
         case 'textarea':
             return <textarea rows={4} className={monoCls} disabled={disabled} value={str} placeholder={f.placeholder} onChange={(e) => onChange(e.target.value)} />;
         case 'json':
-            return <JsonField value={value} disabled={disabled} onChange={onChange} />;
+            return <JsonField key={JSON.stringify(value) ?? ''} value={value} disabled={disabled} onChange={onChange} secrets={secrets} object={f.key === 'headers'} />;
         default:
-            return <input className={f.kind === 'number' ? inputCls : monoCls} disabled={disabled} value={str} placeholder={f.placeholder}
-                onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)} />;
+            return <>
+                <input ref={ref} className={f.kind === 'number' ? inputCls : monoCls} disabled={disabled} value={str} placeholder={f.placeholder}
+                    onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)} />
+                {secrets && <SecretPicker disabled={disabled} onPick={(n) => onChange(insertAt(ref.current, str, n))} />}
+            </>;
     }
 }
 
 export default function NodeInspector({ node, readOnly, errors, onChange, onRename, onDelete }: Props) {
     const def = NODE_DEF[node.type];
     const [idDraft, setIdDraft] = useState(node.id);
+    const [move, setMove] = useState<{ key: string; prefix: string; prefill: SecretPrefill } | null>(null);
+    const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
+    const isAdmin = me?.role === 'admin' || !!me?.is_super_admin;
+    const headers = node.type === 'http_request' && node.config.headers && typeof node.config.headers === 'object' && !Array.isArray(node.config.headers)
+        ? node.config.headers as Record<string, unknown> : {};
+    const literalHeaders = Object.entries(headers).filter(([k, v]) =>
+        CRED_HEADERS.has(k.toLowerCase()) && typeof v === 'string' && !v.includes('{{') && v.trim() !== '');
     const setCfg = (key: string, v: unknown) => {
         const config = { ...node.config };
         if (v === undefined) delete config[key]; else config[key] = v;
@@ -77,8 +166,21 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
             {def?.fields.map((f) => (
                 <label key={f.key} className="block">
                     <span className="label-mono">{f.label}{f.required && ' *'}</span>
-                    <Field f={f} value={node.config[f.key]} disabled={readOnly} onChange={(v) => setCfg(f.key, v)} />
+                    <Field f={f} value={node.config[f.key]} disabled={readOnly} onChange={(v) => setCfg(f.key, v)}
+                        secrets={node.type === 'http_request' && ['url', 'headers', 'body'].includes(f.key)} />
                     {f.help && <span className="text-[11px] text-zinc-500">{f.help}</span>}
+                    {f.key === 'headers' && !readOnly && literalHeaders.map(([k, v]) => (
+                        <div key={k} className="mt-1 flex items-center gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1">
+                            <span className="flex-1"><span className="font-mono">{k}</span> holds a literal credential.</span>
+                            {isAdmin && <button type="button" className="px-2 py-0.5 border border-amber-300 bg-white hover:bg-amber-100"
+                                onClick={(ev) => {
+                                    ev.preventDefault();
+                                    const m = k.toLowerCase() === 'authorization' ? SCHEME_RE.exec(v as string) : null;
+                                    const host = urlHost(node.config.url);
+                                    setMove({ key: k, prefix: m ? m[1] : '', prefill: { name: suggestName(host || 'secret', k), value: m ? m[2] : (v as string), host } });
+                                }}>Move to secret</button>}
+                        </div>
+                    ))}
                 </label>
             ))}
 
@@ -106,6 +208,11 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
                         </label>
                     )}
                 </div>
+            )}
+
+            {move && (
+                <SecretDialog prefill={move.prefill} tenantId={me?.active_tenant_id ?? null} onClose={() => setMove(null)}
+                    onSaved={(name) => setCfg('headers', { ...headers, [move.key]: move.prefix + secretTemplate(name) })} />
             )}
 
             <div className="border-t border-zinc-200 pt-3 text-[11px] text-zinc-500 space-y-0.5">

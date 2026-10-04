@@ -1,15 +1,10 @@
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from sqlalchemy import select
 
 
-class NodeError(Exception):
-    pass
-
-
-class RetryableNodeError(NodeError):
-    pass
+from app.workflows.errors import NodeError, RetryableNodeError  # noqa: F401  (re-exported)
 
 
 WAIT = object()  # returned by nodes that pause the step (slack_ask_user, for_each)
@@ -23,6 +18,10 @@ class NodeContext:
     node: dict
     ctx: dict
     after_commit: List[Callable[[], None]] = field(default_factory=list)
+    # Nonce bound into this step's secret placeholders; send-time resolution only honours this one.
+    secret_nonce: Optional[str] = None
+    # Names the step's SecretsNamespace handed out (live set); only these resolve at send time.
+    secret_names: Optional[Set[str]] = None
 
 
 EXECUTORS: Dict[str, Callable[[NodeContext, dict], Awaitable[Any]]] = {}

@@ -1,13 +1,22 @@
 """Pure save-time validation of a workflow graph."""
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
+from app.secrets.refs import NAME_RE as SECRET_NAME_RE
 from app.services.slack_service import parse_button_labels
 from app.workflows.loops import MAX_CONCURRENCY, MAX_ITEMS_CAP
 from app.workflows.node_types import NODE_TYPES, TRIGGER_TYPES, MAX_NODES
-from app.workflows.templating import syntax_errors
+from jinja2 import nodes as jnodes
+from jinja2.parser import Parser
+
+from app.workflows.templating import _env, syntax_errors
 
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+_SECRETS_ONLY_HTTP = "Secrets are only allowed in HTTP request URL, headers and body"
+_SECRETS_NO_TRANSFORM = "secrets can only be inserted, not transformed"
+_HTTP_SECRET_KEYS = ("url", "headers", "body")
 
 
 def _err(errors: List[dict], node_id: Optional[str], message: str) -> None:
@@ -135,6 +144,126 @@ def _has_cycle(node_ids: List[str], edges: List[dict]) -> bool:
     return False
 
 
+def _walk_strings(value: Any, is_key: bool = False) -> Iterator[Tuple[str, bool]]:
+    """Yield (string, is_dict_key) for every string in a nested config value."""
+    if isinstance(value, str):
+        yield value, is_key
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from _walk_strings(str(k), True)
+            yield from _walk_strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _walk_strings(v)
+
+
+# Blocks whose body output is captured/transformed rather than emitted as-is.
+_CAPTURING = (jnodes.AssignBlock, jnodes.FilterBlock, jnodes.Macro, jnodes.CallBlock, jnodes.Block)  # Block: self.b() can re-render it through filters
+
+
+def _parse(text: str, raw: bool):
+    """Jinja AST for a templated string (Template) or a raw expression (wrapped in Output); None if
+    there is nothing to evaluate or it doesn't parse (syntax_errors reports that separately)."""
+    try:
+        if raw:
+            parser = Parser(_env, text, state="variable")
+            expr = parser.parse_expression()
+            if not parser.stream.eos:
+                return None
+            return jnodes.Output([expr])
+        if "{{" not in text and "{%" not in text:  # rendered verbatim at run time
+            return None
+        return _env.parse(text)
+    except Exception:
+        return None
+
+
+def _secret_uses(tree) -> List[Tuple[Optional[str], bool]]:
+    """(name or None, ok) for every use of the `secrets` variable in a parsed template.
+
+    ok only for `secrets.NAME` emitted directly by an output tag, alone or as an operand of `~`
+    concatenation whose result is itself emitted directly. Anything else (item access, filters, tests,
+    calls, comparisons, arithmetic, conditionals, use in a {% set %}/{% if %}/{% for %}/{% with %} expression,
+    or inside macro/call/filter/set/block bodies, bare `secrets`)
+    transforms or moves the secret. `x.secrets.y` is an attribute of `x`, not the variable, so it is ignored.
+    """
+    out: List[Tuple[Optional[str], bool]] = []
+
+    def emitted(node, parents) -> bool:
+        i = len(parents) - 1
+        while i >= 0 and isinstance(parents[i], jnodes.Concat) and node in parents[i].nodes:
+            node, i = parents[i], i - 1
+        if i < 0 or not isinstance(parents[i], jnodes.Output) or node not in parents[i].nodes:
+            return False
+        return not any(isinstance(p, _CAPTURING) for p in parents[:i])
+
+    def walk(node, parents):
+        if isinstance(node, jnodes.Name) and node.name == "secrets":
+            parent = parents[-1] if parents else None
+            if (node.ctx == "load" and isinstance(parent, jnodes.Getattr) and parent.node is node):
+                out.append((parent.attr, emitted(parent, parents[:-1])))
+            else:
+                out.append((None, False))
+        for child in node.iter_child_nodes():
+            walk(child, parents + [node])
+
+    walk(tree, [])
+    return out
+
+
+def _string_uses(text: str, raw: bool) -> List[Tuple[Optional[str], bool]]:
+    tree = _parse(text, raw)
+    return _secret_uses(tree) if tree is not None else []
+
+
+def secret_names_in_graph(graph: Any) -> Set[str]:
+    """Names referenced as `secrets.NAME` anywhere in a workflow graph's node configs."""
+    names: Set[str] = set()
+    nodes = graph.get("nodes") if isinstance(graph, dict) else None
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict) or not isinstance(node.get("config"), dict):
+            continue
+        t = node.get("type")
+        raw_keys = (NODE_TYPES.get(t) if isinstance(t, str) else None or {}) or {}
+        raw_keys = raw_keys.get("raw", [])
+        for key, value in node["config"].items():
+            for text, _ in _walk_strings(value):
+                names.update(n for n, _ in _string_uses(text, key in raw_keys) if n)
+    return names
+
+
+def _check_secrets(errors: List[dict], node: dict, secret_names: Optional[Set[str]]) -> None:
+    nid, cfg = node["id"], node.get("config") or {}
+    seen: Set[str] = set()
+    raw_keys = NODE_TYPES[node["type"]]["raw"]
+
+    def report(msg: str) -> None:
+        if msg not in seen:
+            seen.add(msg)
+            _err(errors, nid, msg)
+
+    def scan(text: str, is_key: bool, allowed: bool, raw: bool) -> None:
+        uses = _string_uses(text, raw)
+        if any(not ok for _, ok in uses):
+            report(_SECRETS_NO_TRANSFORM)
+        if uses and (not allowed or is_key):
+            report(_SECRETS_ONLY_HTTP)
+            return
+        for name, _ in uses:
+            if name is None:
+                continue
+            if not SECRET_NAME_RE.match(name):
+                report(f"Invalid secret name {name}")
+            elif secret_names is not None and name not in secret_names:
+                report(f"Unknown secret {name}")
+
+    is_http = node.get("type") == "http_request"
+    for key, value in cfg.items():
+        allowed = is_http and key in _HTTP_SECRET_KEYS
+        for text, is_key in _walk_strings(value):
+            scan(text, is_key, allowed, key in raw_keys)
+
+
 def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> None:
     nid, spec, cfg = node["id"], NODE_TYPES[node["type"]], node.get("config") or {}
     for key in spec["required"]:
@@ -152,6 +281,8 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             _err(errors, nid, "missing required field 'case_id'")
         if mode == "group" and not cfg.get("group_key"):
             _err(errors, nid, "missing required field 'group_key'")
+    if node["type"] == "http_request" and cfg.get("headers") is not None and not isinstance(cfg["headers"], dict):
+        _err(errors, nid, "Headers must be a JSON object")
     if node["type"] == "slack_ask_user":
         try:
             if len(parse_button_labels(cfg.get("buttons"))) > 5:
@@ -171,7 +302,7 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             _err(errors, nid, f"template error in '{key}': {msg}")
 
 
-def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
+def validate_graph(graph: Any, trigger_type: str, secret_names: Optional[Set[str]] = None) -> List[dict]:
     """Validate a workflow graph. Returns list of error dicts, empty list if valid.
 
     Handles malformed input gracefully by returning errors instead of raising.
@@ -198,6 +329,7 @@ def validate_graph(graph: Any, trigger_type: str) -> List[dict]:
             _err(errors, nid, f"unknown node type '{node.get('type')}'")
             continue
         _check_node_config(errors, node, trigger_type)
+        _check_secrets(errors, node, secret_names)
 
     triggers = [n for n in nodes if n.get("type") == "trigger"]
     if len(triggers) != 1:
@@ -278,8 +410,12 @@ def validate_trigger_filter(expr: Optional[str]) -> List[dict]:
     """Syntax-check the optional trigger filter expression."""
     if not expr or not expr.strip():
         return []
-    return [{"node_id": None, "message": f"trigger filter: {msg}"} for msg in syntax_errors(expr, raw=True)]
+    errors = [{"node_id": None, "message": f"trigger filter: {msg}"} for msg in syntax_errors(expr, raw=True)]
+    if _string_uses(expr, raw=True):
+        errors.append({"node_id": None, "message": _SECRETS_ONLY_HTTP})
+    return errors
 
 
-def workflow_errors(graph: Any, trigger_type: str, trigger_filter: Optional[str]) -> List[dict]:
-    return validate_trigger_filter(trigger_filter) + validate_graph(graph, trigger_type)
+def workflow_errors(graph: Any, trigger_type: str, trigger_filter: Optional[str],
+                    secret_names: Optional[Set[str]] = None) -> List[dict]:
+    return validate_trigger_filter(trigger_filter) + validate_graph(graph, trigger_type, secret_names)

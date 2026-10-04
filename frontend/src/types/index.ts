@@ -312,3 +312,31 @@ export interface ReportDraft {
   impact: string;
   lessons_learned: string;
 }
+
+export interface SecretName {
+  name: string;
+  description: string | null;
+  allowed_hosts: string[];
+}
+
+export interface Secret extends SecretName {
+  last_used_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  created_by_email: string | null;
+  updated_by_email: string | null;
+  in_use_by: { id: number; name: string }[];
+}
+
+export interface SecretScanItem {
+  workflow_id: number;
+  workflow_name: string;
+  node_id: string;
+  location: 'header' | 'query';
+  key: string;
+  host: string;
+  suggested_name: string;
+  /** false when the host can't be a secret host pattern; `reason` says what to do */
+  convertible: boolean;
+  reason?: string;
+}
