@@ -17,7 +17,7 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.membership import MembershipOut
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserMe, PasswordChange, TokenOnly
-from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
+from app.core.login_throttle import LoginThrottle, client_ip, get_pwd_throttle
 from app.services.avatars import MAX_BYTES, avatar_version, reencode_avatar
 from app.storage import StorageError, get_storage
 from app.utils.audit import create_audit_log
@@ -127,6 +127,8 @@ async def read_user_me(
         for m, t in pairs
     ]
     mfa_required = any(t.require_mfa for _, t in pairs)
+    if current_user.is_super_admin and not mfa_required:  # super admins can enter every tenant
+        mfa_required = await deps.tenant_requires_mfa(db, current_user)
     role = resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
 
     return UserMe(
@@ -289,13 +291,13 @@ async def change_password(
     db: AsyncSession = Depends(deps.get_db),
     body: PasswordChange,
     current_user: User = Depends(deps.get_current_active_user),
-    throttle: LoginThrottle = Depends(get_login_throttle),
+    throttle: LoginThrottle = Depends(get_pwd_throttle),
 ) -> Any:
     """Change own password (requires the current one). Revokes all other sessions
     and returns a fresh token for this one."""
     if not current_user.password_login_enabled:
         raise HTTPException(status_code=400, detail="This account signs in through SSO and has no password.")
-    key, ip = f"pwd:{current_user.id}", client_ip(request)
+    key, ip = str(current_user.id), client_ip(request)
     retry_after = await throttle.reserve(key, ip)
     if retry_after:
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",

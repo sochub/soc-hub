@@ -4,11 +4,11 @@ Never log codes, secrets, otpauth URIs or tokens. Only /me/mfa/setup returns the
 """
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.api.v1.users import _audit_tenant
 from app.core import security, totp
-from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
+from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -29,9 +29,19 @@ security_router = APIRouter()  # mounted under /tenants
 logger = logging.getLogger(__name__)
 
 INVALID_CODE = "Invalid or expired code"
+LOGIN_EXPIRED = "Login expired — sign in again"
 
 
-_mfa_throttle = LoginThrottle(max_email_ip=5, max_email=5)  # 5 failures per window, per user
+async def spend_mfa_challenge(redis, jti) -> bool:
+    """Mark an MFA challenge as used (single use). False if missing or already spent."""
+    if not isinstance(jti, str) or not jti:
+        return False
+    return bool(await redis.set(f"mfa:chal:{jti}", 1, nx=True,
+                                ex=security.MFA_CHALLENGE_MINUTES * 60))
+
+
+# 5 failures per window, per user; keys live under mfa:attempts:... (never login:).
+_mfa_throttle = get_login_throttle().namespaced("mfa", max_email_ip=5, max_email=5)
 
 
 def get_mfa_throttle() -> LoginThrottle:
@@ -56,7 +66,7 @@ def get_redis():
 async def verify_user_code(db: AsyncSession, redis, throttle: LoginThrottle, user: User,
                            code: str, ip: str) -> None:
     """Check a TOTP code for `user` (throttled, replay-protected). Raises HTTPException."""
-    key = f"mfa:{user.id}"
+    key = str(user.id)  # the throttle namespaces it (mfa:attempts:...)
     retry_after = await throttle.reserve(key, ip)
     if retry_after:
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
@@ -72,13 +82,31 @@ async def verify_user_code(db: AsyncSession, redis, throttle: LoginThrottle, use
     await throttle.reset(key, ip)
 
 
-class CodeBody(BaseModel):
-    code: str
+class EnableBody(BaseModel):
+    code: str = Field(max_length=16)
+    # Required when enabling from a normal session on an account with a password
+    # (the forced-setup challenge path already verified the password).
+    current_password: Optional[str] = Field(default=None, max_length=1024)
 
 
 class DisableBody(BaseModel):
-    current_password: str
-    code: str
+    current_password: str = Field(max_length=1024)
+    code: str = Field(max_length=16)
+
+
+async def _check_current_password(pwd_throttle: LoginThrottle, user: User, password: Optional[str],
+                                  ip: str) -> None:
+    """Throttled current-password check (keys pwd:attempts:...). Raises HTTPException."""
+    if not password:
+        raise HTTPException(status_code=400, detail="Enter your current password")
+    key = str(user.id)
+    retry_after = await pwd_throttle.reserve(key, ip)
+    if retry_after:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
+                            headers={"Retry-After": str(retry_after)})
+    if not security.verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    await pwd_throttle.reset(key, ip)
 
 
 class SetupOut(BaseModel):
@@ -113,23 +141,30 @@ async def mfa_setup(
     return SetupOut(otpauth_uri=totp.provisioning_uri(secret, user.email), secret=secret)
 
 
-@router.post("/me/mfa/enable", response_model=Token)
+@router.post("/me/mfa/enable", response_model=Token, response_model_exclude_unset=True)
 async def mfa_enable(
     *,
     request: Request,
-    body: CodeBody,
+    body: EnableBody,
     db: AsyncSession = Depends(deps.get_db),
     caller: tuple = Depends(deps.get_user_for_mfa_setup),
     redis=Depends(get_redis),
     throttle: LoginThrottle = Depends(get_mfa_throttle),
+    pwd_throttle: LoginThrottle = Depends(get_pwd_throttle),
 ) -> Any:
     user, via_challenge = caller
+    jti = getattr(user, "_mfa_challenge_jti", None)
+    ip = client_ip(request)
+    if not via_challenge and user.password_login_enabled:
+        await _check_current_password(pwd_throttle, user, body.current_password, ip)
     user = await _lock_user(db, user.id)  # verify against the secret as stored under the lock
     if user.mfa_enabled_at is not None:
         raise HTTPException(status_code=409, detail="Two-factor authentication is already enabled")
     if not user.mfa_secret_enc:
         raise HTTPException(status_code=400, detail="Start setup first")
-    await verify_user_code(db, redis, throttle, user, body.code, client_ip(request))
+    await verify_user_code(db, redis, throttle, user, body.code, ip)
+    if via_challenge and not await spend_mfa_challenge(redis, jti):
+        raise HTTPException(status_code=401, detail=LOGIN_EXPIRED, headers={"WWW-Authenticate": "Bearer"})
     active = (await deps.default_active_tenant_id(db, user) if via_challenge
               else getattr(user, "_active_tenant_id", None))
     user.mfa_enabled_at = datetime.now(timezone.utc)
@@ -139,7 +174,7 @@ async def mfa_enable(
     return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
 
 
-@router.post("/me/mfa/disable", response_model=Token)
+@router.post("/me/mfa/disable", response_model=Token, response_model_exclude_unset=True)
 async def mfa_disable(
     *,
     request: Request,
@@ -147,7 +182,7 @@ async def mfa_disable(
     db: AsyncSession = Depends(deps.get_db),
     user: User = Depends(deps.get_current_active_user),
     redis=Depends(get_redis),
-    login_throttle: LoginThrottle = Depends(get_login_throttle),
+    pwd_throttle: LoginThrottle = Depends(get_pwd_throttle),
     throttle: LoginThrottle = Depends(get_mfa_throttle),
 ) -> Any:
     if not user.password_login_enabled:
@@ -156,22 +191,10 @@ async def mfa_disable(
     user = await _lock_user(db, user.id)
     if user.mfa_enabled_at is None:
         raise HTTPException(status_code=400, detail="Two-factor authentication is not enabled")
-    required = (await db.execute(
-        select(func.count()).select_from(TenantMembership)
-        .join(Tenant, Tenant.id == TenantMembership.tenant_id)
-        .where(TenantMembership.user_id == user.id, Tenant.require_mfa.is_(True))
-    )).scalar_one()
-    if required:
+    if await deps.tenant_requires_mfa(db, user):  # super admins: any tenant
         raise HTTPException(status_code=403, detail="Your organization requires two-factor authentication")
     ip = client_ip(request)
-    pkey = f"pwd:{user.id}"
-    retry_after = await login_throttle.reserve(pkey, ip)
-    if retry_after:
-        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
-                            headers={"Retry-After": str(retry_after)})
-    if not security.verify_password(body.current_password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-    await login_throttle.reset(pkey, ip)
+    await _check_current_password(pwd_throttle, user, body.current_password, ip)
     await verify_user_code(db, redis, throttle, user, body.code, ip)
     active = getattr(user, "_active_tenant_id", None)
     user.mfa_secret_enc = None

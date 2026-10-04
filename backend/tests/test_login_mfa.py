@@ -1,10 +1,10 @@
 import asyncio
 import secrets
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from app.api.v1 import mfa as mfa_mod
 from app.core import login_throttle, security, totp
@@ -82,19 +82,21 @@ async def _cleanup(ids):
         await db.commit()
 
 
-def _scenario(body, mfa_retry=None):
+def _scenario(body, mfa_retry=None, pass_redis=False):
     async def go():
         await engine.dispose()
         ids = await _setup()
-        redis = _Redis()
-        app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _Throttle()
-        app.dependency_overrides[mfa_mod.get_redis] = lambda: redis
-        app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: _Throttle(mfa_retry)
         try:
+            redis = _Redis()
+            app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _Throttle()
+            app.dependency_overrides[login_throttle.get_pwd_throttle] = lambda: _Throttle()
+            app.dependency_overrides[mfa_mod.get_redis] = lambda: redis
+            app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: _Throttle(mfa_retry)
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-                await body(c, ids)
+                await (body(c, ids, redis) if pass_redis else body(c, ids))
         finally:
-            for d in (login_throttle.get_login_throttle, mfa_mod.get_redis, mfa_mod.get_mfa_throttle):
+            for d in (login_throttle.get_login_throttle, login_throttle.get_pwd_throttle, mfa_mod.get_redis,
+                      mfa_mod.get_mfa_throttle):
                 app.dependency_overrides.pop(d, None)
             await _cleanup(ids)
             await engine.dispose()
@@ -226,11 +228,151 @@ def test_switch_tenant_requires_mfa():
     _scenario(body)
 
 
-def test_super_admin_without_membership_exempt():
+# Super admins are NOT exempt from tenant MFA requirements (Ruling M4).
+async def _token(uid, tenant_id):
+    async with AsyncSessionLocal() as db:
+        u = (await db.execute(select(User).where(User.id == uid))).scalars().one()
+        return security.issue_access_token(u, tenant_id)
+
+
+async def _give_mfa(uid, secret):
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(User).where(User.id == uid).values(
+            mfa_secret_enc=encrypt(secret), mfa_enabled_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+
+def test_super_admin_login_forced_setup_when_any_tenant_requires_mfa():
     async def body(c, ids):
-        r = await _pw(c, ids, "sa")
-        assert r.status_code == 200 and "access_token" in r.json()
-        sw = await c.post("/api/v1/auth/switch-tenant", headers=_bearer(r.json()["access_token"]),
-                          json={"tenant_id": ids["tb"]})
-        assert sw.status_code == 200
+        r = await _pw(c, ids, "sa")  # no memberships; tenant tb requires MFA
+        j = r.json()
+        assert r.status_code == 200 and j["mfa_setup_required"] is True and "access_token" not in j
+    _scenario(body)
+
+
+def test_super_admin_switch_tenant_checks_target_requirement():
+    async def body(c, ids):
+        tok = await _token(ids["sa"], ids["ta"])
+        r = await c.post("/api/v1/auth/switch-tenant", headers=_bearer(tok), json={"tenant_id": ids["tb"]})
+        assert r.status_code == 403 and r.json()["detail"] == "mfa_setup_required"
+        ok = await c.post("/api/v1/auth/switch-tenant", headers=_bearer(tok), json={"tenant_id": ids["ta"]})
+        assert ok.status_code == 200
+        await _give_mfa(ids["sa"], ids["secret"])
+        r = await c.post("/api/v1/auth/switch-tenant", headers=_bearer(tok), json={"tenant_id": ids["tb"]})
+        assert r.status_code == 200
+    _scenario(body)
+
+
+def test_super_admin_tenant_override_requires_mfa():
+    async def body(c, ids):
+        hdr = _bearer(await _token(ids["sa"], ids["ta"]))
+        url = "/api/v1/tenants/current/security"
+        r = await c.get(url, headers=hdr, params={"tenant_id": ids["tb"]})
+        assert r.status_code == 403 and r.json()["detail"] == "mfa_setup_required"
+        assert (await c.get(url, headers=hdr, params={"tenant_id": ids["ta"]})).status_code == 200
+        assert (await c.get(url, headers=hdr)).status_code == 200
+        await _give_mfa(ids["sa"], ids["secret"])
+        r = await c.get(url, headers=hdr, params={"tenant_id": ids["tb"]})
+        assert r.status_code == 200 and r.json()["require_mfa"] is True
+    _scenario(body)
+
+
+def test_super_admin_me_and_disable_consider_all_tenants():
+    async def body(c, ids):
+        hdr = _bearer(await _token(ids["sa"], ids["ta"]))
+        me = await c.get("/api/v1/users/me", headers=hdr)
+        assert me.status_code == 200 and me.json()["mfa_required_by_tenant"] is True
+        await _give_mfa(ids["sa"], ids["secret"])
+        r = await c.post("/api/v1/users/me/mfa/disable", headers=hdr,
+                         json={"current_password": PW, "code": totp.totp_at(ids["secret"], time.time())})
+        assert r.status_code == 403
+        assert r.json()["detail"] == "Your organization requires two-factor authentication"
+    _scenario(body)
+
+
+def test_challenge_is_single_use():
+    async def body(c, ids):
+        tok = (await _pw(c, ids, "mfa")).json()["mfa_token"]
+        now = time.time()
+        assert (await c.post(LOGIN2, json={"mfa_token": tok, "code": totp.totp_at(ids["secret"], now)})).status_code == 200
+        r = await c.post(LOGIN2, json={"mfa_token": tok, "code": totp.totp_at(ids["secret"], now + 30)})
+        assert r.status_code == 401 and r.json()["detail"] == "Login expired — sign in again"
+    _scenario(body)
+
+
+def test_challenge_without_jti_rejected():
+    async def body(c, ids):
+        tok = security.create_access_token({"sub": ids["emails"]["mfa"], "purpose": "mfa", "tv": 0},
+                                           expires_delta=timedelta(minutes=5))
+        r = await c.post(LOGIN2, json={"mfa_token": tok, "code": totp.totp_at(ids["secret"], time.time())})
+        assert r.status_code == 401
+    _scenario(body)
+
+
+def test_forced_enable_spent_challenge_rejected():
+    async def body(c, ids, redis):
+        tok = (await _pw(c, ids, "forced")).json()["mfa_token"]
+        ch = _bearer(tok)
+        secret = (await c.post("/api/v1/users/me/mfa/setup", headers=ch)).json()["secret"]
+        redis.keys.add(f"mfa:chal:{security.decode_mfa_challenge(tok)['jti']}")  # already used
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=ch,
+                         json={"code": totp.totp_at(secret, time.time())})
+        assert r.status_code == 401 and r.json()["detail"] == "Login expired — sign in again"
+        async with AsyncSessionLocal() as db:
+            u = (await db.execute(select(User).where(User.id == ids["forced"]))).scalars().one()
+        assert u.mfa_enabled_at is None
+    _scenario(body, pass_redis=True)
+
+
+def test_mfa_login_code_max_length():
+    async def body(c, ids):
+        tok = (await _pw(c, ids, "mfa")).json()["mfa_token"]
+        assert (await c.post(LOGIN2, json={"mfa_token": tok, "code": "1" * 17})).status_code == 422
+    _scenario(body)
+
+
+def test_login_rejects_non_email_username_before_reserving():
+    calls = []
+
+    class Rec(_Throttle):
+        async def reserve(self, key, ip):
+            calls.append(key)
+            return None
+
+    async def body(c, ids):
+        app.dependency_overrides[login_throttle.get_login_throttle] = lambda: Rec()
+        for name in (f"mfa:{ids['mfa']}", f"pwd:{ids['mfa']}", "admin", "a b@example.com"):
+            r = await c.post(LOGIN, data={"username": name, "password": "x"})
+            assert r.status_code == 401 and r.json()["detail"] == "Incorrect email or password"
+        assert calls == []
+        assert (await _pw(c, ids, "plain")).status_code == 200 and len(calls) == 1
+    _scenario(body)
+
+
+def test_throttle_namespaces_never_collide():
+    """5 failed logins with username mfa:<id> must not lock that user's MFA codes (Ruling S2)."""
+    from tests.test_login_throttle import FakeRedis
+
+    assert mfa_mod.get_mfa_throttle().prefix == "mfa"
+    assert login_throttle.get_pwd_throttle().prefix == "pwd"
+    assert login_throttle.get_login_throttle().prefix == "login"
+    fr = FakeRedis(time.monotonic)
+    base = login_throttle.LoginThrottle(fr)
+    mfa_t = base.namespaced("mfa", max_email_ip=5, max_email=5)
+
+    async def body(c, ids):
+        app.dependency_overrides[login_throttle.get_login_throttle] = lambda: base
+        app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: mfa_t
+        for _ in range(5):
+            for name in (f"mfa:{ids['mfa']}", f"mfa:{ids['mfa']}@example.com", str(ids["mfa"])):
+                r = await c.post(LOGIN, data={"username": name, "password": "wrong-password"})
+                assert r.status_code == 401
+        assert not any(k.startswith("mfa:") for k in fr.data)
+        tok = (await _pw(c, ids, "mfa")).json()["mfa_token"]
+        r = await c.post(LOGIN2, json={"mfa_token": tok, "code": totp.totp_at(ids["secret"], time.time())})
+        assert r.status_code == 200, r.text
+        # MFA failures land only under mfa:attempts:<user id>
+        await mfa_t.reserve(str(ids["mfa"]), "203.0.113.9")
+        assert fr._live(f"mfa:attempts:email:{ids['mfa']}") is not None
+        assert fr._live(f"login:attempts:email:{ids['mfa']}") is None
     _scenario(body)

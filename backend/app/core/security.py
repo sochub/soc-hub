@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 import jwt
@@ -32,7 +33,9 @@ def issue_access_token(user, active_tenant_id) -> str:
 
 
 def issue_mfa_challenge(user) -> str:
-    return create_access_token({"sub": user.email, "purpose": "mfa", "tv": user.token_version or 0},
+    """Short-lived, single-use (jti is spent in Redis on success) login challenge."""
+    return create_access_token({"sub": user.email, "purpose": "mfa", "tv": user.token_version or 0,
+                                "jti": secrets.token_urlsafe(16)},
                                expires_delta=timedelta(minutes=MFA_CHALLENGE_MINUTES))
 
 

@@ -56,14 +56,16 @@ def _scenario(body, **kw):
     async def go():
         await engine.dispose()
         ids = await _setup(**kw)
-        app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
         try:
+            app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
+            app.dependency_overrides[login_throttle.get_pwd_throttle] = lambda: _FakeThrottle()
             u = await _user(ids["u"])
             hdr = {"Authorization": f"Bearer {security.issue_access_token(u, ids['t'])}"}
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
                 await body(c, ids, hdr)
         finally:
             app.dependency_overrides.pop(login_throttle.get_login_throttle, None)
+            app.dependency_overrides.pop(login_throttle.get_pwd_throttle, None)
             await _cleanup(ids)
             await engine.dispose()
     asyncio.run(go())
@@ -144,6 +146,7 @@ def test_password_change_is_throttled():
 
     async def body(c, ids, hdr):
         app.dependency_overrides[login_throttle.get_login_throttle] = lambda: Blocked()
+        app.dependency_overrides[login_throttle.get_pwd_throttle] = lambda: Blocked()
         r = await c.post("/api/v1/users/me/password", headers=hdr,
                          json={"current_password": OLD_PW, "new_password": NEW_PW})
         assert r.status_code == 429 and r.headers["retry-after"] == "30"
@@ -174,4 +177,13 @@ def test_me_avatar_version_is_opaque_stem():
         r = await c.get("/api/v1/users/me", headers=hdr)
         v = r.json()["avatar_version"]
         assert v == "abcdef0123456789" and "avatars" not in v
+    _scenario(body)
+
+
+def test_put_me_rejects_null_full_name():
+    async def body(c, ids, hdr):
+        r = await c.put("/api/v1/users/me", headers=hdr, json={"full_name": None})
+        assert r.status_code == 422
+        r = await c.put("/api/v1/users/me", headers=hdr, json={"job_title": None})
+        assert r.status_code == 200
     _scenario(body)

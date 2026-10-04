@@ -89,15 +89,34 @@ def require_super_admin(current_user: User = Depends(get_current_active_user)) -
     return current_user
 
 
-def get_effective_tenant_id(
+async def tenant_requires_mfa(db: AsyncSession, user: User, tenant_id: Optional[int] = None) -> bool:
+    """Does a tenant's "require two-factor" setting apply to `user`?
+
+    With `tenant_id`: whether that tenant requires MFA (checked directly — the
+    caller has already established access). Without: whether any tenant the user
+    can reach requires it — their memberships, or, for super admins (who can
+    enter every tenant), any tenant at all.
+    """
+    q = select(Tenant.id).where(Tenant.require_mfa.is_(True))
+    if tenant_id is not None:
+        q = q.where(Tenant.id == tenant_id)
+    elif not user.is_super_admin:
+        q = q.join(TenantMembership, TenantMembership.tenant_id == Tenant.id).where(
+            TenantMembership.user_id == user.id)
+    return (await db.execute(q.limit(1))).first() is not None
+
+
+async def get_effective_tenant_id(
     current_user: User = Depends(get_current_active_user),
     tenant_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
 ) -> int:
     """Resolve the tenant to operate in.
 
     Super admins use the active tenant from the token, with an optional
-    ``?tenant_id=`` override. Regular users use the active tenant from the token,
-    which must be one of their memberships.
+    ``?tenant_id=`` override (refused with 403 ``mfa_setup_required`` when the
+    super admin has no MFA and the target tenant requires it). Regular users use
+    the active tenant from the token, which must be one of their memberships.
     """
     active = getattr(current_user, "_active_tenant_id", None)
 
@@ -108,6 +127,9 @@ def get_effective_tenant_id(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Super admin must select a tenant.",
             )
+        if (tenant_id is not None and tenant_id != active and current_user.mfa_enabled_at is None
+                and await tenant_requires_mfa(db, current_user, tenant_id)):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="mfa_setup_required")
         return chosen
 
     if active is None:
@@ -206,4 +228,5 @@ async def get_user_for_mfa_setup(
             or user.mfa_enabled_at is not None):
         raise bad
     user._active_tenant_id = None
+    user._mfa_challenge_jti = payload.get("jti")
     return user, True

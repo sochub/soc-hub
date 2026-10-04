@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import List, Optional
 from zoneinfo import available_timezones
 from pydantic import BaseModel, EmailStr, field_validator
@@ -40,6 +41,12 @@ class UserCreate(BaseModel):
         return validate_password_strength(v)
 
 
+@lru_cache(maxsize=1)
+def _timezones() -> frozenset:
+    """IANA zone names, read from disk once (available_timezones() rescans every call)."""
+    return frozenset(available_timezones())
+
+
 class UserUpdate(BaseModel):
     """Self-service profile update. Passwords change via POST /users/me/password."""
     full_name: Optional[str] = None
@@ -49,8 +56,8 @@ class UserUpdate(BaseModel):
     @field_validator("full_name")
     @classmethod
     def _name(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
+        if v is None:  # only reached when null is sent explicitly
+            raise ValueError("full_name cannot be null")
         v = v.strip()
         if not 1 <= len(v) <= 200:
             raise ValueError("full_name must be 1-200 characters")
@@ -71,7 +78,7 @@ class UserUpdate(BaseModel):
     def _tz(cls, v: Optional[str]) -> Optional[str]:
         if v is None or v == "":
             return None
-        if v not in available_timezones():
+        if v not in _timezones():
             raise ValueError("Unknown timezone")
         return v
 

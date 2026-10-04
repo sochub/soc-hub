@@ -88,15 +88,17 @@ def _scenario(body):
     async def go():
         await engine.dispose()
         ids = await _setup()
-        redis = _FakeRedis()
-        app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
-        app.dependency_overrides[mfa_mod.get_redis] = lambda: redis
-        app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: _FakeThrottle()
         try:
+            redis = _FakeRedis()
+            app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
+            app.dependency_overrides[login_throttle.get_pwd_throttle] = lambda: _FakeThrottle()
+            app.dependency_overrides[mfa_mod.get_redis] = lambda: redis
+            app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: _FakeThrottle()
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
                 await body(c, ids)
         finally:
             app.dependency_overrides.pop(login_throttle.get_login_throttle, None)
+            app.dependency_overrides.pop(login_throttle.get_pwd_throttle, None)
             app.dependency_overrides.pop(mfa_mod.get_redis, None)
             app.dependency_overrides.pop(mfa_mod.get_mfa_throttle, None)
             await _cleanup(ids)
@@ -110,7 +112,7 @@ async def _enable(c, ids, who="member"):
     assert r.status_code == 200, r.text
     secret = r.json()["secret"]
     code = totp.totp_at(secret, time.time())
-    r2 = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": code})
+    r2 = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": code, "current_password": PW})
     return hdr, secret, code, r, r2
 
 
@@ -156,11 +158,11 @@ def test_enable_wrong_code():
     async def body(c, ids):
         hdr = await _hdr(ids["member"], ids["ta"])
         await c.post("/api/v1/users/me/mfa/setup", headers=hdr)
-        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": "000000"})
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": "000000", "current_password": PW})
         assert r.status_code == 400 and r.json()["detail"] == "Invalid or expired code"
         assert (await _user(ids["member"])).mfa_enabled_at is None
         r = await c.post("/api/v1/users/me/mfa/enable", headers=await _hdr(ids["analyst"], ids["ta"]),
-                         json={"code": "123456"})
+                         json={"code": "123456", "current_password": PW})
         assert r.status_code == 400  # no pending setup
     _scenario(body)
 
@@ -265,7 +267,7 @@ def test_undecryptable_secret_409():
         async with AsyncSessionLocal() as db:
             await db.execute(update(User).where(User.id == ids["member"]).values(mfa_secret_enc="garbage"))
             await db.commit()
-        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": "123456"})
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": "123456", "current_password": PW})
         assert r.status_code == 409 and r.json()["detail"] == "MFA unavailable — contact your admin"
     _scenario(body)
 
@@ -279,7 +281,7 @@ def test_throttle_429():
         hdr = await _hdr(ids["member"], ids["ta"])
         await c.post("/api/v1/users/me/mfa/setup", headers=hdr)
         app.dependency_overrides[mfa_mod.get_mfa_throttle] = lambda: Blocked()
-        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": "123456"})
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": "123456", "current_password": PW})
         assert r.status_code == 429 and r.headers["retry-after"] == "42"
     _scenario(body)
 
@@ -339,4 +341,40 @@ def test_disable_sso_only_and_responses_hide_secret():
                          json={"current_password": "x", "code": "123456"})
         assert r.status_code == 400
         assert r.json()["detail"] == "Two-factor for SSO-only accounts can only be reset by an admin"
+    _scenario(body)
+
+
+def test_enable_via_session_requires_current_password():
+    async def body(c, ids):
+        hdr = await _hdr(ids["member"], ids["ta"])
+        secret = (await c.post("/api/v1/users/me/mfa/setup", headers=hdr)).json()["secret"]
+        now = time.time()
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr, json={"code": totp.totp_at(secret, now)})
+        assert r.status_code == 400 and r.json()["detail"] == "Enter your current password"
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr,
+                         json={"code": totp.totp_at(secret, now), "current_password": "Wrong-Password-123"})
+        assert r.status_code == 400 and r.json()["detail"] == "Current password is incorrect"
+        assert (await _user(ids["member"])).mfa_enabled_at is None
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr,
+                         json={"code": totp.totp_at(secret, now), "current_password": PW})
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+    _scenario(body)
+
+
+def test_enable_sso_only_needs_no_password_and_disable_shape():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(User).where(User.id == ids["analyst"]).values(password_login_enabled=False))
+            await db.commit()
+        hdr = await _hdr(ids["analyst"], ids["ta"])
+        secret = (await c.post("/api/v1/users/me/mfa/setup", headers=hdr)).json()["secret"]
+        r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr,
+                         json={"code": totp.totp_at(secret, time.time())})
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        # disable response is also just the token
+        _, secret2, _, _, r2 = await _enable(c, ids)
+        new = {"Authorization": f"Bearer {r2.json()['access_token']}"}
+        r = await c.post("/api/v1/users/me/mfa/disable", headers=new,
+                         json={"current_password": PW, "code": totp.totp_at(secret2, time.time() + 30)})
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
     _scenario(body)

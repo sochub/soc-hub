@@ -87,8 +87,16 @@ def client_ip(request: Request) -> str:
 
 
 class LoginThrottle:
+    _parent: Optional["LoginThrottle"] = None  # set by namespaced(): borrow its lazy Redis client
+
     def __init__(self, redis=None, *, window: Optional[int] = None, max_email_ip: Optional[int] = None,
-                 max_email: Optional[int] = None, max_ip: Optional[int] = None):
+                 max_email: Optional[int] = None, max_ip: Optional[int] = None, prefix: str = "login"):
+        if not prefix or ":" in prefix:
+            raise ValueError("LoginThrottle prefix must be a non-empty string without ':'")
+        # Namespace for every Redis key ("<prefix>:attempts:..."), so counters
+        # for different purposes (login, MFA codes, password checks) can never
+        # collide even if a key value looks like another purpose's key.
+        self.prefix = prefix
         self._redis = redis
         self._reserve_script = self._refund_script = None
         self.window = window if window is not None else settings.LOGIN_WINDOW_SECONDS
@@ -101,6 +109,8 @@ class LoginThrottle:
 
     @property
     def redis(self):
+        if self._redis is None and self._parent is not None:
+            self._redis = self._parent.redis
         if self._redis is None:
             import redis.asyncio as aioredis
 
@@ -114,13 +124,26 @@ class LoginThrottle:
             self._redis = aioredis.Redis(connection_pool=pool)
         return self._redis
 
-    @staticmethod
-    def _email_keys(email: str, ip: str) -> tuple[str, str]:
-        return f"login:attempts:email_ip:{email}|{ip}", f"login:attempts:email:{email}"
+    def namespaced(self, prefix: str, **limits) -> "LoginThrottle":
+        """A throttle sharing this one's Redis client, with its own key namespace
+        (and optionally its own limits: window/max_email_ip/max_email/max_ip)."""
+        opts = {"window": self.window, "max_email_ip": self.max_email_ip,
+                "max_email": self.max_email, "max_ip": self.max_ip, **limits}
+        clone = LoginThrottle(self._redis, prefix=prefix, **opts)
+        if self._redis is None:  # share the lazily-created default client
+            clone._parent = self
+        return clone
+
+    def _ip_key(self, ip: str) -> str:
+        return f"{self.prefix}:attempts:ip:{ip}"
+
+    def _email_keys(self, email: str, ip: str) -> tuple[str, str]:
+        p = self.prefix
+        return f"{p}:attempts:email_ip:{email}|{ip}", f"{p}:attempts:email:{email}"
 
     async def reserve(self, email: str, ip: str) -> Optional[int]:
         """Reserve one attempt. Returns Retry-After seconds if blocked (nothing counted), else None."""
-        keys = [*self._email_keys(email, ip), f"login:attempts:ip:{ip}"]
+        keys = [*self._email_keys(email, ip), self._ip_key(ip)]
         args = [self.window, self.max_email_ip, self.max_email, self.max_ip]
         try:
             if self._reserve_script is None:
@@ -138,7 +161,7 @@ class LoginThrottle:
         or Docker Desktop, where every client shares one IP, isn't throttled by
         its own successful logins). The reservation itself stays atomic.
         """
-        ip_key = f"login:attempts:ip:{ip}"
+        ip_key = self._ip_key(ip)
         try:
             await self.redis.delete(*self._email_keys(email, ip))
             if self._refund_script is None:
@@ -151,6 +174,16 @@ class LoginThrottle:
 _throttle = LoginThrottle()
 
 
+# Current-password checks (change password, turn MFA on/off): same limits as login,
+# separate namespace so a login "username" can never touch these counters.
+_pwd_throttle = _throttle.namespaced("pwd")
+
+
 def get_login_throttle() -> LoginThrottle:
     """FastAPI dependency; tests override it with a LoginThrottle on a fake Redis."""
     return _throttle
+
+
+def get_pwd_throttle() -> LoginThrottle:
+    """Throttle for current-password checks (keys pwd:attempts:...); tests override it."""
+    return _pwd_throttle
