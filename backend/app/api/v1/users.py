@@ -118,10 +118,12 @@ async def read_user_me(
         .where(TenantMembership.user_id == current_user.id)
         .order_by(Tenant.id)
     )
+    pairs = rows.all()
     memberships = [
         MembershipOut(tenant_id=t.id, tenant_name=t.name, tenant_slug=t.slug, role=m.role)
-        for m, t in rows.all()
+        for m, t in pairs
     ]
+    mfa_required = any(t.require_mfa for _, t in pairs)
     role = resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
 
     return UserMe(
@@ -138,6 +140,7 @@ async def read_user_me(
         has_avatar=bool(current_user.avatar_key),
         mfa_enabled=current_user.mfa_enabled_at is not None,
         has_password=bool(current_user.password_login_enabled),
+        mfa_required_by_tenant=mfa_required,
     )
 
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Avatar from '../Avatar';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard, ShieldAlert, Layers, Settings, Bell, Database, Share2, LogOut,
@@ -52,9 +53,6 @@ export default function Layout() {
         navigate('/login', { replace: true });
     };
 
-    const userInitials = currentUser?.full_name
-        ? currentUser.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-        : currentUser?.email?.[0]?.toUpperCase() ?? '?';
     const displayName = currentUser?.full_name || currentUser?.email || 'User';
     const displayRole = currentUser?.role ? currentUser.role.replace('_', ' ') : '';
 
@@ -161,15 +159,19 @@ export default function Layout() {
                 <div className={cn('border-t border-zinc-200 shrink-0',
                     collapsed ? 'lg:px-2 px-3 py-3' : 'px-3 py-3')}>
                     <div className={cn('flex items-center gap-2.5', collapsed ? 'lg:justify-center' : '')}>
-                        <span className="w-8 h-8 bg-zinc-900 text-white flex items-center justify-center text-xs font-mono font-semibold shrink-0">
-                            {userInitials}
-                        </span>
-                        {(showLabels || mobileOpen) && (
-                            <>
+                        <Link to="/profile" className="flex items-center gap-2.5 min-w-0 flex-1 hover:opacity-80"
+                            aria-label="Your profile" title="Your profile">
+                            <Avatar userId={currentUser?.id} name={displayName}
+                                hasAvatar={currentUser?.has_avatar} size={32} />
+                            {(showLabels || mobileOpen) && (
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-zinc-900 truncate leading-tight">{displayName}</p>
                                     <p className="label-mono leading-tight mt-0.5">{displayRole}</p>
                                 </div>
+                            )}
+                        </Link>
+                        {(showLabels || mobileOpen) && (
+                            <>
                                 <button onClick={handleLogout}
                                     className="p-1.5 text-zinc-400 hover:text-severity-critical hover:bg-zinc-100"
                                     aria-label="Logout" title="Logout">

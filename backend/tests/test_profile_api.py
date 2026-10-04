@@ -148,3 +148,16 @@ def test_password_change_is_throttled():
                          json={"current_password": OLD_PW, "new_password": NEW_PW})
         assert r.status_code == 429 and r.headers["retry-after"] == "30"
     _scenario(body)
+
+
+def test_me_reports_mfa_required_by_tenant():
+    async def body(c, ids, hdr):
+        r = await c.get("/api/v1/users/me", headers=hdr)
+        assert r.json()["mfa_required_by_tenant"] is False
+        async with AsyncSessionLocal() as db:
+            t = (await db.execute(select(Tenant).where(Tenant.id == ids["t"]))).scalars().one()
+            t.require_mfa = True
+            await db.commit()
+        r = await c.get("/api/v1/users/me", headers=hdr)
+        assert r.json()["mfa_required_by_tenant"] is True
+    _scenario(body)

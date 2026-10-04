@@ -126,3 +126,4 @@ class UserMe(BaseModel):
     has_avatar: bool = False
     mfa_enabled: bool = False
     has_password: bool = True
+    mfa_required_by_tenant: bool = False
