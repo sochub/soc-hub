@@ -8,8 +8,11 @@ from app.schemas.membership import MembershipOut
 
 
 class Token(BaseModel):
-    access_token: str
-    token_type: str
+    access_token: Optional[str] = None
+    token_type: Optional[str] = None
+    mfa_required: bool = False
+    mfa_setup_required: bool = False
+    mfa_token: Optional[str] = None
 
 
 class TokenData(BaseModel):

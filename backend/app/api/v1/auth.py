@@ -1,5 +1,6 @@
 import logging
 import secrets
+import jwt
 from datetime import timedelta
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,6 +13,7 @@ from sqlalchemy.future import select
 from app.api import deps
 from app.core import security
 from app.core.config import settings
+from app.api.v1.mfa import get_mfa_throttle, get_redis, verify_user_code
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -29,7 +31,7 @@ _DUMMY_HASH = security.get_password_hash(secrets.token_urlsafe(32))
 _default_active_tenant_id = deps.default_active_tenant_id
 
 
-@router.post("/login/access-token", response_model=Token)
+@router.post("/login/access-token", response_model=Token, response_model_exclude_unset=True)
 async def login_access_token(
     request: Request,
     db: AsyncSession = Depends(deps.get_db),
@@ -74,9 +76,59 @@ async def login_access_token(
         )
 
     await throttle.reset(email, ip)
+    if user.mfa_enabled_at is not None:
+        return {"mfa_required": True, "mfa_token": security.issue_mfa_challenge(user)}
+    if await _tenant_requires_mfa(db, user):
+        return {"mfa_setup_required": True, "mfa_token": security.issue_mfa_challenge(user)}
     active_tenant_id = await _default_active_tenant_id(db, user)
     return {
         "access_token": security.issue_access_token(user, active_tenant_id),
+        "token_type": "bearer",
+    }
+
+
+async def _tenant_requires_mfa(db: AsyncSession, user: User, tenant_id: Optional[int] = None) -> bool:
+    """True if the user (without MFA) belongs to / targets a tenant that requires MFA.
+
+    Super admins with no memberships are exempt. `tenant_id` limits the check to that tenant.
+    """
+    q = (select(Tenant.id).join(TenantMembership, TenantMembership.tenant_id == Tenant.id)
+         .where(TenantMembership.user_id == user.id, Tenant.require_mfa.is_(True)))
+    if tenant_id is not None:
+        q = q.where(Tenant.id == tenant_id)
+    return (await db.execute(q.limit(1))).first() is not None
+
+
+class MfaLoginBody(BaseModel):
+    mfa_token: str
+    code: str
+
+
+@router.post("/login/mfa", response_model=Token, response_model_exclude_unset=True)
+async def login_mfa(
+    request: Request,
+    body: MfaLoginBody,
+    db: AsyncSession = Depends(deps.get_db),
+    redis=Depends(get_redis),
+    throttle=Depends(get_mfa_throttle),
+) -> Any:
+    """Second login step: challenge token + TOTP code -> access token."""
+    expired = HTTPException(status_code=401, detail="Login expired — sign in again",
+                            headers={"WWW-Authenticate": "Bearer"})
+    try:
+        payload = security.decode_mfa_challenge(body.mfa_token)
+    except jwt.PyJWTError:
+        raise expired
+    email = payload.get("sub")
+    user = None
+    if isinstance(email, str):
+        user = (await db.execute(select(User).where(func.lower(User.email) == email.lower()))).scalars().first()
+    if (not user or not user.is_active or payload.get("tv") != (user.token_version or 0)
+            or user.mfa_enabled_at is None):
+        raise expired
+    await verify_user_code(db, redis, throttle, user, body.code, client_ip(request))
+    return {
+        "access_token": security.issue_access_token(user, await _default_active_tenant_id(db, user)),
         "token_type": "bearer",
     }
 
@@ -85,7 +137,7 @@ class SwitchTenantRequest(BaseModel):
     tenant_id: int
 
 
-@router.post("/switch-tenant", response_model=Token)
+@router.post("/switch-tenant", response_model=Token, response_model_exclude_unset=True)
 async def switch_tenant(
     *,
     db: AsyncSession = Depends(deps.get_db),
@@ -110,6 +162,10 @@ async def switch_tenant(
         )
         if not res.scalars().first():
             raise HTTPException(status_code=403, detail="You are not a member of that tenant.")
+
+    if (not current_user.is_super_admin and current_user.mfa_enabled_at is None
+            and await _tenant_requires_mfa(db, current_user, body.tenant_id)):
+        raise HTTPException(status_code=403, detail="mfa_setup_required")
 
     return {
         "access_token": security.issue_access_token(current_user, body.tenant_id),
