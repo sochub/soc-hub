@@ -49,3 +49,7 @@ celerybeat.pid
 
 # ---- Local agent scratch space ----
 .superpowers/
+
+# Local agent tooling (not tracked)
+.claude/
+docs/superpowers/
