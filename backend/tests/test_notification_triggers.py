@@ -2,10 +2,15 @@ import asyncio
 import logging
 import secrets
 
+import httpx
+from sqlalchemy.orm import selectinload
+
 from sqlalchemy import delete, func, select
 
 import app.db.base  # noqa: F401  (register all models)
 from app.core.security import get_password_hash
+from app.api import deps
+from app.main import app
 from app.db.session import AsyncSessionLocal, engine
 from app.models.audit_log import AuditLog
 from app.models.case import Case, CaseSeverity, CaseStatus, TimelineEvent
@@ -70,7 +75,7 @@ def scenario(fn):
                 if tids:
                     await db.execute(delete(Tenant).where(Tenant.id.in_(tids)))
                 await db.commit()
-                left = (await db.execute(select(func.count()).select_from(Tenant).where(Tenant.slug.like("wf-test-%")))).scalar()
+                left = (await db.execute(select(func.count()).select_from(Tenant).where(Tenant.slug.like(f"wf-test-{h}-%")))).scalar()
             await engine.dispose()
             assert left == 0
     def test(*a):
@@ -145,8 +150,8 @@ async def test_status_and_severity_changes(db, ctx):
     for k in ("B", "V"):
         by = {n.type: n for n in await notes(db, i[k]) if n.type != "comment"}
         assert set(by) == {"status_change", "severity_change"}
-        assert "in_progress" in by["status_change"].summary and f"#{case.id}" in by["status_change"].summary
-        assert "critical" in by["severity_change"].summary
+        assert "In Progress" in by["status_change"].summary and f"#{case.id}" in by["status_change"].summary
+        assert "Critical" in by["severity_change"].summary
         assert all(SENTINEL not in n.summary for n in await notes(db, i[k]))
 
 
@@ -260,3 +265,112 @@ async def test_external_ids_stashed(db, ctx):
     await db.commit()
     mention = (await notes(db, i["C"], "mention"))[0]
     assert db.info["notif_external"] == [mention.id]
+
+
+@scenario
+async def test_owner_is_implicit_follower(db, ctx):
+    i = ctx["ids"]
+    case = await case_of(db, ctx)  # owner A, no follower row
+    assert not await service.is_following(db, case.id, i["A"])
+    await case_service.add_timeline_note(db, case=case, user_id=i["B"], content="hello")
+    await case_service.apply_case_update(db, case=case, user_id=i["B"], update_data={"status": CaseStatus.IN_PROGRESS})
+    await db.commit()
+    assert sorted(n.type for n in await notes(db, i["A"])) == ["comment", "status_change"]
+
+
+@scenario
+async def test_summary_never_contains_email(db, ctx):
+    i = ctx["ids"]
+    case = await case_of(db, ctx)
+    u = (await db.execute(select(User).where(User.id == i["B"]))).scalars().one()
+    u.full_name = None
+    await db.commit()
+    await case_service.add_timeline_note(db, case=case, user_id=i["B"], content="hello")
+    await db.commit()
+    s = (await notes(db, i["A"]))[0].summary
+    assert "@" not in s and s.startswith("trig-b-")
+
+
+@scenario
+async def test_followers_get_nothing_on_edit(db, ctx):
+    i = ctx["ids"]
+    case = await case_of(db, ctx)
+    await service.follow(db, case, i["B"])
+    ev = await case_service.add_timeline_note(db, case=case, user_id=i["A"], content="one")
+    await db.commit()
+    before = len(await notes(db, i["B"]))
+    await case_service.edit_timeline_note(db, case=case, event=ev, update_data={"content": "two"}, user_id=i["A"])
+    await db.commit()
+    assert len(await notes(db, i["B"])) == before
+
+
+@scenario
+async def test_edit_type_change_to_comment_notifies_mentions(db, ctx):
+    i = ctx["ids"]
+    case = await case_of(db, ctx)
+    ev = await case_service.add_timeline_note(db, case=case, user_id=i["A"], event_type="note",
+                                              content=f"@[x](user:{i['C']})")
+    await db.commit()
+    assert await notes(db, i["C"]) == []
+    await case_service.edit_timeline_note(db, case=case, event=ev, update_data={"event_type": "comment"}, user_id=i["A"])
+    await db.commit()
+    assert [n.type for n in await notes(db, i["C"])] == ["mention"]
+
+
+async def _client(db, ctx, key):
+    u = (await db.execute(select(User).options(selectinload(User.memberships)).where(User.id == ctx["ids"][key]).execution_options(populate_existing=True))).scalars().one()
+    u._active_tenant_id = ctx["t"]
+    app.dependency_overrides[deps.get_current_active_user] = lambda: u
+    app.dependency_overrides[deps.get_effective_tenant_id] = lambda: ctx["t"]
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t", timeout=60)
+
+
+@scenario
+async def test_edit_endpoint_permissions_and_mentions(db, ctx):
+    i = ctx["ids"]
+    case = await case_of(db, ctx)
+    ev = await case_service.add_timeline_note(db, case=case, user_id=i["A"], content="first")
+    await db.commit()
+    url = f"/api/v1/cases/{case.id}/timeline/{ev.id}"
+    try:
+        for key, expect in (("B", 403), ("V", 403), ("A", 200), ("C", 403)):
+            async with await _client(db, ctx, key) as c:
+                r = await c.put(url, json={"content": f"edit by {key} @[x](user:{i['C']})"})
+            assert r.status_code == expect, (key, r.status_code, r.text)
+        # author A edit above notified C once; promote B to admin and edit
+        await db.execute(TenantMembership.__table__.update().where(TenantMembership.id == ctx["mem"]["B"]).values(role="admin"))
+        await db.commit()
+        async with await _client(db, ctx, "B") as c:
+            r = await c.put(url, json={"content": f"admin edit @[x](user:{i['C']}) @[y](user:{i['V']})"})
+        assert r.status_code == 200, r.text
+    finally:
+        app.dependency_overrides.pop(deps.get_current_active_user, None)
+        app.dependency_overrides.pop(deps.get_effective_tenant_id, None)
+    assert len(await notes(db, i["C"], "mention")) == 1
+    assert len(await notes(db, i["V"], "mention")) == 1
+
+
+@scenario
+async def test_copilot_create_case_owner_follows(db, ctx, monkeypatch=None):
+    from app.tasks import triage as triage_mod
+    i = ctx["ids"]
+    dispatched = []
+    orig = triage_mod.run_case_triage_task.delay
+    triage_mod.run_case_triage_task.delay = lambda tid: dispatched.append(tid)
+    try:
+        async with await _client(db, ctx, "B") as c:
+            r = await c.post("/api/v1/copilot/actions/execute",
+                             json={"type": "create_case", "params": {"title": "from copilot", "severity": "high"}})
+        assert r.status_code == 200 and r.json()["ok"] is True, r.text
+        cid = r.json()["case_id"]
+    finally:
+        triage_mod.run_case_triage_task.delay = orig
+        app.dependency_overrides.pop(deps.get_current_active_user, None)
+        app.dependency_overrides.pop(deps.get_effective_tenant_id, None)
+    assert len(dispatched) == 1
+    assert await service.is_following(db, cid, i["B"])
+    # owner B is an implicit follower: a comment by A notifies B
+    case = (await db.execute(select(Case).where(Case.id == cid))).scalars().one()
+    await case_service.add_timeline_note(db, case=case, user_id=i["A"], content="hi")
+    await db.commit()
+    assert [n.type for n in await notes(db, i["B"])] == ["comment"]

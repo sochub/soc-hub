@@ -98,15 +98,17 @@ async def add_timeline_note(db: AsyncSession, *, case: Case, content: str, user_
 
 async def edit_timeline_note(db: AsyncSession, *, case: Case, event: TimelineEvent, update_data: dict,
                              user_id: Optional[int]) -> TimelineEvent:
-    previous = event.content
+    previous, previous_type = event.content, event.event_type
     new_type = update_data.get("event_type", event.event_type)
     content = update_data.get("content", event.content)
     if new_type == "comment" and user_id is not None:
         content, _ = await canonicalize_mentions(db, case.tenant_id, content)
     event.event_type, event.content = new_type, content
     await db.flush()
-    if new_type == "comment" and content != previous:
-        await notify.on_comment(db, case, event, user_id, previous_content=previous or "")
+    type_changed = new_type != previous_type
+    if new_type == "comment" and (content != previous or type_changed):
+        await notify.on_comment(db, case, event, user_id,
+                                previous_content="" if type_changed else (previous or ""))
     return event
 
 

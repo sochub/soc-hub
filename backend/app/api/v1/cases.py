@@ -11,6 +11,7 @@ from app.schemas import case as case_schema
 from app.services.case_service import (
     add_timeline_note, apply_case_update, create_case_record, edit_timeline_note,
 )
+from app.utils.roles import resolve_active_role
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
 from app.workflows.events import emit_event
@@ -222,6 +223,11 @@ async def update_timeline_event(
     event = result.scalars().first()
     if not event:
         raise HTTPException(status_code=404, detail="Timeline event not found")
+
+    role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
+                               current_user.memberships)
+    if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
+        raise HTTPException(status_code=403, detail="Only the author or an admin can edit this entry")
 
     await edit_timeline_note(db, case=case, event=event, update_data=event_in.model_dump(exclude_unset=True),
                              user_id=current_user.id)

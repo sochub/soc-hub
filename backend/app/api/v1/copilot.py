@@ -593,19 +593,13 @@ async def execute_action(
             severity = CaseSeverity(str(p.get("severity", "medium")).lower())
         except ValueError:
             severity = CaseSeverity.MEDIUM
-        case = Case(
-            title=title,
-            description=p.get("description"),
-            severity=severity,
-            status=CaseStatus.NEW,
-            tenant_id=tenant_id,
-            owner_id=current_user.id,
-        )
-        db.add(case)
-        await db.flush()
-        await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="create",
-                               tenant_id=tenant_id, user_id=current_user.id)
+        case, triage_id = await case_service.create_case_record(
+            db, tenant_id=tenant_id, user_id=current_user.id,
+            data={"title": title, "description": p.get("description"), "severity": severity,
+                  "status": CaseStatus.NEW})
         await db.commit()
+        from app.tasks.triage import run_case_triage_task  # lazy: tasks.triage imports this module
+        run_case_triage_task.delay(triage_id)
         return ActionResult(ok=True, message=f"Created case #{case.id}: {title}", case_id=case.id)
 
     if req.type == "add_artifact":

@@ -31,15 +31,25 @@ async def _members(db, tenant_id: int, user_ids: Iterable[int]) -> Set[int]:
     return set(rows.scalars().all())
 
 
-async def _followers(db, case_id: int) -> Set[int]:
-    return set((await db.execute(select(CaseFollower.user_id).where(CaseFollower.case_id == case_id))).scalars().all())
+async def _followers(db, case: Case) -> Set[int]:
+    """Follower rows plus the case owner, who is an implicit follower."""
+    rows = set((await db.execute(select(CaseFollower.user_id).where(CaseFollower.case_id == case.id))).scalars().all())
+    if case.owner_id:
+        rows.add(case.owner_id)
+    return rows
 
 
 async def _actor_name(db, actor_id: Optional[int]) -> str:
     if not actor_id:
         return "Automation"
     u = (await db.execute(select(User).where(User.id == actor_id))).scalars().first()
-    return ((u.full_name or u.email) if u else "Someone")[:60]
+    if not u:
+        return "A teammate"
+    return (u.full_name or (u.email or "").split("@")[0] or "A teammate")[:60]
+
+
+def _label(value) -> str:
+    return str(value).replace("_", " ").title()
 
 
 async def _follow(db, case: Case, user_id: int) -> None:
@@ -56,6 +66,7 @@ def _add(db, case: Case, user_id: int, type_: str, summary: str, actor_id, event
 
 async def _guarded(db, case: Case, type_: str, body) -> None:
     created = []
+    await db.flush()  # a caller's own flush failure must not be mislabelled as a notification failure
     try:
         async with db.begin_nested():
             created = await body()
@@ -93,7 +104,7 @@ async def on_comment(db, case: Case, event, actor_id: Optional[int], previous_co
         if previous_content is not None:  # edits only notify newly mentioned users
             others = set()
         else:
-            others = await _members(db, case.tenant_id, await _followers(db, case.id)) - mentioned - {actor_id}
+            others = await _members(db, case.tenant_id, await _followers(db, case)) - mentioned - {actor_id}
         name = await _actor_name(db, actor_id)
         out = [_add(db, case, u, "mention", f"{name} mentioned you on case #{case.id}", actor_id, event.id) for u in mentioned]
         out += [_add(db, case, u, "comment", f"{name} commented on case #{case.id}", actor_id, event.id) for u in others]
@@ -106,16 +117,16 @@ async def on_case_update(db, case: Case, changes: dict, actor_id: Optional[int])
         out = []
         name = await _actor_name(db, actor_id)
         new_owner = changes.get("owner_id", {}).get("to")
-        if new_owner and new_owner != actor_id and await _members(db, case.tenant_id, [new_owner]):
+        owner_ok = bool(new_owner) and (new_owner == actor_id or bool(await _members(db, case.tenant_id, [new_owner])))
+        if owner_ok:
             await _follow(db, case, new_owner)
-            out.append(_add(db, case, new_owner, "assigned", f"{name} assigned you case #{case.id}", actor_id))
-        elif new_owner:
-            await _follow(db, case, new_owner)
-        followers = await _members(db, case.tenant_id, await _followers(db, case.id)) - {actor_id}
+            if new_owner != actor_id:
+                out.append(_add(db, case, new_owner, "assigned", f"{name} assigned you case #{case.id}", actor_id))
+        followers = await _members(db, case.tenant_id, await _followers(db, case)) - {actor_id}
         for field, type_ in (("status", "status_change"), ("severity", "severity_change")):
             if field in changes:
                 label = "Status" if field == "status" else "Severity"
-                summary = f"{label} changed to {changes[field]['to']} on case #{case.id}"
+                summary = f"{label} changed to {_label(changes[field]['to'])} on case #{case.id}"
                 out += [_add(db, case, u, type_, summary, actor_id) for u in followers]
         return out
     await _guarded(db, case, "case_update", body)
@@ -129,7 +140,7 @@ async def on_case_created(db, case: Case, actor_id: Optional[int]) -> None:
 
 async def on_sla_breach(db, case: Case, breach_type: str) -> None:
     async def body():
-        users = await _members(db, case.tenant_id, (await _followers(db, case.id)) | {case.owner_id})
+        users = await _members(db, case.tenant_id, (await _followers(db, case)) | {case.owner_id})
         label = "response" if breach_type == "response" else "resolution"
         return [_add(db, case, u, "sla_breach", f"Case #{case.id} breached its {label} SLA", None) for u in users]
     await _guarded(db, case, "sla_breach", body)
