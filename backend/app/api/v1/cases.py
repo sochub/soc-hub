@@ -9,7 +9,7 @@ from app.models.case import Case, TimelineEvent
 from app.models.user import User
 from app.schemas import case as case_schema
 from app.services.case_service import (
-    add_timeline_note, apply_case_update, create_case_record,
+    add_timeline_note, apply_case_update, create_case_record, edit_timeline_note,
 )
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
@@ -209,7 +209,8 @@ async def update_timeline_event(
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
     )
-    if not result.scalars().first():
+    case = result.scalars().first()
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
     result = await db.execute(
@@ -222,9 +223,8 @@ async def update_timeline_event(
     if not event:
         raise HTTPException(status_code=404, detail="Timeline event not found")
 
-    update_data = event_in.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(event, field, value)
+    await edit_timeline_note(db, case=case, event=event, update_data=event_in.model_dump(exclude_unset=True),
+                             user_id=current_user.id)
 
     await db.commit()
 
