@@ -28,6 +28,8 @@ def _enqueue(ids) -> None:
 
 
 def _after_commit(session) -> None:
+    if session.in_nested_transaction():
+        return  # a released savepoint is not durable yet; wait for the outer commit
     ids = session.info.pop("notif_external", None)
     if ids:
         try:

@@ -271,7 +271,9 @@ async def _external_ids_body(db, ctx, i, enqueued):
     await case_service.add_timeline_note(db, case=case, user_id=i["A"], content=f"@[x](user:{i['C']})")
     await case_service.apply_case_update(db, case=case, user_id=i["A"], update_data={"status": CaseStatus.IN_PROGRESS})
     mention = (await notes(db, i["C"], "mention"))[0]
-    assert "notif_external" not in db.info  # consumed by the after-commit hook (Task 4)
+    assert enqueued == [] and db.info["notif_external"] == [mention.id]  # only the outermost commit enqueues
+    await db.commit()
+    assert "notif_external" not in db.info
     assert enqueued == [[mention.id]]
 
 
@@ -407,3 +409,26 @@ async def test_copilot_create_case_owner_follows(db, ctx, monkeypatch=None):
     await case_service.add_timeline_note(db, case=case, user_id=i["A"], content="hi")
     await db.commit()
     assert [n.type for n in await notes(db, i["B"])] == ["comment"]
+
+
+@scenario
+async def test_new_owner_gets_only_assigned(db, ctx):
+    i = ctx["ids"]
+    case = await case_of(db, ctx)
+    await service.follow(db, case, i["B"])
+    await service.follow(db, case, i["C"])
+    await case_service.apply_case_update(db, case=case, user_id=i["A"],
+                                         update_data={"owner_id": i["B"], "status": CaseStatus.IN_PROGRESS, "severity": CaseSeverity.HIGH})
+    await db.commit()
+    assert [n.type for n in await notes(db, i["B"])] == ["assigned"]
+    assert sorted(n.type for n in await notes(db, i["C"])) == ["severity_change", "status_change"]
+
+
+@scenario
+async def test_actor_name_control_chars_flattened(db, ctx):
+    i = ctx["ids"]
+    a = (await db.execute(select(User).where(User.id == i["A"]))).scalars().one()
+    a.full_name = "Evil\r\nInjected\x07Name\u2028x"
+    await db.commit()
+    name = await service._actor_name(db, i["A"])
+    assert not any(ch in name for ch in "\r\n\x07\u2028") and name.startswith("Evil  Injected")

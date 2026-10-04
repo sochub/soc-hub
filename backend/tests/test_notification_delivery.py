@@ -272,6 +272,22 @@ async def test_failed_savepoint_keeps_earlier_stash(db, ctx, mp):
     assert calls == [first]
 
 
+@run
+async def test_savepoint_release_does_not_enqueue(db, ctx, mp):
+    i = ctx["ids"]
+    calls = []
+    mp.setattr(delivery, "_enqueue", _REAL_ENQUEUE)
+    mp.setattr(deliver_notifications_task, "delay", lambda ids: calls.append(list(ids)))
+    case = await case_of(db, ctx)
+    await case_service.add_timeline_note(db, case=case, user_id=i["A"], content=f"x @[x](user:{i['C']})")
+    await case_service.add_timeline_note(db, case=case, user_id=i["A"], content=f"y @[x](user:{i['B']})")
+    assert calls == []  # two released savepoints, outer transaction still open
+    assert len(db.info["notif_external"]) == 2
+    await db.commit()
+    assert len(calls) == 1 and sorted(calls[0]) == sorted(
+        (await db.execute(select(Notification.id).where(Notification.type == "mention", Notification.case_id == ctx["case"]))).scalars().all())
+
+
 @scenario
 async def test_prune(db, ctx):
     i = ctx["ids"]

@@ -158,6 +158,7 @@ async def _scenario():
                 assert [x["id"] for x in r.json()] == [al[0].id], "e case-insens"
                 r = await c.get(M, params={"q": f"actor-{h}"})
                 assert [x["id"] for x in r.json()] == [actor.id], "e email prefix"
+                assert r.json()[0]["name"] == f"actor-{h}", "e name fallback"
                 r = await c.get(M, params={"q": "%"})
                 assert r.json() == [], "e percent"
                 r = await c.get(M, params={"q": "_"})

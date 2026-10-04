@@ -5,6 +5,7 @@ action still commits. Ids of externally delivered notifications are stashed on
 db.info["notif_external"] for the after-commit hook (app/notifications/delivery.py).
 """
 import logging
+import re
 from typing import Iterable, Optional, Set
 
 from sqlalchemy import delete, select
@@ -39,13 +40,17 @@ async def _followers(db, case: Case) -> Set[int]:
     return rows
 
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
 async def _actor_name(db, actor_id: Optional[int]) -> str:
     if not actor_id:
         return "Automation"
     u = (await db.execute(select(User).where(User.id == actor_id))).scalars().first()
     if not u:
         return "A teammate"
-    return (u.full_name or (u.email or "").split("@")[0] or "A teammate")[:60]
+    name = _CONTROL_RE.sub(" ", u.full_name or (u.email or "").split("@")[0]).strip()
+    return (name or "A teammate")[:60]
 
 
 def _label(value) -> str:
@@ -123,6 +128,8 @@ async def on_case_update(db, case: Case, changes: dict, actor_id: Optional[int])
             if new_owner != actor_id:
                 out.append(_add(db, case, new_owner, "assigned", f"{name} assigned you case #{case.id}", actor_id))
         followers = await _members(db, case.tenant_id, await _followers(db, case)) - {actor_id}
+        if owner_ok:
+            followers -= {new_owner}  # the new owner gets only the assigned notification
         for field, type_ in (("status", "status_change"), ("severity", "severity_change")):
             if field in changes:
                 label = "Status" if field == "status" else "Severity"

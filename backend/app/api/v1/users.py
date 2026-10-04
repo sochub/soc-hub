@@ -56,7 +56,7 @@ async def mentionable_users(
                (User.full_name.ilike(esc, escape="\\")) | (User.email.ilike(esc, escape="\\")))
         .order_by(User.full_name, User.id).limit(10)
     )
-    return [MentionableUser(id=u.id, name=u.full_name, email=u.email) for u in rows.scalars().all()]
+    return [MentionableUser(id=u.id, name=u.full_name or (u.email or "").split("@")[0], email=u.email) for u in rows.scalars().all()]
 
 
 @router.post("/", response_model=UserSchema)

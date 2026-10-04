@@ -30,5 +30,5 @@ class FollowState(BaseModel):
 
 class MentionableUser(BaseModel):
     id: int
-    name: Optional[str] = None
+    name: str
     email: str
