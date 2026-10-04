@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -48,16 +48,24 @@ def _sso_ready(cfg: Optional[TenantSSOConfig]) -> bool:
     return bool(cfg and cfg.enabled and cfg.idp_entity_id and cfg.idp_sso_url and cfg.idp_x509_cert)
 
 
+SSO_NOT_ALLOWED = ("This account can't use single sign-on for this organization — "
+                   "sign in with your password.")
+
+
 async def _resolve_sso_user(
     db: AsyncSession, tenant: Tenant, cfg: TenantSSOConfig, email: str, full_name: str
 ) -> User:
     """Find-or-provision the SSO user per the tenant's JIT settings.
-    Raises HTTPException(403) when the user/membership is missing and
-    auto-provisioning is disabled."""
+
+    A tenant's IdP is controlled by that tenant's admins, so it may only sign
+    in accounts that belong to this tenant alone. An existing user is refused
+    (HTTPException 403) when they are a super admin, belong to any other
+    tenant, or are not a member of this tenant (no auto-attach). Auto-provision
+    only ever creates NEW users (with a membership in this tenant)."""
     email = email.strip().lower()
     role = cfg.default_role if cfg.default_role in _ALLOWED_JIT_ROLES else "viewer"
 
-    user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalars().first()
     if user and not user.is_active:
         raise HTTPException(status_code=403, detail="Your account is deactivated.")
 
@@ -85,21 +93,14 @@ async def _resolve_sso_user(
         await db.commit()
         return user
 
-    membership = (await db.execute(
-        select(TenantMembership).where(
-            TenantMembership.user_id == user.id, TenantMembership.tenant_id == tenant.id)
-    )).scalars().first()
-    if not membership:
-        if not cfg.auto_provision:
-            raise HTTPException(
-                status_code=403,
-                detail="Your account is not a member of this tenant.",
-            )
-        db.add(TenantMembership(user_id=user.id, tenant_id=tenant.id, role=role))
-        await create_audit_log(db=db, entity_type="user", entity_id=user.id,
-                               action="sso_membership_added", tenant_id=tenant.id,
-                               user_id=user.id, changes={"role": role})
-        await db.commit()
+    if user.is_super_admin:
+        raise HTTPException(status_code=403, detail=SSO_NOT_ALLOWED)
+    tenant_ids = set((await db.execute(
+        select(TenantMembership.tenant_id).where(TenantMembership.user_id == user.id)
+    )).scalars().all())
+    if tenant_ids != {tenant.id}:
+        # Not a member here (never auto-attached), or also a member elsewhere.
+        raise HTTPException(status_code=403, detail=SSO_NOT_ALLOWED)
     return user
 
 

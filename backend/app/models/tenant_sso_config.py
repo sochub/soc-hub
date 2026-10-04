@@ -17,8 +17,9 @@ class TenantSSOConfig(Base):
     idp_entity_id = Column(String, nullable=True)
     idp_sso_url = Column(String, nullable=True)
     idp_x509_cert = Column(Text, nullable=True)
-    # JIT provisioning: create unknown users (and missing memberships) on first
-    # SSO login with `default_role` (analyst|viewer — never admin).
+    # JIT provisioning: create unknown users (with a membership here) on first
+    # SSO login with `default_role` (analyst|viewer — never admin). Existing
+    # users are never attached to a tenant by SSO (see sso._resolve_sso_user).
     auto_provision = Column(Boolean, nullable=False, default=False)
     default_role = Column(String, nullable=False, default="viewer")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
