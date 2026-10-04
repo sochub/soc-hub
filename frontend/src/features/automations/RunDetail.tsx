@@ -13,8 +13,9 @@ import { StatusBadge } from './RunsTable';
 const nodeTypes = { wf: WorkflowNode };
 const LIVE = ['running', 'waiting', 'queued'];
 
-// Placeholders are nonce-bound (`#<16 hex>`); show only the NAME. split() with one capture group puts names at odd indices.
-const PLACEHOLDER_RE = /⟦secret:([A-Z][A-Z0-9_]{1,63})(?:#[0-9a-f]{16})?⟧/g;
+// Real placeholders are nonce-bound (`#<16 hex>`); show only the NAME. Nonce-less look-alikes (e.g. from
+// alert data) stay plain text. split() with one capture group puts names at odd indices.
+const PLACEHOLDER_RE = /⟦secret:([A-Z][A-Z0-9_]{1,63})#[0-9a-f]{16}⟧/g;
 
 function WithChips({ text }: { text: string }) {
     return <>{text.split(PLACEHOLDER_RE).map((part, i) => i % 2 === 0 ? part : (

@@ -52,21 +52,24 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
             {status && <p role="status" className={`mb-3 text-xs ${status.ok ? 'text-emerald-700' : 'text-red-700'}`}>{status.text}</p>}
             <div className="space-y-4">
                 {[...byWf.entries()].map(([wid, its]) => {
-                    const valid = its.every((i) => NAME_RE.test(names[`${wid}|${itemKey(i)}`] ?? ''));
+                    const todo = its.filter((i) => i.convertible);
+                    const valid = todo.length > 0 && todo.every((i) => NAME_RE.test(names[`${wid}|${itemKey(i)}`] ?? ''));
                     return (
                         <div key={wid} className="border border-zinc-200">
                             <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-200">
                                 <span className="font-medium text-sm text-zinc-900">{its[0].workflow_name}</span>
-                                <button type="button" className={`${btnPrimary} ml-auto !h-8`} disabled={busy !== null || !valid} onClick={() => convert(wid, its)}>
+                                <button type="button" className={`${btnPrimary} ml-auto !h-8`} disabled={busy !== null || !valid} onClick={() => convert(wid, todo)}>
                                     {busy === wid ? 'Converting…' : 'Convert'}</button>
                             </div>
                             <ul className="divide-y divide-zinc-100">
                                 {its.map((i) => {
                                     const k = `${wid}|${itemKey(i)}`;
                                     return (
-                                        <li key={k} className="px-3 py-2 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-2 items-center">
-                                            <div className="text-xs text-zinc-600"><span className="font-mono">{i.node_id}</span> · {i.location} <span className="font-mono">{i.key}</span> · <span className="font-mono">{i.host}</span></div>
-                                            <input aria-label="Secret name" className={`${modalInput} font-mono !py-1 !text-xs`} value={names[k] ?? ''}
+                                        <li key={k} className={`px-3 py-2 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-2 items-center ${i.convertible ? '' : 'bg-zinc-50'}`}>
+                                            <div className="text-xs text-zinc-600"><span className="font-mono">{i.node_id}</span> · {i.location} <span className="font-mono">{i.key}</span> · <span className="font-mono">{i.host}</span>
+                                                {!i.convertible && <div className="mt-0.5 text-amber-700">Not convertible: {i.reason ?? 'host not supported'}</div>}</div>
+                                            <input aria-label="Secret name" disabled={!i.convertible} title={i.convertible ? undefined : i.reason}
+                                                className={`${modalInput} font-mono !py-1 !text-xs disabled:opacity-50 disabled:cursor-not-allowed`} value={names[k] ?? ''}
                                                 onChange={(e) => setNames((p) => ({ ...p, [k]: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') }))} />
                                         </li>
                                     );

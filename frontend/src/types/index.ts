@@ -336,4 +336,7 @@ export interface SecretScanItem {
   key: string;
   host: string;
   suggested_name: string;
+  /** false when the host can't be a secret host pattern; `reason` says what to do */
+  convertible: boolean;
+  reason?: string;
 }

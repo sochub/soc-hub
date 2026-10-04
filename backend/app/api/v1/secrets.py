@@ -152,7 +152,8 @@ async def update_secret(name: str, body: SecretUpdate, db: AsyncSession = Depend
         raise HTTPException(status_code=422, detail=VALUE_ERR)
     fields = []
     if body.allowed_hosts is not None:
-        await _check_hosts(db, tenant_id, body.allowed_hosts)
+        # only newly added entries are revalidated: an unchanged entry stays even if no longer allowlisted
+        await _check_hosts(db, tenant_id, [h for h in body.allowed_hosts if h not in (row.allowed_hosts or [])])
         if body.allowed_hosts != (row.allowed_hosts or []):
             row.allowed_hosts = body.allowed_hosts
             fields.append("allowed_hosts")
@@ -190,8 +191,16 @@ async def delete_secret(name: str, force: bool = False, db: AsyncSession = Depen
     return Response(status_code=204)
 
 
+NOT_CONVERTIBLE = "add the host to the tenant HTTP allowlist to convert"
+
+
 def _scan_workflow(wf: Workflow, allow: List[str]) -> List[dict]:
-    return [f for f in scan_graph(wf.graph) if valid_host_pattern(f["host"], allow)]
+    """All findings; those whose host can't be a secret host pattern are reported but not convertible."""
+    out = []
+    for f in scan_graph(wf.graph):
+        ok = valid_host_pattern(f["host"], allow)
+        out.append({**f, "convertible": ok, **({} if ok else {"reason": NOT_CONVERTIBLE})})
+    return out
 
 
 async def _allowlist(db: AsyncSession, tenant_id: int) -> List[str]:
@@ -230,6 +239,14 @@ async def convert_workflow(workflow_id: int, body: ConvertIn, db: AsyncSession =
         raise
 
 
+def _decrypt_or_409(row: TenantSecret) -> str:
+    try:
+        return decrypt(row.value_enc)
+    except Exception:
+        logger.info("secret convert name=%s outcome=undecryptable", row.name)
+        raise HTTPException(status_code=409, detail=f"Secret {row.name} could not be decrypted — re-enter it in Integrations") from None
+
+
 async def _convert(db, workflow_id, body, current_user, tenant_id):
     wf = await _get_workflow(db, workflow_id, tenant_id, lock=True)
     findings = {(f["node_id"], f["location"], f["key"]): f
@@ -242,6 +259,8 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
         f = findings.get(k)
         if f is None or k in seen:
             raise HTTPException(status_code=422, detail=f"No plaintext credential found at node {it.node_id!r} {it.location} {it.key!r}")
+        if not f["convertible"]:
+            raise HTTPException(status_code=422, detail=f"Host {f['host']} cannot be a secret host — {NOT_CONVERTIBLE}")
         if not NAME_RE.match(it.secret_name):
             raise HTTPException(status_code=422, detail="Invalid secret name")
         seen.add(k)
@@ -254,7 +273,7 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
             await _insert(db, tenant_id, current_user.id, it["secret_name"], it["literal"], [it["host"]],
                           "Converted from plaintext workflow credential")
             created.append(it["secret_name"])
-        elif hmac.compare_digest(decrypt(row.value_enc).encode(), it["literal"].encode()):
+        elif hmac.compare_digest(_decrypt_or_409(row).encode(), it["literal"].encode()):
             if not host_allowed(it["host"], row.allowed_hosts or []):
                 raise HTTPException(status_code=409, detail=f"Secret {it['secret_name']} is not allowed for host {it['host']} — add the host to the secret or choose another name")
             if it["secret_name"] not in created and it["secret_name"] not in reused:
