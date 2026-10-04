@@ -1,8 +1,7 @@
 import asyncio
 import secrets
 
-import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 
 import app.db.base  # noqa: F401  (register all models)
 from app.core.security import get_password_hash
@@ -10,11 +9,17 @@ from app.db.session import AsyncSessionLocal, engine
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.notifications.mentions import MENTION_RE, parse_mention_ids, canonicalize_mentions
+from app.notifications.mentions import MAX_MENTIONS, parse_mention_ids, canonicalize_mentions
 
 
 def test_parse_ids_unique_in_order():
     assert parse_mention_ids("hi @[A](user:3) and @[B](user:1) @[A](user:3)") == [3, 1]
+
+
+def test_parse_skips_ids_beyond_int4_and_caps_count():
+    assert parse_mention_ids("@[a](user:2147483648) @[b](user:9999999999) @[c](user:2147483647)") == [2147483647]
+    many = " ".join(f"@[u](user:{i})" for i in range(1, 80))
+    assert parse_mention_ids(many) == list(range(1, MAX_MENTIONS + 1))
 
 
 def test_parse_ignores_malformed():
@@ -90,9 +95,17 @@ def test_display_name_without_full_name():
                 db.add(TenantMembership(user_id=u.id, tenant_id=t.id, role="analyst"))
                 await db.commit()
 
+                text, valid_ids = await canonicalize_mentions(db, t.id, "x @[big](user:9999999999)")
+                assert (text, valid_ids) == ("x @[big](user:9999999999)", set()), "out-of-range id must stay inert"
+
                 text, valid_ids = await canonicalize_mentions(db, t.id, f"ping @[Old Name](user:{u.id})")
                 assert text == f"ping @[test-{h}@example.test](user:{u.id})", f"Expected email-based rewrite, got {text}"
                 assert valid_ids == {u.id}, f"Expected {{u.id}}, got {valid_ids}"
+
+                u.is_active = False
+                await db.commit()
+                text, valid_ids = await canonicalize_mentions(db, t.id, f"ping @[Old Name](user:{u.id})")
+                assert (text, valid_ids) == (f"ping @[Old Name](user:{u.id})", set()), "deactivated users are not mentionable"
 
         finally:
             async with AsyncSessionLocal() as db:
