@@ -341,7 +341,7 @@ export interface SecretScanItem {
   reason?: string;
 }
 
-export type NotificationType = 'mention' | 'assigned' | 'comment' | 'status' | 'severity' | 'sla';
+export type NotificationType = 'mention' | 'assigned' | 'comment' | 'status_change' | 'severity_change' | 'sla_breach';
 
 export interface AppNotification {
   id: number;

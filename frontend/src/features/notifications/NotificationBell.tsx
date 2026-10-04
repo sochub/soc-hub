@@ -10,7 +10,7 @@ import { fetchNotifications, markAllRead, relativeTime, useTenantId, useUnreadCo
 
 const ICONS: Record<string, LucideIcon> = {
     mention: AtSign, assigned: UserPlus, comment: MessageSquare,
-    status: Activity, severity: AlertTriangle, sla: Clock,
+    status_change: Activity, severity_change: AlertTriangle, sla_breach: Clock,
 };
 
 export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpen: (n: AppNotification) => void; role?: 'menuitem' }) {

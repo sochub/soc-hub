@@ -15,6 +15,7 @@ import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
 import FollowButton from './FollowButton';
 import MentionTextarea from './MentionTextarea';
+import { stripMentions } from './mentionChips';
 import MentionText from './MentionText';
 import type { User } from '../../types';
 import SLAPanel from './SLAPanel';
@@ -100,15 +101,21 @@ export default function CaseDetail() {
     // Deep link from a notification: /cases/:id#event-<id> -> scroll to and briefly highlight the event.
     const { hash } = useLocation();
     const handledHash = useRef<string | null>(null);
+    const switchedFor = useRef<string | null>(null);
     const eventsReady = !!caseData;
     useEffect(() => {
-        if (!eventsReady || activeTab !== 'timeline' || !/^#event-\d+$/.test(hash) || handledHash.current === hash) return;
+        if (!eventsReady || !/^#event-\d+$/.test(hash) || handledHash.current === hash) return;
+        if (activeTab !== 'timeline') {
+            if (switchedFor.current !== hash) { switchedFor.current = hash; selectTab('timeline'); } // once, so the user can leave again
+            return;
+        }
         const el = document.getElementById(hash.slice(1));
         if (!el) return;
         handledHash.current = hash; // once per hash value
         el.scrollIntoView({ block: 'center' });
         el.classList.add('ring-2', 'ring-accent');
         setTimeout(() => el.classList.remove('ring-2', 'ring-accent'), 2000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectTab only closes over state already in deps
     }, [eventsReady, hash, activeTab, caseData?.timeline_events?.length]);
 
     const { data: artifacts, isLoading: isLoadingArtifacts } = useQuery({
@@ -356,7 +363,10 @@ export default function CaseDetail() {
                                                     </div>
                                                     <select
                                                         value={newEvent.event_type}
-                                                        onChange={(e) => setNewEvent({ ...newEvent, event_type: e.target.value })}
+                                                        onChange={(e) => {
+                                                            const t = e.target.value;
+                                                            setNewEvent((n) => ({ ...n, event_type: t, content: t === 'comment' ? n.content : stripMentions(n.content) }));
+                                                        }}
                                                         className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
                                                     >
                                                         {EVENT_TYPES.map(t => (
@@ -427,7 +437,10 @@ export default function CaseDetail() {
                                                         <div className="glass-panel p-4 rounded-xl border border-blue-200 bg-white space-y-2">
                                                             <select
                                                                 value={editEventData.event_type}
-                                                                onChange={(e) => setEditEventData({ ...editEventData, event_type: e.target.value })}
+                                                                onChange={(e) => {
+                                                                    const t = e.target.value;
+                                                                    setEditEventData((d) => ({ ...d, event_type: t, content: t === 'comment' ? d.content : stripMentions(d.content) }));
+                                                                }}
                                                                 className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
                                                             >
                                                                 {EVENT_TYPES.map(t => (
