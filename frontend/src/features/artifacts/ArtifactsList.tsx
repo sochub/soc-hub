@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { Link } from 'react-router-dom';
 import { FileText, Globe, Mail, Server, Database, ArrowRight, Calendar, Hash, Link2, Pencil, Trash2, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import PageContainer from '../../components/layout/PageContainer';
 
 const ARTIFACT_ICONS: Record<string, any> = {
     hash: FileText,
@@ -75,16 +76,18 @@ export default function ArtifactsList() {
 
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-[50vh]">
-                <div className="flex flex-col items-center gap-4">
-                    <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+            <PageContainer>
+                <div className="flex items-center justify-center h-[50vh]">
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+                    </div>
                 </div>
-            </div>
+            </PageContainer>
         );
     }
 
     return (
-        <div className="space-y-6">
+        <PageContainer>
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-zinc-900 tracking-tight mb-1">Artifact Repository</h1>
@@ -273,6 +276,6 @@ export default function ArtifactsList() {
                     <p className="text-sm">Artifacts added to cases will appear here automatically.</p>
                 </div>
             )}
-        </div>
+        </PageContainer>
     );
 }

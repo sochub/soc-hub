@@ -271,3 +271,44 @@ export interface AttachmentList {
   max_upload_mb: number;
   items: Attachment[];
 }
+
+export type TLPLevel = 'white' | 'green' | 'amber' | 'red';
+export type MilestoneKey = 'first_seen' | 'detected' | 'contained' | 'recovered';
+
+export interface ReportMilestone {
+  at: string | null;
+  source: 'override' | 'computed' | 'unknown';
+}
+
+export type ReportMilestones = Record<MilestoneKey, ReportMilestone> & {
+  ttd_seconds: number | null;
+  ttc_seconds: number | null;
+  ttr_seconds: number | null;
+  out_of_order: string[];
+};
+
+export interface CaseReportFields {
+  executive_summary: string | null;
+  impact: string | null;
+  lessons_learned: string | null;
+  tlp: TLPLevel;
+  first_seen_at: string | null;
+  detected_at: string | null;
+  contained_at: string | null;
+  recovered_at: string | null;
+  updated_by_email: string | null;
+  updated_at: string | null;
+}
+
+export interface CaseReportView {
+  report: CaseReportFields;
+  milestones: ReportMilestones;
+  min_tlp: TLPLevel;
+  ai_available: boolean;
+}
+
+export interface ReportDraft {
+  executive_summary: string;
+  impact: string;
+  lessons_learned: string;
+}

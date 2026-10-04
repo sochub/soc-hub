@@ -4,6 +4,7 @@ import { UserPlus, Shield, ShieldCheck, Eye, ChevronDown } from 'lucide-react';
 import { api } from '../../api/client';
 import type { User } from '../../types';
 import InviteUserModal from './InviteUserModal';
+import PageContainer from '../../components/layout/PageContainer';
 
 const roleBadgeColors: Record<string, string> = {
     admin: 'bg-purple-50 text-purple-700 border-purple-200',
@@ -52,7 +53,7 @@ export default function UserManagement() {
     });
 
     return (
-        <div className="space-y-6">
+        <PageContainer>
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-zinc-900">User Management</h1>
@@ -145,6 +146,6 @@ export default function UserManagement() {
             </div>
 
             <InviteUserModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} />
-        </div>
+        </PageContainer>
     );
 }

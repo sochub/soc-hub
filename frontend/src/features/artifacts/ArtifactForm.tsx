@@ -115,7 +115,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
                     <select
                         value={newArtifact.type}
                         onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
-                        className="bg-white border border-zinc-200 rounded-lg px-3 py-2 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
+                        className="bg-white border border-zinc-300 px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:border-accent-500 focus:ring-1 focus:ring-accent-500"
                     >
                         {ARTIFACT_TYPES.map(type => (
                             <option key={type.value} value={type.value}>{type.label}</option>
@@ -131,7 +131,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
                         }}
                         onKeyDown={(e) => e.key === 'Enter' && !potentialMatch && addArtifact(false)}
                         placeholder="Enter artifact value..."
-                        className="flex-1 bg-white border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50"
+                        className="flex-1 min-w-0 bg-white border border-zinc-300 px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:border-accent-500 focus:ring-1 focus:ring-accent-500"
                     />
                     {!potentialMatch && (
                         <button

@@ -398,6 +398,80 @@ storage root or bucket). Operators must purge them by hand.
 `upload`, `download` or `delete` and `outcome` is one of `ok`, `too_large`, `empty`,
 `error`, `missing`, `not_found`. File names, contents and storage keys are never logged.
 
+## Incident reports
+
+Each case has a **Report** tab. It holds an executive summary, impact, lessons learned, a TLP marking and
+optional milestone overrides, and exports the case as a PDF or JSON file.
+
+**PDF engine.** PDFs are rendered with `weasyprint==70.0` (in `requirements.txt`). WeasyPrint needs these Debian
+runtime packages, which `backend/Dockerfile` installs: `libpango-1.0-0`, `libpangoft2-1.0-0`, `libharfbuzz0b`,
+`libharfbuzz-subset0` and `shared-mime-info`. If you build your own image, install the same packages.
+
+| Variable | Default | Range | Meaning |
+|---|---|---|---|
+| `REPORT_RENDER_TIMEOUT_SECONDS` | `60` | 5-600 | Longest a PDF export may wait for the render slot, and then for the render itself. On timeout the API returns **504**. |
+
+**One render at a time.** At most one PDF render runs per process, off the event loop. The slot is held until the
+render thread has actually finished, even after a timeout, because a thread can't be cancelled. A caller can wait
+about twice the timeout in the worst case (once for the slot, once for the render).
+
+**No network, embedded fonts.** Rendering never fetches anything. Every URL that is not a `data:` URL is blocked, so
+case content (IOC values, notes) can't make the server request a remote resource. The fonts (IBM Plex Sans and
+Roboto Mono, SIL OFL) ship with the app and are embedded as data URLs. WeasyPrint and fontTools logging is silenced
+so case content never reaches the logs. Report endpoints log only ids, format, full/key mode and outcome. They
+never log narrative text, IOC values or file contents.
+
+**TLP.** The export marking is CLEAR, GREEN, AMBER or RED, shown in the FIRST TLP 2.0 colours (white text on RED,
+black text on the others). A report is never marked below the highest TLP of the case's IOCs. Saving the report or
+exporting with a lower value returns **422** (`TLP must be at least <LABEL>`). New reports default to AMBER. The
+floor is enforced on the server, so the UI limits are not the only guard. IOC TLP values are normalised when they
+are saved (case-insensitive, an optional `TLP:` prefix is dropped, `clear` is stored as `white`); any other value is
+rejected with 422. When computing the floor, older stored values are normalised the same way, and a value that is
+not a TLP counts as RED (fail closed).
+
+**Content rules.**
+- Defanging (`hxxp`, `[.]`, `[@]`) applies to the PDF only. JSON carries raw values.
+- URL userinfo (`user:pass@`) is stripped in both PDF and JSON, including URLs inside timeline event text (for
+  example "Added artifact: http://user:pass@host/…" or a URL pasted into a comment). This also covers the
+  timeline chart and the AI draft prompt. In the PDF, URLs in timeline text are defanged as well. Known
+  limitation: a password that itself contains `#` or `?` may be only partly stripped.
+- Timeline event text is capped at 300 characters, in both the PDF and the JSON.
+- Milestones (first seen, detected, contained, recovered) use your override when set and otherwise a computed
+  value (earliest IOC or alert, case creation, latest completed containment task, case resolution). Time to
+  detect, contain and recover (TTD/TTC/TTR) come from them. If milestones are out of order, the affected duration
+  shows as "unknown" with a warning, and saving out-of-order overrides is rejected with 422.
+- The **key** report includes evidence uploads and deletions (chain of custody). The **full** report adds the
+  complete timeline and the audit trail.
+- Large cases are truncated in the PDF (500 timeline events, 1000 IOCs, 1000 evidence files, 2000 audit rows,
+  1000 tasks per actions phase and 1000 outstanding tasks) and the report says so. JSON is not truncated by those limits.
+
+**Export audit trail.** Every export writes an `export_report` audit entry (case id, user, format, full/key, TLP,
+size and the **SHA-256** of the exact bytes). The same hash is returned in the `X-Content-SHA256` response
+header. To verify a file you were given against the audit entry:
+
+```bash
+sha256sum case-0042-report-TLP-AMBER-20261002.pdf   # compare with the audit entry / X-Content-SHA256
+```
+
+Only analysts and admins can export; viewers can read the report tab but get 403 on export, save and draft.
+
+**AI drafting is never saved automatically.** "Draft with AI" fills the three text fields in the form only.
+Nothing is stored until the analyst reviews and saves. The prompt contains structured case data: case fields,
+milestones, timeline text, IOC values (**including TLP:RED IOCs**), user emails, completed and outstanding tasks,
+and evidence file names and hashes. It never contains file contents or the existing narrative text. Draft
+requests return 409 when no AI provider is configured and 503 when the provider fails.
+
+The prompt is size-bounded. It holds the first 100 and the last 100 timeline events, the first 200 IOCs
+(malicious first), at most 200 completed tasks (all phases together), 200 outstanding tasks and 200 evidence
+files. When something is dropped, the input carries a `truncated` object with the dropped counts per section.
+If the case data is still over 60,000 characters, the timeline and IOC caps are halved until it fits (and then
+the task and evidence caps).
+
+> **Warning:** if the tenant's AI provider is external (OpenAI, Anthropic, Gemini, Bedrock, etc.), drafting sends
+> that case data, including TLP:RED IOC values, to that provider. If you can't allow that, leave AI unconfigured
+> for the tenant (a local Ollama stays on your network) or don't use drafting. See
+> [AI provider](#ai-provider).
+
 ## Email (optional — invitations work without it)
 
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`. When
