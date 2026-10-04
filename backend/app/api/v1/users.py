@@ -11,6 +11,7 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.membership import MembershipOut
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRoleUpdate, UserMe
+from app.schemas.notification import MentionableUser
 from app.utils.roles import resolve_active_role
 
 router = APIRouter()
@@ -38,6 +39,24 @@ async def read_users(
         )
         for u, role in rows.all()
     ]
+
+
+@router.get("/mentionable", response_model=List[MentionableUser])
+async def mentionable_users(
+    q: str = Query("", max_length=100),
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Active members of the active tenant whose name or email starts with q."""
+    esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = await db.execute(
+        select(User).join(TenantMembership, TenantMembership.user_id == User.id)
+        .where(TenantMembership.tenant_id == tenant_id, User.is_active.is_(True),
+               (User.full_name.ilike(esc, escape="\\")) | (User.email.ilike(esc, escape="\\")))
+        .order_by(User.full_name, User.id).limit(10)
+    )
+    return [MentionableUser(id=u.id, name=u.full_name or (u.email or "").split("@")[0], email=u.email) for u in rows.scalars().all()]
 
 
 @router.post("/", response_model=UserSchema)

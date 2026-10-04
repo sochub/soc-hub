@@ -98,6 +98,15 @@ case's highest IOC TLP. "Draft with AI" proposes the text but nothing is saved u
 audited with its SHA-256, also sent in `X-Content-SHA256`. Viewers can't export. PDFs render offline with embedded
 fonts. See [configuration](configuration.md#incident-reports).
 
+## Notifications and @mentions
+
+Type `@` in a case comment to mention a teammate. A bell in the top bar and a `/notifications` page show
+mentions, assignments, new comments, status/severity changes and SLA breaches on cases you own or follow
+(owners always follow; commenting or being mentioned follows too; Follow/Following toggle in the case
+header). Mentions and assignments also go out as a Slack DM, or email if Slack isn't connected, at most once
+per user per case every 5 minutes, and never with comment text. See
+[configuration](configuration.md#notifications-and-mentions).
+
 ## Telemetry dashboard
 
 A light, developer-centric "Telemetry Console" dashboard:

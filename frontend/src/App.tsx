@@ -9,6 +9,7 @@ import AcceptInvitation from './features/auth/AcceptInvitation';
 import Dashboard from './features/cases/Dashboard';
 import CasesList from './features/cases/CasesList';
 import CaseDetail from './features/cases/CaseDetail';
+import NotificationsPage from './features/notifications/NotificationsPage';
 import ArtifactsList from './features/artifacts/ArtifactsList';
 import ArtifactMindMap from './features/artifacts/ArtifactMindMap';
 import Integrations from './features/integrations/Integrations';
@@ -49,6 +50,7 @@ function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="cases" element={<CasesList />} />
                 <Route path="cases/:id" element={<CaseDetail />} />
+                <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="alerts" element={<AlertsList />} />
                 <Route path="artifacts" element={<ArtifactsList />} />
                 <Route path="iocs" element={<IOCList />} />

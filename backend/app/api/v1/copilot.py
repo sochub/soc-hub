@@ -7,6 +7,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
+from app.services import case_service
 from app.services.ai_service import AIService, extract_action, strip_action_blocks
 from app.models.case import Case, CaseStatus, CaseSeverity, TimelineEvent
 from app.models.artifact import Artifact, ArtifactType
@@ -592,19 +593,13 @@ async def execute_action(
             severity = CaseSeverity(str(p.get("severity", "medium")).lower())
         except ValueError:
             severity = CaseSeverity.MEDIUM
-        case = Case(
-            title=title,
-            description=p.get("description"),
-            severity=severity,
-            status=CaseStatus.NEW,
-            tenant_id=tenant_id,
-            owner_id=current_user.id,
-        )
-        db.add(case)
-        await db.flush()
-        await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="create",
-                               tenant_id=tenant_id, user_id=current_user.id)
+        case, triage_id = await case_service.create_case_record(
+            db, tenant_id=tenant_id, user_id=current_user.id,
+            data={"title": title, "description": p.get("description"), "severity": severity,
+                  "status": CaseStatus.NEW})
         await db.commit()
+        from app.tasks.triage import run_case_triage_task  # lazy: tasks.triage imports this module
+        run_case_triage_task.delay(triage_id)
         return ActionResult(ok=True, message=f"Created case #{case.id}: {title}", case_id=case.id)
 
     if req.type == "add_artifact":
@@ -648,11 +643,11 @@ async def execute_action(
     if req.type == "add_timeline_note":
         if not req.case_id:
             raise HTTPException(status_code=400, detail="Open a case to add a note.")
-        await _get_case_in_tenant(db, req.case_id, tenant_id)
+        note_case = await _get_case_in_tenant(db, req.case_id, tenant_id)
         content = (p.get("content") or "").strip()
         if not content:
             raise HTTPException(status_code=400, detail="Note content is required.")
-        db.add(TimelineEvent(case_id=req.case_id, user_id=current_user.id, event_type="comment", content=content))
+        await case_service.add_timeline_note(db, case=note_case, content=content, user_id=current_user.id)
         await create_audit_log(db=db, entity_type="case", entity_id=req.case_id, action="comment",
                                tenant_id=tenant_id, user_id=current_user.id)
         await db.commit()
@@ -663,26 +658,26 @@ async def execute_action(
             raise HTTPException(status_code=400, detail="Open a case to update it.")
         case = await _get_case_in_tenant(db, req.case_id, tenant_id)
         changes: Dict[str, Any] = {}
+        update_data: Dict[str, Any] = {}
         if p.get("status"):
             try:
-                case.status = CaseStatus(str(p["status"]).lower())
-                changes["status"] = case.status.value
+                update_data["status"] = CaseStatus(str(p["status"]).lower())
+                changes["status"] = update_data["status"].value
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid status.")
         if p.get("severity"):
             try:
-                case.severity = CaseSeverity(str(p["severity"]).lower())
-                changes["severity"] = case.severity.value
+                update_data["severity"] = CaseSeverity(str(p["severity"]).lower())
+                changes["severity"] = update_data["severity"].value
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid severity.")
         if p.get("tags") is not None:
             tags = [str(t).strip() for t in p["tags"] if str(t).strip()]
-            case.tags = tags
+            update_data["tags"] = tags
             changes["tags"] = tags
         if not changes:
             raise HTTPException(status_code=400, detail="Nothing to update.")
-        await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="update",
-                               tenant_id=tenant_id, user_id=current_user.id, changes=changes)
+        await case_service.apply_case_update(db, case=case, update_data=update_data, user_id=current_user.id)
         await db.commit()
         return ActionResult(ok=True, message=f"Updated case #{case.id} ({', '.join(changes)}).", case_id=case.id)
 

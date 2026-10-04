@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -9,8 +9,10 @@ from app.models.case import Case, TimelineEvent
 from app.models.user import User
 from app.schemas import case as case_schema
 from app.services.case_service import (
-    add_timeline_note, apply_case_update, create_case_record,
+    add_timeline_note, apply_case_update, create_case_record, edit_timeline_note,
 )
+from app.notifications import service as notif_service
+from app.utils.roles import resolve_active_role
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
 from app.workflows.events import emit_event
@@ -101,6 +103,52 @@ async def create_case(
     await _attach_sla(db, tenant_id, [case])
 
     return case
+
+async def _follow_case(db, case_id: int, tenant_id: int) -> Case:
+    case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@router.get("/{case_id}/follow")
+async def get_follow(
+    case_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    case = await _follow_case(db, case_id, tenant_id)
+    # The case owner is an implicit follower for notifications.
+    following = case.owner_id == current_user.id or await notif_service.is_following(db, case.id, current_user.id)
+    return {"following": bool(following)}
+
+
+@router.put("/{case_id}/follow", status_code=204)
+async def put_follow(
+    case_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Response:
+    case = await _follow_case(db, case_id, tenant_id)
+    await notif_service.follow(db, case, current_user.id)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/{case_id}/follow", status_code=204)
+async def delete_follow(
+    case_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Response:
+    case = await _follow_case(db, case_id, tenant_id)
+    await notif_service.unfollow(db, case, current_user.id)  # owner stays implicitly followed
+    await db.commit()
+    return Response(status_code=204)
+
 
 @router.get("/{case_id}", response_model=case_schema.Case)
 async def read_case(
@@ -209,7 +257,8 @@ async def update_timeline_event(
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
     )
-    if not result.scalars().first():
+    case = result.scalars().first()
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
     result = await db.execute(
@@ -222,9 +271,13 @@ async def update_timeline_event(
     if not event:
         raise HTTPException(status_code=404, detail="Timeline event not found")
 
-    update_data = event_in.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(event, field, value)
+    role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
+                               current_user.memberships)
+    if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
+        raise HTTPException(status_code=403, detail="Only the author or an admin can edit this entry")
+
+    await edit_timeline_note(db, case=case, event=event, update_data=event_in.model_dump(exclude_unset=True),
+                             user_id=current_user.id)
 
     await db.commit()
 
@@ -262,6 +315,11 @@ async def delete_timeline_event(
     event = result.scalars().first()
     if not event:
         raise HTTPException(status_code=404, detail="Timeline event not found")
+
+    role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
+                               current_user.memberships)
+    if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
+        raise HTTPException(status_code=403, detail="Only the author or an admin can delete this entry")
 
     await db.delete(event)
     await db.commit()

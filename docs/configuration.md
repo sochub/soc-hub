@@ -631,6 +631,82 @@ the plaintext from those runs' snapshots, rewrite the JSON (replace the literal 
 that node's config) with an explicit `WHERE id IN (...)`, or leave it and rely on
 rotating the credential.
 
+## Notifications and @mentions
+
+Analysts pull teammates into a case with `@mentions` in comments and hear about activity on
+cases they own or follow. Everything lands in the in-app bell and `/notifications` page; mentions and
+assignments are also sent out of band.
+
+### Who is notified of what
+
+| Event | Recipients | Type |
+|---|---|---|
+| Comment mentions a user | The mentioned users (not the author) | `mention` |
+| New comment | Owner and followers, except the author and anyone already mentioned | `comment` |
+| Case assigned / created with an owner | The new owner (not if they did it themselves) | `assigned` |
+| Status change | Owner and followers, except the actor | `status_change` |
+| Severity change | Owner and followers, except the actor | `severity_change` |
+| SLA breach | Owner and followers | `sla_breach` |
+
+The actor never notifies themselves. Recipients must currently be members of the case's tenant and
+active: deactivated users are never mentioned or notified. Viewers can follow and be notified. Notification
+text is a fixed template (actor name, case number); comment text is never copied into a notification.
+A failure while writing notifications is logged and never blocks the comment or case change.
+
+### Mentions
+
+- Only case comments (`comment` timeline entries) carry mentions. The composer autocompletes active members
+  of the tenant (analyst or above) and stores a token `@[Name](user:42)`.
+- The server validates each token against the tenant's active members and rewrites the display name to the
+  user's real name. Foreign, deactivated or malformed tokens stay inert text and notify no one.
+- At most 50 distinct mentions are honoured per comment; ids beyond int4 are ignored.
+- Workflow and automation notes never mention anyone, but they do send `comment` notifications to the
+  case owner and followers ("Automation commented on case #N").
+- Editing a comment notifies only users newly mentioned in the edit.
+- Timeline entries can be edited or deleted only by their author (analyst or above) or by a tenant/super
+  admin; viewers never can.
+
+### Following
+
+- The case owner always follows the case. Unfollowing as owner removes only the explicit follower row;
+  owner notifications continue.
+- Commenting, being mentioned, or being assigned makes you a follower. Anyone with read access can
+  follow or unfollow from the case header (`GET/PUT/DELETE /cases/{id}/follow`).
+- An admin who edits someone else's comment becomes a follower of the case.
+- When the owner changes, the new owner gets only the `assigned` notification, not a duplicate
+  status/severity notification from the same update.
+- A super admin without a membership in the tenant can follow a case but is never notified (recipients
+  must be tenant members).
+- Cases created through the Copilot go through the same path as the API: the owner follows and
+  auto-triage runs.
+
+### External delivery
+
+Only `mention` and `assigned` notifications leave the app, after the transaction commits, through the
+`deliver_notifications_task` Celery task (ids only).
+
+1. If the tenant has an active Slack integration, the user is found by their email in that Slack workspace
+   and sent a DM. The message is the summary, the case title and a link.
+2. If there is no Slack integration, or the lookup/post fails permanently (for example the email is not in
+   Slack), an email is sent when SMTP is configured (see [Email](#email-optional--invitations-work-without-it)).
+   Subject is the summary; the body is summary, case title and link.
+3. Otherwise nothing is sent; the in-app notification stands.
+
+Links are `{FRONTEND_URL}/cases/{id}` (default `http://localhost:80`; set `FRONTEND_URL` in production).
+Comment text is never sent. At most one external message per user per case per 5 minutes is sent
+(Redis key `notif:ext:{user}:{case}`, 300 s). Transient failures (network, Slack rate limit, 5xx) retry up to
+3 times with backoff of 30 s, 60 s, 120 s. Logs hold ids and outcomes only, never message text or addresses.
+
+### Retention
+
+A daily task (`prune_notifications`) deletes read notifications older than 90 days and any notification
+older than 180 days.
+
+### SLA breach email
+
+The existing SLA breach email to the case owner and admins is unchanged and still sent; the `sla_breach`
+in-app notification is additional.
+
 ## Email (optional — invitations work without it)
 
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`. When

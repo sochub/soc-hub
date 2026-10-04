@@ -340,3 +340,17 @@ export interface SecretScanItem {
   convertible: boolean;
   reason?: string;
 }
+
+export type NotificationType = 'mention' | 'assigned' | 'comment' | 'status_change' | 'severity_change' | 'sla_breach';
+
+export interface AppNotification {
+  id: number;
+  type: NotificationType | string;
+  summary: string;
+  case_id: number;
+  case_title: string | null;
+  actor_name: string | null;
+  timeline_event_id: number | null;
+  read_at: string | null;
+  created_at: string;
+}

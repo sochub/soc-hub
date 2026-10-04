@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { User } from '../../types';
 import CopilotWidget from '../../features/copilot/CopilotWidget';
+import NotificationBell from '../../features/notifications/NotificationBell';
 import TenantSwitcher from '../../features/tenants/TenantSwitcher';
 
 const baseSidebarItems = [
@@ -193,10 +194,7 @@ export default function Layout() {
                             <span className="text-zinc-900 font-medium">{section}</span>
                         </nav>
                     </div>
-                    <button className="relative p-2 text-zinc-500 hover:text-zinc-900" aria-label="Notifications">
-                        <Bell size={17} />
-                        <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-accent-600" />
-                    </button>
+                    <NotificationBell />
                 </header>
 
                 <main className="flex-1 overflow-y-auto console-grid">

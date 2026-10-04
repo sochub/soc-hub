@@ -16,6 +16,11 @@ AsyncSessionLocal = sessionmaker(
 # auto-enrichment listeners register here too. hooks.py imports its models lazily: no cycle.
 import app.enrichment.hooks as _enrichment_hooks  # noqa: E402,F401
 
+# After-commit external delivery of notifications (stash is written by app/notifications/service.py).
+from app.notifications.delivery import register_after_commit_hook  # noqa: E402
+
+register_after_commit_hook()
+
 
 async def get_db():
     async with AsyncSessionLocal() as session:

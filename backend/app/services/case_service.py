@@ -13,6 +13,8 @@ from app.models.artifact import Artifact, ArtifactType
 from app.models.case import Case, CaseStatus, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.case_triage import CaseTriageResult
+from app.notifications import service as notify
+from app.notifications.mentions import canonicalize_mentions
 from app.utils.audit import create_audit_log
 
 
@@ -24,6 +26,7 @@ async def create_case_record(db: AsyncSession, *, tenant_id: int, data: dict, us
     await db.flush()
     await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="create",
                            tenant_id=tenant_id, user_id=user_id)
+    await notify.on_case_created(db, case, user_id)
     triage = CaseTriageResult(case_id=case.id, tenant_id=tenant_id, triggered_by="auto_on_create", status="pending")
     db.add(triage)
     await db.flush()
@@ -76,16 +79,37 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
     if changes:
         await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="update",
                                tenant_id=case.tenant_id, user_id=user_id, changes=changes)
+        await notify.on_case_update(db, case, changes, user_id)
     await db.flush()
     return changes
 
 
 async def add_timeline_note(db: AsyncSession, *, case: Case, content: str, user_id: Optional[int],
                             event_type: str = "comment") -> TimelineEvent:
+    if event_type == "comment" and user_id is not None:
+        content, _ = await canonicalize_mentions(db, case.tenant_id, content)
     ev = TimelineEvent(case_id=case.id, user_id=user_id, event_type=event_type, content=content)
     db.add(ev)
     await db.flush()
+    if event_type == "comment":
+        await notify.on_comment(db, case, ev, user_id)
     return ev
+
+
+async def edit_timeline_note(db: AsyncSession, *, case: Case, event: TimelineEvent, update_data: dict,
+                             user_id: Optional[int]) -> TimelineEvent:
+    previous, previous_type = event.content, event.event_type
+    new_type = update_data.get("event_type", event.event_type)
+    content = update_data.get("content", event.content)
+    if new_type == "comment" and user_id is not None:
+        content, _ = await canonicalize_mentions(db, case.tenant_id, content)
+    event.event_type, event.content = new_type, content
+    await db.flush()
+    type_changed = new_type != previous_type
+    if new_type == "comment" and (content != previous or type_changed):
+        await notify.on_comment(db, case, event, user_id,
+                                previous_content="" if type_changed else (previous or ""))
+    return event
 
 
 async def add_artifact_to_case(db: AsyncSession, *, case: Case, artifact_type: ArtifactType, value: str,

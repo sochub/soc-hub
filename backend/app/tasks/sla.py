@@ -10,6 +10,7 @@ from app.models.case import Case, CaseStatus
 from app.models.tenant import Tenant
 from app.models.membership import TenantMembership
 from app.models.user import User
+from app.notifications import service as notify
 from app.services.email_service import send_sla_breach_email
 from app.utils.sla import compute_sla_state, load_policy_overrides
 
@@ -51,10 +52,12 @@ async def _check_tenant(db, tenant_id: int) -> None:
 
         if state["response_status"] == "breached" and case.sla_response_breach_notified_at is None:
             await _notify_recipients(db, case, "response")
+            await notify.on_sla_breach(db, case, "response")
             case.sla_response_breach_notified_at = now
 
         if state["resolution_status"] == "breached" and case.sla_resolution_breach_notified_at is None:
             await _notify_recipients(db, case, "resolution")
+            await notify.on_sla_breach(db, case, "resolution")
             case.sla_resolution_breach_notified_at = now
 
     await db.commit()
