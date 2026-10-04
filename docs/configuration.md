@@ -660,7 +660,8 @@ A failure while writing notifications is logged and never blocks the comment or 
 - The server validates each token against the tenant's active members and rewrites the display name to the
   user's real name. Foreign, deactivated or malformed tokens stay inert text and notify no one.
 - At most 50 distinct mentions are honoured per comment; ids beyond int4 are ignored.
-- Workflow and automation notes never mention anyone.
+- Workflow and automation notes never mention anyone, but they do send `comment` notifications to the
+  case owner and followers ("Automation commented on case #N").
 - Editing a comment notifies only users newly mentioned in the edit.
 - Timeline entries can be edited or deleted only by their author (analyst or above) or by a tenant/super
   admin; viewers never can.
@@ -671,6 +672,11 @@ A failure while writing notifications is logged and never blocks the comment or 
   owner notifications continue.
 - Commenting, being mentioned, or being assigned makes you a follower. Anyone with read access can
   follow or unfollow from the case header (`GET/PUT/DELETE /cases/{id}/follow`).
+- An admin who edits someone else's comment becomes a follower of the case.
+- When the owner changes, the new owner gets only the `assigned` notification, not a duplicate
+  status/severity notification from the same update.
+- A super admin without a membership in the tenant can follow a case but is never notified (recipients
+  must be tenant members).
 - Cases created through the Copilot go through the same path as the API: the owner follows and
   auto-triage runs.
 
