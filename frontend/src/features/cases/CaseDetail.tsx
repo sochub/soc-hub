@@ -1,10 +1,10 @@
-import { useParams } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import EditCaseModal from './EditCaseModal';
 import PageContainer from '../../components/layout/PageContainer';
@@ -13,6 +13,10 @@ import CaseTasks from './CaseTasks';
 import CaseEvidence from './CaseEvidence';
 import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
+import FollowButton from './FollowButton';
+import MentionTextarea from './MentionTextarea';
+import MentionText from './MentionText';
+import type { User } from '../../types';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
@@ -82,6 +86,28 @@ export default function CaseDetail() {
             return response.data;
         }
     });
+
+    const { data: me } = useQuery({
+        queryKey: ['currentUser'],
+        queryFn: async () => (await api.get('/users/me')).data as User,
+        staleTime: 300_000,
+    });
+    const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
+
+    // Deep link from a notification: /cases/:id#event-<id> -> scroll to and briefly highlight the event.
+    const { hash } = useLocation();
+    const eventsReady = !!caseData;
+    useEffect(() => {
+        if (!eventsReady || !/^#event-\d+$/.test(hash)) return;
+        const elId = hash.slice(1);
+        if (activeTab !== 'timeline') return;
+        const el = document.getElementById(elId);
+        if (!el) return;
+        el.scrollIntoView({ block: 'center' });
+        el.classList.add('ring-2', 'ring-accent');
+        const t = setTimeout(() => el.classList.remove('ring-2', 'ring-accent'), 2000);
+        return () => { clearTimeout(t); el.classList.remove('ring-2', 'ring-accent'); };
+    }, [eventsReady, hash, activeTab, caseData?.timeline_events?.length]);
 
     const { data: artifacts, isLoading: isLoadingArtifacts } = useQuery({
         queryKey: ['artifacts', id],
@@ -233,6 +259,7 @@ export default function CaseDetail() {
                                 </span>
                             </div>
                         </div>
+                        {id && <FollowButton caseId={parseInt(id)} isOwner={!!me && caseData.owner_id === me.id} />}
                         <button
                             onClick={() => setShowEditModal(true)}
                             className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
@@ -334,6 +361,13 @@ export default function CaseDetail() {
                                                             <option key={t} value={t}>{t.replace('_', ' ')}</option>
                                                         ))}
                                                     </select>
+                                                    {newEvent.event_type === 'comment' ? (
+                                                        <MentionTextarea
+                                                            value={newEvent.content}
+                                                            onChange={(content) => setNewEvent((n) => ({ ...n, content }))}
+                                                            placeholder="Describe the event... (type @ to mention a teammate)"
+                                                        />
+                                                    ) : (
                                                     <textarea
                                                         value={newEvent.content}
                                                         onChange={(e) => setNewEvent({ ...newEvent, content: e.target.value })}
@@ -341,6 +375,7 @@ export default function CaseDetail() {
                                                         rows={3}
                                                         className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50 resize-none"
                                                     />
+                                                    )}
                                                     <div className="flex justify-end gap-2">
                                                         <button
                                                             onClick={() => setShowAddEvent(false)}
@@ -367,7 +402,8 @@ export default function CaseDetail() {
                                         const isEditing = editingEventId === event.id;
 
                                         return (
-                                            <div key={event.id || i} className="relative pl-12 group">
+                                            <div key={event.id || i} id={`event-${event.id}`}
+                                                className="relative pl-12 group scroll-mt-24">
                                                 <div className="absolute left-[-22px] top-0 p-1.5 rounded-full bg-white border border-zinc-200 group-hover:border-white/50 group-hover:shadow-[0_0_10px_rgba(255,255,255,0.2)] transition-all z-10">
                                                     <Icon size={14} className="text-zinc-500 group-hover:text-zinc-900 transition-colors" />
                                                 </div>
@@ -396,12 +432,19 @@ export default function CaseDetail() {
                                                                     <option key={t} value={t}>{t.replace('_', ' ')}</option>
                                                                 ))}
                                                             </select>
+                                                            {editEventData.event_type === 'comment' ? (
+                                                                <MentionTextarea
+                                                                    value={editEventData.content}
+                                                                    onChange={(content) => setEditEventData((d) => ({ ...d, content }))}
+                                                                />
+                                                            ) : (
                                                             <textarea
                                                                 value={editEventData.content}
                                                                 onChange={(e) => setEditEventData({ ...editEventData, content: e.target.value })}
                                                                 rows={3}
                                                                 className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50 resize-none"
                                                             />
+                                                            )}
                                                             <div className="flex justify-end gap-2">
                                                                 <button
                                                                     onClick={() => setEditingEventId(null)}
@@ -420,9 +463,12 @@ export default function CaseDetail() {
                                                         </div>
                                                     ) : (
                                                         <div className="glass-panel p-4 rounded-xl border border-zinc-200 bg-white group-hover:bg-white transition-colors relative">
-                                                            <p className="text-zinc-700 text-sm leading-relaxed pr-16">{event.content}</p>
+                                                            <p className="text-zinc-700 text-sm leading-relaxed pr-16 whitespace-pre-wrap">
+                                                                {event.event_type === 'comment' ? <MentionText content={event.content} /> : event.content}
+                                                            </p>
                                                             {/* Edit/Delete buttons - visible on hover */}
                                                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                {(isAdmin || (!!me && event.user_id === me.id)) && (
                                                                 <button
                                                                     onClick={() => startEditing(event)}
                                                                     className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded transition-colors"
@@ -430,6 +476,7 @@ export default function CaseDetail() {
                                                                 >
                                                                     <Pencil size={12} />
                                                                 </button>
+                                                                )}
                                                                 <button
                                                                     onClick={() => {
                                                                         if (confirm('Delete this timeline event?')) {
