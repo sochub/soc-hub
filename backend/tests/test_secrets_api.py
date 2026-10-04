@@ -146,9 +146,10 @@ async def _scenario(caplog):
                 async with AsyncSessionLocal() as db2:
                     w1 = Workflow(tenant_id=ta_id, name="uses-api-key", trigger_type="manual", graph=_graph("secrets.API_KEY"), enabled=False, version=1)
                     w2 = Workflow(tenant_id=ta_id, name="uses-other", trigger_type="manual", graph=_graph("secrets.API_KEY_2"), enabled=False, version=1)
-                    db2.add_all([w1, w2])
+                    w3 = Workflow(tenant_id=ta_id, name="alert-field", trigger_type="manual", graph=_graph("alert.payload.secrets.API_KEY"), enabled=False, version=1)
+                    db2.add_all([w1, w2, w3])
                     await db2.flush()
-                    ids["workflows"] += [w1.id, w2.id]
+                    ids["workflows"] += [w1.id, w2.id, w3.id]
                     await db2.commit()
                     w1_id = w1.id
                 r = await call("GET", BASE + "/")

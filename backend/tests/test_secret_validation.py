@@ -100,6 +100,55 @@ def test_prose_outside_spans_accepted(prose):
     assert msgs(http(body={"text": prose})) == []
 
 
+def test_concat_with_filtered_operand_allowed():
+    # R1: the secret itself is only concatenated; the filter applies to the other operand
+    assert msgs(http(headers={"A": "{{ case.id|string ~ secrets.TOK }}"})) == []
+    assert msgs(http(headers={"A": "{{ ('a' ~ secrets.TOK) ~ 'b' }}"})) == []
+    assert XFORM in msgs(http(headers={"A": "{{ ('a' ~ secrets.TOK) | upper }}"}))
+
+
+@pytest.mark.parametrize("expr", [
+    "{% set x %}{{ secrets.TOK }}{% endset %}{{ x }}", "{% filter upper %}{{ secrets.TOK }}{% endfilter %}",
+    "{% macro m(v) %}{{ v }}{% endmacro %}{{ m(secrets.TOK) }}", "{{ secrets.TOK if case.id else '' }}",
+    "{% for s in [secrets.TOK] %}{{ s }}{% endfor %}", "{{ secrets.TOK is defined }}",
+])
+def test_more_transforms_rejected(expr):
+    assert XFORM in msgs(http(headers={"A": expr}))
+
+
+def test_secret_inside_control_flow_body_allowed():
+    assert msgs(http(headers={"A": "{% if case.id %}{{ secrets.TOK }}{% endif %}"})) == []
+
+
+def test_word_secrets_in_data_and_literals_accepted():
+    # regressions: the regex checks rejected all of these
+    assert msgs(graph("condition", {"expression": "'leaked secrets' in alert.title"})) == []
+    assert workflow_errors(http(), "manual", "'secrets' in alert.title", {"TOK"}) == []
+    assert msgs(graph("case_add_note", {"content": "{{ alert.payload.secrets.count }}"})) == []
+    assert msgs(http(url="https://a.example/{{ alert.payload.secrets.id }}")) == []
+    assert msgs(graph("case_add_note", {"content": "{{ 'secrets.TOK' }} and {{ \"secrets['X']\" }}"})) == []
+    assert msgs(graph("for_each", {"items": "alert.payload.secrets"}), names=None) == [
+        "loop body is empty — drop nodes inside the loop"]
+
+
+def test_close_braces_in_string_literal_do_not_hide_secret_access():
+    assert XFORM in msgs(http(headers={"A": "{{ '}}' ~ secrets['TOK'] }}"}))
+    assert XFORM in msgs(graph("case_add_note", {"content": "{{ '}}' ~ secrets['TOK'] }}"}))
+
+
+def test_syntax_error_reported_not_secret_errors():
+    m = msgs(http(headers={"A": "{{ secrets.TOK "}))
+    assert any(x.startswith("template error in 'headers'") for x in m) and XFORM not in m
+
+
+def test_secret_names_in_graph():
+    from app.workflows.validation import secret_names_in_graph
+    g = http(url="https://a.example/{{ alert.payload.secrets.ID }}?k={{ secrets.TOK }}",
+             headers={"A": "{{ 'x' ~ secrets.B_TOK }}"}, body="{{ secrets['C_TOK'] }}")
+    assert secret_names_in_graph(g) == {"TOK", "B_TOK"}
+    assert secret_names_in_graph(None) == set() and secret_names_in_graph({"nodes": "x"}) == set()
+
+
 def test_dedupe_per_node():
     g = http(headers={"A": "{{ secrets.NOPE }}", "B": "{{ secrets.NOPE }}"}, body="{{ secrets.NOPE }}")
     assert msgs(g).count("Unknown secret NOPE") == 1

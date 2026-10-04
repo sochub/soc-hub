@@ -1,7 +1,5 @@
 import hmac
-import json
 import logging
-import re
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -26,6 +24,7 @@ from app.secrets.refs import NAME_RE
 from app.secrets.scan import apply_conversion, scan_graph
 from app.utils.audit import create_audit_log
 from app.utils.crypto import decrypt, encrypt
+from app.workflows.validation import secret_names_in_graph
 
 
 
@@ -52,10 +51,9 @@ logger = logging.getLogger(__name__)
 async def _in_use_by(db: AsyncSession, tenant_id: int, name: str) -> List[dict]:
     wfs = (await db.execute(
         select(Workflow).where(Workflow.tenant_id == tenant_id,
-                               Workflow.graph.cast(Text).ilike(f"%secrets.{name}%"))
+                               Workflow.graph.cast(Text).ilike(f"%{name}%"))  # coarse prefilter
         .order_by(Workflow.name))).scalars().all()
-    pat = re.compile(rf"\bsecrets\.{re.escape(name)}\b")
-    return [{"id": w.id, "name": w.name} for w in wfs if pat.search(json.dumps(w.graph))]
+    return [{"id": w.id, "name": w.name} for w in wfs if name in secret_names_in_graph(w.graph)]
 
 
 async def _emails(db: AsyncSession, rows) -> dict:

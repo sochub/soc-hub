@@ -6,16 +6,14 @@ from app.secrets.refs import NAME_RE as SECRET_NAME_RE
 from app.services.slack_service import parse_button_labels
 from app.workflows.loops import MAX_CONCURRENCY, MAX_ITEMS_CAP
 from app.workflows.node_types import NODE_TYPES, TRIGGER_TYPES, MAX_NODES
-from app.workflows.templating import syntax_errors
+from jinja2 import nodes as jnodes
+from jinja2.parser import Parser
+
+from app.workflows.templating import _env, syntax_errors
 
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 
 
-_SECRET_REF_RE = re.compile(r"\bsecrets\.([A-Za-z_][A-Za-z0-9_]*)")
-_SECRET_BARE_RE = re.compile(r"(?<![\w.])secrets\b(?!\.[A-Za-z_])")  # `secrets` not used as secrets.NAME
-_SECRET_DYNAMIC_RE = re.compile(r"(?<![\w.])secrets\s*[\[|]")
-_SPAN_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
-_TRANSFORM_RE = re.compile(r"\||\[|==|!=|\+| in ")
 _SECRETS_ONLY_HTTP = "Secrets are only allowed in HTTP request URL, headers and body"
 _SECRETS_NO_TRANSFORM = "secrets can only be inserted, not transformed"
 _HTTP_SECRET_KEYS = ("url", "headers", "body")
@@ -159,21 +157,78 @@ def _walk_strings(value: Any, is_key: bool = False) -> Iterator[Tuple[str, bool]
             yield from _walk_strings(v)
 
 
-def _segments(text: str, raw: bool) -> List[str]:
-    """The parts of a string that are evaluated: the whole string for raw expressions, else template spans."""
-    return [text] if raw else _SPAN_RE.findall(text)
+# Blocks whose body output is captured/transformed rather than emitted as-is.
+_CAPTURING = (jnodes.AssignBlock, jnodes.FilterBlock, jnodes.Macro, jnodes.CallBlock)
 
 
-def _transforms_secret(seg: str, raw: bool) -> bool:
-    """True when an evaluated segment uses secrets other than plain insertion."""
-    if _SECRET_DYNAMIC_RE.search(seg) or _SECRET_BARE_RE.search(seg):
-        return True
-    ref = _SECRET_REF_RE.search(seg)
-    if not ref or raw:
-        return False
-    if seg.startswith("{%"):
-        return True
-    return bool(_TRANSFORM_RE.search(seg) or "(" in seg[ref.end():])
+def _parse(text: str, raw: bool):
+    """Jinja AST for a templated string (Template) or a raw expression (wrapped in Output); None if
+    there is nothing to evaluate or it doesn't parse (syntax_errors reports that separately)."""
+    try:
+        if raw:
+            parser = Parser(_env, text, state="variable")
+            expr = parser.parse_expression()
+            if not parser.stream.eos:
+                return None
+            return jnodes.Output([expr])
+        if "{{" not in text and "{%" not in text:  # rendered verbatim at run time
+            return None
+        return _env.parse(text)
+    except Exception:
+        return None
+
+
+def _secret_uses(tree) -> List[Tuple[Optional[str], bool]]:
+    """(name or None, ok) for every use of the `secrets` variable in a parsed template.
+
+    ok only for `secrets.NAME` emitted directly by an output tag, alone or as an operand of `~`
+    concatenation whose result is itself emitted directly. Anything else (item access, filters, tests,
+    calls, comparisons, arithmetic, conditionals, {% set %}/{% if %}/{% for %}/macros, bare `secrets`)
+    transforms or moves the secret. `x.secrets.y` is an attribute of `x`, not the variable, so it is ignored.
+    """
+    out: List[Tuple[Optional[str], bool]] = []
+
+    def emitted(node, parents) -> bool:
+        i = len(parents) - 1
+        while i >= 0 and isinstance(parents[i], jnodes.Concat) and node in parents[i].nodes:
+            node, i = parents[i], i - 1
+        if i < 0 or not isinstance(parents[i], jnodes.Output) or node not in parents[i].nodes:
+            return False
+        return not any(isinstance(p, _CAPTURING) for p in parents[:i])
+
+    def walk(node, parents):
+        if isinstance(node, jnodes.Name) and node.name == "secrets":
+            parent = parents[-1] if parents else None
+            if (node.ctx == "load" and isinstance(parent, jnodes.Getattr) and parent.node is node):
+                out.append((parent.attr, emitted(parent, parents[:-1])))
+            else:
+                out.append((None, False))
+        for child in node.iter_child_nodes():
+            walk(child, parents + [node])
+
+    walk(tree, [])
+    return out
+
+
+def _string_uses(text: str, raw: bool) -> List[Tuple[Optional[str], bool]]:
+    tree = _parse(text, raw)
+    return _secret_uses(tree) if tree is not None else []
+
+
+def secret_names_in_graph(graph: Any) -> Set[str]:
+    """Names referenced as `secrets.NAME` anywhere in a workflow graph's node configs."""
+    names: Set[str] = set()
+    nodes = graph.get("nodes") if isinstance(graph, dict) else None
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict) or not isinstance(node.get("config"), dict):
+            continue
+        t = node.get("type")
+        raw_keys = (NODE_TYPES.get(t) if isinstance(t, str) else None or {}) or {}
+        raw_keys = raw_keys.get("raw", [])
+        for key, value in node["config"].items():
+            for text, _ in _walk_strings(value):
+                names.update(n for n, _ in _string_uses(text, key in raw_keys) if n)
+    return names
 
 
 def _check_secrets(errors: List[dict], node: dict, secret_names: Optional[Set[str]]) -> None:
@@ -187,18 +242,19 @@ def _check_secrets(errors: List[dict], node: dict, secret_names: Optional[Set[st
             _err(errors, nid, msg)
 
     def scan(text: str, is_key: bool, allowed: bool, raw: bool) -> None:
-        for seg in _segments(text, raw):
-            if _transforms_secret(seg, raw):
-                report(_SECRETS_NO_TRANSFORM)
-            refs = _SECRET_REF_RE.findall(seg)
-            if refs and (not allowed or is_key):
-                report(_SECRETS_ONLY_HTTP)
+        uses = _string_uses(text, raw)
+        if any(not ok for _, ok in uses):
+            report(_SECRETS_NO_TRANSFORM)
+        if uses and (not allowed or is_key):
+            report(_SECRETS_ONLY_HTTP)
+            return
+        for name, _ in uses:
+            if name is None:
                 continue
-            for name in refs:
-                if not SECRET_NAME_RE.match(name):
-                    report(f"Invalid secret name {name}")
-                elif secret_names is not None and name not in secret_names:
-                    report(f"Unknown secret {name}")
+            if not SECRET_NAME_RE.match(name):
+                report(f"Invalid secret name {name}")
+            elif secret_names is not None and name not in secret_names:
+                report(f"Unknown secret {name}")
 
     is_http = node.get("type") == "http_request"
     for key, value in cfg.items():
@@ -354,7 +410,7 @@ def validate_trigger_filter(expr: Optional[str]) -> List[dict]:
     if not expr or not expr.strip():
         return []
     errors = [{"node_id": None, "message": f"trigger filter: {msg}"} for msg in syntax_errors(expr, raw=True)]
-    if _SECRET_REF_RE.search(expr) or _SECRET_BARE_RE.search(expr):
+    if _string_uses(expr, raw=True):
         errors.append({"node_id": None, "message": _SECRETS_ONLY_HTTP})
     return errors
 
