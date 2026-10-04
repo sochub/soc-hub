@@ -24,9 +24,16 @@ Separate table so tenant **admins** can edit without touching super_admin tenant
 - `GET/PUT /api/v1/tenants/sso-config` — active-tenant scoped, `require_admin`. GET also returns the SP values to paste into the IdP (ACS URL, entity ID, metadata URL). Registered BEFORE `/tenants/{tenant_id}` to avoid path collision.
 
 ## Find-or-provision rules (`_resolve_sso_user`)
-- existing user + membership → ok
-- existing user, no membership → membership(default_role) only if auto_provision else reject
-- unknown user → if auto_provision: create user (random unusable password, is_super_admin=False) + membership(default_role) else reject
+A tenant's IdP is controlled by that tenant's admins, so it may only sign in
+accounts that belong to **this tenant alone**:
+- existing user whose only membership is this tenant → ok
+- existing **super admin** → reject
+- existing user with a membership in **any other tenant** → reject
+- existing user with **no membership here** → reject (never auto-attached, even with auto_provision)
+- unknown user → if auto_provision: create user (random unusable password, is_super_admin=False,
+  password_login_enabled=False) + membership(default_role) else reject
+- Rejected accounts get `#sso_error=This account can't use single sign-on for this
+  organization — sign in with your password.`
 - default_role clamped to analyst|viewer. SSO logins + provisioning audit-logged.
 
 ## Config / infra

@@ -156,5 +156,7 @@ tenant and reset a member's two-factor if they lose their device. See
 Tenant admins configure their own IdP (Okta, Entra ID, Google, …) under
 **Settings → Single Sign-On**, with optional **JIT provisioning** (auto-create
 users on first SSO login with a default role). Users sign in via "Sign in with SSO"
-using their tenant slug. Password login remains available. See
+using their tenant slug. Password login remains available. A tenant's SSO only signs
+in accounts that belong to that tenant alone — super admins and members of other
+tenants must use their password. See
 [sso/saml-design.md](sso/saml-design.md).
