@@ -257,14 +257,22 @@ async def test_sla_breach_notifies_owner_and_followers(db, ctx):
 
 @scenario
 async def test_external_ids_stashed(db, ctx):
+    from unittest.mock import patch
+    from app.notifications import delivery
+    enqueued = []
     i = ctx["ids"]
+    with patch.object(delivery, "_enqueue", lambda ids: enqueued.append(list(ids))):
+        await _external_ids_body(db, ctx, i, enqueued)
+
+
+async def _external_ids_body(db, ctx, i, enqueued):
     case = await case_of(db, ctx)
     await service.follow(db, case, i["B"])
     await case_service.add_timeline_note(db, case=case, user_id=i["A"], content=f"@[x](user:{i['C']})")
     await case_service.apply_case_update(db, case=case, user_id=i["A"], update_data={"status": CaseStatus.IN_PROGRESS})
-    await db.commit()
     mention = (await notes(db, i["C"], "mention"))[0]
-    assert db.info["notif_external"] == [mention.id]
+    assert "notif_external" not in db.info  # consumed by the after-commit hook (Task 4)
+    assert enqueued == [[mention.id]]
 
 
 @scenario
