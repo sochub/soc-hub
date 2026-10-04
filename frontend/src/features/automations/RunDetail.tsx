@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ReactFlow, ReactFlowProvider, Background, Controls } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Lock } from 'lucide-react';
 import { api } from '../../api/client';
 import type { ChildRun, RunDetail as Run, RunStep } from './types';
 import { toFlow } from './flow';
@@ -13,8 +13,19 @@ import { StatusBadge } from './RunsTable';
 const nodeTypes = { wf: WorkflowNode };
 const LIVE = ['running', 'waiting', 'queued'];
 
+// Placeholders are nonce-bound (`#<16 hex>`); show only the NAME. split() with one capture group puts names at odd indices.
+const PLACEHOLDER_RE = /⟦secret:([A-Z][A-Z0-9_]{1,63})(?:#[0-9a-f]{16})?⟧/g;
+
+function WithChips({ text }: { text: string }) {
+    return <>{text.split(PLACEHOLDER_RE).map((part, i) => i % 2 === 0 ? part : (
+        <span key={i} title="secret placeholder (value never stored)"
+            className="inline-flex items-center gap-1 px-1 py-px mx-0.5 border border-accent-200 bg-accent-50 text-accent-700 font-mono text-[10px] align-baseline">
+            <Lock size={9} />{part}</span>
+    ))}</>;
+}
+
 function Json({ value }: { value: unknown }) {
-    return <pre className="text-[11px] font-mono bg-zinc-50 border border-zinc-200 p-2 overflow-x-auto whitespace-pre-wrap break-all">{JSON.stringify(value, null, 2)}</pre>;
+    return <pre className="text-[11px] font-mono bg-zinc-50 border border-zinc-200 p-2 overflow-x-auto whitespace-pre-wrap break-all"><WithChips text={JSON.stringify(value, null, 2) ?? ''} /></pre>;
 }
 
 export function StepPanel({ step, children = [] }: { step: RunStep; children?: ChildRun[] }) {
@@ -28,7 +39,7 @@ export function StepPanel({ step, children = [] }: { step: RunStep; children?: C
                 {simulated && <span className="px-1.5 py-0.5 text-[10px] font-bold border border-violet-200 bg-violet-50 text-violet-700">SIMULATED</span>}
             </div>
             {step.attempt > 0 && <p className="text-xs text-zinc-500">retried {step.attempt}×</p>}
-            {step.error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 p-2">{step.error}</p>}
+            {step.error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 p-2"><WithChips text={step.error} /></p>}
             {simulated ? (
                 <><p className="label-mono">would do</p><Json value={(out as Record<string, unknown>).would_do} /></>
             ) : (
@@ -88,7 +99,7 @@ function Detail() {
                 {run.is_dry_run && <span className="px-1.5 py-0.5 text-[10px] font-bold border border-violet-200 bg-violet-50 text-violet-700">DRY RUN</span>}
                 {run.case_id && <Link to={`/cases/${run.case_id}`} className="text-xs text-accent-600 hover:underline">case {run.case_id}</Link>}
                 {run.alert_id && <span className="text-xs text-zinc-500">alert {run.alert_id}</span>}
-                {run.error && <span className="text-xs text-red-700">{run.error}</span>}
+                {run.error && <span className="text-xs text-red-700"><WithChips text={run.error} /></span>}
                 {LIVE.includes(run.status) && (
                     <button onClick={() => cancel.mutate()} className="ml-auto h-8 px-3 border border-red-300 text-red-700 text-sm hover:bg-red-50">Cancel run</button>
                 )}
