@@ -74,9 +74,11 @@ tenant in Integrations. See [configuration](configuration.md#threat-intel-enrich
 
 Tenant admins store API tokens in Integrations -> Secrets and reference them in
 workflow HTTP nodes as `{{ secrets.NAME }}`. Values are encrypted, write-only,
-restricted to allowed hosts, and never appear in run history (placeholders and
-`••••` instead). A scan finds plaintext credentials in existing workflows and
-converts them in one step. See [configuration](configuration.md#workflow-secrets).
+restricted to allowed hosts, sent over HTTPS only (unless the host is on the
+tenant HTTP allowlist), and never appear in run history (placeholders and `••••`
+instead). Only names a template actually references are resolved. An Automations
+banner flags workflows with plaintext credentials; its Review dialog converts them
+to secrets in one step. HTTP nodes set to execute in dry run use real secrets. See [configuration](configuration.md#workflow-secrets).
 
 ## Evidence attachments
 
