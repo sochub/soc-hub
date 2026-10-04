@@ -8,13 +8,14 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.models.tenant_secret import TenantSecret
 from app.secrets.hosts import host_allowed
 from app.secrets.refs import placeholder_re
 from app.utils.crypto import decrypt
 from app.workflows.errors import NodeError
+from app.workflows.ssrf import host_on_allowlist
 
 MASK = "••••"
 _MARK_RE = re.compile("\ue000(\\d+)\ue001")
@@ -55,10 +56,13 @@ def _walk(obj, fn):
     return obj
 
 
-async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce):
+async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce, names, allowlist=()):
+    """Substitute this render's placeholders. `names`: the names the render's SecretsNamespace handed
+    out (R10) — placeholders for any other name stay inert text. `allowlist`: the tenant HTTP allowlist;
+    secrets go over plain http only to hosts on it (R11)."""
     if nonce is None:
         return url, headers, body, {}
-    rx = placeholder_re(nonce)
+    rx = placeholder_re(nonce, names or ())
     # The placeholder contains '#', which would confuse urlsplit: swap in delimiter-free index markers first.
     url_names: list[str] = []
 
@@ -77,7 +81,7 @@ async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce):
     scheme, netloc, path, query = parts.scheme, parts.netloc, parts.path, parts.query  # fragment dropped
 
     # names actually used: path/query markers (a fragment-only placeholder is stripped, not used)
-    names: list[str] = []
+    names = []
 
     def add(n):
         if n not in names:
@@ -104,6 +108,8 @@ async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce):
         return urlunsplit((scheme, netloc, path, query, "")), headers, body, {}
     if scheme.lower() not in ("http", "https") or not netloc:
         raise NodeError(_URL_ERR)
+    if scheme.lower() == "http" and not host_on_allowlist(host, allowlist):
+        raise NodeError(f"Secret {names[0]} can only be sent over HTTPS unless the host is on the tenant HTTP allowlist")
 
     rows = {r.name: r for r in (await db.execute(
         select(TenantSecret).where(TenantSecret.tenant_id == tenant_id, TenantSecret.name.in_(names)))).scalars()}
@@ -145,9 +151,10 @@ async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce):
     new_url = urlunsplit((scheme, netloc, usub(path, lambda v: quote(v, safe="")), usub(query, quote_plus), ""))
     new_body = _walk(body, sub)
 
-    now = datetime.now(timezone.utc)
-    for n in used:
-        rows[n].last_used_at = now
+    # Core UPDATE (not an ORM attribute change) so the updated_at onupdate does not fire on use
+    await db.execute(update(TenantSecret).where(TenantSecret.id.in_([rows[n].id for n in used]))
+                     .values(last_used_at=datetime.now(timezone.utc), updated_at=TenantSecret.updated_at)
+                     .execution_options(synchronize_session=False))
     return new_url, new_headers, new_body, used
 
 

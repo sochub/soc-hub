@@ -64,8 +64,9 @@ async def _with_tenant(body):
         await engine.dispose()
 
 
-def _nctx(db, tid, nonce=N):
-    return NodeContext(db=db, run=SimpleNamespace(tenant_id=tid), step=None, node={}, ctx={}, secret_nonce=nonce)
+def _nctx(db, tid, nonce=N, names=frozenset({"TOK", "WSP", "UNI"})):
+    return NodeContext(db=db, run=SimpleNamespace(tenant_id=tid), step=None, node={}, ctx={}, secret_nonce=nonce,
+                       secret_names=set(names))
 
 
 def test_substitution_and_output_redaction(monkeypatch):
@@ -278,3 +279,57 @@ def test_dry_run_keeps_placeholder_and_no_last_used(monkeypatch):
     assert st.status == "succeeded" and not calls
     assert "⟦secret:TOK#" in st.input["headers"]["Authorization"]
     assert last is None
+
+
+def test_transformed_placeholder_never_resolves_other_secret(monkeypatch):
+    # R10: rewriting A_TOK's placeholder text into B_TOK's (same nonce) must not send B_TOK's value
+    from app.workflows.templating import render
+    seen = []
+
+    async def body(db, tid, ids):
+        for name, val in (("A_TOK", "aaa-value"), ("B_TOK", "bbb-value")):
+            row = TenantSecret(tenant_id=tid, name=name, value_enc=encrypt(val), allowed_hosts=["api.example.com"])
+            db.add(row)
+            await db.flush()
+            ids["s"].append(row.id)
+        await db.commit()
+        _install(monkeypatch, lambda r: seen.append(r) or httpx.Response(200, text="ok"))
+        nctx = NodeContext(db=db, run=SimpleNamespace(tenant_id=tid), step=None, node={}, ctx={})
+        runtime.bind_secrets(nctx)
+        cfg = render({"method": "POST", "url": "https://api.example.com/x",
+                      "body": {"v": "{{ (secrets.A_TOK ~ '') | replace('A_TOK#', 'B_TOK#') }}"}}, nctx.ctx)
+        assert cfg["body"]["v"] == placeholder("B_TOK", nctx.secret_nonce) and nctx.secret_names == {"A_TOK"}
+        await http_node.run_http(nctx, cfg)
+        sent = seen[0].content.decode()
+        assert "bbb-value" not in sent and "aaa-value" not in sent
+        assert json.loads(sent) == {"v": placeholder("B_TOK", nctx.secret_nonce)}
+
+    asyncio.run(_with_tenant(body))
+
+
+def test_no_log_record_contains_query_secret(monkeypatch, caplog):
+    async def body(db, tid, ids):
+        _install(monkeypatch, lambda r: httpx.Response(200, text="ok"))
+        with caplog.at_level(logging.DEBUG):
+            await http_node.run_http(_nctx(db, tid), {"url": "https://api.example.com/x?k=" + PH})
+        assert caplog.records  # the secret-use audit line at least
+        for rec in caplog.records:
+            text_ = rec.getMessage() + repr(rec.args)
+            assert TOK not in text_ and quote_plus(TOK) not in text_ and "s3cr3t" not in text_, rec.name
+
+    asyncio.run(_with_tenant(body))
+
+
+def test_cancelled_request_logged_as_error(monkeypatch, caplog):
+    def handler(request):
+        raise asyncio.CancelledError()
+
+    async def body(db, tid, ids):
+        _install(monkeypatch, handler)
+        with caplog.at_level(logging.INFO, logger=http_node.logger.name):
+            with pytest.raises(asyncio.CancelledError):
+                await http_node.run_http(_nctx(db, tid), {"url": "https://api.example.com/x", "headers": {"A": PH}})
+        logs = [r.getMessage() for r in caplog.records if "secret use" in r.getMessage()]
+        assert len(logs) == 1 and "outcome=error" in logs[0]
+
+    asyncio.run(_with_tenant(body))

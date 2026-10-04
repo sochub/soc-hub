@@ -26,9 +26,19 @@ def placeholder(name: str, nonce: str) -> str:
     return f"⟦secret:{name}#{nonce}⟧"
 
 
-def placeholder_re(nonce: str) -> "re.Pattern[str]":
-    """The only regex to use for resolution: matches placeholders carrying exactly this render's nonce."""
-    return re.compile(r"⟦secret:([A-Z][A-Z0-9_]{1,63})#" + re.escape(nonce) + "⟧")
+def placeholder_re(nonce: str, names=None) -> "re.Pattern[str]":
+    """The only regex to use for resolution: matches placeholders carrying exactly this render's nonce.
+
+    With `names` (the names a SecretsNamespace actually handed out in this render), only those names
+    match: a template that rewrites one secret's placeholder text into another name's (e.g. via
+    `replace`) produces inert text, never the other secret.
+    """
+    if names is None:
+        group = r"[A-Z][A-Z0-9_]{1,63}"
+    else:
+        valid = sorted(n for n in names if isinstance(n, str) and NAME_RE.match(n))
+        group = "|".join(re.escape(n) for n in valid) or "(?!)"
+    return re.compile("⟦secret:(" + group + ")#" + re.escape(nonce) + "⟧")
 
 
 def _deny(*_a, **_k):
@@ -73,25 +83,33 @@ class SecretRef:
 
 
 class SecretsNamespace:
-    """`secrets` in a step's render context. Built per step render with that render's nonce."""
-    __slots__ = ("_nonce",)
+    """`secrets` in a step's render context. Built per step render with that render's nonce.
+
+    `_issued` records every name handed out as a SecretRef; send-time resolution honours only those
+    (runtime passes this live set as NodeContext.secret_names). Underscore attributes are invisible
+    to the sandbox, so templates cannot read or change it.
+    """
+    __slots__ = ("_nonce", "_issued")
 
     def __init__(self, nonce: str):
         if not isinstance(nonce, str) or not NONCE_RE.match(nonce):
             raise ValueError("nonce must be 16 lowercase hex chars (secrets.token_hex(8))")
         object.__setattr__(self, "_nonce", nonce)
+        object.__setattr__(self, "_issued", set())
+
+    def _ref(self, name):
+        if not isinstance(name, str) or not NAME_RE.match(name):
+            raise TemplateError(f"Invalid secret name {name}")
+        self._issued.add(name)
+        return SecretRef(name, self._nonce)
 
     def __getattr__(self, name):
         if name.startswith("_"):
             raise AttributeError(name)
-        if not NAME_RE.match(name):
-            raise TemplateError(f"Invalid secret name {name}")
-        return SecretRef(name, self._nonce)
+        return self._ref(name)
 
     def __getitem__(self, name):
-        if not isinstance(name, str) or not NAME_RE.match(name):
-            raise TemplateError(f"Invalid secret name {name}")
-        return SecretRef(name, self._nonce)
+        return self._ref(name)
 
     def __repr__(self):
         return "SecretsNamespace(...)"

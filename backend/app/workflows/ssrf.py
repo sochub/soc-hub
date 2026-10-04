@@ -20,6 +20,13 @@ def _blocked(ip: ipaddress._BaseAddress) -> bool:
             or (isinstance(ip, ipaddress.IPv4Address) and ip in _SHARED))
 
 
+def host_on_allowlist(host: Optional[str], allowlist) -> bool:
+    """Exact (case-insensitive, trailing-dot-insensitive) match against the tenant HTTP allowlist."""
+    if not host:
+        return False
+    return host.strip().rstrip(".").lower() in {h.strip().rstrip(".").lower() for h in (allowlist or []) if isinstance(h, str)}
+
+
 def assert_url_allowed(url: str, allowlist: List[str], resolve=socket.getaddrinfo) -> Optional[str]:
     """Raise SSRFError unless every address the host resolves to is public.
 
@@ -33,10 +40,7 @@ def assert_url_allowed(url: str, allowlist: List[str], resolve=socket.getaddrinf
     if not host:
         raise SSRFError("URL has no host")
 
-    # Normalize hostname: strip whitespace and trailing dot, lowercase for comparison
-    normalized_host = host.strip().rstrip(".").lower()
-    normalized_allowlist = {h.strip().rstrip(".").lower() for h in allowlist}
-    if normalized_host in normalized_allowlist:
+    if host_on_allowlist(host, allowlist):
         return None
 
     try:

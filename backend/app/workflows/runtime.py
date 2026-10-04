@@ -44,7 +44,9 @@ def bind_secrets(nctx: NodeContext) -> None:
     `secrets.X` there is an undefined name and fails as TemplateError.
     """
     nctx.secret_nonce = _stdlib_secrets.token_hex(8)
-    nctx.ctx["secrets"] = SecretsNamespace(nctx.secret_nonce)
+    ns = SecretsNamespace(nctx.secret_nonce)
+    nctx.ctx["secrets"] = ns
+    nctx.secret_names = ns._issued  # live: filled as the config renders (R10)
 
 
 def render_config(node: dict, ctx: dict) -> dict:

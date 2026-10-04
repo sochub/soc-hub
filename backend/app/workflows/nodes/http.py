@@ -14,6 +14,9 @@ from app.workflows.ssrf import SSRFError, assert_url_allowed
 
 MAX_BODY = 1_000_000
 logger = logging.getLogger(__name__)
+# httpx logs every request URL at INFO ("HTTP Request: GET https://...?key=<secret>"): never let that through.
+for _name in ("httpx", "httpcore"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 
 def _strings(o):
@@ -52,7 +55,8 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
     used: dict = {}
     host = ""
     nonce = nctx.secret_nonce
-    rx = placeholder_re(nonce) if nonce else None
+    issued = set(nctx.secret_names or ())
+    rx = placeholder_re(nonce, issued) if nonce else None
     if rx and any(rx.search(x) for x in [url, *headers.keys(), *headers.values(), *_strings(body)]):
         try:
             host = urlsplit(url).hostname or ""
@@ -60,19 +64,20 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             raise NodeError("invalid URL") from None
         try:
             url, headers, body, used = await resolve_for_request(
-                nctx.db, nctx.run.tenant_id, url, headers, body, host, nonce)
+                nctx.db, nctx.run.tenant_id, url, headers, body, host, nonce, issued,
+                tenant.workflow_http_allowlist or [])
         except NodeError:
             names = {n for x in [url, *headers.keys(), *headers.values(), *_strings(body)] for n in rx.findall(x)}
             _log_secret_use(nctx.run.tenant_id, names, host, "blocked")
             raise
-    outcome = "ok"
+    outcome = "error"  # also for CancelledError/BaseException: only a completed request is "ok"
     try:
-        return redact(await _send(url, method, headers, body, pinned_ip, bool(used)), used)
+        out = redact(await _send(url, method, headers, body, pinned_ip, bool(used)), used)
+        outcome = "ok"
+        return out
     except NodeError as e:
-        outcome = "error"
         raise type(e)(redact_text(str(e), used)) from None
     except Exception as e:  # unexpected library error after substitution: never echo its text
-        outcome = "error"
         if not used:
             raise
         raise NodeError(f"request failed: {type(e).__name__}") from None

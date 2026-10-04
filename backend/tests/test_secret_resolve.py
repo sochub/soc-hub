@@ -18,6 +18,7 @@ KEY_V = "k3y\r\nX-Evil: 1"
 N = "0123456789abcdef"
 OTHER = "fedcba9876543210"
 P_TOK, P_KEY = placeholder("TOK", N), placeholder("KEY", N)
+ALL = {"TOK", "KEY", "NOPE"}
 
 
 async def _scenario(body):
@@ -61,7 +62,7 @@ def test_header_query_path_body_and_last_used():
         url, hd, bd, used = await resolve_for_request(
             db, tid, f"https://api.example.com/v/{P_TOK}/x?k={P_TOK}#frag{P_TOK}",
             {"Authorization": f"Bearer {P_TOK}", "X": "plain"},
-            {"a": [f"t={P_TOK}", 1], "b": {"c": P_TOK}}, H, N)
+            {"a": [f"t={P_TOK}", 1], "b": {"c": P_TOK}}, H, N, ALL)
         assert url == "https://api.example.com/v/s3cr3t%20value%26x/x?k=s3cr3t+value%26x"
         assert hd == {"Authorization": f"Bearer {TOK_V}", "X": "plain"}
         assert bd == {"a": [f"t={TOK_V}", 1], "b": {"c": TOK_V}}
@@ -76,10 +77,10 @@ def test_header_query_path_body_and_last_used():
 
 def test_string_body_and_no_nonce_noop():
     async def body(db, tid, rows):
-        _, _, bd, _ = await resolve_for_request(db, tid, "https://api.example.com/", {}, f"x{P_TOK}", H, N)
+        _, _, bd, _ = await resolve_for_request(db, tid, "https://api.example.com/", {}, f"x{P_TOK}", H, N, ALL)
         assert bd == f"x{TOK_V}"
         args = ("https://api.example.com/", {"A": P_TOK}, {"b": P_TOK})
-        assert await resolve_for_request(db, tid, *args, H, None) == (*args, {})
+        assert await resolve_for_request(db, tid, *args, H, None, ALL) == (*args, {})
     run(body)
 
 
@@ -88,7 +89,7 @@ def test_forged_placeholders_inert():
         forged = ["⟦secret:TOK⟧", placeholder("TOK", OTHER)]
         for f in forged:
             url, hd, bd, used = await resolve_for_request(
-                db, tid, f"https://api.example.com/?q={f}", {"A": f}, {"b": f}, "evil.example.org", N)
+                db, tid, f"https://api.example.com/?q={f}", {"A": f}, {"b": f}, "evil.example.org", N, ALL)
             assert hd == {"A": f} and bd == {"b": f} and used == {}
             assert TOK_V not in url and "s3cr3t" not in url
             if "#" not in f:
@@ -101,7 +102,7 @@ def test_forged_placeholders_inert():
 def test_marker_forgery_inert():
     async def body(db, tid, rows):
         url, _, _, used = await resolve_for_request(
-            db, tid, "https://api.example.com/\ue0000\ue001?q=\ue0000\ue001", {}, None, H, N)
+            db, tid, "https://api.example.com/\ue0000\ue001?q=\ue0000\ue001", {}, None, H, N, ALL)
         assert used == {} and "\ue000" not in url
     run(body)
 
@@ -113,7 +114,7 @@ def _err(msg_part, **kw):
             await db.commit()
         with pytest.raises(NodeError) as e:
             await resolve_for_request(db, tid, kw.get("url", "https://api.example.com/"),
-                                      kw.get("headers", {}), kw.get("body"), kw.get("host", H), N)
+                                      kw.get("headers", {}), kw.get("body"), kw.get("host", H), N, ALL, kw.get("allow", ()))
         assert str(e.value) == msg_part
     run(body)
 
@@ -164,7 +165,7 @@ def test_nul_in_header_secret():
         await db.execute(update(TenantSecret).where(TenantSecret.id == rows["TOK"]).values(value_enc=encrypt("x\x00y")))
         await db.commit()
         with pytest.raises(NodeError) as e:
-            await resolve_for_request(db, tid, "https://api.example.com/", {"A": P_TOK}, None, H, N)
+            await resolve_for_request(db, tid, "https://api.example.com/", {"A": P_TOK}, None, H, N, ALL)
         assert str(e.value) == "secret TOK contains a control character and cannot be used in a header"
     run(body)
 
@@ -181,3 +182,39 @@ def test_redact_keys_variants_and_numbers():
     used = {"TOK": TOK_V, "N": "12345", "J": 'a"b/c'}
     out = redact({TOK_V: 1, "k": "a\\\"b/c", "p": "a%22b/c", "n": 12345, "f": 1.5, "t": ("12345",)}, used)
     assert out == {"••••": 1, "k": "••••", "p": "••••", "n": "••••", "f": 1.5, "t": ("••••",)}
+
+
+def test_only_issued_names_resolve():
+    # R10: a current-nonce placeholder for a name the render never handed out stays inert text
+    async def body(db, tid, rows):
+        url, hd, bd, used = await resolve_for_request(
+            db, tid, "https://api.example.com/", {"A": P_TOK}, {"k": P_KEY}, H, N, {"TOK"})
+        assert hd == {"A": TOK_V} and bd == {"k": P_KEY} and used == {"TOK": TOK_V}
+        _, hd, _, used = await resolve_for_request(db, tid, "https://api.example.com/", {"A": P_TOK}, None, H, N, set())
+        assert hd == {"A": P_TOK} and used == {}
+    run(body)
+
+
+def test_plain_http_needs_allowlisted_host():
+    # R11
+    msg = "Secret TOK can only be sent over HTTPS unless the host is on the tenant HTTP allowlist"
+    _err(msg, url="http://api.example.com/", headers={"A": P_TOK})
+    _err(msg, url="HTTP://api.example.com/x?k=" + P_TOK, allow=["other.example.com"])
+
+    async def body(db, tid, rows):
+        url, hd, _, used = await resolve_for_request(
+            db, tid, "http://api.example.com/", {"A": P_TOK}, None, H, N, ALL, ["API.example.com."])
+        assert hd == {"A": TOK_V} and used == {"TOK": TOK_V}
+    run(body)
+
+
+def test_use_sets_last_used_without_bumping_updated_at():
+    async def body(db, tid, rows):
+        before = (await db.execute(select(TenantSecret.updated_at).where(TenantSecret.id == rows["TOK"]))).scalar_one()
+        await asyncio.sleep(0.01)
+        await resolve_for_request(db, tid, "https://api.example.com/", {"A": P_TOK}, None, H, N, ALL)
+        await db.commit()
+        r = (await db.execute(select(TenantSecret.updated_at, TenantSecret.last_used_at)
+                              .where(TenantSecret.id == rows["TOK"]))).one()
+        assert r.last_used_at is not None and r.updated_at == before
+    run(body)
