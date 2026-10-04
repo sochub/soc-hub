@@ -1,4 +1,3 @@
-import NotificationBell from '../../features/notifications/NotificationBell';
 import { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -10,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { User } from '../../types';
 import CopilotWidget from '../../features/copilot/CopilotWidget';
+import NotificationBell from '../../features/notifications/NotificationBell';
 import TenantSwitcher from '../../features/tenants/TenantSwitcher';
 
 const baseSidebarItems = [

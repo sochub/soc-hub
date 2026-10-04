@@ -6,18 +6,18 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { AppNotification } from '../../types';
 import { useOpenNotification } from './useOpenNotification';
-import { fetchNotifications, markAllRead, relativeTime, useUnreadCount } from './api';
+import { fetchNotifications, markAllRead, relativeTime, useTenantId, useUnreadCount } from './api';
 
 const ICONS: Record<string, LucideIcon> = {
     mention: AtSign, assigned: UserPlus, comment: MessageSquare,
     status: Activity, severity: AlertTriangle, sla: Clock,
 };
 
-export function NotificationRow({ n, onOpen }: { n: AppNotification; onOpen: (n: AppNotification) => void }) {
+export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpen: (n: AppNotification) => void; role?: 'menuitem' }) {
     const Icon = ICONS[n.type] ?? Bell;
     const unread = !n.read_at;
     return (
-        <button type="button" role="menuitem" onClick={() => onOpen(n)}
+        <button type="button" role={role} onClick={() => onOpen(n)}
             className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-zinc-100 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-none',
                 unread && 'bg-accent-50/40')}>
             <Icon size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
@@ -28,7 +28,7 @@ export function NotificationRow({ n, onOpen }: { n: AppNotification; onOpen: (n:
             <span className="shrink-0 flex items-center gap-2">
                 <span className="num text-xs text-zinc-400">{relativeTime(n.created_at)}</span>
                 {unread
-                    ? <span className="w-1.5 h-1.5 bg-accent-600" aria-label="Unread" />
+                    ? <span className="w-1.5 h-1.5 bg-accent-600"><span className="sr-only">Unread</span></span>
                     : <span className="w-1.5 h-1.5" aria-hidden />}
             </span>
         </button>
@@ -40,9 +40,11 @@ export default function NotificationBell() {
     const ref = useRef<HTMLDivElement>(null);
     const btnRef = useRef<HTMLButtonElement>(null);
     const qc = useQueryClient();
+    const { tenantId } = useTenantId();
     const { data: count = 0 } = useUnreadCount();
+    const menuRef = useRef<HTMLDivElement>(null);
     const list = useQuery({
-        queryKey: ['notifications', 'list', { unreadOnly: false, panel: true }],
+        queryKey: ['notifications', 'list', { tenantId, unreadOnly: false, panel: true }],
         queryFn: () => fetchNotifications({ limit: 20 }),
         enabled: open,
     });
@@ -62,6 +64,20 @@ export default function NotificationBell() {
     }, [open]);
 
     const items = list.data ?? [];
+    // focus the first item once rows are rendered
+    const firstId = items[0]?.id;
+    useEffect(() => {
+        if (open && firstId != null) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [open, firstId]);
+    const onMenuKey = (e: React.KeyboardEvent) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        const els = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+        if (!els.length) return;
+        e.preventDefault();
+        const i = els.indexOf(document.activeElement as HTMLElement);
+        const next = e.key === 'ArrowDown' ? (i + 1) % els.length : (i <= 0 ? els.length - 1 : i - 1);
+        els[next].focus();
+    };
     return (
         <div ref={ref} className="relative">
             <button ref={btnRef} type="button" onClick={() => setOpen(o => !o)}
@@ -75,8 +91,7 @@ export default function NotificationBell() {
                 )}
             </button>
             {open && (
-                <div role="menu" aria-label="Notifications"
-                    className="absolute right-0 top-full mt-1 w-[360px] max-w-[calc(100vw-2rem)] bg-white border border-zinc-200 shadow-lg z-50">
+                <div className="absolute right-0 top-full mt-1 w-[360px] max-w-[calc(100vw-2rem)] bg-white border border-zinc-200 shadow-lg z-50">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200">
                         <button type="button" onClick={() => readAll.mutate()} disabled={count === 0 || readAll.isPending}
                             className="text-xs text-accent-600 hover:underline disabled:text-zinc-400 disabled:no-underline">
@@ -86,15 +101,18 @@ export default function NotificationBell() {
                             View all
                         </Link>
                     </div>
-                    <div className="max-h-[420px] overflow-y-auto">
-                        {list.isLoading ? (
-                            <p className="px-3 py-6 text-center text-sm text-zinc-400">Loading…</p>
-                        ) : list.isError ? (
-                            <p className="px-3 py-6 text-center text-sm text-zinc-500">Could not load notifications</p>
-                        ) : items.length === 0 ? (
-                            <p className="px-3 py-6 text-center text-sm text-zinc-500">You're all caught up</p>
-                        ) : items.map(n => <NotificationRow key={n.id} n={n} onOpen={openNotification} />)}
-                    </div>
+                    {list.isLoading ? (
+                        <p className="px-3 py-6 text-center text-sm text-zinc-400">Loading…</p>
+                    ) : list.isError ? (
+                        <p className="px-3 py-6 text-center text-sm text-zinc-500">Could not load notifications</p>
+                    ) : items.length === 0 ? (
+                        <p className="px-3 py-6 text-center text-sm text-zinc-500">You're all caught up</p>
+                    ) : (
+                        <div ref={menuRef} role="menu" aria-label="Notifications" onKeyDown={onMenuKey}
+                            className="max-h-[420px] overflow-y-auto">
+                            {items.map(n => <NotificationRow key={n.id} n={n} onOpen={openNotification} role="menuitem" />)}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

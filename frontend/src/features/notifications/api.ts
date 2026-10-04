@@ -18,17 +18,21 @@ export function notificationHref(n: AppNotification) {
     return `/cases/${n.case_id}${n.timeline_event_id != null ? `#event-${n.timeline_event_id}` : ''}`;
 }
 
-export function useUnreadCount() {
+export function useTenantId() {
     const { data: me } = useQuery({
         queryKey: ['currentUser'],
         queryFn: async () => (await api.get('/users/me')).data as User,
         staleTime: 300_000,
     });
-    const tenantId = me?.active_tenant_id ?? null;
+    return { ready: !!me, tenantId: me?.active_tenant_id ?? null };
+}
+
+export function useUnreadCount() {
+    const { ready, tenantId } = useTenantId();
     return useQuery({
         queryKey: ['notifications', 'unread', tenantId],
         queryFn: async () => (await api.get('/notifications/unread-count')).data.count as number,
-        enabled: !!me,
+        enabled: ready,
         refetchInterval: 30000,
         refetchOnWindowFocus: true,
     });

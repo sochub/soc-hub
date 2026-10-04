@@ -1,4 +1,3 @@
-import NotificationsPage from './features/notifications/NotificationsPage';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -10,6 +9,7 @@ import AcceptInvitation from './features/auth/AcceptInvitation';
 import Dashboard from './features/cases/Dashboard';
 import CasesList from './features/cases/CasesList';
 import CaseDetail from './features/cases/CaseDetail';
+import NotificationsPage from './features/notifications/NotificationsPage';
 import ArtifactsList from './features/artifacts/ArtifactsList';
 import ArtifactMindMap from './features/artifacts/ArtifactMindMap';
 import Integrations from './features/integrations/Integrations';
