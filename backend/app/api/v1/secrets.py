@@ -20,7 +20,14 @@ from app.models.workflow import Workflow
 from app.schemas.secret import SecretCreate, SecretNameOut, SecretOut, SecretUpdate
 from app.secrets.hosts import valid_host_pattern
 from app.utils.audit import create_audit_log
-from app.utils.crypto import encrypt
+import hmac
+
+from pydantic import BaseModel
+
+from app.api.v1.workflows import _get_workflow, _secret_names, save_workflow
+from app.secrets.refs import NAME_RE
+from app.secrets.scan import apply_conversion, scan_graph
+from app.utils.crypto import decrypt, encrypt
 
 
 
@@ -83,6 +90,28 @@ async def _check_hosts(db: AsyncSession, tenant_id: int, hosts: List[str]) -> No
         raise HTTPException(status_code=422, detail=f"Invalid allowed host(s): {', '.join(repr(h) for h in bad)}")
 
 
+async def _insert(db: AsyncSession, tenant_id: int, user_id: int, name: str, value: str, hosts: List[str],
+                  description) -> TenantSecret:
+    """Create + flush + audit (no commit). 409 on duplicate name."""
+    exists = (await db.execute(select(TenantSecret.id).where(
+        TenantSecret.tenant_id == tenant_id, TenantSecret.name == name))).first()
+    if exists:
+        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)
+        raise HTTPException(status_code=409, detail="A secret with this name already exists")
+    row = TenantSecret(tenant_id=tenant_id, name=name, value_enc=encrypt(value), allowed_hosts=hosts,
+                       description=description, created_by=user_id, updated_by=user_id)
+    db.add(row)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)
+        raise HTTPException(status_code=409, detail="A secret with this name already exists")
+    await create_audit_log(db=db, entity_type="secret", entity_id=row.id, action="create", tenant_id=tenant_id,
+                           user_id=user_id, changes={"name": row.name, "fields": ["value", "allowed_hosts", "description"]})
+    return row
+
+
 @router.get("/", response_model=List[SecretOut])
 async def list_secrets(db: AsyncSession = Depends(deps.get_db), current_user: User = Depends(deps.require_admin),
                        tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
@@ -109,24 +138,7 @@ async def create_secret(body: SecretCreate, db: AsyncSession = Depends(deps.get_
     if not body.value.strip() or len(body.value) > 8192:
         raise HTTPException(status_code=422, detail=VALUE_ERR)
     await _check_hosts(db, tenant_id, body.allowed_hosts)
-    exists = (await db.execute(select(TenantSecret.id).where(
-        TenantSecret.tenant_id == tenant_id, TenantSecret.name == body.name))).first()
-    if exists:
-        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, body.name)
-        raise HTTPException(status_code=409, detail="A secret with this name already exists")
-    row = TenantSecret(tenant_id=tenant_id, name=body.name, value_enc=encrypt(body.value),
-                       allowed_hosts=body.allowed_hosts, description=body.description,
-                       created_by=current_user.id, updated_by=current_user.id)
-    db.add(row)
-    try:
-        await db.flush()
-    except IntegrityError:
-        await db.rollback()
-        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, body.name)
-        raise HTTPException(status_code=409, detail="A secret with this name already exists")
-    await create_audit_log(db=db, entity_type="secret", entity_id=row.id, action="create", tenant_id=tenant_id,
-                           user_id=current_user.id,
-                           changes={"name": row.name, "fields": ["value", "allowed_hosts", "description"]})
+    row = await _insert(db, tenant_id, current_user.id, body.name, body.value, body.allowed_hosts, body.description)
     await db.commit()
     await db.refresh(row)
     logger.info("secret create tenant=%s name=%s outcome=ok", tenant_id, row.name)
@@ -178,3 +190,82 @@ async def delete_secret(name: str, force: bool = False, db: AsyncSession = Depen
     await db.commit()
     logger.info("secret delete tenant=%s name=%s outcome=ok", tenant_id, name)
     return Response(status_code=204)
+
+
+async def _scan_workflow(wf: Workflow, allow: List[str]) -> List[dict]:
+    return [f for f in scan_graph(wf.graph) if valid_host_pattern(f["host"], allow)]
+
+
+async def _allowlist(db: AsyncSession, tenant_id: int) -> List[str]:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalars().first()
+    return (tenant.workflow_http_allowlist if tenant else None) or []
+
+
+@router.get("/scan")
+async def scan_workflows(db: AsyncSession = Depends(deps.get_db), current_user: User = Depends(deps.require_admin),
+                         tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    allow = await _allowlist(db, tenant_id)
+    wfs = (await db.execute(select(Workflow).where(Workflow.tenant_id == tenant_id).order_by(Workflow.name))).scalars().all()
+    return [{"workflow_id": w.id, "workflow_name": w.name, **{k: v for k, v in f.items() if k != "literal"}}
+            for w in wfs for f in await _scan_workflow(w, allow)]
+
+
+class ConvertItem(BaseModel):
+    node_id: str
+    location: str
+    key: str
+    secret_name: str
+
+
+class ConvertIn(BaseModel):
+    items: List[ConvertItem]
+
+
+@router.post("/convert/{workflow_id}")
+async def convert_workflow(workflow_id: int, body: ConvertIn, db: AsyncSession = Depends(deps.get_db),
+                           current_user: User = Depends(deps.require_admin),
+                           tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    try:
+        return await _convert(db, workflow_id, body, current_user, tenant_id)
+    except BaseException:
+        await db.rollback()  # atomic: no secrets, no workflow change
+        raise
+
+
+async def _convert(db, workflow_id, body, current_user, tenant_id):
+    wf = await _get_workflow(db, workflow_id, tenant_id)
+    findings = {(f["node_id"], f["location"], f["key"]): f
+                for f in await _scan_workflow(wf, await _allowlist(db, tenant_id))}
+    if not body.items:
+        raise HTTPException(status_code=422, detail="No items to convert")
+    todo, seen = [], set()
+    for it in body.items:
+        k = (it.node_id, it.location, it.key)
+        f = findings.get(k)
+        if f is None or k in seen:
+            raise HTTPException(status_code=422, detail=f"No plaintext credential found at node {it.node_id!r} {it.location} {it.key!r}")
+        if not NAME_RE.match(it.secret_name):
+            raise HTTPException(status_code=422, detail="Invalid secret name")
+        seen.add(k)
+        todo.append({**f, "secret_name": it.secret_name})
+    created, reused = [], []
+    for it in todo:
+        row = (await db.execute(select(TenantSecret).where(
+            TenantSecret.tenant_id == tenant_id, TenantSecret.name == it["secret_name"]))).scalars().first()
+        if row is None:
+            await _insert(db, tenant_id, current_user.id, it["secret_name"], it["literal"], [it["host"]],
+                          "Converted from plaintext workflow credential")
+            created.append(it["secret_name"])
+        elif hmac.compare_digest(decrypt(row.value_enc).encode(), it["literal"].encode()):
+            if it["secret_name"] not in created and it["secret_name"] not in reused:
+                reused.append(it["secret_name"])
+        else:
+            logger.info("secret convert tenant=%s name=%s outcome=conflict", tenant_id, it["secret_name"])
+            raise HTTPException(status_code=409, detail=f"Secret {it['secret_name']} already exists with a different value")
+    names = await _secret_names(db, tenant_id) | {i["secret_name"] for i in todo}
+    await save_workflow(db, wf, name=wf.name, description=wf.description, trigger_type=wf.trigger_type,
+                        trigger_filter=wf.trigger_filter, graph=apply_conversion(wf.graph, todo, names),
+                        names=names, tenant_id=tenant_id, user_id=current_user.id)
+    await db.commit()
+    logger.info("secret convert tenant=%s workflow=%s created=%s reused=%s outcome=ok", tenant_id, workflow_id, created, reused)
+    return {"workflow_id": workflow_id, "version": wf.version, "created": created, "reused": reused}

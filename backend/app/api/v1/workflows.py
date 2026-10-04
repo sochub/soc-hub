@@ -48,6 +48,19 @@ async def _secret_names(db, tenant_id: int) -> set:
     return set((await db.execute(select(TenantSecret.name).where(TenantSecret.tenant_id == tenant_id))).scalars())
 
 
+async def save_workflow(db, wf: Workflow, *, name, description, trigger_type, trigger_filter, graph, names: set,
+                        tenant_id: int, user_id: int) -> None:
+    """Shared by PUT /workflows/{id} and secret conversion: validate (only when enabled), bump version, audit. No commit."""
+    if wf.enabled:
+        errors = workflow_errors(graph, trigger_type, trigger_filter, names)
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors, "message": "Disable the workflow to save an invalid graph"})
+    wf.name, wf.description, wf.trigger_type = name, description, trigger_type
+    wf.trigger_filter, wf.graph, wf.version = trigger_filter, graph, wf.version + 1
+    await create_audit_log(db=db, entity_type="workflow", entity_id=wf.id, action="update", tenant_id=tenant_id,
+                           user_id=user_id, changes={"version": wf.version})
+
+
 def _summary(wf: Workflow, stats: dict) -> dict:
     return {"id": wf.id, "name": wf.name, "description": wf.description, "enabled": wf.enabled,
             "trigger_type": wf.trigger_type, "version": wf.version, "updated_at": wf.updated_at,
@@ -115,14 +128,9 @@ async def update_workflow(workflow_id: int, body: WorkflowIn, db: AsyncSession =
                           tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     wf = await _get_workflow(db, workflow_id, tenant_id)
     names = await _secret_names(db, tenant_id)
-    if wf.enabled:
-        errors = workflow_errors(body.graph, body.trigger_type, body.trigger_filter, names)
-        if errors:
-            raise HTTPException(status_code=422, detail={"errors": errors, "message": "Disable the workflow to save an invalid graph"})
-    wf.name, wf.description, wf.trigger_type = body.name, body.description, body.trigger_type
-    wf.trigger_filter, wf.graph, wf.version = body.trigger_filter, body.graph, wf.version + 1
-    await create_audit_log(db=db, entity_type="workflow", entity_id=wf.id, action="update", tenant_id=tenant_id,
-                           user_id=current_user.id, changes={"version": wf.version})
+    await save_workflow(db, wf, name=body.name, description=body.description, trigger_type=body.trigger_type,
+                        trigger_filter=body.trigger_filter, graph=body.graph, names=names,
+                        tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
     await db.refresh(wf)
     return _out(wf, await _run_stats(db, [wf.id]), names)
