@@ -21,41 +21,89 @@ leaves your infrastructure) and proposes actions you explicitly approve.
 
 ## Highlights
 
-- 🏢 **Multi-tenant** — one account, many tenants, a **role per tenant**; row-level isolation, in-app tenant switcher.
-- 🤖 **Investigation Copilot** — a global, context-aware assistant (Ollama/local LLM). Chats about the case, and **proposes actions** (create case, add IOC, add timeline note, update status, correlate cases) that you confirm before anything is written. Proactively flags indicators it spots in conversation.
-- 📋 **Playbooks** — a global **marketplace** of MITRE-mapped IR playbooks; tenants import the ones they want and auto-fill phase-grouped task checklists (Identification → Containment → Eradication → Recovery → Lessons Learned) onto cases.
-- 📊 **Telemetry dashboard** — opened-vs-resolved trends, severity × status heatmap, open-case aging, MTTR, and top shared indicators.
-- 🕸️ **Investigation graph** — interactive force-directed map of cases ◉, artifacts ▢, and IOCs ◇, with dashed **value-match bridges** that reveal cross-case correlation. Filter, zoom, drag, click for details.
-- 🔐 **Security first** — per-tenant webhook keys, Argon2 password hashing, strong-`SECRET_KEY` enforcement, a password policy, security headers, and full audit logging.
-- 🪪 **Per-tenant SAML SSO** — tenant admins configure their own IdP (Okta, Entra ID, Google…) with optional JIT provisioning.
+- 🏢 **Multi-tenant**: one account, many tenants, and a **role per tenant**. Data is isolated per row, and there's an in-app tenant switcher.
+- 🤖 **Investigation Copilot**: a global, context-aware assistant.
+  - It runs on a local LLM (Ollama) by default, or on the AI provider you configure per tenant.
+  - It **proposes actions** that you confirm before anything is written.
+- 🧠 **AI triage**: every new case gets a suggested severity, tags, playbook, related cases and next steps.
+- 📋 **Playbooks**: a **marketplace** of MITRE-mapped IR playbooks.
+  - Applying one fills the case with phase-grouped task checklists.
+- 🧪 **Threat-intel enrichment**: IOCs and artifacts are checked against VirusTotal, URLhaus, ThreatFox, RDAP and crt.sh.
+  - Enrichment respects TLP, and private values never leave your network.
+- 📎 **Evidence**: file attachments on cases.
+  - Malware samples are stored in a password-protected ZIP, and each upload is hashed into an artifact.
+- 📝 **Incident reports**: an AI-assisted draft plus analyst editing.
+  - Includes TTD/TTC/TTR and swimlane timeline charts.
+  - Exports to PDF or JSON with TLP marking.
+- ⚙️ **Automations**: a visual workflow builder with conditions, loops, case and alert actions, and HTTP requests.
+  - Includes Slack messages and "ask a person" buttons, plus dry runs.
+- 🔑 **Workflow secrets**: encrypted credentials bound to allowed hosts.
+  - They're inserted only at send time and redacted from run history.
+- 🔔 **Collaboration**: `@mentions` in comments, case following, and an in-app notification bell.
+  - Mentions and assignments also go out by Slack DM or email.
+- 👤 **Profiles & two-factor**: photo, timezone, and a password change that signs out your other sessions.
+  - Authenticator-app MFA, which a tenant can make mandatory.
+- 📊 **Telemetry dashboard**: opened-vs-resolved trends, a severity × status heatmap, case aging, MTTR and SLA compliance.
+- 🕸️ **Investigation graph**: a force-directed map of cases, artifacts and IOCs that reveals cross-case correlation.
+- 🔐 **Security first**:
+  - per-tenant webhook keys and per-tenant SAML SSO;
+  - Argon2 password hashing and session revocation;
+  - SSRF-guarded automations;
+  - security headers and full audit logging.
 
 ## Screenshots
 
-### 🕸️ Investigation graph — see how indicators connect cases
+### 🗂️ Cases: AI triage, timeline and @mentions
 
-Cases ◉, artifacts ▢, and IOCs ◇ in one force-directed map; dashed amber bridges
-reveal where the same indicator value appears across different cases. Filter, zoom,
-drag, and click any node for a detail dossier.
+Each case opens with its AI triage, its SLA status and a **Follow** toggle.
+In comments you can mention a teammate by typing `@`.
 
-<img src="docs/images/investigation-graph.png" alt="Investigation graph" width="900" />
-
-### 🤖 AI copilot — propose → confirm, nothing happens without your click
-
-The copilot analyzes the case, suggests next steps, and proposes structured actions
-(add IOC, record a note, update status). It also proactively flags indicators it
-notices in conversation. You confirm before anything is written.
+<img src="docs/images/case-overview.png" alt="Case overview with AI triage and follow" width="900" />
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/copilot-action-card.png" alt="Copilot action card with confirm/cancel and a proactive suggestion" /></td>
-<td width="50%"><img src="docs/images/copilot-case.png" alt="Copilot investigation session" /></td>
+<td width="50%"><img src="docs/images/case-timeline.png" alt="Case timeline with a highlighted @mention" /></td>
+<td width="50%"><img src="docs/images/mentions.png" alt="@mention autocomplete in a comment" /></td>
 </tr>
 </table>
 
-### 📋 Playbooks — import IR playbooks, auto-fill phase-grouped tasks
+### 🔔 Notifications
 
-A marketplace of MITRE-mapped playbooks; applying one fills the case with a
-phase-grouped task checklist and a progress tracker.
+Mentions, assignments, status and severity changes, comments on cases you follow,
+and SLA breaches all land in the bell. Mentions and assignments also go out by
+Slack DM or email.
+
+<img src="docs/images/notifications.png" alt="Notification panel" width="900" />
+
+### 📝 Incident reports
+
+The report tab lets you write an AI-assisted draft and edit it. It includes a
+detection → containment → recovery bar and a swimlane timeline. You can export it
+as a TLP-marked PDF or as JSON.
+
+<img src="docs/images/case-report.png" alt="Incident report with timeline charts" width="900" />
+
+### 🕸️ Investigation graph: see how indicators connect cases
+
+<img src="docs/images/investigation-graph.png" alt="Investigation graph" width="900" />
+
+### ⚙️ Automations
+
+A visual workflow editor with typed node inspectors, dry runs and run history.
+Steps include Slack "ask a person" prompts, HTTP calls and case actions.
+
+<img src="docs/images/automations-editor.png" alt="Workflow editor" width="900" />
+
+### 🤖 AI copilot: you confirm every proposed action
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/copilot-case.png" alt="Copilot on a case" /></td>
+<td width="50%"><img src="docs/images/copilot-action-card.png" alt="Copilot action card with confirm/cancel" /></td>
+</tr>
+</table>
+
+### 📋 Playbooks & tasks
 
 <table>
 <tr>
@@ -64,7 +112,7 @@ phase-grouped task checklist and a progress tracker.
 </tr>
 </table>
 
-### 🗂️ Cases, IOCs & artifacts
+### 🗃️ Cases, IOCs & artifacts
 
 <table>
 <tr>
@@ -73,20 +121,37 @@ phase-grouped task checklist and a progress tracker.
 </tr>
 </table>
 
+### 👤 Profile & two-factor authentication
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/profile.png" alt="Profile page" /></td>
+<td width="50%"><img src="docs/images/profile-security.png" alt="Password change and two-factor" /></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/users-mfa.png" alt="Users with MFA status" /></td>
+<td width="50%"><img src="docs/images/settings-security.png" alt="Require two-factor for the tenant" /></td>
+</tr>
+</table>
+
 <details>
 <summary><b>More screenshots</b></summary>
 
 <br/>
 
-**Case detail — timeline**
+**Integrations: AI provider and threat intelligence**
 
-<img src="docs/images/case-timeline.png" alt="Case timeline" width="820" />
+<img src="docs/images/integrations.png" alt="Integrations: AI provider and threat intel" width="820" />
 
-**Artifact repository — shared indicators across cases**
+**Workflow secrets**
+
+<img src="docs/images/secrets.png" alt="Workflow secrets" width="820" />
+
+**Artifact repository: indicators shared across cases**
 
 <img src="docs/images/artifacts.png" alt="Artifact repository" width="820" />
 
-**Copilot — general (queue-level) assistant**
+**Copilot: general (queue-level) assistant**
 
 <img src="docs/images/copilot-general.png" alt="General copilot" width="420" />
 
@@ -98,9 +163,9 @@ phase-grouped task checklist and a progress tracker.
 |---|---|
 | Backend | FastAPI · SQLAlchemy (async) · PostgreSQL (asyncpg) · Alembic |
 | Frontend | React 19 · TypeScript · TanStack Query · React Router v7 · Tailwind CSS · Recharts |
-| Auth | JWT (HS256) · Argon2 · per-tenant SAML SSO (python3-saml) |
+| Auth | JWT (HS256) with session revocation · Argon2 · TOTP two-factor · per-tenant SAML SSO (python3-saml) |
 | Background | Celery · Redis |
-| AI | Ollama (local LLM, default `llama3`) |
+| AI | Ollama (local, default `llama3`) or a per-tenant provider |
 | Infra | Docker Compose |
 
 ## Quick start

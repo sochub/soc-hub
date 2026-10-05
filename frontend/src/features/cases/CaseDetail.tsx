@@ -351,10 +351,10 @@ export default function CaseDetail() {
                                     <AnimatePresence>
                                         {showAddEvent && (
                                             <motion.div
-                                                initial={{ opacity: 0, height: 0 }}
-                                                animate={{ opacity: 1, height: 'auto' }}
-                                                exit={{ opacity: 0, height: 0 }}
-                                                className="overflow-hidden"
+                                                // Opacity only: a height animation needs overflow-hidden, which clips the @mention list.
+                                                initial={{ opacity: 0, y: -4 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -4 }}
                                             >
                                                 <div className="glass-panel p-4 rounded-xl border border-zinc-200 bg-white space-y-3">
                                                     <div className="flex items-center justify-between">

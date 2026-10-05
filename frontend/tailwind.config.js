@@ -34,6 +34,7 @@ export default {
                 },
                 // Light-theme accent (high-contrast blue) for the new console look.
                 accent: {
+                    DEFAULT: "#2563eb",
                     50: "#eff6ff",
                     100: "#dbeafe",
                     200: "#bfdbfe",
