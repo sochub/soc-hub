@@ -79,6 +79,7 @@ jobs:
       - uses: reviewdog/action-actionlint@1129829fb3230509a1c9aa4e93cec2b234746a68 # v1.78.0
         with:
           reporter: local
+          filter_mode: nofilter # local has no diff to filter against
           fail_level: error
 
   hadolint:
