@@ -153,6 +153,15 @@ async def add_artifact_by_key(db: AsyncSession, *, case: Case, key: str, value: 
                                       user_id=user_id, isolated=isolated, custom_type=custom)
 
 
+def _drop_path(obj, path: str) -> None:
+    """Delete a dotted path from nested dicts in place (missing paths are ignored)."""
+    *parents, last = path.split(".")
+    for part in parents:
+        obj = obj.get(part) if isinstance(obj, dict) else None
+    if isinstance(obj, dict):
+        obj.pop(last, None)
+
+
 MAX_ALERT_SCAN_CHARS = 64_000  # bound the regex sweep over arbitrary webhook payloads
 
 
@@ -164,10 +173,17 @@ async def add_alert_artifacts(db: AsyncSession, *, case: Case, alert, user_id: O
     mapped = [(d, payload_values(alert.payload, d.payload_key)) for d in defs]
     private_values = {v.lower() for d, vals in mapped if d.private for v in vals}
 
-    text = json.dumps(alert.payload or {}, default=str)[:MAX_ALERT_SCAN_CHARS]
+    # Scan a copy with private-mapped fields removed, then also drop any hit overlapping a private value
+    # (the same value may sit elsewhere in the payload, e.g. inside a raw log line or a URL).
+    scan = json.loads(json.dumps(alert.payload or {}, default=str))
+    for d, _ in mapped:
+        if d.private:
+            _drop_path(scan, d.payload_key)
+    text = json.dumps(scan, ensure_ascii=False)[:MAX_ALERT_SCAN_CHARS]
     # ponytail: regex sweep over the JSON text, capped at 20; field mapping per source if this proves noisy.
     for ind in detect_indicators(text, limit=20):
-        if ind["value"].lower() in private_values:
+        hit = ind["value"].lower()
+        if any(p in hit or hit in p for p in private_values):
             continue
         await add_artifact_to_case(db, case=case, artifact_type=ArtifactType(ind["artifact_type"]), value=ind["value"],
                                    description=f"From alert {alert.id}", user_id=user_id)

@@ -113,3 +113,54 @@ async def test_alert_ioc_sweep_is_bounded():
         cs.detect_indicators = orig
     assert calls and calls[0] <= MAX_ALERT_SCAN_CHARS
 
+
+@pytest.mark.asyncio
+async def test_private_mapped_values_never_leak_through_ioc_sweep():
+    """Regex hits that contain or are contained in a private value stay private (no parser differential)."""
+    slug = f"wf-test-{uuid.uuid4().hex[:8]}"
+    case_id = None
+    async with AsyncSessionLocal() as db:
+        t = Tenant(name=slug, slug=slug)
+        db.add(t)
+        await db.flush()
+        db.add_all([
+            ArtifactTypeDefinition(tenant_id=t.id, key="internal", label="Internal", payload_key="internal", private=True),
+            ArtifactTypeDefinition(tenant_id=t.id, key="vip_mail", label="VIP", payload_key="vip", private=True),
+        ])
+        alert = Alert(source="t", title="a", status="pending", tenant_id=t.id,
+                      payload={"internal": "host 10.0.0.5 on vlan", "vip": "CEO@Corp.Example",
+                               "log": "clicked https://evil.example/?u=ceo@corp.example from 10.0.0.5",
+                               "src": "8.8.8.8"})
+        db.add(alert)
+        await db.commit()
+        tid, aid = t.id, alert.id
+    try:
+        async with AsyncSessionLocal() as db:
+            run = SimpleNamespace(tenant_id=tid, alert_id=aid, case_id=None, depth=0)
+            out = await run_alert_promote(NodeContext(db=db, run=run, step=None, node={}, ctx={}), {"mode": "new", "title": "x"})
+            await db.commit()
+            case_id = out["case_id"]
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(Artifact).join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
+                                     .where(CaseArtifact.case_id == case_id))).scalars().all()
+            public = [a.value.lower() for a in rows if not a.is_private]
+        assert "8.8.8.8" in public                                   # unrelated IOCs still extracted
+        assert not any("10.0.0.5" in v for v in public), public      # inside a private value
+        assert not any("ceo@corp.example" in v for v in public), public  # case-insensitive, embedded in a URL
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(AuditLog).where(AuditLog.entity_type == "alert", AuditLog.entity_id == aid))
+            await db.execute(delete(Alert).where(Alert.id == aid))
+            if case_id:
+                art_ids = (await db.execute(select(CaseArtifact.artifact_id).where(CaseArtifact.case_id == case_id))).scalars().all()
+                await db.execute(delete(CaseArtifact).where(CaseArtifact.case_id == case_id))
+                await db.execute(delete(Artifact).where(Artifact.id.in_(art_ids), Artifact.tenant_id == tid))
+                await db.execute(delete(CaseTriageResult).where(CaseTriageResult.case_id == case_id))
+                await db.execute(delete(TimelineEvent).where(TimelineEvent.case_id == case_id))
+                await db.execute(delete(AuditLog).where(AuditLog.entity_type == "case", AuditLog.entity_id == case_id))
+                await db.execute(delete(Case).where(Case.id == case_id))
+            await db.execute(delete(ArtifactTypeDefinition).where(ArtifactTypeDefinition.tenant_id == tid))
+            await db.execute(delete(Tenant).where(Tenant.id == tid))
+            await db.commit()
+        await engine.dispose()
+
