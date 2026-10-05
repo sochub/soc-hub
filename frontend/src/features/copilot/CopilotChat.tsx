@@ -55,7 +55,8 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
 
     const messages = session?.messages || [];
 
-    const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Braces matter: newer browsers return a Promise from scrollIntoView, and an effect must not return one.
+    const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
     useEffect(scrollToBottom, [messages]);
 
     const chatMutation = useMutation({
