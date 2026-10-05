@@ -167,7 +167,7 @@ async def update_artifact(
         )
     )
     artifact = result.scalars().first()
-    if not artifact:
+    if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     update_data = artifact_in.model_dump(exclude_unset=True)
@@ -237,7 +237,7 @@ async def delete_artifact(
         )
     )
     artifact = result.scalars().first()
-    if not artifact:
+    if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     # Get linked cases to create timeline events
@@ -282,7 +282,7 @@ async def remove_artifact_from_case(
         )
     )
     artifact = result.scalars().first()
-    if not artifact:
+    if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     # Find and remove the junction record

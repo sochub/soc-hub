@@ -83,7 +83,7 @@ async def promote_alert_to_case(
     db: AsyncSession = Depends(deps.get_db),
     alert_id: int,
     case_id: int,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Link an alert to a case (promote). Both must belong to tenant."""

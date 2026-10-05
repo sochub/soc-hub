@@ -81,8 +81,16 @@ async def test_artifact_types_crud_and_private_filtering():
             r = await c.put(f"{a}{r2.json()['id']}", json={"artifact_type": "username"})
             assert r.status_code == 200 and r.json()["artifact_type"] == "username", r.text
             assert (await c.put(f"{a}{r2.json()['id']}", json={"artifact_type": "nope"})).status_code == 422
-            r = await c.delete(f"{a}{r3.json()['id']}/case/{cid}")
-            assert r.status_code == 200
+            # private artifacts are workflow-only: by-id endpoints act as if they don't exist
+            pid = r3.json()["id"]
+            assert (await c.put(f"{a}{pid}", json={})).status_code == 404, "PUT must not echo a private value"
+            assert (await c.delete(f"{a}{pid}")).status_code == 404
+            assert (await c.delete(f"{a}{pid}/case/{cid}")).status_code == 404
+
+            # promote needs analyst+ (it now writes artifacts)
+            app.dependency_overrides[deps.require_analyst_or_above] = _deny
+            assert (await c.post(f"/api/v1/alerts/999999/promote/{cid}")).status_code == 403
+            del app.dependency_overrides[deps.require_analyst_or_above]
 
             # delete in use -> 409; cross-tenant -> 404
             assert (await c.delete(f"{u}{uname['id']}")).status_code == 409

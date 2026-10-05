@@ -153,16 +153,25 @@ async def add_artifact_by_key(db: AsyncSession, *, case: Case, key: str, value: 
                                       user_id=user_id, isolated=isolated, custom_type=custom)
 
 
+MAX_ALERT_SCAN_CHARS = 64_000  # bound the regex sweep over arbitrary webhook payloads
+
+
 async def add_alert_artifacts(db: AsyncSession, *, case: Case, alert, user_id: Optional[int]) -> None:
-    """Pull IOCs (ip/email/url/domain/hash) out of an alert payload onto the case."""
-    text = json.dumps(alert.payload or {}, default=str)
-    # ponytail: regex sweep over the JSON text, capped at 20; field mapping per source if this proves noisy.
-    for ind in detect_indicators(text, limit=20):
-        await add_artifact_to_case(db, case=case, artifact_type=ArtifactType(ind["artifact_type"]), value=ind["value"],
-                                   description=f"From alert {alert.id}", user_id=user_id)
+    """Copy alert payload data onto the case: mapped custom types, plus IOC regex hits
+    (ip/email/url/domain/hash). Values mapped to a private type never become public IOC artifacts."""
     defs = (await db.execute(select(ArtifactTypeDefinition).where(
         ArtifactTypeDefinition.tenant_id == case.tenant_id, ArtifactTypeDefinition.payload_key.isnot(None)))).scalars().all()
-    for d in defs:
-        for v in payload_values(alert.payload, d.payload_key):
+    mapped = [(d, payload_values(alert.payload, d.payload_key)) for d in defs]
+    private_values = {v.lower() for d, vals in mapped if d.private for v in vals}
+
+    text = json.dumps(alert.payload or {}, default=str)[:MAX_ALERT_SCAN_CHARS]
+    # ponytail: regex sweep over the JSON text, capped at 20; field mapping per source if this proves noisy.
+    for ind in detect_indicators(text, limit=20):
+        if ind["value"].lower() in private_values:
+            continue
+        await add_artifact_to_case(db, case=case, artifact_type=ArtifactType(ind["artifact_type"]), value=ind["value"],
+                                   description=f"From alert {alert.id}", user_id=user_id)
+    for d, vals in mapped:
+        for v in vals:
             await add_artifact_to_case(db, case=case, artifact_type=ArtifactType.OTHER, value=v,
                                        description=f"From alert {alert.id}", user_id=user_id, custom_type=d)

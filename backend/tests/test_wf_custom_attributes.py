@@ -32,9 +32,11 @@ async def test_promote_maps_payload_to_custom_types_and_context_exposes_attribut
             ArtifactTypeDefinition(tenant_id=t.id, key="hostname", label="Host", payload_key="host.name"),
             ArtifactTypeDefinition(tenant_id=t.id, key="port", label="Port", payload_key="port", private=True),
             ArtifactTypeDefinition(tenant_id=t.id, key="unused", label="Unused", payload_key="nothing_here"),
+            ArtifactTypeDefinition(tenant_id=t.id, key="vip_mail", label="VIP", payload_key="vip.mail", private=True),
         ])
         alert = Alert(source="t", title="a", status="pending", tenant_id=t.id,
-                      payload={"user_name": "bob", "host": {"name": "web-01"}, "port": 22, "ip": "1.2.3.4"})
+                      payload={"user_name": "bob", "host": {"name": "web-01"}, "port": 22, "ip": "1.2.3.4",
+                               "vip": {"mail": "ceo@corp.example"}})
         db.add(alert)
         await db.commit()
         tid, aid = t.id, alert.id
@@ -56,6 +58,9 @@ async def test_promote_maps_payload_to_custom_types_and_context_exposes_attribut
         assert c["attributes"]["ip"] == "1.2.3.4"       # built-ins too
         assert "unused" not in c["attributes"]
         assert c["attributes_all"]["username"] == ["bob"]
+        assert c["attributes"]["vip_mail"] == "ceo@corp.example"
+        # a value mapped to a private type must not also become a public IOC artifact
+        assert "ceo@corp.example" not in c["attributes_all"].get("email", [])
         assert {"type": "username", "value": "bob"} in c["artifacts"]
         assert not any("(port)" in (x or "") for x in timeline), timeline
         assert str(render("{{ case.attributes.username }}", ctx)) == "bob"
@@ -78,3 +83,33 @@ async def test_promote_maps_payload_to_custom_types_and_context_exposes_attribut
             await db.execute(delete(Tenant).where(Tenant.id == tid))
             await db.commit()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_alert_ioc_sweep_is_bounded():
+    """The regex sweep only reads the first MAX_SCAN_CHARS of the payload."""
+    from app.services.case_service import MAX_ALERT_SCAN_CHARS, add_alert_artifacts
+    calls = []
+
+    class FakeCase:
+        tenant_id, id = -1, -1
+
+    import app.services.case_service as cs
+    orig = cs.detect_indicators
+    cs.detect_indicators = lambda text, limit=20: calls.append(len(text)) or []
+
+    class FakeDB:
+        async def execute(self, *a, **k):
+            class R:
+                def scalars(self):
+                    class S:
+                        def all(self):
+                            return []
+                    return S()
+            return R()
+    try:
+        await add_alert_artifacts(FakeDB(), case=FakeCase(), alert=SimpleNamespace(id=1, payload={"x": "a" * 5_000_000}), user_id=None)
+    finally:
+        cs.detect_indicators = orig
+    assert calls and calls[0] <= MAX_ALERT_SCAN_CHARS
+
