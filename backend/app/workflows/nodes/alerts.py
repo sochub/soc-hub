@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, text
 
 from app.models.case import Alert, Case, CaseSeverity, CaseStatus
-from app.services.case_service import create_case_record
+from app.services.case_service import add_alert_artifacts, create_case_record
 from app.utils.audit import create_audit_log
 from app.workflows.events import emit_event
 from app.workflows.nodes import NodeContext, NodeError, executor
@@ -79,6 +79,7 @@ async def run_alert_promote(nctx: NodeContext, config: dict) -> dict:
     alert.status = "promoted"
     alert.case_id = case.id
     nctx.run.case_id = case.id  # later nodes now act on this case
+    await add_alert_artifacts(nctx.db, case=case, alert=alert, user_id=None)
     await create_audit_log(db=nctx.db, entity_type="alert", entity_id=alert.id, action="promote",
                            tenant_id=nctx.run.tenant_id, user_id=None,
                            changes={"case_id": case.id, "mode": mode, "by": "automation"})

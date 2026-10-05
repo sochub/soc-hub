@@ -2,6 +2,7 @@
 
 All functions only flush; the caller commits (and emits workflow events after commit).
 """
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, Tuple
@@ -16,6 +17,7 @@ from app.models.case_triage import CaseTriageResult
 from app.notifications import service as notify
 from app.notifications.mentions import canonicalize_mentions
 from app.utils.audit import create_audit_log
+from app.utils.copilot_heuristics import detect_indicators
 
 
 async def create_case_record(db: AsyncSession, *, tenant_id: int, data: dict, user_id: Optional[int]) -> Tuple[Case, int]:
@@ -134,3 +136,12 @@ async def add_artifact_to_case(db: AsyncSession, *, case: Case, artifact_type: A
                              content=f"Added artifact: {value} ({artifact_type})"))
     await db.flush()
     return artifact
+
+
+async def add_alert_artifacts(db: AsyncSession, *, case: Case, alert, user_id: Optional[int]) -> None:
+    """Pull IOCs (ip/email/url/domain/hash) out of an alert payload onto the case."""
+    text = json.dumps(alert.payload or {}, default=str)
+    # ponytail: regex sweep over the JSON text, capped at 20; field mapping per source if this proves noisy.
+    for ind in detect_indicators(text, limit=20):
+        await add_artifact_to_case(db, case=case, artifact_type=ArtifactType(ind["artifact_type"]), value=ind["value"],
+                                   description=f"From alert {alert.id}", user_id=user_id)

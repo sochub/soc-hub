@@ -49,6 +49,10 @@ async def build_context(db, run: WorkflowRun) -> dict:
     alert = None
     if run.alert_id:
         alert = (await db.execute(select(Alert).where(Alert.id == run.alert_id, Alert.tenant_id == run.tenant_id))).scalars().first()
+    elif case is not None:
+        # Case-scoped runs (manual, case.*) still get the case's originating alert. ponytail: latest wins if several.
+        alert = (await db.execute(select(Alert).where(Alert.case_id == case.id, Alert.tenant_id == run.tenant_id)
+                                  .order_by(Alert.id.desc()).limit(1))).scalars().first()
 
     steps = {}
     if run.parent_run_id:  # loop child: parent's outputs are visible too

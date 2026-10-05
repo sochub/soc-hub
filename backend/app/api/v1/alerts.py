@@ -10,6 +10,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
+from app.services.case_service import add_alert_artifacts
 from app.workflows.events import emit_event
 
 router = APIRouter()
@@ -102,6 +103,7 @@ async def promote_alert_to_case(
 
     alert.case_id = case.id
     alert.status = "promoted"
+    await add_alert_artifacts(db, case=case, alert=alert, user_id=current_user.id)
     await db.commit()
     await db.refresh(alert)
     return alert

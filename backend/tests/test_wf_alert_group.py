@@ -109,3 +109,49 @@ async def test_concurrent_promotes_same_alert_only_one_succeeds():
             await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
             await db.commit()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_promote_extracts_artifacts_and_manual_run_sees_alert():
+    """Promote copies payload IOCs onto the case; a case-only run (manual) still gets `alert` in context."""
+    from app.models.artifact import Artifact
+    from app.models.case_artifact import CaseArtifact
+    from app.workflows.context import build_context
+    slug = f"wf-test-{uuid.uuid4().hex[:8]}"
+    case_id = None
+    async with AsyncSessionLocal() as db:
+        tenant = Tenant(name=slug, slug=slug)
+        db.add(tenant)
+        await db.flush()
+        alert = Alert(source="t", title="a", status="pending", tenant_id=tenant.id,
+                      payload={"ip": "1.2.3.4", "country": "Argentina", "user_name": "santi@sochub.io"})
+        db.add(alert)
+        await db.commit()
+        tenant_id, alert_id = tenant.id, alert.id
+    try:
+        async with AsyncSessionLocal() as db:
+            run = SimpleNamespace(tenant_id=tenant_id, alert_id=alert_id, case_id=None, depth=0)
+            out = await run_alert_promote(NodeContext(db=db, run=run, step=None, node={}, ctx={}), {"mode": "new", "title": "x"})
+            await db.commit()
+            case_id = out["case_id"]
+        async with AsyncSessionLocal() as db:
+            manual = SimpleNamespace(tenant_id=tenant_id, case_id=case_id, alert_id=None, parent_run_id=None,
+                                     id=-1, trigger_payload={"event": "manual"}, is_dry_run=True)
+            ctx = await build_context(db, manual)
+        assert ctx["alert"]["payload"]["country"] == "Argentina"
+        assert {(a["type"], a["value"]) for a in ctx["case"]["artifacts"]} == {("ip", "1.2.3.4"), ("email", "santi@sochub.io")}
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(AuditLog).where(AuditLog.entity_type == "alert", AuditLog.entity_id == alert_id))
+            await db.execute(delete(Alert).where(Alert.id == alert_id))
+            if case_id:
+                art_ids = (await db.execute(select(CaseArtifact.artifact_id).where(CaseArtifact.case_id == case_id))).scalars().all()
+                await db.execute(delete(CaseArtifact).where(CaseArtifact.case_id == case_id))
+                await db.execute(delete(Artifact).where(Artifact.id.in_(art_ids), Artifact.tenant_id == tenant_id))
+                await db.execute(delete(CaseTriageResult).where(CaseTriageResult.case_id == case_id))
+                await db.execute(delete(TimelineEvent).where(TimelineEvent.case_id == case_id))
+                await db.execute(delete(AuditLog).where(AuditLog.entity_type == "case", AuditLog.entity_id == case_id))
+                await db.execute(delete(Case).where(Case.id == case_id))
+            await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
+            await db.commit()
+        await engine.dispose()
