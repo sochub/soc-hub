@@ -10,7 +10,8 @@ from app.models.case import Case
 from app.models.case_artifact import CaseArtifact
 from app.models.user import User
 from app.schemas import artifact as artifact_schema
-from app.services.case_service import add_artifact_to_case
+from app.services.artifact_types import UnknownArtifactType, not_private, resolve_type
+from app.services.case_service import add_artifact_by_key
 
 router = APIRouter()
 
@@ -20,7 +21,8 @@ def _artifact_with_cases(artifact: Artifact, case_ids: List[int]) -> dict:
     return {
         "id": artifact.id,
         "tenant_id": artifact.tenant_id,
-        "artifact_type": artifact.artifact_type,
+        "artifact_type": artifact.type_key,
+        "custom_type_id": artifact.custom_type_id,
         "value": artifact.value,
         "description": artifact.description,
         "isolated": artifact.isolated,
@@ -52,11 +54,12 @@ async def create_artifact(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    artifact = await add_artifact_to_case(
-        db, case=case, artifact_type=artifact_in.artifact_type, value=artifact_in.value,
-        description=artifact_in.description, user_id=current_user.id,
-        isolated=artifact_in.isolated,
-    )
+    try:
+        artifact = await add_artifact_by_key(
+            db, case=case, key=artifact_in.artifact_type, value=artifact_in.value,
+            description=artifact_in.description, user_id=current_user.id, isolated=artifact_in.isolated)
+    except UnknownArtifactType:
+        raise HTTPException(status_code=422, detail=f"Unknown artifact type '{artifact_in.artifact_type}'")
 
     await db.commit()
     await db.refresh(artifact)
@@ -83,7 +86,7 @@ async def read_artifacts_all(
     # Get artifacts
     result = await db.execute(
         select(Artifact)
-        .where(Artifact.tenant_id == tenant_id)
+        .where(Artifact.tenant_id == tenant_id, not_private())
         .offset(skip).limit(limit)
     )
     artifacts = result.scalars().all()
@@ -123,6 +126,7 @@ async def read_artifacts_by_case(
         .where(
             CaseArtifact.case_id == case_id,
             Artifact.tenant_id == tenant_id,
+            not_private(),
         )
     )
     artifacts = result.scalars().all()
@@ -163,16 +167,22 @@ async def update_artifact(
         )
     )
     artifact = result.scalars().first()
-    if not artifact:
+    if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     update_data = artifact_in.model_dump(exclude_unset=True)
+    if "artifact_type" in update_data:
+        try:
+            atype, custom = await resolve_type(db, tenant_id, update_data.pop("artifact_type"))
+        except UnknownArtifactType as e:
+            raise HTTPException(status_code=422, detail=f"Unknown artifact type '{e}'")
+        artifact.artifact_type, artifact.custom_type_id, artifact.custom_type = atype, (custom.id if custom else None), custom
     for field, value in update_data.items():
         setattr(artifact, field, value)
 
     await db.commit()
     await db.refresh(artifact)
-    return artifact
+    return _artifact_with_cases(artifact, [])
 
 
 @router.get("/search/", response_model=List[artifact_schema.ArtifactWithCases])
@@ -188,6 +198,7 @@ async def search_artifacts(
         select(Artifact).where(
             Artifact.value == value,
             Artifact.tenant_id == tenant_id,
+            not_private(),
         )
     )
     artifacts = result.scalars().all()
@@ -226,7 +237,7 @@ async def delete_artifact(
         )
     )
     artifact = result.scalars().first()
-    if not artifact:
+    if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     # Get linked cases to create timeline events
@@ -235,14 +246,14 @@ async def delete_artifact(
     )
     linked_case_ids = [row[0] for row in result.all()]
 
-    for cid in linked_case_ids:
-        timeline = TimelineEvent(
-            case_id=cid,
-            user_id=current_user.id,
-            event_type="artifact_removed",
-            content=f"Deleted artifact: {artifact.value} ({artifact.artifact_type})"
-        )
-        db.add(timeline)
+    if not artifact.is_private:  # private values never reach the timeline
+        for cid in linked_case_ids:
+            db.add(TimelineEvent(
+                case_id=cid,
+                user_id=current_user.id,
+                event_type="artifact_removed",
+                content=f"Deleted artifact: {artifact.value} ({artifact.type_key})"
+            ))
 
     # cascade will remove junction records via relationship
     await db.delete(artifact)
@@ -271,7 +282,7 @@ async def remove_artifact_from_case(
         )
     )
     artifact = result.scalars().first()
-    if not artifact:
+    if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     # Find and remove the junction record
@@ -287,14 +298,13 @@ async def remove_artifact_from_case(
 
     await db.delete(junction)
 
-    # Create timeline event
-    timeline = TimelineEvent(
-        case_id=case_id,
-        user_id=current_user.id,
-        event_type="artifact_removed",
-        content=f"Removed artifact: {artifact.value} ({artifact.artifact_type})"
-    )
-    db.add(timeline)
+    if not artifact.is_private:  # private values never reach the timeline
+        db.add(TimelineEvent(
+            case_id=case_id,
+            user_id=current_user.id,
+            event_type="artifact_removed",
+            content=f"Removed artifact: {artifact.value} ({artifact.type_key})"
+        ))
 
     # If isolated and orphaned, delete the artifact itself
     if artifact.isolated:

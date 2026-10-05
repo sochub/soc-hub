@@ -1,11 +1,10 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from app.models.artifact import ArtifactType
 
 
 class ArtifactBase(BaseModel):
-    artifact_type: ArtifactType
+    artifact_type: str
     value: str
     description: Optional[str] = None
 
@@ -16,7 +15,7 @@ class ArtifactCreate(ArtifactBase):
 
 
 class ArtifactUpdate(BaseModel):
-    artifact_type: Optional[ArtifactType] = None
+    artifact_type: Optional[str] = None
     value: Optional[str] = None
     description: Optional[str] = None
 
@@ -25,6 +24,7 @@ class Artifact(ArtifactBase):
     id: int
     tenant_id: int
     isolated: bool
+    custom_type_id: Optional[int] = None
     created_at: datetime
     created_by: Optional[int] = None
 

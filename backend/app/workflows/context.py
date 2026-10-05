@@ -3,6 +3,7 @@ from typing import Optional
 from sqlalchemy import select
 
 from app.models.artifact import Artifact
+from app.models.artifact_type_definition import ArtifactTypeDefinition
 from app.models.case import Alert, Case
 from app.models.case_artifact import CaseArtifact
 from app.models.workflow import WorkflowRun, WorkflowRunStep
@@ -15,18 +16,26 @@ def _enum(v):
 async def case_to_dict(db, case: Optional[Case]) -> Optional[dict]:
     if case is None:
         return None
-    arts = (await db.execute(
-        select(Artifact.artifact_type, Artifact.value)
+    rows = (await db.execute(
+        select(Artifact.artifact_type, Artifact.value, ArtifactTypeDefinition.key)
         .join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
+        .outerjoin(ArtifactTypeDefinition, ArtifactTypeDefinition.id == Artifact.custom_type_id)
         .where(CaseArtifact.case_id == case.id)
+        .order_by(CaseArtifact.id)
     )).all()
+    arts = [{"type": key or _enum(t), "value": v} for t, v, key in rows]
+    attributes_all: dict = {}
+    for a in arts:
+        attributes_all.setdefault(a["type"], []).append(a["value"])
     return {
         "id": case.id, "title": case.title, "description": case.description,
         "status": _enum(case.status), "severity": _enum(case.severity),
         "tags": list(case.tags or []), "source": case.source, "owner_id": case.owner_id,
         "group_key": case.group_key,
         "created_at": case.created_at.isoformat() if case.created_at else None,
-        "artifacts": [{"type": _enum(t), "value": v} for t, v in arts],
+        "artifacts": arts,
+        "attributes": {k: v[0] for k, v in attributes_all.items()},  # first value per type
+        "attributes_all": attributes_all,
     }
 
 
@@ -49,6 +58,10 @@ async def build_context(db, run: WorkflowRun) -> dict:
     alert = None
     if run.alert_id:
         alert = (await db.execute(select(Alert).where(Alert.id == run.alert_id, Alert.tenant_id == run.tenant_id))).scalars().first()
+    elif case is not None:
+        # Case-scoped runs (manual, case.*) still get the case's originating alert. ponytail: latest wins if several.
+        alert = (await db.execute(select(Alert).where(Alert.case_id == case.id, Alert.tenant_id == run.tenant_id)
+                                  .order_by(Alert.id.desc()).limit(1))).scalars().first()
 
     steps = {}
     if run.parent_run_id:  # loop child: parent's outputs are visible too

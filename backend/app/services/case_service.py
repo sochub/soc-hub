@@ -2,6 +2,7 @@
 
 All functions only flush; the caller commits (and emits workflow events after commit).
 """
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, Tuple
@@ -10,12 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifact import Artifact, ArtifactType
+from app.models.artifact_type_definition import ArtifactTypeDefinition
 from app.models.case import Case, CaseStatus, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.case_triage import CaseTriageResult
 from app.notifications import service as notify
 from app.notifications.mentions import canonicalize_mentions
+from app.services.artifact_types import payload_values, resolve_type
 from app.utils.audit import create_audit_log
+from app.utils.copilot_heuristics import detect_indicators
 
 
 async def create_case_record(db: AsyncSession, *, tenant_id: int, data: dict, user_id: Optional[int]) -> Tuple[Case, int]:
@@ -113,16 +117,20 @@ async def edit_timeline_note(db: AsyncSession, *, case: Case, event: TimelineEve
 
 
 async def add_artifact_to_case(db: AsyncSession, *, case: Case, artifact_type: ArtifactType, value: str,
-                               description: Optional[str], user_id: Optional[int], isolated: bool = False) -> Artifact:
+                               description: Optional[str], user_id: Optional[int], isolated: bool = False,
+                               custom_type=None) -> Artifact:
+    custom_type_id = custom_type.id if custom_type is not None else None
     artifact = None
     if not isolated:
         artifact = (await db.execute(select(Artifact).where(
             Artifact.value == value, Artifact.artifact_type == artifact_type,
+            Artifact.custom_type_id == custom_type_id,  # None renders IS NULL
             Artifact.tenant_id == case.tenant_id, Artifact.isolated == False,  # noqa: E712
         ))).scalars().first()
     if artifact is None:
-        artifact = Artifact(artifact_type=artifact_type, value=value, description=description,
-                            isolated=isolated, tenant_id=case.tenant_id, created_by=user_id)
+        artifact = Artifact(artifact_type=artifact_type, value=value, description=description, isolated=isolated,
+                            tenant_id=case.tenant_id, created_by=user_id, custom_type_id=custom_type_id)
+        artifact.custom_type = custom_type
         db.add(artifact)
         await db.flush()
 
@@ -130,7 +138,52 @@ async def add_artifact_to_case(db: AsyncSession, *, case: Case, artifact_type: A
         CaseArtifact.case_id == case.id, CaseArtifact.artifact_id == artifact.id))).scalars().first()
     if not linked:
         db.add(CaseArtifact(case_id=case.id, artifact_id=artifact.id, added_by=user_id))
-        db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="artifact_added",
-                             content=f"Added artifact: {value} ({artifact_type})"))
+        if not (custom_type is not None and custom_type.private):  # private values never reach the timeline
+            db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="artifact_added",
+                                 content=f"Added artifact: {value} ({artifact.type_key})"))
     await db.flush()
     return artifact
+
+
+async def add_artifact_by_key(db: AsyncSession, *, case: Case, key: str, value: str, description: Optional[str],
+                              user_id: Optional[int], isolated: bool = False) -> Artifact:
+    """Add by type key (built-in or tenant custom). Raises UnknownArtifactType."""
+    atype, custom = await resolve_type(db, case.tenant_id, key)
+    return await add_artifact_to_case(db, case=case, artifact_type=atype, value=value, description=description,
+                                      user_id=user_id, isolated=isolated, custom_type=custom)
+
+
+def _drop_path(obj, path: str) -> None:
+    """Delete a dotted path from nested dicts in place (missing paths are ignored)."""
+    *parents, last = path.split(".")
+    for part in parents:
+        obj = obj.get(part) if isinstance(obj, dict) else None
+    if isinstance(obj, dict):
+        obj.pop(last, None)
+
+
+MAX_ALERT_SCAN_CHARS = 64_000  # bound the regex sweep over arbitrary webhook payloads
+
+
+async def add_alert_artifacts(db: AsyncSession, *, case: Case, alert, user_id: Optional[int]) -> None:
+    """Copy alert payload data onto the case: mapped custom types, plus IOC regex hits
+    (ip/email/url/domain/hash) from every field not mapped to a private type."""
+    defs = (await db.execute(select(ArtifactTypeDefinition).where(
+        ArtifactTypeDefinition.tenant_id == case.tenant_id, ArtifactTypeDefinition.payload_key.isnot(None)))).scalars().all()
+    mapped = [(d, payload_values(alert.payload, d.payload_key)) for d in defs]
+
+    # Scan a copy with private-mapped fields removed. No value-based filtering: payload content must not be
+    # able to suppress IOCs found in other fields, and the raw payload is visible on the alert anyway.
+    scan = json.loads(json.dumps(alert.payload or {}, default=str))
+    for d, _ in mapped:
+        if d.private:
+            _drop_path(scan, d.payload_key)
+    text = json.dumps(scan, ensure_ascii=False)[:MAX_ALERT_SCAN_CHARS]
+    # ponytail: regex sweep over the JSON text, capped at 20; field mapping per source if this proves noisy.
+    for ind in detect_indicators(text, limit=20):
+        await add_artifact_to_case(db, case=case, artifact_type=ArtifactType(ind["artifact_type"]), value=ind["value"],
+                                   description=f"From alert {alert.id}", user_id=user_id)
+    for d, vals in mapped:
+        for v in vals:
+            await add_artifact_to_case(db, case=case, artifact_type=ArtifactType.OTHER, value=v,
+                                       description=f"From alert {alert.id}", user_id=user_id, custom_type=d)

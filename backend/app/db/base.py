@@ -8,6 +8,7 @@ from app.models.user import User  # noqa: F401
 from app.models.membership import TenantMembership  # noqa: F401
 from app.models.case import Case, Alert, TimelineEvent, CaseLink  # noqa: F401
 from app.models.artifact import Artifact  # noqa: F401
+from app.models.artifact_type_definition import ArtifactTypeDefinition  # noqa: F401
 from app.models.case_artifact import CaseArtifact  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.invitation import Invitation  # noqa: F401

@@ -3,12 +3,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
-from app.models.artifact import Artifact, ArtifactType
+from app.models.artifact import Artifact
 from app.models.case import Case, CaseSeverity, CaseStatus
 from app.models.case_artifact import CaseArtifact
 from app.models.membership import TenantMembership
 from app.models.user import User
-from app.services.case_service import add_artifact_to_case, add_timeline_note, apply_case_update
+from app.services.artifact_types import UnknownArtifactType
+from app.services.case_service import add_artifact_by_key, add_timeline_note, apply_case_update
 from app.utils.audit import create_audit_log
 from app.utils.playbooks import apply_playbook_to_case
 from app.workflows.events import emit_event
@@ -74,11 +75,10 @@ async def run_case_add_note(nctx: NodeContext, config: dict) -> dict:
 async def run_case_add_artifact(nctx: NodeContext, config: dict) -> dict:
     case = await load_target_case(nctx, config)
     try:
-        atype = ArtifactType(config["artifact_type"])
-    except ValueError:
+        artifact = await add_artifact_by_key(nctx.db, case=case, key=str(config["artifact_type"]), value=str(config["value"]),
+                                             description=config.get("description"), user_id=None)
+    except UnknownArtifactType:
         raise NodeError(f"unknown artifact_type {config['artifact_type']!r}")
-    artifact = await add_artifact_to_case(nctx.db, case=case, artifact_type=atype, value=str(config["value"]),
-                                          description=config.get("description"), user_id=None)
     return {"case_id": case.id, "artifact_id": artifact.id}
 
 

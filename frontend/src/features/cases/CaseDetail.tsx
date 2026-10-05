@@ -24,9 +24,11 @@ import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
 import { useCanRun } from '../enrichment/useCanRun';
+import { useArtifactTypes } from '../artifacts/useArtifactTypes';
 
 const ARTIFACT_ICONS: Record<string, any> = {
     hash: FileText,
+    file_hash: FileText,
     ip: Server,
     domain: Globe,
     url: Globe,
@@ -62,6 +64,7 @@ export default function CaseDetail() {
     const [intelOpen, setIntelOpen] = useState<number | null>(null);
     const canRunIntel = useCanRun();
     const [newArtifact, setNewArtifact] = useState({ type: 'file_hash', value: '' });
+    const { options: artifactTypeOptions } = useArtifactTypes();
     const [showEditModal, setShowEditModal] = useState(false);
 
     // Timeline state
@@ -692,11 +695,7 @@ export default function CaseDetail() {
                             onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
                             className={modalInput}
                         >
-                            <option value="file_hash">File Hash (MD5/SHA1/SHA256)</option>
-                            <option value="ip">IP Address</option>
-                            <option value="domain">Domain</option>
-                            <option value="url">URL</option>
-                            <option value="email">Email Address</option>
+                            {artifactTypeOptions.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                     </div>
                     <div>
