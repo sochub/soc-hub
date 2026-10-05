@@ -30,7 +30,8 @@ Text fields are Jinja2 templates (sandboxed, strict: an undefined variable is an
 Admins define types in Settings → Artifact types: a key (`username`), a label, an optional alert payload key
 (`user_name`; dotted paths like `user.email` work), "show in mindmap", and "private" (hidden everywhere in the UI;
 only workflows see it; switching an existing type to private hides its artifacts from then on, but timeline entries written
-while it was public stay). Promoting an alert copies each mapped payload value onto the case as an artifact of that type
+while it was public stay). "Private" covers the artifacts only: the raw alert payload, shown on the Alerts page and
+copied into a case description by "Promote → new case", still contains the value. Promoting an alert copies each mapped payload value onto the case as an artifact of that type
 (a list becomes one artifact per item, max 20; objects and empty values are skipped). IPs, emails, URLs, domains and
 hashes found anywhere in the payload are also added as built-in artifacts.
 

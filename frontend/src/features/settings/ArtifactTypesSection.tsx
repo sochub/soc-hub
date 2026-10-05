@@ -48,7 +48,7 @@ export default function ArtifactTypesSection() {
             <div className="p-4 space-y-3">
                 <p className="text-xs text-zinc-500">
                     Custom types appear next to the built-in ones. With an alert payload key, promoting an alert fills them automatically.
-                    Workflows read them as <code className="font-mono">{'{{ case.attributes.<key> }}'}</code>. Private types are only visible to workflows; making an existing type private hides it from now on but doesn't remove timeline entries already written.
+                    Workflows read them as <code className="font-mono">{'{{ case.attributes.<key> }}'}</code>. Private types are only visible to workflows; making an existing type private hides it from now on but doesn't remove timeline entries already written. Raw alert payloads still show the original values.
                 </p>
                 {custom.length > 0 && (
                     <div className="overflow-x-auto">

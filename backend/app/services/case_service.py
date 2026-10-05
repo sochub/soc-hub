@@ -167,14 +167,13 @@ MAX_ALERT_SCAN_CHARS = 64_000  # bound the regex sweep over arbitrary webhook pa
 
 async def add_alert_artifacts(db: AsyncSession, *, case: Case, alert, user_id: Optional[int]) -> None:
     """Copy alert payload data onto the case: mapped custom types, plus IOC regex hits
-    (ip/email/url/domain/hash). Values mapped to a private type never become public IOC artifacts."""
+    (ip/email/url/domain/hash) from every field not mapped to a private type."""
     defs = (await db.execute(select(ArtifactTypeDefinition).where(
         ArtifactTypeDefinition.tenant_id == case.tenant_id, ArtifactTypeDefinition.payload_key.isnot(None)))).scalars().all()
     mapped = [(d, payload_values(alert.payload, d.payload_key)) for d in defs]
-    private_values = {v.lower() for d, vals in mapped if d.private for v in vals}
 
-    # Scan a copy with private-mapped fields removed, then also drop any hit overlapping a private value
-    # (the same value may sit elsewhere in the payload, e.g. inside a raw log line or a URL).
+    # Scan a copy with private-mapped fields removed. No value-based filtering: payload content must not be
+    # able to suppress IOCs found in other fields, and the raw payload is visible on the alert anyway.
     scan = json.loads(json.dumps(alert.payload or {}, default=str))
     for d, _ in mapped:
         if d.private:
@@ -182,9 +181,6 @@ async def add_alert_artifacts(db: AsyncSession, *, case: Case, alert, user_id: O
     text = json.dumps(scan, ensure_ascii=False)[:MAX_ALERT_SCAN_CHARS]
     # ponytail: regex sweep over the JSON text, capped at 20; field mapping per source if this proves noisy.
     for ind in detect_indicators(text, limit=20):
-        hit = ind["value"].lower()
-        if any(p in hit or hit in p for p in private_values):
-            continue
         await add_artifact_to_case(db, case=case, artifact_type=ArtifactType(ind["artifact_type"]), value=ind["value"],
                                    description=f"From alert {alert.id}", user_id=user_id)
     for d, vals in mapped:

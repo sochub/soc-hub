@@ -115,8 +115,8 @@ async def test_alert_ioc_sweep_is_bounded():
 
 
 @pytest.mark.asyncio
-async def test_private_mapped_values_never_leak_through_ioc_sweep():
-    """Regex hits that contain or are contained in a private value stay private (no parser differential)."""
+async def test_private_fields_are_redacted_from_ioc_sweep_without_suppressing_others():
+    """A private-mapped field's own IOCs stay private; its content can't suppress IOCs elsewhere (no evasion)."""
     slug = f"wf-test-{uuid.uuid4().hex[:8]}"
     case_id = None
     async with AsyncSessionLocal() as db:
@@ -125,12 +125,11 @@ async def test_private_mapped_values_never_leak_through_ioc_sweep():
         await db.flush()
         db.add_all([
             ArtifactTypeDefinition(tenant_id=t.id, key="internal", label="Internal", payload_key="internal", private=True),
-            ArtifactTypeDefinition(tenant_id=t.id, key="vip_mail", label="VIP", payload_key="vip", private=True),
+            ArtifactTypeDefinition(tenant_id=t.id, key="handle", label="Handle", payload_key="user", private=True),
         ])
         alert = Alert(source="t", title="a", status="pending", tenant_id=t.id,
-                      payload={"internal": "host 10.0.0.5 on vlan", "vip": "CEO@Corp.Example",
-                               "log": "clicked https://evil.example/?u=ceo@corp.example from 10.0.0.5",
-                               "src": "8.8.8.8"})
+                      payload={"internal": "host 10.0.0.5 vip CEO@Corp.Example", "user": "https://",
+                               "log": "clicked https://evil.example/x from 8.8.8.8"})
         db.add(alert)
         await db.commit()
         tid, aid = t.id, alert.id
@@ -144,9 +143,9 @@ async def test_private_mapped_values_never_leak_through_ioc_sweep():
             rows = (await db.execute(select(Artifact).join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
                                      .where(CaseArtifact.case_id == case_id))).scalars().all()
             public = [a.value.lower() for a in rows if not a.is_private]
-        assert "8.8.8.8" in public                                   # unrelated IOCs still extracted
-        assert not any("10.0.0.5" in v for v in public), public      # inside a private value
-        assert not any("ceo@corp.example" in v for v in public), public  # case-insensitive, embedded in a URL
+        assert "10.0.0.5" not in public and "ceo@corp.example" not in public, public  # private field redacted
+        assert "8.8.8.8" in public, public                                # other fields still swept
+        assert "https://evil.example/x" in public, public                 # private value "https://" suppresses nothing
     finally:
         async with AsyncSessionLocal() as db:
             await db.execute(delete(AuditLog).where(AuditLog.entity_type == "alert", AuditLog.entity_id == aid))
