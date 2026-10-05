@@ -18,12 +18,27 @@ Text fields are Jinja2 templates (sandboxed, strict: an undefined variable is an
 
 | Name | Meaning |
 |---|---|
-| `case` | The run's case, reloaded before each step (tags, artifacts summary). `null` until one exists, e.g. before `alert_promote`. |
-| `alert` | The run's alert (`source`, `external_id`, `title`, `payload`, `status`), reloaded fresh. |
+| `case` | The run's case, reloaded before each step. `null` until one exists, e.g. before `alert_promote`. Includes `artifacts` (`[{type, value}]`, `type` is the custom key for custom types), `attributes` (first value per type, e.g. `case.attributes.username`) and `attributes_all` (all values per type). See [Custom artifact types](#custom-artifact-types). |
+| `alert` | The run's alert (`source`, `external_id`, `title`, `payload`, `status`), reloaded fresh. For a run without its own alert (manual, `case.*`), this is the newest alert promoted into the case, or `null`. |
 | `trigger` | The event payload: `event`, `case_id`, `alert_id`, `changes`. For `case.updated`, `changes` has one `{from, to}` entry per changed field, with enum values as plain strings (`trigger.changes.severity.to == 'critical'`, `trigger.changes.status.from == 'new'`). `tags` also has `added` and `removed` lists (`'phishing' in trigger.changes.tags.added`). An owner change appears as both `owner_id` and `assignee` (`{from, to}` user ids). |
 | `steps.<node_id>.output` | Output of an already completed step. Loop child runs also see the parent's. |
 | `loop.item`, `loop.index` | Inside a `for_each` body only. |
 | `dry_run` | Boolean. |
+
+## Custom artifact types
+
+Admins define types in Settings → Artifact types: a key (`username`), a label, an optional alert payload key
+(`user_name`; dotted paths like `user.email` work), "show in mindmap", and "private" (hidden everywhere in the UI;
+only workflows see it; switching an existing type to private hides its artifacts from then on, but timeline entries written
+while it was public stay). Promoting an alert copies each mapped payload value onto the case as an artifact of that type
+(a list becomes one artifact per item, max 20; objects and empty values are skipped). IPs, emails, URLs, domains and
+hashes found anywhere in the payload are also added as built-in artifacts.
+
+Use them in templates:
+- `{{ case.attributes.username }}`: first value; the step fails if the case has none.
+- `{{ case.attributes.get('username', '') }}`: optional.
+- `{{ case.attributes_all.username | join(', ') }}`: every value.
+- `case_add_artifact` accepts custom keys in its type field.
 
 ## Node reference
 

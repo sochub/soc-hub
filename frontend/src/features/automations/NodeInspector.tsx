@@ -6,6 +6,7 @@ import type { SecretName, User } from '../../types';
 import { SecretDialog, type SecretPrefill } from '../integrations/SecretsCard';
 import { secretTemplate, suggestName } from '../integrations/secretsUtil';
 import { NODE_DEF, type FieldDef } from './nodeCatalog';
+import { useArtifactTypes } from '../artifacts/useArtifactTypes';
 import type { WfNode } from './types';
 
 interface Props {
@@ -132,6 +133,7 @@ function Field({ f, value, disabled, onChange, secrets }: { f: FieldDef; value: 
 
 export default function NodeInspector({ node, readOnly, errors, onChange, onRename, onDelete }: Props) {
     const def = NODE_DEF[node.type];
+    const { allKeys: artifactTypeKeys } = useArtifactTypes();
     const [idDraft, setIdDraft] = useState(node.id);
     const [move, setMove] = useState<{ key: string; prefix: string; prefill: SecretPrefill } | null>(null);
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
@@ -166,7 +168,7 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
             {def?.fields.map((f) => (
                 <label key={f.key} className="block">
                     <span className="label-mono">{f.label}{f.required && ' *'}</span>
-                    <Field f={f} value={node.config[f.key]} disabled={readOnly} onChange={(v) => setCfg(f.key, v)}
+                    <Field f={node.type === 'case_add_artifact' && f.key === 'artifact_type' ? { ...f, options: artifactTypeKeys } : f} value={node.config[f.key]} disabled={readOnly} onChange={(v) => setCfg(f.key, v)}
                         secrets={node.type === 'http_request' && ['url', 'headers', 'body'].includes(f.key)} />
                     {f.help && <span className="text-[11px] text-zinc-500">{f.help}</span>}
                     {f.key === 'headers' && !readOnly && literalHeaders.map(([k, v]) => (

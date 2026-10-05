@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.services import case_service
 from app.services.ai_service import AIService, extract_action, strip_action_blocks
+from app.services.artifact_types import not_private
 from app.models.case import Case, CaseStatus, CaseSeverity, TimelineEvent
 from app.models.artifact import Artifact, ArtifactType
 from app.models.case_artifact import CaseArtifact
@@ -51,7 +52,7 @@ async def _case_indicator_values(db: AsyncSession, case_id: int, tenant_id: int)
     arts = await db.execute(
         select(Artifact.value)
         .join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
-        .where(CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id)
+        .where(CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id, not_private())
     )
     iocs = await db.execute(
         select(IOC.value).where(IOC.case_id == case_id, IOC.tenant_id == tenant_id)
@@ -179,6 +180,7 @@ async def _build_full_case_context(
         .where(
             CaseArtifact.case_id == case_id,
             Artifact.tenant_id == tenant_id,
+            not_private(),
         )
     )
     artifacts = result.scalars().all()
@@ -529,7 +531,7 @@ async def _find_related_cases(
         a = await db.execute(
             select(Artifact.value)
             .join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
-            .where(CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id)
+            .where(CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id, not_private())
         )
         i = await db.execute(
             select(IOC.value).where(IOC.case_id == case_id, IOC.tenant_id == tenant_id)
@@ -544,7 +546,7 @@ async def _find_related_cases(
         select(Case.id, Case.title, Artifact.value)
         .join(CaseArtifact, CaseArtifact.case_id == Case.id)
         .join(Artifact, Artifact.id == CaseArtifact.artifact_id)
-        .where(Case.tenant_id == tenant_id, Artifact.value.in_(targets), Case.id != (case_id or -1))
+        .where(Case.tenant_id == tenant_id, Artifact.value.in_(targets), Case.id != (case_id or -1), not_private())
     )
     iocs = await db.execute(
         select(Case.id, Case.title, IOC.value)
@@ -615,7 +617,7 @@ async def execute_action(
             atype = ArtifactType.OTHER
         existing = await db.execute(
             select(Artifact).where(
-                Artifact.value == value, Artifact.artifact_type == atype,
+                Artifact.value == value, Artifact.artifact_type == atype, Artifact.custom_type_id.is_(None),
                 Artifact.tenant_id == tenant_id, Artifact.isolated == False,  # noqa: E712
             )
         )

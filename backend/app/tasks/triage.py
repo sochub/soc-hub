@@ -14,6 +14,7 @@ from app.models.ioc import IOC
 from app.models.playbook import PlaybookTemplate
 from app.models.case_triage import CaseTriageResult
 from app.services.ai_service import AIService
+from app.services.artifact_types import not_private
 from app.api.v1.copilot import _find_related_cases
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ async def _match_playbook(db: AsyncSession, tenant_id: int, case: Case) -> Optio
 async def _indicator_values(db: AsyncSession, tenant_id: int, case_id: int) -> List[str]:
     a = await db.execute(
         select(Artifact.value).join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
-        .where(CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id)
+        .where(CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id, not_private())
     )
     i = await db.execute(select(IOC.value).where(IOC.case_id == case_id, IOC.tenant_id == tenant_id))
     return [v for v in [*a.scalars().all(), *i.scalars().all()] if v]

@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { FileText, Globe, Mail, Server, Database, ArrowRight, Calendar, Hash, Link2, Pencil, Trash2, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageContainer from '../../components/layout/PageContainer';
+import { useArtifactTypes } from './useArtifactTypes';
 
 const ARTIFACT_ICONS: Record<string, any> = {
     hash: FileText,
@@ -15,17 +16,9 @@ const ARTIFACT_ICONS: Record<string, any> = {
     email: Mail,
 };
 
-const ARTIFACT_TYPE_OPTIONS = [
-    { value: 'ip', label: 'IP Address' },
-    { value: 'domain', label: 'Domain' },
-    { value: 'url', label: 'URL' },
-    { value: 'file_hash', label: 'File Hash' },
-    { value: 'email', label: 'Email' },
-    { value: 'other', label: 'Other' },
-];
-
 export default function ArtifactsList() {
     const queryClient = useQueryClient();
+    const { options: ARTIFACT_TYPE_OPTIONS } = useArtifactTypes();
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editData, setEditData] = useState({ artifact_type: '', value: '', description: '' });
 

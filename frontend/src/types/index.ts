@@ -173,6 +173,7 @@ export interface Artifact {
   value: string;
   description: string | null;
   isolated: boolean;
+  custom_type_id: number | null;
   created_at: string;
   created_by: number | null;
   case_ids: number[];

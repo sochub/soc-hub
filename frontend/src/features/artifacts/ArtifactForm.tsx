@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Plus, Trash2, AlertCircle, Link2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../../api/client';
+import { useArtifactTypes } from './useArtifactTypes';
 
 interface ArtifactEntry {
     type: string;
@@ -15,16 +16,9 @@ interface ArtifactFormProps {
     setArtifacts: (artifacts: ArtifactEntry[]) => void;
 }
 
-const ARTIFACT_TYPES = [
-    { value: 'hash', label: 'File Hash (MD5/SHA1/SHA256)' },
-    { value: 'ip', label: 'IP Address' },
-    { value: 'domain', label: 'Domain' },
-    { value: 'url', label: 'URL' },
-    { value: 'email', label: 'Email Address' },
-];
-
 export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormProps) {
-    const [newArtifact, setNewArtifact] = useState({ type: 'hash', value: '', isolated: false });
+    const { options: ARTIFACT_TYPES } = useArtifactTypes();
+    const [newArtifact, setNewArtifact] = useState({ type: 'file_hash', value: '', isolated: false });
     const [potentialMatch, setPotentialMatch] = useState<any>(null);
     const checkArtifact = useCallback(async (value: string) => {
         if (!value.trim()) return;
@@ -44,7 +38,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
     const addArtifact = (isolated: boolean = false) => {
         if (newArtifact.value.trim()) {
             setArtifacts([...artifacts, { ...newArtifact, isolated }]);
-            setNewArtifact({ type: 'hash', value: '', isolated: false });
+            setNewArtifact({ type: 'file_hash', value: '', isolated: false });
             setPotentialMatch(null);
         }
     };

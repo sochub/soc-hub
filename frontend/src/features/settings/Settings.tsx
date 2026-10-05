@@ -7,6 +7,7 @@ import type { SLAPolicyItem, SSOConfig, User } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import { mfaErrorMessage } from '../profile/mfaErrors';
+import ArtifactTypesSection from './ArtifactTypesSection';
 
 const SEVERITY_LABEL: Record<string, string> = {
     critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info',
@@ -331,6 +332,7 @@ export default function Settings() {
 
             {isAdmin && <MfaRequirementSection />}
             {isAdmin && <SLAPoliciesSection />}
+            {isAdmin && <ArtifactTypesSection />}
         </PageContainer>
     );
 }

@@ -7,6 +7,7 @@ import {
     SlidersHorizontal, ChevronLeft, Maximize2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useArtifactTypes } from './useArtifactTypes';
 
 /* ------------------------------------------------------------------ *
  * Investigation Graph — cases ◉, artifacts ▢, IOCs ◇ and the links
@@ -63,6 +64,9 @@ export default function ArtifactMindMap() {
     };
 
     // ---- graph build (filtered) ----
+    const { custom: customTypes } = useArtifactTypes();
+    const hiddenTypes = useMemo(() => new Set(customTypes.filter((d) => !d.show_in_mindmap).map((d) => d.key)), [customTypes]);
+
     const graph = useMemo(() => {
         const q = query.trim().toLowerCase();
         const ns: GNode[] = [];
@@ -79,6 +83,7 @@ export default function ArtifactMindMap() {
         }
         if (showKind.artifact) {
             artifacts.forEach((a: any) => {
+                if (hiddenTypes.has(a.artifact_type)) return;
                 if (!matches(a.value)) return;
                 ns.push({ id: `artifact-${a.id}`, kind: 'artifact', label: a.value, color: '#52525b', data: a, x: 0, y: 0, vx: 0, vy: 0 });
             });
@@ -125,7 +130,7 @@ export default function ArtifactMindMap() {
             links = ls.filter(l => keep.has(l.source) && keep.has(l.target));
         }
         return { nodes, links };
-    }, [cases, artifacts, iocs, showKind, sevFilter, threatFilter, query, connectedOnly]);
+    }, [cases, artifacts, iocs, showKind, sevFilter, threatFilter, query, connectedOnly, hiddenTypes]);
 
     // adjacency for hover/selection highlighting
     const neighbors = useMemo(() => {

@@ -12,6 +12,7 @@ from app.models.case_artifact import CaseArtifact
 from app.models.ioc import IOC
 from app.models.user import User
 from app.utils.sla import compute_sla_state, load_policy_overrides
+from app.services.artifact_types import not_private
 
 router = APIRouter()
 
@@ -223,7 +224,7 @@ async def get_stats(
 
     # --- artifact insights ---
     total_artifacts = (
-        await db.execute(select(func.count(Artifact.id)).where(Artifact.tenant_id == tenant_id))
+        await db.execute(select(func.count(Artifact.id)).where(Artifact.tenant_id == tenant_id, not_private()))
     ).scalar() or 0
     total_iocs = (
         await db.execute(select(func.count(IOC.id)).where(IOC.tenant_id == tenant_id))
@@ -231,7 +232,7 @@ async def get_stats(
 
     artifacts_by_type_result = await db.execute(
         select(Artifact.artifact_type, func.count(Artifact.id).label("count"))
-        .where(Artifact.tenant_id == tenant_id)
+        .where(Artifact.tenant_id == tenant_id, not_private())
         .group_by(Artifact.artifact_type)
     )
     artifacts_by_type = [
@@ -246,7 +247,7 @@ async def get_stats(
             func.count(CaseArtifact.id).label("case_count"),
         )
         .join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
-        .where(Artifact.tenant_id == tenant_id)
+        .where(Artifact.tenant_id == tenant_id, not_private())
         .group_by(Artifact.id, Artifact.value, Artifact.artifact_type)
         .order_by(func.count(CaseArtifact.id).desc())
         .limit(6)
