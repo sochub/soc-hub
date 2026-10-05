@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Check, ChevronsUpDown, Building2, Loader2 } from 'lucide-react';
 import { api } from '../../api/client';
 import { switchTenant } from '../../api/auth';
@@ -16,6 +17,8 @@ export default function TenantSwitcher() {
     const qc = useQueryClient();
     const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [mfaBlocked, setMfaBlocked] = useState(false);
+    const [switchError, setSwitchError] = useState<string | null>(null);
 
     const { data: me } = useQuery({
         queryKey: ['currentUser'],
@@ -50,10 +53,20 @@ export default function TenantSwitcher() {
             return;
         }
         setBusy(true);
+        setMfaBlocked(false);
+        setSwitchError(null);
         try {
             await switchTenant(id);
             setOpen(false);
             await qc.invalidateQueries();
+        } catch (err) {
+            const e = err as { response?: { status?: number; data?: { detail?: unknown } } };
+            if (e.response?.status === 403 && e.response.data?.detail === 'mfa_setup_required') {
+                setMfaBlocked(true);
+            } else {
+                const d = e.response?.data?.detail;
+                setSwitchError(typeof d === 'string' ? d : 'Could not switch tenant. Try again.');
+            }
         } finally {
             setBusy(false);
         }
@@ -63,7 +76,7 @@ export default function TenantSwitcher() {
         <div className="relative">
             <p className="label-mono mb-1.5 px-1">{isSuper ? 'viewing tenant' : 'tenant'}</p>
             <button
-                onClick={() => setOpen((o) => !o)}
+                onClick={() => { setOpen((o) => !o); setMfaBlocked(false); setSwitchError(null); }}
                 disabled={busy}
                 aria-haspopup="listbox"
                 aria-expanded={open}
@@ -77,6 +90,19 @@ export default function TenantSwitcher() {
                     ? <Loader2 size={14} className="animate-spin text-zinc-400 shrink-0" />
                     : <ChevronsUpDown size={14} className="text-zinc-400 shrink-0" />}
             </button>
+
+            {mfaBlocked && (
+                <p role="alert" className="mt-1.5 px-1 text-xs text-red-700">
+                    That tenant requires two-factor authentication.{' '}
+                    <Link to="/profile" className="underline font-medium" onClick={() => { setMfaBlocked(false); setOpen(false); }}>
+                        Set it up in your profile
+                    </Link>{' '}then try again.
+                </p>
+            )}
+
+            {switchError && (
+                <p role="alert" className="mt-1.5 px-1 text-xs text-red-700">{switchError}</p>
+            )}
 
             {open && (
                 <ul

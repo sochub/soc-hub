@@ -49,6 +49,11 @@ async def create_invitation(
         )
         if dup.scalars().first():
             raise HTTPException(status_code=409, detail="User is already a member of this tenant.")
+        if not existing_user.password_login_enabled:
+            # SSO-only accounts may belong to a single tenant (SSO refuses multi-tenant users),
+            # so adding one elsewhere would lock them out of their own organization.
+            raise HTTPException(status_code=409, detail="This account signs in through another "
+                                "organization's single sign-on and can't be added to this tenant.")
         db.add(TenantMembership(
             user_id=existing_user.id, tenant_id=tenant_id, role=invitation_in.role.value
         ))

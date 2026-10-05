@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.session import get_db
+from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
@@ -29,7 +30,7 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
-        if email is None:
+        if email is None or payload.get("purpose"):
             raise credentials_exception
         token_data = user_schema.TokenData(
             email=email, active_tenant_id=payload.get("active_tenant_id")
@@ -41,7 +42,7 @@ async def get_current_user(
         select(User).options(selectinload(User.memberships)).where(User.email == token_data.email)
     )
     user = result.scalars().first()
-    if user is None:
+    if user is None or payload.get("tv", 0) != (user.token_version or 0):
         raise credentials_exception
     # Transient, request-scoped: the active tenant chosen for this token.
     user._active_tenant_id = token_data.active_tenant_id
@@ -88,15 +89,34 @@ def require_super_admin(current_user: User = Depends(get_current_active_user)) -
     return current_user
 
 
-def get_effective_tenant_id(
+async def tenant_requires_mfa(db: AsyncSession, user: User, tenant_id: Optional[int] = None) -> bool:
+    """Does a tenant's "require two-factor" setting apply to `user`?
+
+    With `tenant_id`: whether that tenant requires MFA (checked directly — the
+    caller has already established access). Without: whether any tenant the user
+    can reach requires it — their memberships, or, for super admins (who can
+    enter every tenant), any tenant at all.
+    """
+    q = select(Tenant.id).where(Tenant.require_mfa.is_(True))
+    if tenant_id is not None:
+        q = q.where(Tenant.id == tenant_id)
+    elif not user.is_super_admin:
+        q = q.join(TenantMembership, TenantMembership.tenant_id == Tenant.id).where(
+            TenantMembership.user_id == user.id)
+    return (await db.execute(q.limit(1))).first() is not None
+
+
+async def get_effective_tenant_id(
     current_user: User = Depends(get_current_active_user),
     tenant_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
 ) -> int:
     """Resolve the tenant to operate in.
 
     Super admins use the active tenant from the token, with an optional
-    ``?tenant_id=`` override. Regular users use the active tenant from the token,
-    which must be one of their memberships.
+    ``?tenant_id=`` override (refused with 403 ``mfa_setup_required`` when the
+    super admin has no MFA and the target tenant requires it). Regular users use
+    the active tenant from the token, which must be one of their memberships.
     """
     active = getattr(current_user, "_active_tenant_id", None)
 
@@ -107,6 +127,9 @@ def get_effective_tenant_id(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Super admin must select a tenant.",
             )
+        if (tenant_id is not None and tenant_id != active and current_user.mfa_enabled_at is None
+                and await tenant_requires_mfa(db, current_user, tenant_id)):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="mfa_setup_required")
         return chosen
 
     if active is None:
@@ -158,3 +181,52 @@ async def get_webhook_from_key(
             detail="Invalid API key",
         )
     return webhook
+
+
+async def default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int]:
+    """Pick the tenant a freshly-issued token should start in."""
+    if user.is_super_admin:
+        res = await db.execute(select(Tenant.id).order_by(Tenant.id).limit(1))
+        return res.scalars().first()
+    res = await db.execute(
+        select(TenantMembership.tenant_id)
+        .where(TenantMembership.user_id == user.id)
+        .order_by(TenantMembership.tenant_id)
+        .limit(1)
+    )
+    return res.scalars().first()
+
+
+async def get_user_for_mfa_setup(
+    db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
+) -> tuple[User, bool]:
+    """Caller for MFA setup/enable: a normal access token, OR an MFA challenge
+    token for a user who has not enabled MFA yet (forced enrolment at login).
+    Returns (user, via_challenge)."""
+    from app.core.security import decode_mfa_challenge
+
+    bad = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except PyJWTError:
+        raise bad
+    if not payload.get("purpose"):
+        return get_current_active_user(await get_current_user(db=db, token=token)), False
+    try:
+        payload = decode_mfa_challenge(token)
+    except PyJWTError:
+        raise bad
+    email = payload.get("sub")
+    user = (await db.execute(
+        select(User).options(selectinload(User.memberships)).where(User.email == email)
+    )).scalars().first() if email else None
+    if (user is None or not user.is_active or payload.get("tv", 0) != (user.token_version or 0)
+            or user.mfa_enabled_at is not None):
+        raise bad
+    user._active_tenant_id = None
+    user._mfa_challenge_jti = payload.get("jti")
+    return user, True

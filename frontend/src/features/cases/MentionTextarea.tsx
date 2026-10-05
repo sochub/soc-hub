@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import Avatar from '../../components/Avatar';
 import { useTenantId } from '../notifications/api';
 import { useCanRun } from '../enrichment/useCanRun';
 import { applyEdit, parse, serialize, type Chip } from './mentionChips';
 
-interface Mentionable { id: number; name: string; email: string }
+interface Mentionable { id: number; name: string; email: string; has_avatar?: boolean; avatar_version?: string | null }
 interface Props {
     value: string;
     onChange: (serialized: string) => void;
@@ -136,6 +137,7 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
                             onMouseEnter={() => setActive(i)}
                             className={`px-3 py-1.5 cursor-pointer flex items-baseline gap-2 ${i === activeIdx ? 'bg-accent/10' : ''}`}
                         >
+                            <Avatar userId={u.id} name={u.name} hasAvatar={u.has_avatar} version={u.avatar_version} size={20} className="self-center" />
                             <span className="font-medium text-zinc-900">{u.name ?? ''}</span>
                             <span className="text-xs text-zinc-500 truncate">{u.email}</span>
                         </li>

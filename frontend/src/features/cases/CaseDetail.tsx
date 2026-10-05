@@ -1,4 +1,5 @@
 import { useParams, useLocation } from 'react-router-dom';
+import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink } from 'lucide-react';
@@ -18,6 +19,7 @@ import MentionTextarea from './MentionTextarea';
 import { stripMentions } from './mentionChips';
 import MentionText from './MentionText';
 import type { User } from '../../types';
+import { formatDateTime } from '../../utils/datetime';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
@@ -260,7 +262,7 @@ export default function CaseDetail() {
                                 </span>
                                 <span className="flex items-center gap-1.5">
                                     <Calendar size={12} />
-                                    {new Date(caseData.created_at).toLocaleString()}
+                                    {formatDateTime(caseData.created_at, me?.timezone)}
                                 </span>
                                 <span className="flex items-center gap-1.5">
                                     <Shield size={12} />
@@ -422,12 +424,14 @@ export default function CaseDetail() {
 
                                                 <div className="flex flex-col gap-1">
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-xs font-mono text-zinc-400">{new Date(event.created_at).toLocaleString()}</span>
+                                                        <span className="text-xs font-mono text-zinc-400">{formatDateTime(event.created_at, me?.timezone)}</span>
                                                         <span className="text-[10px] font-mono text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">
                                                             {event.event_type?.replace('_', ' ')}
                                                         </span>
                                                         {event.user && (
-                                                            <span className="text-[10px] font-mono text-zinc-400">
+                                                            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-zinc-400">
+                                                                <Avatar userId={event.user.id} name={event.user.full_name || event.user.email}
+                                                                    hasAvatar={event.user.has_avatar} version={event.user.avatar_version} size={18} />
                                                                 by {event.user.full_name || event.user.email}
                                                             </span>
                                                         )}
@@ -619,7 +623,7 @@ export default function CaseDetail() {
 
                                                 <div className="flex flex-col gap-1">
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-xs font-mono text-zinc-400">{new Date(log.created_at).toLocaleString()}</span>
+                                                        <span className="text-xs font-mono text-zinc-400">{formatDateTime(log.created_at, me?.timezone)}</span>
                                                         <span className={cn(
                                                             "text-xs font-bold px-2 py-0.5 rounded uppercase",
                                                             log.action === 'create' ? "bg-green-50 text-green-700 border border-green-200" :

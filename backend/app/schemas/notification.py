@@ -32,3 +32,5 @@ class MentionableUser(BaseModel):
     id: int
     name: str
     email: str
+    has_avatar: bool = False
+    avatar_version: Optional[str] = None

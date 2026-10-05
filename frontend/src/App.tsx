@@ -1,5 +1,7 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { queryClient } from './api/queryClient';
+import ProfilePage from './features/profile/ProfilePage';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/layout/Layout';
 import ProtectedRoute from './components/auth/ProtectedRoute';
@@ -25,18 +27,6 @@ import RunDetail from './features/automations/RunDetail';
 import AlertsList from './features/alerts/AlertsList';
 import ApiDocs from './features/docs/ApiDocs';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      retry: (failureCount, error: any) => {
-        if (error?.response?.status === 401 || error?.response?.status === 403) return false;
-        return failureCount < 2;
-      },
-    },
-  },
-});
-
 function App() {
   return (
     <ErrorBoundary>
@@ -60,6 +50,7 @@ function App() {
                 <Route path="automations/:id" element={<WorkflowEditor />} />
                 <Route path="mindmap" element={<ArtifactMindMap />} />
                 <Route path="integrations" element={<Integrations />} />
+                <Route path="profile" element={<ProfilePage />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="docs" element={<ApiDocs />} />
                 <Route element={<RequireRole roles={['admin', 'super_admin']} />}>

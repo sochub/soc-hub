@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
+import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { SLAPolicyItem, SSOConfig, User } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
+import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { mfaErrorMessage } from '../profile/mfaErrors';
 
 const SEVERITY_LABEL: Record<string, string> = {
     critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info',
@@ -98,6 +100,63 @@ function SLAPoliciesSection() {
                     </button>
                 </div>
             )}
+        </section>
+    );
+}
+
+function MfaRequirementSection() {
+    const qc = useQueryClient();
+    const [error, setError] = useState<string | null>(null);
+    const [confirmOn, setConfirmOn] = useState(false);
+    const { data, isLoading } = useQuery({
+        queryKey: ['tenant-security'],
+        queryFn: async () => (await api.get('/tenants/current/security')).data as { require_mfa: boolean; members_without_mfa: number },
+    });
+    const toggle = useMutation({
+        mutationFn: async (require_mfa: boolean) => (await api.put('/tenants/current/security', { require_mfa })).data,
+        onSuccess: (d) => { setError(null); setConfirmOn(false); qc.setQueryData(['tenant-security'], d); },
+        onError: (err) => setError(mfaErrorMessage(err, 'Could not update the setting.')),
+    });
+    const n = data?.members_without_mfa ?? 0;
+    return (
+        <section className="bg-white border border-zinc-200">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-zinc-200">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+                    <ShieldCheck size={15} className="text-accent-600" /> Two-factor authentication
+                </h2>
+            </div>
+            {isLoading || !data ? (
+                <p className="p-4 font-mono text-xs text-zinc-400">$ loading…</p>
+            ) : (
+                <div className="p-4 space-y-3">
+                    <label className="flex items-center gap-2 text-sm text-zinc-800 cursor-pointer">
+                        <input type="checkbox" checked={data.require_mfa} disabled={toggle.isPending}
+                            onChange={(e) => (e.target.checked ? setConfirmOn(true) : toggle.mutate(false))}
+                            className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                        Require two-factor authentication
+                    </label>
+                    <p className="text-xs text-zinc-500">
+                        {n === 0
+                            ? 'All members have two-factor authentication enabled.'
+                            : `${n} member${n === 1 ? '' : 's'} ${n === 1 ? "doesn't" : "don't"} have MFA yet.`}
+                        {data.require_mfa && n > 0 && ' They will be asked to set it up at their next sign-in.'}
+                    </p>
+                    {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
+                </div>
+            )}
+            <Modal open={confirmOn} onClose={() => setConfirmOn(false)} title="Require two-factor authentication?" size="md"
+                footer={<>
+                    <button type="button" className={btnSecondary} onClick={() => setConfirmOn(false)}>Cancel</button>
+                    <button type="button" className={btnPrimary} disabled={toggle.isPending} onClick={() => toggle.mutate(true)}>
+                        {toggle.isPending && <Loader2 size={14} className="animate-spin" />} Require two-factor
+                    </button>
+                </>}>
+                <div className="space-y-2 text-sm text-zinc-700">
+                    <p>Every member of this organization will need two-factor authentication to sign in or switch into it.</p>
+                    {n > 0 && <p>{n} member{n === 1 ? '' : 's'} without it will be asked to set it up at their next sign-in.</p>}
+                    <p>Members who sign in through single sign-on are not affected; their identity provider handles two-factor.</p>
+                </div>
+            </Modal>
         </section>
     );
 }
@@ -270,6 +329,7 @@ export default function Settings() {
                 </section>
             )}
 
+            {isAdmin && <MfaRequirementSection />}
             {isAdmin && <SLAPoliciesSection />}
         </PageContainer>
     );

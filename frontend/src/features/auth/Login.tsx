@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, KeyRound, ArrowLeft } from 'lucide-react';
 import { api } from '../../api/client';
 import { Button, Input, Label } from '../../components/ui';
+import MfaSetupDialog from '../profile/MfaSetupDialog';
+import { mfaErrorMessage } from '../profile/mfaErrors';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -11,7 +13,17 @@ export default function Login() {
     const [isLoading, setIsLoading] = useState(false);
     const [ssoMode, setSsoMode] = useState(false);
     const [ssoSlug, setSsoSlug] = useState('');
+    // Challenge token lives in component state only (never persisted).
+    const [challenge, setChallenge] = useState<{ token: string; kind: 'code' | 'setup' } | null>(null);
+    const [code, setCode] = useState('');
     const navigate = useNavigate();
+
+    const resetChallenge = (msg = '') => {
+        setChallenge(null);
+        setCode('');
+        setPassword('');
+        setError(msg);
+    };
 
     // SAML ACS bounces back here with the JWT (or an error) in the URL fragment
     // — fragments stay out of server logs.
@@ -45,16 +57,45 @@ export default function Login() {
                 { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
             );
 
+            if (response.data.mfa_required || response.data.mfa_setup_required) {
+                setChallenge({ token: response.data.mfa_token, kind: response.data.mfa_required ? 'code' : 'setup' });
+                setCode('');
+                setPassword(''); // not needed past this step; don't keep it in memory
+                return;
+            }
             const { access_token } = response.data;
             localStorage.setItem('token', access_token);
             navigate('/');
         } catch (err: any) {
             if (err.response?.status === 401) {
                 setError('Invalid email or password.');
+            } else if (err.response?.status === 429) {
+                setError(mfaErrorMessage(err));
             } else if (!err.response) {
                 setError('Unable to connect to server. Please try again later.');
             } else {
                 setError('An unexpected error occurred. Please try again.');
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleCode = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!challenge) return;
+        setError('');
+        setIsLoading(true);
+        try {
+            const response = await api.post('/auth/login/mfa', { mfa_token: challenge.token, code });
+            localStorage.setItem('token', response.data.access_token);
+            navigate('/');
+        } catch (err) {
+            if ((err as { response?: { status?: number } }).response?.status === 401) {
+                resetChallenge('Your sign-in expired — please sign in again');
+            } else {
+                setError(mfaErrorMessage(err));
+                setCode('');
             }
         } finally {
             setIsLoading(false);
@@ -78,7 +119,61 @@ export default function Login() {
                         <p className="text-slate-400">Enter your credentials to access the SOC hub.</p>
                     </div>
 
-                    {ssoMode ? (
+                    {challenge?.kind === 'code' ? (
+                        <form onSubmit={handleCode} className="space-y-4" noValidate>
+                            <div className="space-y-2">
+                                <Label htmlFor="mfa-code">Authentication code</Label>
+                                <Input
+                                    id="mfa-code"
+                                    name="mfa-code"
+                                    type="text"
+                                    inputMode="numeric"
+                                    autoComplete="one-time-code"
+                                    maxLength={6}
+                                    required
+                                    autoFocus
+                                    placeholder="123456"
+                                    value={code}
+                                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                                    disabled={isLoading}
+                                    invalid={!!error}
+                                    aria-describedby={error ? 'login-error' : undefined}
+                                />
+                                <p className="text-xs text-slate-500">Enter the 6-digit code from your authenticator app.</p>
+                            </div>
+                            {error && (
+                                <p id="login-error" role="alert" className="text-severity-critical text-sm">{error}</p>
+                            )}
+                            <Button type="submit" size="lg" disabled={isLoading || code.length !== 6} className="w-full">
+                                {isLoading ? 'Verifying…' : 'Verify'}
+                            </Button>
+                            <button type="button" onClick={() => resetChallenge()}
+                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                                <ArrowLeft size={14} /> Back
+                            </button>
+                        </form>
+                    ) : challenge?.kind === 'setup' ? (
+                        <div className="space-y-4">
+                            <p className="text-sm text-slate-300">
+                                Your organization requires two-factor authentication. Set it up to continue.
+                            </p>
+                            <MfaSetupDialog
+                                open
+                                authToken={challenge.token}
+                                onClose={() => resetChallenge()}
+                                onExpired={() => resetChallenge('Your sign-in expired — please sign in again')}
+                                onEnabled={(token) => {
+                                    localStorage.setItem('token', token);
+                                    setChallenge(null);
+                                    navigate('/');
+                                }}
+                            />
+                            <button type="button" onClick={() => resetChallenge()}
+                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                                <ArrowLeft size={14} /> Back
+                            </button>
+                        </div>
+                    ) : ssoMode ? (
                         <form onSubmit={handleSso} className="space-y-4" noValidate>
                             <div className="space-y-2">
                                 <Label htmlFor="sso-slug">Organization slug</Label>

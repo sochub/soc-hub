@@ -716,8 +716,117 @@ unset, invitation links are returned in the API/UI instead of emailed.
 
 `JIRA_URL`, `JIRA_USER`, `JIRA_API_TOKEN`.
 
+## Profile and two-factor authentication
+
+### Profile
+
+Every user has a **Profile** page (avatar menu in the sidebar) with: full name, job
+title, time zone (an IANA name, used to display dates), a photo, password change and
+two-factor authentication. Email is read-only.
+
+**Photo.** PNG, JPEG or WebP, at most **2 MB**. The server decodes and **re-encodes**
+every upload as a 256x256 WEBP, so EXIF/ICC metadata is stripped and nothing the
+client sent is stored as-is. Anyone who shares at least one tenant with the user can
+see their photo (assignees, mentions, member lists); super admins can see all. Others
+get a 404. nginx allows request bodies up to **3 MB** on the avatar path
+(`/api/v1/users/me/avatar`) so the app returns the friendly error rather than a
+bare 413. Other users may see a replaced photo up to 5 minutes late (browser cache).
+
+**Password change.** Requires the **current password** (throttled with the login
+limits, in its own `pwd:` counters). The
+new password follows the normal policy. On success all of the user's **other sessions
+are signed out** and this session gets a fresh token. Accounts created through SSO
+have no SOC Hub password (`has_password` is false): they cannot change one here, and
+cannot turn two-factor off themselves (an admin resets it instead).
+
+### Two-factor authentication (TOTP)
+
+Users enrol under **Profile → Two-factor authentication**: scan the QR code (or type
+the key) into an authenticator app, then enter the 6-digit code **and their current
+password** to turn it on. (Accounts without a SOC Hub password — created through SSO —
+don't see "Turn on": their identity provider handles two-factor.) After that,
+password login returns a short-lived challenge and a second step
+(`POST /api/v1/auth/login/mfa`) exchanges challenge + code for the access token.
+A challenge is valid for 5 minutes and is **single use**: once it has produced a
+session it is spent (tracked in Redis), and reusing it returns
+`401 Login expired — sign in again`.
+
+- Codes are standard TOTP (RFC 6238: SHA-1, 30 s, 6 digits, one step of clock drift
+  accepted). Each code is **single use** (replays are rejected for the validity
+  window, tracked in Redis).
+- Failed code attempts are limited to **5 per 15 minutes per account** by a
+  dedicated per-account MFA throttle (Redis keys under `mfa:attempts:`, separate
+  from the login `login:attempts:` and password-check `pwd:attempts:` counters, so
+  login attempts can never consume or lock another account's MFA budget). After
+  that the endpoint returns 429 with `Retry-After`.
+- Turning two-factor off needs the **current password and a valid code**.
+- There are **no backup codes**. Recovery is an admin reset (below).
+- The secret is stored encrypted; it is shown only once, during setup.
+- **SSO logins skip SOC Hub two-factor** — the identity provider is trusted to
+  enforce its own MFA. Two-factor applies to password sign-in only. Because a
+  tenant's admins control its IdP, a tenant's SSO only signs in accounts that
+  belong to **that tenant alone**: it refuses **super admins**, users who are also
+  members of **another tenant**, and existing users who are **not a member** of the
+  tenant (it never adds a membership to an existing account). Those users sign in
+  with their password (and two-factor). Auto-provisioning only creates **new**
+  users. Accounts created by SSO have no SOC Hub password, so they can't be added
+  to another tenant (inviting one is refused with 409) — that would lock them out.
+
+**Tenant requirement.** A tenant admin can enable **Settings → Two-factor
+authentication → Require two-factor authentication** (the UI asks for confirmation
+before turning it on). Members of that tenant who have not enrolled are forced to enrol at
+their next password login (they get a setup-only token and the setup dialog), and
+**switching into** such a tenant is blocked (`403 mfa_setup_required`) until they have
+enrolled. While any tenant a user belongs to requires two-factor, the user cannot
+turn it off. The Security panel shows how many members have not enrolled yet.
+
+**Admin reset.** A user who loses their device is recovered by an admin: a **tenant
+admin** can reset members of the active tenant, a **super admin** can reset anyone.
+The reset clears the secret and signs the user out everywhere; on next login they
+enrol again (or sign in normally if no tenant requires two-factor). Limits: you
+cannot reset **yourself** (use Turn off), and a tenant admin cannot reset a **super
+admin** (the request returns 404). A locked-out super admin therefore needs
+**another super admin** to reset them; if there is none, reset it on the server:
+
+```bash
+docker compose exec backend python -m app.scripts.reset_mfa --email <addr>
+```
+
+The script clears the user's two-factor secret, signs them out everywhere, and
+prints only `MFA reset for user id N`. (`create_super_admin` does **not** touch
+two-factor.)
+
+**`SECRET_KEY` rotation.** Two-factor secrets are encrypted with `SECRET_KEY`.
+Rotating it makes every stored secret unreadable, so **everyone's two-factor stops
+working** (code checks return `409 MFA unavailable — contact your admin`). After a
+rotation, reset affected users from **Users → Reset MFA** (any admin who can still
+sign in) or with `reset_mfa` on the server, and have them enrol again.
+
+**Super admins and tenant requirements.** Super admins are **not exempt**: they can
+enter every tenant, so the requirement applies to them across all tenants.
+- At login, a super admin without two-factor is forced to enrol if **any** tenant
+  requires it.
+- Switching into a tenant that requires two-factor (`POST /auth/switch-tenant`, and
+  the `?tenant_id=` override on API requests) returns `403 mfa_setup_required`
+  until they have enrolled.
+- A super admin cannot turn two-factor off while any tenant requires it, and their
+  profile shows it as required.
+
+### Session revocation (`token_version`)
+
+Every user has an integer `token_version`, embedded in each access token (`tv`) and
+checked on every request. A token whose `tv` is stale is rejected with 401. The
+version is bumped when the user **changes their password**, **enables or disables
+two-factor**, has two-factor **reset by an admin**, or is **deactivated**. The
+request that caused the change (password change, enable, disable) receives a fresh
+token, so the acting session continues while all **other** sessions are revoked.
+Challenge tokens carry the version too, so a half-finished login dies on any of
+these changes.
+
 ## Security model
 
+- **Two-factor** — optional TOTP per user, enforceable per tenant; see
+  [Profile and two-factor authentication](#profile-and-two-factor-authentication).
 - **Passwords** — Argon2 hashed; policy enforced everywhere a password is set:
   ≥12 chars with upper, lower, and a digit; common passwords rejected.
 - **Alert webhook** — `POST /api/v1/alerts/webhook` is authenticated **per tenant**.
@@ -752,6 +861,12 @@ bursts can't race past the limits. Counters are fixed windows of
 
 All four must be **≥ 1**; a `0` (or negative) value refuses to boot with a
 validation error naming the setting.
+
+A username that isn't syntactically an email address is refused with the generic
+`401 Incorrect email or password` **before** any counter is touched. Login counters
+live under `login:attempts:`; the MFA code limit (`mfa:attempts:`) and the
+current-password checks for password change / turning two-factor off or on
+(`pwd:attempts:`) use their own namespaces, so no login username can reach them.
 
 **Redis requirements.** The throttle runs Lua scripts that use `EXPIRE … NX`,
 so it needs **Redis ≥ 7.0** (compose ships `redis:7`). It assumes a **single

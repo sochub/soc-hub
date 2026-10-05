@@ -137,6 +137,13 @@ export interface User {
   is_super_admin?: boolean;
   active_tenant_id?: number | null;
   memberships?: Membership[];
+  job_title?: string | null;
+  timezone?: string | null;
+  has_avatar?: boolean;
+  mfa_enabled?: boolean;
+  has_password?: boolean;
+  mfa_required_by_tenant?: boolean;
+  avatar_version?: string | null;
 }
 
 export interface Invitation {
@@ -176,6 +183,8 @@ export interface TimelineEventUser {
   id: number;
   email: string;
   full_name: string | null;
+  has_avatar?: boolean;
+  avatar_version?: string | null;
 }
 
 export interface TimelineEvent {

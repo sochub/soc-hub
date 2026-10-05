@@ -1,4 +1,6 @@
+from functools import lru_cache
 from typing import List, Optional
+from zoneinfo import available_timezones
 from pydantic import BaseModel, EmailStr, field_validator
 from app.core.passwords import validate_password_strength
 from app.utils.emails import normalize_email
@@ -7,8 +9,11 @@ from app.schemas.membership import MembershipOut
 
 
 class Token(BaseModel):
-    access_token: str
-    token_type: str
+    access_token: Optional[str] = None
+    token_type: Optional[str] = None
+    mfa_required: bool = False
+    mfa_setup_required: bool = False
+    mfa_token: Optional[str] = None
 
 
 class TokenData(BaseModel):
@@ -36,17 +41,61 @@ class UserCreate(BaseModel):
         return validate_password_strength(v)
 
 
-class UserUpdate(BaseModel):
-    """Self-service profile update (own name / password)."""
-    full_name: Optional[str] = None
-    password: Optional[str] = None
+@lru_cache(maxsize=1)
+def _timezones() -> frozenset:
+    """IANA zone names, read from disk once (available_timezones() rescans every call)."""
+    return frozenset(available_timezones())
 
-    @field_validator("password")
+
+class UserUpdate(BaseModel):
+    """Self-service profile update. Passwords change via POST /users/me/password."""
+    full_name: Optional[str] = None
+    job_title: Optional[str] = None
+    timezone: Optional[str] = None
+
+    @field_validator("full_name")
     @classmethod
-    def _check_password(cls, v: Optional[str]) -> Optional[str]:
+    def _name(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:  # only reached when null is sent explicitly
+            raise ValueError("full_name cannot be null")
+        v = v.strip()
+        if not 1 <= len(v) <= 200:
+            raise ValueError("full_name must be 1-200 characters")
+        return v
+
+    @field_validator("job_title")
+    @classmethod
+    def _title(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
+        v = v.strip()
+        if len(v) > 100:
+            raise ValueError("job_title must be at most 100 characters")
+        return v or None
+
+    @field_validator("timezone")
+    @classmethod
+    def _tz(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if v not in _timezones():
+            raise ValueError("Unknown timezone")
+        return v
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def _check_password(cls, v: str) -> str:
         return validate_password_strength(v)
+
+
+class TokenOnly(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 
 class UserRoleUpdate(BaseModel):
@@ -62,6 +111,9 @@ class User(BaseModel):
     is_active: bool = True
     is_super_admin: bool = False
     role: Optional[str] = None
+    has_avatar: bool = False
+    avatar_version: Optional[str] = None
+    mfa_enabled: bool = False
 
     class Config:
         from_attributes = True
@@ -79,3 +131,10 @@ class UserMe(BaseModel):
     role: Optional[str] = None
     active_tenant_id: Optional[int] = None
     memberships: List[MembershipOut] = []
+    job_title: Optional[str] = None
+    timezone: Optional[str] = None
+    has_avatar: bool = False
+    mfa_enabled: bool = False
+    has_password: bool = True
+    mfa_required_by_tenant: bool = False
+    avatar_version: Optional[str] = None

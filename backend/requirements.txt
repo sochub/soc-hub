@@ -19,3 +19,4 @@ boto3==1.43.106
 google-auth==2.59.1
 pyzipper==0.4.0
 weasyprint==70.0
+pillow==12.3.0
