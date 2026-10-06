@@ -20,6 +20,9 @@ ENV MAX_UPLOAD_MB=100
 # Copy built assets from build stage
 COPY --from=build /app/dist /usr/share/nginx/html
 
+# The base image already runs as nginx (uid 101); stated explicitly for scanners and readers.
+USER 101
+
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1
