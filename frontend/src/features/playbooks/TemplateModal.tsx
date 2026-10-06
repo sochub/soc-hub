@@ -98,18 +98,18 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
                     <div>
                         <label className="label-mono block mb-1">name</label>
                         <input value={draft.name} onChange={(e) => update({ name: e.target.value })}
-                            className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                            className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                     </div>
                     <div>
                         <label className="label-mono block mb-1">category</label>
                         <input value={draft.category} onChange={(e) => update({ category: e.target.value })}
-                            className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                            className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                     </div>
                 </div>
                 <div>
                     <label className="label-mono block mb-1">description</label>
                     <textarea value={draft.description} onChange={(e) => update({ description: e.target.value })} rows={2}
-                        className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                        className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -127,9 +127,9 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
                             </select>
                             <div className="flex-1 space-y-1">
                                 <input value={t.title} placeholder="Task title" onChange={(e) => updateTask(i, { title: e.target.value })}
-                                    className="w-full border border-zinc-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                                    className="w-full border border-zinc-300 px-2 py-1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                                 <input value={t.description ?? ''} placeholder="Description (optional)" onChange={(e) => updateTask(i, { description: e.target.value })}
-                                    className="w-full border border-zinc-200 px-2 py-1 text-xs text-zinc-600 focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                                    className="w-full border border-zinc-200 px-2 py-1 text-xs text-zinc-600 focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                             </div>
                             <button onClick={() => removeTask(i)} aria-label="Remove task" className="text-zinc-300 hover:text-severity-critical p-1"><Trash2 size={14} /></button>
                         </div>

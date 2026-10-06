@@ -60,7 +60,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
     return (
         <div className="space-y-4">
             <div className="flex items-start gap-3 p-3 bg-white rounded-lg border border-zinc-200">
-                <AlertCircle size={20} className="text-zinc-500 mt-0.5 flex-shrink-0" />
+                <AlertCircle size={20} className="text-zinc-500 mt-0.5 shrink-0" />
                 <div className="text-sm text-zinc-500">
                     <p className="font-medium text-zinc-700 mb-1">Add Indicators of Compromise (IOCs)</p>
                     <p>Attach file hashes, IPs, domains, URLs, or email addresses to this case for tracking and analysis.</p>
@@ -84,7 +84,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
                                         {ARTIFACT_TYPES.find(t => t.value === artifact.type)?.label}
                                     </p>
                                     {artifact.isolated && (
-                                        <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded uppercase font-bold">
+                                        <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-sm uppercase font-bold">
                                             Isolated
                                         </span>
                                     )}
@@ -109,7 +109,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
                     <select
                         value={newArtifact.type}
                         onChange={(e) => setNewArtifact({ ...newArtifact, type: e.target.value })}
-                        className="bg-white border border-zinc-300 px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:border-accent-500 focus:ring-1 focus:ring-accent-500"
+                        className="bg-white border border-zinc-300 px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:border-accent-500 focus:ring-1 focus:ring-accent-500"
                     >
                         {ARTIFACT_TYPES.map(type => (
                             <option key={type.value} value={type.value}>{type.label}</option>
@@ -125,7 +125,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
                         }}
                         onKeyDown={(e) => e.key === 'Enter' && !potentialMatch && addArtifact(false)}
                         placeholder="Enter artifact value..."
-                        className="flex-1 min-w-0 bg-white border border-zinc-300 px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:border-accent-500 focus:ring-1 focus:ring-accent-500"
+                        className="flex-1 min-w-0 bg-white border border-zinc-300 px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:border-accent-500 focus:ring-1 focus:ring-accent-500"
                     />
                     {!potentialMatch && (
                         <button
@@ -144,7 +144,7 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
                         type="checkbox"
                         checked={newArtifact.isolated}
                         onChange={(e) => setNewArtifact({ ...newArtifact, isolated: e.target.checked })}
-                        className="rounded border-zinc-300 bg-white text-accent-600 focus:ring-accent-500"
+                        className="rounded-sm border-zinc-300 bg-white text-accent-600 focus:ring-accent-500"
                     />
                     Create as isolated (case-specific copy, won't be shared)
                 </label>
@@ -167,14 +167,14 @@ export default function ArtifactForm({ artifacts, setArtifacts }: ArtifactFormPr
                                     <div className="flex gap-3 mt-3">
                                         <button
                                             onClick={linkExisting}
-                                            className="text-xs bg-accent-500/20 hover:bg-accent-700/30 text-blue-200 px-3 py-1.5 rounded transition-colors flex items-center gap-1.5"
+                                            className="text-xs bg-accent-500/20 hover:bg-accent-700/30 text-blue-200 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-1.5"
                                         >
                                             <Link2 size={12} />
                                             Link Existing
                                         </button>
                                         <button
                                             onClick={createSeparate}
-                                            className="text-xs bg-zinc-200 hover:bg-zinc-300 text-zinc-700 px-3 py-1.5 rounded transition-colors"
+                                            className="text-xs bg-zinc-200 hover:bg-zinc-300 text-zinc-700 px-3 py-1.5 rounded-sm transition-colors"
                                         >
                                             Create Separate
                                         </button>

@@ -259,9 +259,9 @@ export default function Login() {
                 </div>
             </div>
             <div className="hidden lg:flex items-center justify-center bg-slate-950 relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-tr from-brand-900/20 to-slate-900/40" />
+                <div className="absolute inset-0 bg-linear-to-tr from-brand-900/20 to-slate-900/40" />
                 <div className="relative z-10 text-center space-y-4 p-8">
-                    <h2 className="text-4xl font-bold bg-gradient-to-br from-white to-slate-500 bg-clip-text text-transparent">
+                    <h2 className="text-4xl font-bold bg-linear-to-br from-white to-slate-500 bg-clip-text text-transparent">
                         Secure Operations
                     </h2>
                     <p className="text-slate-400 max-w-md mx-auto">

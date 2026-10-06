@@ -304,7 +304,7 @@ export default function ArtifactMindMap() {
                             <div className="relative">
                                 <Search size={13} className="absolute left-2 top-2 text-zinc-400" />
                                 <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search value / title…"
-                                    className="w-full bg-white border border-zinc-200 pl-7 pr-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                                    className="w-full bg-white border border-zinc-200 pl-7 pr-2 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                             </div>
 
                             <div className="space-y-1">

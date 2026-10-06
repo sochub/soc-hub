@@ -61,7 +61,7 @@ export default function Integrations() {
                         <h2 className="font-semibold text-zinc-800 mb-3">New webhook</h2>
                         <div className="flex gap-2">
                             <input value={name} onChange={e => setName(e.target.value)} placeholder="Source name (e.g. Splunk)"
-                                className="flex-1 bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                                className="flex-1 bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                             <button disabled={!name.trim() || create.isPending} onClick={() => create.mutate(name.trim())}
                                 className="px-3 py-2 rounded-lg bg-accent-600 text-white text-sm font-semibold hover:bg-accent-700 disabled:opacity-50 flex items-center gap-1.5"><Plus size={16} />Create</button>
                         </div>

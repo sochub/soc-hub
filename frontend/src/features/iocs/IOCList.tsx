@@ -154,7 +154,7 @@ export default function IOCList() {
                                             </button>
                                         </td>
                                         <td className="px-4 py-3">
-                                            <span className="font-mono text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded">
+                                            <span className="font-mono text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-sm">
                                                 {ioc.ioc_type.replace('_', ' ')}
                                             </span>
                                         </td>
@@ -165,7 +165,7 @@ export default function IOCList() {
                                             {ioc.value}
                                         </td>
                                         <td className="px-4 py-3">
-                                            <span className={cn('px-2 py-0.5 rounded text-[11px] font-bold border uppercase', threatLevelBadge(ioc.threat_level))}>
+                                            <span className={cn('px-2 py-0.5 rounded-sm text-[11px] font-bold border uppercase', threatLevelBadge(ioc.threat_level))}>
                                                 {ioc.threat_level}
                                             </span>
                                         </td>
@@ -181,12 +181,12 @@ export default function IOCList() {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
-                                            <span className={cn('px-2 py-0.5 rounded text-[11px] font-bold border', statusBadge(ioc.status))}>
+                                            <span className={cn('px-2 py-0.5 rounded-sm text-[11px] font-bold border', statusBadge(ioc.status))}>
                                                 {ioc.status.replace('_', ' ')}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3">
-                                            <span className={cn('px-2 py-0.5 rounded text-[11px] font-bold border uppercase', tlpBadge(ioc.tlp))}>
+                                            <span className={cn('px-2 py-0.5 rounded-sm text-[11px] font-bold border uppercase', tlpBadge(ioc.tlp))}>
                                                 TLP:{ioc.tlp}
                                             </span>
                                         </td>
@@ -201,7 +201,7 @@ export default function IOCList() {
                                                         deleteMutation.mutate(ioc.id);
                                                     }
                                                 }}
-                                                className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded transition-colors opacity-0 group-hover:opacity-100"
+                                                className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors opacity-0 group-hover:opacity-100"
                                                 title="Delete IOC"
                                             >
                                                 <Trash2 size={14} />

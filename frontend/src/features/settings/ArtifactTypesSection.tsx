@@ -7,7 +7,7 @@ import { useArtifactTypes, type ArtifactTypeDef } from '../artifacts/useArtifact
 
 type Draft = { id?: number; key: string; label: string; payload_key: string; show_in_mindmap: boolean; private: boolean };
 const EMPTY: Draft = { key: '', label: '', payload_key: '', show_in_mindmap: true, private: false };
-const input = 'mt-1 w-full h-8 px-2 text-sm border border-zinc-300 bg-white focus:outline-none focus:border-accent-500';
+const input = 'mt-1 w-full h-8 px-2 text-sm border border-zinc-300 bg-white focus:outline-hidden focus:border-accent-500';
 
 function errorText(e: unknown): string {
     const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;

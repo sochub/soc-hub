@@ -89,7 +89,7 @@ export default function CopilotActionCard({ action, caseId }: Props) {
     const result = exec.data;
 
     return (
-        <div className="mt-2 rounded-xl border border-brand-500/30 bg-brand-500/[0.06] p-3 text-sm">
+        <div className="mt-2 rounded-xl border border-brand-500/30 bg-brand-500/6 p-3 text-sm">
             <div className="flex items-center gap-2 mb-1.5 text-brand-300 font-medium">
                 <Zap size={14} />
                 <span>{ACTION_LABEL[action.type] ?? action.type}</span>
@@ -208,7 +208,7 @@ export function CopilotSuggestionChip({ action, caseId }: Props) {
             ) : (
                 <span className="flex items-center gap-1 shrink-0">
                     <button onClick={() => exec.mutate()}
-                        className="px-2 py-0.5 rounded bg-amber-500/90 text-slate-950 font-semibold hover:bg-amber-400 transition-colors">
+                        className="px-2 py-0.5 rounded-sm bg-amber-500/90 text-slate-950 font-semibold hover:bg-amber-400 transition-colors">
                         Add
                     </button>
                     <button onClick={() => setDismissed(true)} aria-label="Dismiss suggestion"

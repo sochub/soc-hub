@@ -377,7 +377,7 @@ export default function Dashboard() {
                         <ol className="relative border-l border-zinc-200 ml-1.5 mt-1">
                             {recentCases.map(c => (
                                 <li key={c.id} className="ml-4 pb-3 last:pb-0 group">
-                                    <span className="absolute -left-[5px] mt-1 w-2.5 h-2.5 border-2 border-white"
+                                    <span className="absolute left-[-5px] mt-1 w-2.5 h-2.5 border-2 border-white"
                                         style={{ background: SEVERITY_COLORS[c.severity] ?? '#64748b' }} />
                                     <Link to={`/cases/${c.id}`} className="block hover:bg-zinc-50 -mx-1 px-1 py-0.5 transition-colors">
                                         <div className="flex items-center justify-between gap-2">

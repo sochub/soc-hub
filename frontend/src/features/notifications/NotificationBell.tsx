@@ -21,11 +21,11 @@ export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpe
     const tz = useMyTimezone();
     return (
         <button type="button" role={role} onClick={() => onOpen(n)}
-            className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-zinc-100 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-none',
+            className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-zinc-100 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-hidden',
                 unread && 'bg-accent-50/40')}>
             <Icon size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
             <span className="flex-1 min-w-0">
-                <span className={cn('block text-sm text-zinc-900 break-words', unread && 'font-medium')}>{n.summary}</span>
+                <span className={cn('block text-sm text-zinc-900 wrap-break-word', unread && 'font-medium')}>{n.summary}</span>
                 <span className="block label-mono truncate mt-0.5">#{n.case_id} · {n.case_title ?? ''}</span>
             </span>
             <span className="shrink-0 flex items-center gap-2">

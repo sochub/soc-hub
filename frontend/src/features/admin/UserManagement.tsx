@@ -135,7 +135,7 @@ export default function UserManagement() {
                                     <td className="px-6 py-4">
                                         {editingRoleUser === user.id ? (
                                             <select
-                                                className="bg-white border border-zinc-200 rounded px-2 py-1 text-xs text-zinc-800"
+                                                className="bg-white border border-zinc-200 rounded-sm px-2 py-1 text-xs text-zinc-800"
                                                 defaultValue={role}
                                                 onChange={e => roleMutation.mutate({ userId: user.id, role: e.target.value })}
                                                 onBlur={() => setEditingRoleUser(null)}

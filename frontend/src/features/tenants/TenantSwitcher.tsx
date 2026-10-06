@@ -80,7 +80,7 @@ export default function TenantSwitcher() {
                 disabled={busy}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 border border-zinc-200 bg-white text-sm text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-500 disabled:opacity-60"
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 border border-zinc-200 bg-white text-sm text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50 transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-accent-500 disabled:opacity-60"
             >
                 <span className="flex items-center gap-2 min-w-0">
                     <Building2 size={14} className="text-accent-600 shrink-0" />

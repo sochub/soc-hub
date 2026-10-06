@@ -275,7 +275,7 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                                     </h3>
                                     <div className="space-y-2">
                                         {artifacts.map((artifact, index) => (
-                                            <div key={index} className="flex items-center gap-3 p-2 bg-zinc-100 rounded">
+                                            <div key={index} className="flex items-center gap-3 p-2 bg-zinc-100 rounded-sm">
                                                 <span className="text-xs text-zinc-400 uppercase font-semibold">{artifact.type}</span>
                                                 <span className="text-sm text-zinc-800 font-mono">{artifact.value}</span>
                                             </div>

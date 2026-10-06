@@ -94,7 +94,7 @@ export default function Playbooks() {
                         className={cn('relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors',
                             tab === key ? 'text-accent-700' : 'text-zinc-500 hover:text-zinc-800')}>
                         <Icon size={15} /> {label}
-                        {tab === key && <span className="absolute bottom-[-1px] left-0 right-0 h-0.5 bg-accent-600" />}
+                        {tab === key && <span className="absolute -bottom-px left-0 right-0 h-0.5 bg-accent-600" />}
                     </button>
                 ))}
             </div>
