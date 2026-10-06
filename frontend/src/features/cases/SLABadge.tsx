@@ -23,7 +23,7 @@ export function SLABadge({ status }: { status?: SLAStatus | null }) {
     }
     return (
         <span className={cn(
-            'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border',
+            'inline-flex items-center px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border',
             SLA_STYLE[status],
         )}>
             {SLA_LABEL[status]}

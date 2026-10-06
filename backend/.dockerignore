@@ -1,0 +1,11 @@
+# Keep secrets and local state out of the image.
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+celerybeat-schedule*
+celerybeat.pid
+tests/
+verify_*.py

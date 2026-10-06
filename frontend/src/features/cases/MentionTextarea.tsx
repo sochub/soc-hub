@@ -118,7 +118,7 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
                 onKeyUp={(e) => { if (!['Enter', 'Tab', 'Escape'].includes(e.key)) { setDismissed(false); syncCaret(e.currentTarget); } }}
                 onClick={(e) => syncCaret(e.currentTarget)}
                 onBlur={() => setDismissed(true)}
-                className={className ?? 'w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-accent resize-none disabled:opacity-60'}
+                className={className ?? 'w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-accent resize-none disabled:opacity-60'}
             />
             {open && (
                 <ul

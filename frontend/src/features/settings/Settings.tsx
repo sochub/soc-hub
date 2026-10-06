@@ -76,7 +76,7 @@ function SLAPoliciesSection() {
                                             value={r.response_target_minutes ?? ''}
                                             onChange={(e) => updateRow(r.severity, 'response_target_minutes', e.target.value)}
                                             placeholder="—"
-                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-none focus:ring-1 focus:ring-accent-500"
+                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent-500"
                                         />
                                     </td>
                                     <td className="py-2">
@@ -85,7 +85,7 @@ function SLAPoliciesSection() {
                                             value={r.resolution_target_minutes ?? ''}
                                             onChange={(e) => updateRow(r.severity, 'resolution_target_minutes', e.target.value)}
                                             placeholder="—"
-                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-none focus:ring-1 focus:ring-accent-500"
+                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent-500"
                                         />
                                     </td>
                                 </tr>
@@ -231,7 +231,7 @@ export default function Settings() {
             <label className="label-mono block mb-1">{label}</label>
             <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                 placeholder={placeholder}
-                className="w-full bg-white border border-zinc-300 px-2.5 py-2 text-sm num focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                className="w-full bg-white border border-zinc-300 px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
         </div>
     );
 
@@ -274,7 +274,7 @@ export default function Settings() {
                                     <textarea value={form.idp_x509_cert}
                                         onChange={e => setForm(f => ({ ...f, idp_x509_cert: e.target.value }))}
                                         rows={6} placeholder="-----BEGIN CERTIFICATE-----"
-                                        className="w-full bg-white border border-zinc-300 px-2.5 py-2 text-[11px] num focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                                        className="w-full bg-white border border-zinc-300 px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                                 </div>
                                 <div className="flex items-center gap-4 flex-wrap">
                                     <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">

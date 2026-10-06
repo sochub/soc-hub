@@ -1,0 +1,6 @@
+# Local scans: `trivy fs .` picks this up. Skip build output, installed deps and agent scratch folders.
+scan:
+  skip-dirs:
+    - frontend/node_modules
+    - frontend/dist
+    - .superpowers

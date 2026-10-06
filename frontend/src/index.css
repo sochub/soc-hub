@@ -1,46 +1,121 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  --color-brand-50: #ecfeff;
+  --color-brand-100: #cffafe;
+  --color-brand-200: #a5f3fc;
+  --color-brand-300: #67e8f9;
+  --color-brand-400: #22d3ee;
+  --color-brand-500: #06b6d4;
+  --color-brand-600: #0891b2;
+  --color-brand-700: #0e7490;
+  --color-brand-800: #155e75;
+  --color-brand-900: #164e63;
+  --color-brand-950: #083344;
+
+  --color-severity-critical: #dc2626;
+  --color-severity-high: #ea580c;
+  --color-severity-medium: #d97706;
+  --color-severity-low: #2563eb;
+  --color-severity-info: #64748b;
+
+  --color-accent-50: #eff6ff;
+  --color-accent-100: #dbeafe;
+  --color-accent-200: #bfdbfe;
+  --color-accent-300: #93c5fd;
+  --color-accent-400: #60a5fa;
+  --color-accent-500: #3b82f6;
+  --color-accent-600: #2563eb;
+  --color-accent-700: #1d4ed8;
+  --color-accent-800: #1e40af;
+  --color-accent-900: #1e3a8a;
+  --color-accent: #2563eb;
+
+  --font-sans:
+    IBM Plex Sans, ui-sans-serif, system-ui, -apple-system, Segoe UI,
+    Helvetica Neue, Arial, sans-serif;
+  --font-mono:
+    Roboto Mono, Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
+
+  --shadow-brand-glow: 0 0 20px -2px rgba(34, 211, 238, 0.35);
+  --shadow-console: 0 1px 2px 0 rgba(24, 24, 27, 0.04);
+  --shadow-console-hover: 0 4px 16px -4px rgba(37, 99, 235, 0.18);
+
+  --animate-fade-in: fade-in 0.2s ease-out;
+
+  @keyframes fade-in {
+    0% {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility num {
+  /* Tabular monospace for numerals / telemetry. */
+  @apply font-mono tabular-nums tracking-tight;
+}
+
+@utility label-mono {
+  /* Uppercase mono micro-label, e.g. // CASES BY SEVERITY */
+  @apply font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500;
+}
+
+@utility console-grid {
+  /* Faint engineering dot-grid backdrop for the console canvas. */
+  background-image: radial-gradient(
+    circle,
+    rgba(24, 24, 27, 0.05) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+}
+
+/* Custom Utilities for Glow Effects */
+
+@utility glass-panel {
+  @apply bg-white border border-zinc-200 shadow-xl;
+}
+
+@utility neon-border {
+  @apply relative after:absolute after:-inset-px after:rounded-lg after:bg-linear-to-r after:from-blue-500/50 after:to-purple-500/50 after:blur-xs after:-z-10;
+}
+
+@utility text-glow {
+  text-shadow: 0 0 10px rgba(100, 200, 255, 0.5);
+}
+
+@utility animate-pulse-slow {
+  animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
 
 @layer base {
   body {
     @apply bg-zinc-50 text-zinc-900 font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
-  }
-}
-
-@layer utilities {
-  /* Tabular monospace for numerals / telemetry. */
-  .num {
-    @apply font-mono tabular-nums tracking-tight;
-  }
-  /* Uppercase mono micro-label, e.g. // CASES BY SEVERITY */
-  .label-mono {
-    @apply font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500;
-  }
-  /* Faint engineering dot-grid backdrop for the console canvas. */
-  .console-grid {
-    background-image: radial-gradient(circle, rgba(24, 24, 27, 0.05) 1px, transparent 1px);
-    background-size: 22px 22px;
-  }
-}
-
-/* Custom Utilities for Glow Effects */
-@layer utilities {
-  .glass-panel {
-    @apply bg-white border border-zinc-200 shadow-xl;
-  }
-
-  .neon-border {
-    @apply relative after:absolute after:-inset-[1px] after:rounded-lg after:bg-gradient-to-r after:from-blue-500/50 after:to-purple-500/50 after:blur-sm after:-z-10;
-  }
-
-  .text-glow {
-    text-shadow: 0 0 10px rgba(100, 200, 255, 0.5);
-  }
-
-  .animate-pulse-slow {
-    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 }
 
@@ -76,7 +151,7 @@
   @apply italic text-slate-300;
 }
 .copilot-markdown code {
-  @apply bg-slate-900 text-purple-300 text-xs px-1.5 py-0.5 rounded font-mono;
+  @apply bg-slate-900 text-purple-300 text-xs px-1.5 py-0.5 rounded-sm font-mono;
 }
 .copilot-markdown pre {
   @apply bg-slate-900 border border-slate-700/50 rounded-lg p-3 my-2 overflow-x-auto;

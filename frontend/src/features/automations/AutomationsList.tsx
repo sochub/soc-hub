@@ -58,7 +58,7 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
                         <div key={wid} className="border border-zinc-200">
                             <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-200">
                                 <span className="font-medium text-sm text-zinc-900">{its[0].workflow_name}</span>
-                                <button type="button" className={`${btnPrimary} ml-auto !h-8`} disabled={busy !== null || !valid} onClick={() => convert(wid, todo)}>
+                                <button type="button" className={`${btnPrimary} ml-auto h-8!`} disabled={busy !== null || !valid} onClick={() => convert(wid, todo)}>
                                     {busy === wid ? 'Converting…' : 'Convert'}</button>
                             </div>
                             <ul className="divide-y divide-zinc-100">
@@ -69,7 +69,7 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
                                             <div className="text-xs text-zinc-600"><span className="font-mono">{i.node_id}</span> · {i.location} <span className="font-mono">{i.key}</span> · <span className="font-mono">{i.host}</span>
                                                 {!i.convertible && <div className="mt-0.5 text-amber-700">Not convertible: {i.reason ?? 'host not supported'}</div>}</div>
                                             <input aria-label="Secret name" disabled={!i.convertible} title={i.convertible ? undefined : i.reason}
-                                                className={`${modalInput} font-mono !py-1 !text-xs disabled:opacity-50 disabled:cursor-not-allowed`} value={names[k] ?? ''}
+                                                className={`${modalInput} font-mono py-1! text-xs! disabled:opacity-50 disabled:cursor-not-allowed`} value={names[k] ?? ''}
                                                 onChange={(e) => setNames((p) => ({ ...p, [k]: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') }))} />
                                         </li>
                                     );

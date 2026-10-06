@@ -190,11 +190,11 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder="Description (optional)"
-                        className="w-full text-sm border border-zinc-200 rounded px-3 py-1.5 bg-white text-zinc-800 focus:outline-none focus:border-accent-600"
+                        className="w-full text-sm border border-zinc-200 rounded-sm px-3 py-1.5 bg-white text-zinc-800 focus:outline-hidden focus:border-accent-600"
                     />
                     {progress !== null && (
                         <div className="flex items-center gap-3">
-                            <div className="flex-1 h-1.5 bg-zinc-100 rounded overflow-hidden">
+                            <div className="flex-1 h-1.5 bg-zinc-100 rounded-sm overflow-hidden">
                                 <div className="h-full bg-accent-600 transition-all" style={{ width: `${progress}%` }} />
                             </div>
                             <span className="num text-xs text-zinc-500">{progress}%</span>
@@ -204,7 +204,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
             )}
 
             {error && (
-                <div role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>
+                <div role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>
             )}
 
             {isLoading ? (
@@ -235,7 +235,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                                             <div className="flex items-center gap-2">
                                                 <span className={cn('text-zinc-800 break-all', deleted && 'line-through')}>{a.filename}</span>
                                                 {a.is_malicious && (
-                                                    <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded uppercase font-bold">malicious</span>
+                                                    <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded-sm uppercase font-bold">malicious</span>
                                                 )}
                                             </div>
                                             {a.description && <p className="text-xs text-zinc-400 mt-0.5">{a.description}</p>}
@@ -243,7 +243,7 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                                         <td className="px-4 py-2 num text-zinc-600 whitespace-nowrap">{formatSize(a.size_bytes)}</td>
                                         <td className="px-4 py-2 whitespace-nowrap">
                                             <span className="num text-zinc-600" title={a.sha256}>{a.sha256.slice(0, 12)}</span>
-                                            <button onClick={() => copyHash(a.sha256)} className="ml-2 p-1 text-zinc-400 hover:text-zinc-700 rounded" title="Copy SHA-256" aria-label="Copy SHA-256">
+                                            <button onClick={() => copyHash(a.sha256)} className="ml-2 p-1 text-zinc-400 hover:text-zinc-700 rounded-sm" title="Copy SHA-256" aria-label="Copy SHA-256">
                                                 <Copy size={12} />
                                             </button>
                                         </td>
@@ -257,21 +257,21 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                                                 confirmId === a.id ? (
                                                     <span className="inline-flex items-center gap-2 text-xs">
                                                         <span className="text-zinc-600">Delete this file?</span>
-                                                        <button onClick={() => remove.mutate(a.id)} disabled={remove.isPending} className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50">Delete</button>
-                                                        <button onClick={() => setConfirmId(null)} className="px-2 py-1 bg-zinc-100 text-zinc-700 rounded hover:bg-zinc-200">Cancel</button>
+                                                        <button onClick={() => remove.mutate(a.id)} disabled={remove.isPending} className="px-2 py-1 bg-red-600 text-white rounded-sm hover:bg-red-700 disabled:opacity-50">Delete</button>
+                                                        <button onClick={() => setConfirmId(null)} className="px-2 py-1 bg-zinc-100 text-zinc-700 rounded-sm hover:bg-zinc-200">Cancel</button>
                                                     </span>
                                                 ) : (
                                                     <span className="inline-flex items-center gap-2">
                                                         <button
                                                             onClick={() => download(a)}
                                                             disabled={downloading}
-                                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
                                                         >
                                                             <Download size={12} />
                                                             {a.is_malicious ? 'Download (ZIP, pw: infected)' : 'Download'}
                                                         </button>
                                                         {canWrite && (
-                                                            <button onClick={() => setConfirmId(a.id)} className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded transition-colors" title="Delete" aria-label="Delete">
+                                                            <button onClick={() => setConfirmId(a.id)} className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors" title="Delete" aria-label="Delete">
                                                                 <Trash2 size={14} />
                                                             </button>
                                                         )}

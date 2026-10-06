@@ -37,7 +37,7 @@ def deny_all_fetcher(url, timeout=10, ssl_context=None):
     Returns a dict (string/mime_type) for data: URLs; raises ValueError otherwise.
     """
     if isinstance(url, str) and url.strip().lower().startswith("data:"):
-        with urlopen(url.strip()) as resp:  # data: scheme only, never touches the network
+        with urlopen(url.strip()) as resp:  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- guarded: data: only
             return {"string": resp.read(), "mime_type": resp.headers.get_content_type(), "url": url}
     raise ValueError("blocked url")
 
@@ -111,7 +111,7 @@ def _defang_text_filter(value) -> Markup:
         out += [escape(s[pos:m.start()]), escape(defang(scrub_userinfo(m.group(0)), "url"))]
         pos = m.end()
     out.append(escape(s[pos:]))
-    return Markup("".join(out))
+    return Markup("".join(out))  # nosec B704  # nosemgrep: python.flask.security.xss.audit.explicit-unescape-with-markup.explicit-unescape-with-markup -- every piece escaped above
 
 
 def _dt(value, suffix=True) -> str:
@@ -137,7 +137,7 @@ def _filesize(n) -> str:
     return f"{size:.1f} GB"
 
 
-_ENV = Environment(loader=FileSystemLoader(str(TEMPLATES)), autoescape=True, undefined=StrictUndefined)
+_ENV = Environment(loader=FileSystemLoader(str(TEMPLATES)), autoescape=True, undefined=StrictUndefined)  # nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2 -- autoescape=True
 _ENV.filters.update(defang=_defang_filter, defang_text=_defang_text_filter, dt=_dt, duration=fmt_duration, filesize=_filesize)
 
 
@@ -149,7 +149,7 @@ def render_html(report: dict) -> str:
         report=report,
         # Trusted constant CSS (our vendored fonts). <style> is raw text: entity-escaping would break the
         # @font-face rules and silently fall back to DejaVu.
-        font_css=Markup(font_face_css()), limits=PDF_LIMITS, truncated=compute_truncated(report),
+        font_css=Markup(font_face_css()), limits=PDF_LIMITS, truncated=compute_truncated(report),  # nosec B704  # nosemgrep: python.flask.security.xss.audit.explicit-unescape-with-markup.explicit-unescape-with-markup -- constant vendored CSS
         tlp_label=tlp_mod.LABEL[tlp], tlp_bg=bg, tlp_fg=fg, tlp_border="#000000" if tlp == "white" else bg,
         case_ref=f"Case #{int(report['case']['id']):04d}",
         lifecycle_svg=lifecycle_svg(report["milestones"]), timeline_svg=timeline_svg(report["timeline"]))

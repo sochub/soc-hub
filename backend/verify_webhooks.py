@@ -3,10 +3,13 @@
 Run: docker compose exec backend python verify_webhooks.py
 
 Self-bootstraps a throwaway admin user via direct DB access so no real user
-accounts or passwords are needed.  All created rows are left in the DB but
-they are idempotent — re-running this script is safe.
+accounts or passwords are needed. The user gets a fresh random password on
+every run and is deactivated when the run ends (pass or fail). The tenant and
+user rows are left in the DB; re-running this script is safe.
 """
 import asyncio
+import os
+import secrets
 import httpx
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -20,12 +23,12 @@ from app.models.membership import TenantMembership
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DB_URL = "postgresql+asyncpg://user:password@db:5432/sicms"
+DB_URL = os.environ["DATABASE_URL"]
 BASE = "http://backend:8000/api/v1"
 
 VERIFY_SLUG = "webhook-verify"
 VERIFY_EMAIL = "webhook-verify@example.test"
-VERIFY_PASSWORD = "verifypass123"
+VERIFY_PASSWORD = secrets.token_urlsafe(24)  # per run; never a known credential
 VERIFY_NAME = "Webhook Verify Admin"
 TENANT_NAME = "Webhook Verify"
 
@@ -70,7 +73,9 @@ async def bootstrap() -> None:
             await session.flush()
             print(f"[bootstrap] created user id={user.id}")
         else:
-            print(f"[bootstrap] user already exists id={user.id}")
+            user.hashed_password = get_password_hash(VERIFY_PASSWORD)
+            user.is_active = True
+            print(f"[bootstrap] user already exists id={user.id}; password rotated")
 
         # --- Membership ---
         result = await session.execute(
@@ -188,6 +193,22 @@ def run() -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+async def deactivate() -> None:
+    """Disable the throwaway admin so it can't be used between runs."""
+    engine = create_async_engine(DB_URL, echo=False)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as session:
+        user = (await session.execute(select(User).where(User.email == VERIFY_EMAIL))).scalars().first()
+        if user is not None:
+            user.is_active = False
+            await session.commit()
+            print(f"[cleanup] deactivated user id={user.id}")
+    await engine.dispose()
+
+
 if __name__ == "__main__":
     asyncio.run(bootstrap())
-    run()
+    try:
+        run()
+    finally:
+        asyncio.run(deactivate())

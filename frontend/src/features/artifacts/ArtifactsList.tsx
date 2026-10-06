@@ -119,7 +119,7 @@ export default function ArtifactsList() {
                                                         <select
                                                             value={editData.artifact_type}
                                                             onChange={(e) => setEditData({ ...editData, artifact_type: e.target.value })}
-                                                            className="w-full bg-white border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
+                                                            className="w-full bg-white border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                         >
                                                             {ARTIFACT_TYPE_OPTIONS.map(opt => (
                                                                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -132,14 +132,14 @@ export default function ArtifactsList() {
                                                                 type="text"
                                                                 value={editData.value}
                                                                 onChange={(e) => setEditData({ ...editData, value: e.target.value })}
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm text-zinc-900 font-mono focus:outline-none focus:ring-1 focus:ring-white/50"
+                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm text-zinc-900 font-mono focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                             />
                                                             <input
                                                                 type="text"
                                                                 value={editData.description}
                                                                 onChange={(e) => setEditData({ ...editData, description: e.target.value })}
                                                                 placeholder="Description (optional)"
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-xs text-zinc-500 focus:outline-none focus:ring-1 focus:ring-white/50"
+                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-xs text-zinc-500 focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                             />
                                                         </div>
                                                     </td>
@@ -164,14 +164,14 @@ export default function ArtifactsList() {
                                                             <button
                                                                 onClick={() => saveEdit(artifact.id)}
                                                                 disabled={!editData.value.trim() || updateMutation.isPending}
-                                                                className="p-1.5 text-green-700 hover:bg-green-50 rounded transition-colors disabled:opacity-50"
+                                                                className="p-1.5 text-green-700 hover:bg-green-50 rounded-sm transition-colors disabled:opacity-50"
                                                                 title="Save"
                                                             >
                                                                 <Check size={14} />
                                                             </button>
                                                             <button
                                                                 onClick={cancelEdit}
-                                                                className="p-1.5 text-zinc-500 hover:bg-zinc-200 rounded transition-colors"
+                                                                className="p-1.5 text-zinc-500 hover:bg-zinc-200 rounded-sm transition-colors"
                                                                 title="Cancel"
                                                             >
                                                                 <X size={14} />
@@ -183,7 +183,7 @@ export default function ArtifactsList() {
                                                 <>
                                                     <td className="p-4">
                                                         <div className="flex items-center gap-2">
-                                                            <div className="p-1.5 bg-zinc-100 rounded text-accent-600">
+                                                            <div className="p-1.5 bg-zinc-100 rounded-sm text-accent-600">
                                                                 <Icon size={14} />
                                                             </div>
                                                             <span className="text-xs font-medium text-zinc-500 uppercase">{artifact.artifact_type}</span>
@@ -193,13 +193,13 @@ export default function ArtifactsList() {
                                                         <div className="flex items-center gap-2">
                                                             <span className="font-mono text-sm text-zinc-800">{artifact.value}</span>
                                                             {!artifact.isolated && caseIds.length > 1 && (
-                                                                <span className="text-[10px] bg-blue-50 text-accent-600 border border-blue-200 px-1.5 py-0.5 rounded uppercase font-bold flex items-center gap-1">
+                                                                <span className="text-[10px] bg-blue-50 text-accent-600 border border-blue-200 px-1.5 py-0.5 rounded-sm uppercase font-bold flex items-center gap-1">
                                                                     <Link2 size={10} />
                                                                     Shared
                                                                 </span>
                                                             )}
                                                             {artifact.isolated && (
-                                                                <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded uppercase font-bold">
+                                                                <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-sm uppercase font-bold">
                                                                     Isolated
                                                                 </span>
                                                             )}
@@ -235,7 +235,7 @@ export default function ArtifactsList() {
                                                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                             <button
                                                                 onClick={() => startEdit(artifact)}
-                                                                className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded transition-colors"
+                                                                className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded-sm transition-colors"
                                                                 title="Edit artifact"
                                                             >
                                                                 <Pencil size={14} />
@@ -246,7 +246,7 @@ export default function ArtifactsList() {
                                                                         deleteMutation.mutate(artifact.id);
                                                                     }
                                                                 }}
-                                                                className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded transition-colors"
+                                                                className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors"
                                                                 title="Delete artifact"
                                                             >
                                                                 <Trash2 size={14} />

@@ -74,7 +74,7 @@ async def verify_user_code(db: AsyncSession, redis, throttle: LoginThrottle, use
     try:
         secret = decrypt(user.mfa_secret_enc or "")
     except (InvalidToken, ValueError, TypeError):
-        logger.warning("mfa secret undecryptable user_id=%s", user.id)
+        logger.warning("mfa secret undecryptable user_id=%s", user.id)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- logs user id only
         raise HTTPException(status_code=409, detail="MFA unavailable — contact your admin")
     step = totp.matching_step(secret, code)
     if step is None or not await totp.consume_step(redis, user.id, step):

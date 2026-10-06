@@ -70,7 +70,7 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                     <div className="flex items-center gap-2">
                         <div className="relative">
                             <select value={applyId} onChange={(e) => setApplyId(e.target.value)}
-                                className="appearance-none border border-zinc-300 bg-white text-sm pl-2.5 pr-7 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent-500">
+                                className="appearance-none border border-zinc-300 bg-white text-sm pl-2.5 pr-7 py-1.5 focus:outline-hidden focus:ring-1 focus:ring-accent-500">
                                 <option value="">Apply playbook…</option>
                                 {playbooks.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
@@ -140,7 +140,7 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                         </select>
                         <input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && newTitle && add.mutate()}
-                            placeholder="Task title" className="flex-1 border border-zinc-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500" />
+                            placeholder="Task title" className="flex-1 border border-zinc-300 px-2 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
                         <button onClick={() => newTitle && add.mutate()} disabled={!newTitle}
                             className="px-3 py-1.5 bg-accent-600 text-white text-sm hover:bg-accent-700 disabled:opacity-50">Add</button>
                         <button onClick={() => setAdding(false)} className="px-2 text-sm text-zinc-500">Cancel</button>

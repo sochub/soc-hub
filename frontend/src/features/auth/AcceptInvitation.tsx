@@ -105,7 +105,7 @@ export default function AcceptInvitation() {
                         <input
                             type="text"
                             required
-                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             value={fullName}
                             onChange={e => setFullName(e.target.value)}
                             disabled={submitting}
@@ -116,7 +116,7 @@ export default function AcceptInvitation() {
                         <input
                             type="password"
                             required
-                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             value={password}
                             onChange={e => setPassword(e.target.value)}
                             disabled={submitting}
@@ -127,7 +127,7 @@ export default function AcceptInvitation() {
                         <input
                             type="password"
                             required
-                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             value={confirmPassword}
                             onChange={e => setConfirmPassword(e.target.value)}
                             disabled={submitting}

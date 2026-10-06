@@ -182,7 +182,7 @@ export default function TenantDetail() {
                         <div className="space-y-1">
                             <label className="text-xs text-zinc-400">Name</label>
                             <input
-                                className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-accent-500"
+                                className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-accent-500"
                                 value={editName}
                                 onChange={e => setEditName(e.target.value)}
                             />
@@ -190,7 +190,7 @@ export default function TenantDetail() {
                         <div className="space-y-1">
                             <label className="text-xs text-zinc-400">Slug</label>
                             <input
-                                className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-accent-500"
+                                className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-accent-500"
                                 value={editSlug}
                                 onChange={e => setEditSlug(e.target.value)}
                             />
@@ -334,7 +334,7 @@ export default function TenantDetail() {
                                                 <div className="flex items-center justify-end gap-1">
                                                     <button
                                                         onClick={() => handleCopyLink(inv)}
-                                                        className="p-1.5 text-zinc-500 hover:text-zinc-800 transition-colors rounded"
+                                                        className="p-1.5 text-zinc-500 hover:text-zinc-800 transition-colors rounded-sm"
                                                         title="Copy invite link"
                                                     >
                                                         {copiedId === inv.id ? <Check size={14} className="text-green-700" /> : <Copy size={14} />}
@@ -342,7 +342,7 @@ export default function TenantDetail() {
                                                     <button
                                                         onClick={() => resendMutation.mutate(inv.id)}
                                                         disabled={resendMutation.isPending}
-                                                        className="p-1.5 text-zinc-500 hover:text-accent-600 transition-colors rounded disabled:opacity-50"
+                                                        className="p-1.5 text-zinc-500 hover:text-accent-600 transition-colors rounded-sm disabled:opacity-50"
                                                         title="Resend invitation"
                                                     >
                                                         <RefreshCw size={14} className={resendMutation.isPending ? 'animate-spin' : ''} />
@@ -350,7 +350,7 @@ export default function TenantDetail() {
                                                     <button
                                                         onClick={() => revokeMutation.mutate(inv.id)}
                                                         disabled={revokeMutation.isPending}
-                                                        className="p-1.5 text-zinc-500 hover:text-red-700 transition-colors rounded disabled:opacity-50"
+                                                        className="p-1.5 text-zinc-500 hover:text-red-700 transition-colors rounded-sm disabled:opacity-50"
                                                         title="Revoke invitation"
                                                     >
                                                         <X size={14} />

@@ -145,7 +145,7 @@ export default function CasesList() {
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder="Search (ID, Title)..."
-                            className="bg-white border border-zinc-200 rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all w-48 lg:w-64 placeholder:text-zinc-400"
+                            className="bg-white border border-zinc-200 rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all w-48 lg:w-64 placeholder:text-zinc-400"
                         />
                     </div>
 
@@ -154,7 +154,7 @@ export default function CasesList() {
                         <select
                             value={severityFilter}
                             onChange={(e) => setSeverityFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
+                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
                         >
                             <option value="all">All Severities</option>
                             <option value="critical">Critical</option>
@@ -170,7 +170,7 @@ export default function CasesList() {
                         <select
                             value={tagFilter}
                             onChange={(e) => setTagFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
+                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
                         >
                             <option value="all">All Tags</option>
                             {availableTags?.map(tag => (
@@ -184,7 +184,7 @@ export default function CasesList() {
                         <select
                             value={statusFilter}
                             onChange={(e) => setStatusFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
+                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
                         >
                             <option value="all">All Statuses</option>
                             <option value="open">Open</option>
@@ -197,7 +197,7 @@ export default function CasesList() {
 
                     <button
                         onClick={() => setShowNewCaseModal(true)}
-                        className="px-3 py-1.5 bg-zinc-100 hover:bg-white text-slate-900 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5 shadow-sm ml-2"
+                        className="px-3 py-1.5 bg-zinc-100 hover:bg-white text-slate-900 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5 shadow-xs ml-2"
                     >
                         <Plus size={16} />
                         New Case
@@ -258,7 +258,7 @@ export default function CasesList() {
                                             </td>
                                             <td className="px-4 py-2.5">
                                                 <span className={cn(
-                                                    "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border",
+                                                    "inline-flex items-center px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border",
                                                     config.color, config.bg, config.border
                                                 )}>
                                                     {c.severity}

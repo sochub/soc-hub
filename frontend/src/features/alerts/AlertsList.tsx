@@ -63,7 +63,7 @@ export default function AlertsList() {
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
                         <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm text-zinc-700 cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent-500">
+                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm text-zinc-700 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent-500">
                             <option value="all">All Sources</option>
                             {sources.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
@@ -71,7 +71,7 @@ export default function AlertsList() {
                     </div>
                     <div className="relative">
                         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm text-zinc-700 cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent-500">
+                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm text-zinc-700 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent-500">
                             <option value="all">All Statuses</option>
                             <option value="pending">Pending</option>
                             <option value="promoted">Promoted</option>
@@ -109,14 +109,14 @@ export default function AlertsList() {
                                     <td className="px-4 py-2.5"><span className="font-mono text-xs text-zinc-600">{a.source}</span></td>
                                     <td className="px-4 py-2.5 font-medium text-zinc-800">{a.title}</td>
                                     <td className="px-4 py-2.5">
-                                        <span className={cn("inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border", statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
+                                        <span className={cn("inline-flex px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border", statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
                                     </td>
                                     <td className="px-4 py-2.5 text-zinc-500 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>
                                     <td className="px-4 py-2.5">
                                         {a.status === 'pending' ? (
                                             <div className="flex items-center gap-2">
-                                                <button onClick={() => setPromoting(a)} className="px-2 py-1 text-xs font-semibold rounded bg-accent-600 text-white hover:bg-accent-700 flex items-center gap-1"><CheckCircle size={12} />Promote</button>
-                                                <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded bg-zinc-100 text-zinc-600 hover:bg-zinc-200 flex items-center gap-1"><X size={12} />Dismiss</button>
+                                                <button onClick={() => setPromoting(a)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent-600 text-white hover:bg-accent-700 flex items-center gap-1"><CheckCircle size={12} />Promote</button>
+                                                <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-zinc-100 text-zinc-600 hover:bg-zinc-200 flex items-center gap-1"><X size={12} />Dismiss</button>
                                             </div>
                                         ) : a.case_id ? (
                                             <Link to={`/cases/${a.case_id}`} className="text-xs text-accent-600 hover:underline">Case #{a.case_id}</Link>

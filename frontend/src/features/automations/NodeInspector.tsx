@@ -18,7 +18,7 @@ interface Props {
     onDelete: () => void;
 }
 
-const inputCls = 'w-full border border-zinc-300 px-2 py-1.5 text-sm bg-white focus:outline-none focus:border-accent-500 disabled:bg-zinc-50';
+const inputCls = 'w-full border border-zinc-300 px-2 py-1.5 text-sm bg-white focus:outline-hidden focus:border-accent-500 disabled:bg-zinc-50';
 const monoCls = inputCls + ' font-mono text-xs';
 
 const CRED_HEADERS = new Set(['authorization', 'x-api-key', 'api-key', 'apikey', 'x-auth-token', 'x-apikey', 'private-token']);

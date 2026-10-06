@@ -98,7 +98,7 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                         {isCase ? `· case #${caseId}` : '· general'}
                     </span>
                     {aiInfo?.provider && (
-                        <span className="font-mono text-[10px] font-medium text-slate-500 normal-case tracking-normal truncate max-w-[14rem]" title="Where case data is sent">
+                        <span className="font-mono text-[10px] font-medium text-slate-500 normal-case tracking-normal truncate max-w-56" title="Where case data is sent">
                             · AI: {aiInfo.provider} · {aiInfo.model}
                         </span>
                     )}
@@ -152,7 +152,7 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                             <div className={cn(
                                 'rounded-xl p-3 text-sm max-w-[85%]',
                                 msg.role === 'assistant'
-                                    ? 'bg-slate-800/80 text-slate-200 border border-slate-700/50 shadow-sm'
+                                    ? 'bg-slate-800/80 text-slate-200 border border-slate-700/50 shadow-xs'
                                     : 'bg-blue-600/10 text-blue-100 border border-blue-500/20'
                             )}>
                                 {msg.role === 'assistant' ? (
@@ -208,7 +208,7 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                         placeholder={isCase ? 'Ask about this case…' : 'Ask about the queue or SOC topics…'}
                         disabled={isLoadingSession || !session}
                         aria-label="Message the copilot"
-                        className="w-full bg-slate-950/80 border border-slate-700/50 rounded-lg py-3 pl-10 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500/50 focus:border-brand-500/50 transition-all text-slate-200 placeholder:text-slate-600 font-medium disabled:opacity-50"
+                        className="w-full bg-slate-950/80 border border-slate-700/50 rounded-lg py-3 pl-10 pr-10 text-sm focus:outline-hidden focus:ring-1 focus:ring-brand-500/50 focus:border-brand-500/50 transition-all text-slate-200 placeholder:text-slate-600 font-medium disabled:opacity-50"
                     />
                     <Terminal size={14} className="absolute left-3.5 top-3.5 text-slate-500 group-focus-within:text-brand-400 transition-colors" />
                     <button

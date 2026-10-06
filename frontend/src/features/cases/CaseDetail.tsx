@@ -240,7 +240,7 @@ export default function CaseDetail() {
         <PageContainer>
             <div className="min-w-0 flex flex-col bg-white rounded-2xl border border-zinc-200 relative">
                 {/* Top Decoration */}
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl bg-gradient-to-r from-accent-500 via-accent-400 to-accent-500 opacity-50" />
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl bg-linear-to-r from-accent-500 via-accent-400 to-accent-500 opacity-50" />
 
                 {/* Header */}
                 <div className="p-6 pb-2">
@@ -252,7 +252,7 @@ export default function CaseDetail() {
                             <div className="flex items-center gap-3 mb-1">
                                 <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">{caseData.title}</h1>
                                 <span className={cn(
-                                    "px-2.5 py-0.5 rounded text-xs uppercase font-bold border tracking-wider",
+                                    "px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border tracking-wider",
                                     severityColor
                                 )}>
                                     {caseData.severity}
@@ -303,7 +303,7 @@ export default function CaseDetail() {
                                 key={tab}
                                 onClick={() => selectTab(tab)}
                                 className={cn(
-                                    "pb-3 text-sm font-medium transition-colors relative focus:outline-none",
+                                    "pb-3 text-sm font-medium transition-colors relative focus:outline-hidden",
                                     activeTab === tab ? "text-accent-700" : "text-zinc-400 hover:text-zinc-700"
                                 )}
                             >
@@ -311,7 +311,7 @@ export default function CaseDetail() {
                                 {activeTab === tab && (
                                     <motion.div
                                         layoutId="activeTab"
-                                        className="absolute bottom-[-1px] left-0 right-0 h-0.5 bg-accent-600"
+                                        className="absolute -bottom-px left-0 right-0 h-0.5 bg-accent-600"
                                     />
                                 )}
                             </button>
@@ -321,9 +321,9 @@ export default function CaseDetail() {
                         <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 mt-2">
                             <span className="mr-auto">The report has unsaved changes. Discard them and switch to <span className="capitalize font-medium">{pendingTab}</span>?</span>
                             <button onClick={() => { setReportDirty(false); setActiveTab(pendingTab); setPendingTab(null); }}
-                                className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700">Discard</button>
+                                className="px-2 py-1 bg-red-600 text-white rounded-sm hover:bg-red-700">Discard</button>
                             <button onClick={() => setPendingTab(null)}
-                                className="px-2 py-1 bg-white border border-zinc-300 text-zinc-700 rounded hover:bg-zinc-50">Keep editing</button>
+                                className="px-2 py-1 bg-white border border-zinc-300 text-zinc-700 rounded-sm hover:bg-zinc-50">Keep editing</button>
                         </div>
                     )}
                 </div>
@@ -344,7 +344,7 @@ export default function CaseDetail() {
                                     <div className="flex justify-end mb-2">
                                         <button
                                             onClick={() => setShowAddEvent(true)}
-                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded transition-colors flex items-center gap-2"
+                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-2"
                                         >
                                             <Plus size={12} /> Add Event
                                         </button>
@@ -372,7 +372,7 @@ export default function CaseDetail() {
                                                             const t = e.target.value;
                                                             setNewEvent((n) => ({ ...n, event_type: t, content: t === 'comment' ? n.content : stripMentions(n.content) }));
                                                         }}
-                                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
+                                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                     >
                                                         {EVENT_TYPES.map(t => (
                                                             <option key={t} value={t}>{t.replace('_', ' ')}</option>
@@ -390,7 +390,7 @@ export default function CaseDetail() {
                                                         onChange={(e) => setNewEvent({ ...newEvent, content: e.target.value })}
                                                         placeholder="Describe the event..."
                                                         rows={3}
-                                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50 resize-none"
+                                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
                                                     />
                                                     )}
                                                     <div className="flex justify-end gap-2">
@@ -403,7 +403,7 @@ export default function CaseDetail() {
                                                         <button
                                                             onClick={() => addTimelineEventMutation.mutate(newEvent)}
                                                             disabled={!newEvent.content.trim() || addTimelineEventMutation.isPending}
-                                                            className="px-3 py-1.5 text-xs bg-white text-black rounded font-medium hover:bg-zinc-200 disabled:opacity-50 transition-colors"
+                                                            className="px-3 py-1.5 text-xs bg-white text-black rounded-sm font-medium hover:bg-zinc-200 disabled:opacity-50 transition-colors"
                                                         >
                                                             {addTimelineEventMutation.isPending ? 'Adding...' : 'Add Event'}
                                                         </button>
@@ -428,7 +428,7 @@ export default function CaseDetail() {
                                                 <div className="flex flex-col gap-1">
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-xs font-mono text-zinc-400">{formatDateTime(event.created_at, me?.timezone)}</span>
-                                                        <span className="text-[10px] font-mono text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">
+                                                        <span className="text-[10px] font-mono text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-sm">
                                                             {event.event_type?.replace('_', ' ')}
                                                         </span>
                                                         {event.user && (
@@ -448,7 +448,7 @@ export default function CaseDetail() {
                                                                     const t = e.target.value;
                                                                     setEditEventData((d) => ({ ...d, event_type: t, content: t === 'comment' ? d.content : stripMentions(d.content) }));
                                                                 }}
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50"
+                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                             >
                                                                 {EVENT_TYPES.map(t => (
                                                                     <option key={t} value={t}>{t.replace('_', ' ')}</option>
@@ -464,7 +464,7 @@ export default function CaseDetail() {
                                                                 value={editEventData.content}
                                                                 onChange={(e) => setEditEventData({ ...editEventData, content: e.target.value })}
                                                                 rows={3}
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-white/50 resize-none"
+                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
                                                             />
                                                             )}
                                                             <div className="flex justify-end gap-2">
@@ -477,7 +477,7 @@ export default function CaseDetail() {
                                                                 <button
                                                                     onClick={() => updateTimelineEventMutation.mutate({ eventId: event.id, data: editEventData })}
                                                                     disabled={!editEventData.content.trim() || updateTimelineEventMutation.isPending}
-                                                                    className="px-2 py-1 text-xs bg-white text-black rounded font-medium hover:bg-zinc-200 disabled:opacity-50 flex items-center gap-1 transition-colors"
+                                                                    className="px-2 py-1 text-xs bg-white text-black rounded-sm font-medium hover:bg-zinc-200 disabled:opacity-50 flex items-center gap-1 transition-colors"
                                                                 >
                                                                     <Check size={12} /> Save
                                                                 </button>
@@ -493,7 +493,7 @@ export default function CaseDetail() {
                                                                 {canModify(event) && (
                                                                 <button
                                                                     onClick={() => startEditing(event)}
-                                                                    className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded transition-colors"
+                                                                    className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded-sm transition-colors"
                                                                     title="Edit event"
                                                                 >
                                                                     <Pencil size={12} />
@@ -506,7 +506,7 @@ export default function CaseDetail() {
                                                                             deleteTimelineEventMutation.mutate(event.id);
                                                                         }
                                                                     }}
-                                                                    className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded transition-colors"
+                                                                    className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors"
                                                                     title="Delete event"
                                                                 >
                                                                     <Trash2 size={12} />
@@ -541,7 +541,7 @@ export default function CaseDetail() {
                                         <h3 className="text-sm font-semibold text-zinc-700">Case Artifacts</h3>
                                         <button
                                             onClick={() => setShowArtifactModal(true)}
-                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded transition-colors flex items-center gap-2"
+                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-2"
                                         >
                                             <Plus size={12} /> Add Artifact
                                         </button>
@@ -563,13 +563,13 @@ export default function CaseDetail() {
                                                             <div className="flex items-center gap-2 mb-0.5">
                                                                 <p className="text-xs text-zinc-400 uppercase font-bold tracking-wider">{artifact.artifact_type}</p>
                                                                 {isShared && (
-                                                                    <span className="text-[10px] bg-blue-50 text-accent-600 border border-blue-200 px-1.5 py-0.5 rounded uppercase font-bold flex items-center gap-1">
+                                                                    <span className="text-[10px] bg-blue-50 text-accent-600 border border-blue-200 px-1.5 py-0.5 rounded-sm uppercase font-bold flex items-center gap-1">
                                                                         <Link2 size={10} />
                                                                         Shared ({artifact.case_ids.length})
                                                                     </span>
                                                                 )}
                                                                 {artifact.isolated && (
-                                                                    <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded uppercase font-bold">
+                                                                    <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-sm uppercase font-bold">
                                                                         Isolated
                                                                     </span>
                                                                 )}
@@ -588,7 +588,7 @@ export default function CaseDetail() {
                                                                     removeArtifactMutation.mutate(artifact.id);
                                                                 }
                                                             }}
-                                                            className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded transition-colors opacity-0 group-hover/artifact:opacity-100"
+                                                            className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors opacity-0 group-hover/artifact:opacity-100"
                                                             title="Remove from case"
                                                         >
                                                             <Unlink size={14} />
@@ -628,7 +628,7 @@ export default function CaseDetail() {
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-xs font-mono text-zinc-400">{formatDateTime(log.created_at, me?.timezone)}</span>
                                                         <span className={cn(
-                                                            "text-xs font-bold px-2 py-0.5 rounded uppercase",
+                                                            "text-xs font-bold px-2 py-0.5 rounded-sm uppercase",
                                                             log.action === 'create' ? "bg-green-50 text-green-700 border border-green-200" :
                                                                 log.action === 'update' ? "bg-blue-50 text-accent-600 border border-blue-200" :
                                                                     "bg-red-50 text-red-700 border border-red-200"
