@@ -1,0 +1,6 @@
+# The build stage installs its own Linux node_modules; never copy the host's.
+node_modules/
+dist/
+*.log
+.env
+.env.*

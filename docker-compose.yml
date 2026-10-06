@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   app_network:
     driver: bridge
@@ -8,6 +6,8 @@ services:
   backend:
     build: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./backend:/app
       - attachments_data:/data/attachments
@@ -45,6 +45,12 @@ services:
 
   db:
     image: postgres:15
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -64,6 +70,11 @@ services:
   redis:
     image: redis:7
     command: redis-server --requirepass ${REDIS_PASSWORD:-devredispass}
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /data
     environment:
       # lets redis-cli (healthcheck, `docker compose exec redis redis-cli`) authenticate
       - REDISCLI_AUTH=${REDIS_PASSWORD:-devredispass}
@@ -79,6 +90,11 @@ services:
 
   ollama:
     image: ollama/ollama:latest
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       - OLLAMA_MODEL=llama3
@@ -100,7 +116,17 @@ services:
     # -B embeds Celery beat (the periodic-task scheduler) in this same
     # process — fine for a single worker replica; split into a separate
     # `beat` service if this is ever scaled to multiple worker replicas.
-    command: celery -A app.worker.celery_app worker -B --loglevel=info
+    # The schedule file lives in /tmp: the image's /app is not writable by the app user.
+    command: celery -A app.worker.celery_app worker -B --loglevel=info -s /tmp/celerybeat-schedule
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # the image's HEALTHCHECK probes the API; the worker has no HTTP server
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 >/dev/null"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     volumes:
       - ./backend:/app
       - attachments_data:/data/attachments
@@ -131,8 +157,10 @@ services:
 
   frontend:
     build: ./frontend
+    security_opt:
+      - no-new-privileges:true
     ports:
-      - "80:80"
+      - "80:8080"
     environment:
       - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-100}
     depends_on:
