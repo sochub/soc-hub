@@ -4,6 +4,7 @@ updates:
     directory: /
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
+    cooldown: {default-days: 7}
     commit-message: {prefix: "ci"}
     groups:
       actions-minor-patch:
@@ -13,6 +14,7 @@ updates:
     directory: /frontend
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
+    cooldown: {default-days: 7}
     commit-message: {prefix: "build"}
     groups:
       npm-minor-patch:
@@ -22,6 +24,7 @@ updates:
     directory: /backend
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
+    cooldown: {default-days: 7}
     commit-message: {prefix: "build"}
     groups:
       pip-minor-patch:
@@ -31,6 +34,7 @@ updates:
     directory: /backend
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
+    cooldown: {default-days: 7}
     commit-message: {prefix: "build"}
     groups:
       docker-backend-minor-patch:
@@ -40,6 +44,7 @@ updates:
     directory: /frontend
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
+    cooldown: {default-days: 7}
     commit-message: {prefix: "build"}
     groups:
       docker-frontend-minor-patch:
