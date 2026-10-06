@@ -1,0 +1,21 @@
+# Reviewed 2026-10-06: fake credentials in test fixtures and docs examples (e.g. AKIA…EXAMPLE-style, 'sekrit-value').
+e9d78d0f5bf66e1b1a76e2eb1f8f0c3b268e00ae:backend/tests/test_totp.py:generic-api-key:41
+e9d78d0f5bf66e1b1a76e2eb1f8f0c3b268e00ae:backend/tests/test_totp.py:generic-api-key:67
+e9d78d0f5bf66e1b1a76e2eb1f8f0c3b268e00ae:backend/tests/test_totp.py:generic-api-key:146
+93973f644cc7bb205f7485c56fd7f1985b0fd663:backend/tests/test_ai_llm.py:generic-api-key:33
+93973f644cc7bb205f7485c56fd7f1985b0fd663:backend/tests/test_ai_llm.py:generic-api-key:139
+ae385a36882a1161448f839697e1fb6dc1e2b9d0:backend/tests/test_ai_api.py:generic-api-key:22
+34f6695c9de1d4c95b11d8637e8d54a53c454d19:backend/tests/test_ai_errors.py:generic-api-key:47
+34f6695c9de1d4c95b11d8637e8d54a53c454d19:backend/tests/test_ai_errors.py:generic-api-key:48
+e40e58d6b6efbad8ab7cfe2151717225955bef65:backend/tests/test_ai_errors.py:aws-access-token:16
+e40e58d6b6efbad8ab7cfe2151717225955bef65:backend/tests/test_ai_errors.py:aws-access-token:21
+0e247c32aebb39ca8c24f090e187b5be016bf93c:backend/tests/test_ai_aws.py:aws-access-token:104
+0e247c32aebb39ca8c24f090e187b5be016bf93c:backend/tests/test_ai_aws.py:aws-access-token:114
+0f13d10883b8fb5e8d84770e6a428e3457b72f6c:backend/tests/test_slack_signature.py:generic-api-key:12
+e94bee351094886bacbd2c36dcdb2a7867ab3331:backend/verify_webhooks.py:generic-api-key:28
+615a3688d78766248b1050c323566e063d6c603e:docs/superpowers/plans/2026-09-30-ai-providers.md:generic-api-key:683
+615a3688d78766248b1050c323566e063d6c603e:docs/superpowers/plans/2026-09-30-ai-providers.md:generic-api-key:1231
+615a3688d78766248b1050c323566e063d6c603e:docs/superpowers/plans/2026-09-30-ai-providers.md:private-key:99
+615a3688d78766248b1050c323566e063d6c603e:docs/superpowers/plans/2026-09-30-ai-providers.md:aws-access-token:97
+615a3688d78766248b1050c323566e063d6c603e:docs/superpowers/plans/2026-09-30-ai-providers.md:aws-access-token:102
+92e907da0eeedc1ce76a708d0be957bd2f14deab:docs/superpowers/plans/2026-09-29-workflows-slack.md:generic-api-key:4697

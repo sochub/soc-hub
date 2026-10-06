@@ -182,7 +182,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                     {secretFields.map((f) => (
                         <label key={f} className="block"><span className="label-mono">{FIELD_LABEL[f]}{secretIsSet(f) && <span className="ml-2 text-emerald-700">· set</span>}</span>
                             {f === 'service_account_json'
-                                ? <textarea rows={4} className={`${input} font-mono text-xs`} value={(form[`secret_${f}`] as string) ?? ''} onChange={(e) => set(`secret_${f}`, e.target.value)} placeholder={secretIsSet(f) ? '•••• (saved — leave blank to keep)' : '{ "type": "service_account", … }'} />
+                                ? <textarea rows={4} className={`${input} font-mono text-xs`} value={(form[`secret_${f}`] as string) ?? ''} onChange={(e) => set(`secret_${f}`, e.target.value)} placeholder={secretIsSet(f) ? '•••• (saved — leave blank to keep)' : 'Paste the service-account JSON key'} />
                                 : <input type="password" autoComplete="off" className={`${input} font-mono`} value={(form[`secret_${f}`] as string) ?? ''} onChange={(e) => set(`secret_${f}`, e.target.value)} placeholder={secretIsSet(f) ? '•••• (saved — leave blank to keep)' : ''} />}
                         </label>
                     ))}
