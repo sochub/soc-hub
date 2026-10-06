@@ -34,7 +34,7 @@ def _strings(o):
 
 def _log_secret_use(tenant_id, names, host, outcome):
     # names/ids/hosts only, never values
-    logger.info("secret use tenant=%s names=%s host=%s outcome=%s", tenant_id, sorted(names), host, outcome)
+    logger.info("secret use tenant=%s names=%s host=%s outcome=%s", tenant_id, sorted(names), host, outcome)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- names/hosts only, never values
 
 
 @executor("http_request")

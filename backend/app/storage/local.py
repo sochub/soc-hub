@@ -27,7 +27,7 @@ class LocalStorage:
             root = root / comp
             if not root.exists():
                 root.mkdir()
-                os.chmod(root, 0o700)
+                os.chmod(root, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions -- 0700 is owner-only
 
     async def put(self, key, chunks) -> int:
         path = self._path(key)

@@ -94,7 +94,7 @@ async def _insert(db: AsyncSession, tenant_id: int, user_id: int, name: str, val
     exists = (await db.execute(select(TenantSecret.id).where(
         TenantSecret.tenant_id == tenant_id, TenantSecret.name == name))).first()
     if exists:
-        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)
+        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
         raise HTTPException(status_code=409, detail="A secret with this name already exists")
     row = TenantSecret(tenant_id=tenant_id, name=name, value_enc=encrypt(value), allowed_hosts=hosts,
                        description=description, created_by=user_id, updated_by=user_id)
@@ -103,7 +103,7 @@ async def _insert(db: AsyncSession, tenant_id: int, user_id: int, name: str, val
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)
+        logger.info("secret create tenant=%s name=%s outcome=duplicate", tenant_id, name)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
         raise HTTPException(status_code=409, detail="A secret with this name already exists")
     await create_audit_log(db=db, entity_type="secret", entity_id=row.id, action="create", tenant_id=tenant_id,
                            user_id=user_id, changes={"name": row.name, "fields": ["value", "allowed_hosts", "description"]})
@@ -139,7 +139,7 @@ async def create_secret(body: SecretCreate, db: AsyncSession = Depends(deps.get_
     row = await _insert(db, tenant_id, current_user.id, body.name, body.value, body.allowed_hosts, body.description)
     await db.commit()
     await db.refresh(row)
-    logger.info("secret create tenant=%s name=%s outcome=ok", tenant_id, row.name)
+    logger.info("secret create tenant=%s name=%s outcome=ok", tenant_id, row.name)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
     return _out(row, {current_user.id: current_user.email}, [])
 
 
@@ -169,7 +169,7 @@ async def update_secret(name: str, body: SecretUpdate, db: AsyncSession = Depend
                                user_id=current_user.id, changes={"name": row.name, "fields": fields})
     await db.commit()
     await db.refresh(row)
-    logger.info("secret update tenant=%s name=%s outcome=ok", tenant_id, name)
+    logger.info("secret update tenant=%s name=%s outcome=ok", tenant_id, name)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
     return _out(row, await _emails(db, [row]), await _in_use_by(db, tenant_id, name))
 
 
@@ -180,14 +180,14 @@ async def delete_secret(name: str, force: bool = False, db: AsyncSession = Depen
     row = await _get(db, tenant_id, name)
     in_use = await _in_use_by(db, tenant_id, name)
     if in_use and not force:
-        logger.info("secret delete tenant=%s name=%s outcome=in_use", tenant_id, name)
+        logger.info("secret delete tenant=%s name=%s outcome=in_use", tenant_id, name)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
         return JSONResponse(status_code=409, content={
             "detail": f"Secret {name} is used by {len(in_use)} workflow(s)", "workflows": in_use})
     await create_audit_log(db=db, entity_type="secret", entity_id=row.id, action="delete", tenant_id=tenant_id,
                            user_id=current_user.id, changes={"name": name, "fields": []})
     await db.delete(row)
     await db.commit()
-    logger.info("secret delete tenant=%s name=%s outcome=ok", tenant_id, name)
+    logger.info("secret delete tenant=%s name=%s outcome=ok", tenant_id, name)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
     return Response(status_code=204)
 
 
@@ -243,7 +243,7 @@ def _decrypt_or_409(row: TenantSecret) -> str:
     try:
         return decrypt(row.value_enc)
     except Exception:
-        logger.info("secret convert name=%s outcome=undecryptable", row.name)
+        logger.info("secret convert name=%s outcome=undecryptable", row.name)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
         raise HTTPException(status_code=409, detail=f"Secret {row.name} could not be decrypted — re-enter it in Integrations") from None
 
 
@@ -279,12 +279,12 @@ async def _convert(db, workflow_id, body, current_user, tenant_id):
             if it["secret_name"] not in created and it["secret_name"] not in reused:
                 reused.append(it["secret_name"])
         else:
-            logger.info("secret convert tenant=%s name=%s outcome=conflict", tenant_id, it["secret_name"])
+            logger.info("secret convert tenant=%s name=%s outcome=conflict", tenant_id, it["secret_name"])  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
             raise HTTPException(status_code=409, detail=f"Secret {it['secret_name']} already exists with a different value")
     names = await _secret_names(db, tenant_id) | {i["secret_name"] for i in todo}
     await save_workflow(db, wf, name=wf.name, description=wf.description, trigger_type=wf.trigger_type,
                         trigger_filter=wf.trigger_filter, graph=apply_conversion(wf.graph, todo),
                         names=names, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
-    logger.info("secret convert tenant=%s workflow=%s created=%s reused=%s outcome=ok", tenant_id, workflow_id, created, reused)
+    logger.info("secret convert tenant=%s workflow=%s created=%s reused=%s outcome=ok", tenant_id, workflow_id, created, reused)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- secret names only, never values
     return {"workflow_id": workflow_id, "version": wf.version, "created": created, "reused": reused}
