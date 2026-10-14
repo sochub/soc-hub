@@ -3,10 +3,12 @@ import secrets
 from io import BytesIO
 
 import httpx
+import pytest
 from PIL import Image
 from sqlalchemy import delete, select
 
 from app.core import security
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
@@ -17,6 +19,12 @@ from app.models.user import User
 from app.storage import get_storage
 
 URL = "/api/v1/users/me/avatar"
+
+
+@pytest.fixture(autouse=True)
+def _tmp_storage(monkeypatch, tmp_path):
+    # Default STORAGE_LOCAL_PATH is the container volume (/data); keep tests off it.
+    monkeypatch.setattr(settings, "STORAGE_LOCAL_PATH", str(tmp_path))
 
 
 def _png(size=(600, 400), mode="RGB", fmt="PNG", **kw):
