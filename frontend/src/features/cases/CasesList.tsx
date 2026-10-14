@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Clock, AlertCircle, CheckCircle, XCircle, Plus, Search, ChevronDown } from 'lucide-react';
+import { Clock, AlertCircle, CheckCircle, XCircle, Plus, Search, ChevronDown, LayoutList, Columns3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useState } from 'react';
 import NewCaseModal from './NewCaseModal';
+import CasesBoard from './CasesBoard';
 import { SLABadge } from './SLABadge';
 import type { SLAStatus } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
@@ -44,6 +45,13 @@ export default function CasesList() {
     const [severityFilter, setSeverityFilter] = useState<string>(searchParams.get('severity') || 'all');
     const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
     const [tagFilter, setTagFilter] = useState<string>('all');
+    const [view, setView] = useState<'table' | 'board'>(() => {
+        try { return localStorage.getItem('cases:view') === 'board' ? 'board' : 'table'; } catch { return 'table'; }
+    });
+    const changeView = (v: 'table' | 'board') => {
+        setView(v);
+        try { localStorage.setItem('cases:view', v); } catch { /* storage unavailable */ }
+    };
     const queryClient = useQueryClient();
 
     const { data: cases, isLoading } = useQuery<Case[]>({
@@ -187,12 +195,28 @@ export default function CasesList() {
                             className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
                         >
                             <option value="all">All Statuses</option>
+                            <option value="new">New</option>
                             <option value="open">Open</option>
-                            <option value="investigating">Investigating</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="pending">Pending</option>
                             <option value="resolved">Resolved</option>
                             <option value="closed">Closed</option>
                         </select>
                         <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    </div>
+
+                    <div className="flex border border-zinc-200 rounded-lg overflow-hidden">
+                        {([['table', LayoutList], ['board', Columns3]] as const).map(([v, Icon]) => (
+                            <button
+                                key={v}
+                                onClick={() => changeView(v)}
+                                title={v === 'table' ? 'Table view' : 'Board view'}
+                                aria-pressed={view === v}
+                                className={cn("px-2 py-1.5", view === v ? "bg-zinc-900 text-white" : "bg-white text-zinc-500 hover:text-zinc-800")}
+                            >
+                                <Icon size={14} />
+                            </button>
+                        ))}
                     </div>
 
                     <button
@@ -205,7 +229,9 @@ export default function CasesList() {
                 </div>
             </div>
 
-            {/* Dense Table View */}
+            {view === 'board' ? (
+                <CasesBoard cases={filteredCases} severityConfig={severityConfig} />
+            ) : (
             <div className="glass-panel rounded-lg border border-zinc-200 overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
@@ -292,6 +318,7 @@ export default function CasesList() {
                     </table>
                 </div>
             </div>
+            )}
 
             {/* New Case Modal */}
             <NewCaseModal
