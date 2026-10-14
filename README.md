@@ -10,6 +10,8 @@ FastAPI · React 19 · PostgreSQL · Ollama
 
 <img src="docs/images/dashboard.png" alt="SOC Hub operations dashboard" width="900" />
 
+▶️ [Watch the 40-second product tour](docs/media/tour.mp4)
+
 </div>
 
 ---
@@ -35,7 +37,7 @@ leaves your infrastructure) and proposes actions you explicitly approve.
 - 📝 **Incident reports**: an AI-assisted draft plus analyst editing.
   - Includes TTD/TTC/TTR and swimlane timeline charts.
   - Exports to PDF or JSON with TLP marking.
-- ⚙️ **Automations**: a visual workflow builder with conditions, loops, case and alert actions, and HTTP requests.
+- ⚙️ **Workflows**: a visual workflow builder with conditions, loops, case and alert actions, and HTTP requests.
   - Includes Slack messages and "ask a person" buttons, plus dry runs.
 - 🔑 **Workflow secrets**: encrypted credentials bound to allowed hosts.
   - They're inserted only at send time and redacted from run history.
@@ -52,6 +54,20 @@ leaves your infrastructure) and proposes actions you explicitly approve.
   - security headers and full audit logging.
 
 ## Screenshots
+
+### 🧭 Kanban board, My Queue and ⌘K
+
+Drag cases across status columns, see what needs you in **My Queue**, and press
+<kbd>⌘K</kbd> / <kbd>Ctrl+K</kbd> to jump to any case, IOC, artifact or page.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/cases-board.png" alt="Cases Kanban board" /></td>
+<td width="50%"><img src="docs/images/queue.png" alt="My Queue: assigned, SLA pressure, inbox" /></td>
+</tr>
+</table>
+
+<img src="docs/images/command-palette.png" alt="Command palette" width="900" />
 
 ### 🗂️ Cases: AI triage, timeline and @mentions
 
@@ -87,7 +103,7 @@ as a TLP-marked PDF or as JSON.
 
 <img src="docs/images/investigation-graph.png" alt="Investigation graph" width="900" />
 
-### ⚙️ Automations
+### ⚙️ Workflows
 
 A visual workflow editor with typed node inspectors, dry runs and run history.
 Steps include Slack "ask a person" prompts, HTTP calls and case actions.

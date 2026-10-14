@@ -1,0 +1,28 @@
+WEBVTT
+
+00:00.000 --> 00:04.583
+Overview: trends, severity mix, aging and SLA at a glance
+
+00:04.583 --> 00:09.013
+My Queue: what is assigned to you, SLA pressure and your inbox
+
+00:09.013 --> 00:13.789
+Cases as a Kanban board: drag a card to change its status
+
+00:13.789 --> 00:16.992
+Press ⌘K to jump to any case, IOC or page
+
+00:16.992 --> 00:20.194
+Cases open with AI triage: severity, tags, playbook and related cases
+
+00:20.194 --> 00:25.749
+The copilot runs on a local model and proposes, you confirm
+
+00:25.749 --> 00:30.940
+Import MITRE-mapped IR playbooks from the marketplace
+
+00:30.940 --> 00:36.522
+Build workflows visually: triggers, case actions, Slack approvals
+
+00:36.522 --> 00:42.592
+The investigation graph links cases through shared indicators
