@@ -34,7 +34,7 @@ export default function CopilotWidget() {
                 animate={{ scale: open ? 0 : 1, opacity: open ? 0 : 1 }}
                 transition={{ duration: 0.15 }}
                 aria-label="Open copilot"
-                className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-2xl bg-linear-to-tr from-accent to-accent text-on-accent shadow-xl shadow-accent/30 flex items-center justify-center hover:shadow-brand-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-2xl bg-brand-gradient shadow-xl shadow-accent/30 flex items-center justify-center hover:shadow-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
             >
                 <Sparkles size={24} />
             </motion.button>

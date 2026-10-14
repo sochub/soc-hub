@@ -82,12 +82,12 @@
 
 @utility console-grid {
   /* Faint engineering dot-grid backdrop for the console canvas. */
-  background-image: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.035) 1px,
-    transparent 1px
-  );
-  background-size: 22px 22px;
+  /* sochub.io: faint dot grid + violet glow in the top-right corner */
+  background-image:
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgb(138 43 226 / 0.12), transparent 70%),
+    radial-gradient(circle, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 22px 22px;
+  background-attachment: local, local;
 }
 
 /* Custom Utilities for Glow Effects */
@@ -122,6 +122,11 @@
 }
 
 @layer base {
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
   body {
     @apply bg-canvas text-fg font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;

@@ -403,7 +403,7 @@ export default function CaseDetail() {
                                                         <button
                                                             onClick={() => addTimelineEventMutation.mutate(newEvent)}
                                                             disabled={!newEvent.content.trim() || addTimelineEventMutation.isPending}
-                                                            className="px-3 py-1.5 text-xs bg-panel text-on-accent rounded-sm font-medium hover:bg-raised-2 disabled:opacity-50 transition-colors"
+                                                            className="px-3 py-1.5 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50 transition-colors"
                                                         >
                                                             {addTimelineEventMutation.isPending ? 'Adding...' : 'Add Event'}
                                                         </button>
@@ -477,7 +477,7 @@ export default function CaseDetail() {
                                                                 <button
                                                                     onClick={() => updateTimelineEventMutation.mutate({ eventId: event.id, data: editEventData })}
                                                                     disabled={!editEventData.content.trim() || updateTimelineEventMutation.isPending}
-                                                                    className="px-2 py-1 text-xs bg-panel text-on-accent rounded-sm font-medium hover:bg-raised-2 disabled:opacity-50 flex items-center gap-1 transition-colors"
+                                                                    className="px-2 py-1 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50 flex items-center gap-1 transition-colors"
                                                                 >
                                                                     <Check size={12} /> Save
                                                                 </button>

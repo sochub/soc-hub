@@ -142,7 +142,7 @@ function Editor() {
             setBanner(saved.validation_errors.length ? `Saved with ${saved.validation_errors.length} problem(s)` : 'Saved');
             qc.invalidateQueries({ queryKey: ['workflows'] });
             qc.setQueryData(['workflow', String(saved.id)], saved);
-            if (isNew) navigate(`/automations/${saved.id}`, { replace: true });
+            if (isNew) navigate(`/workflows/${saved.id}`, { replace: true });
         },
         onError: (err: ApiErr) => {
             const detail = err?.response?.data?.detail;
@@ -165,7 +165,7 @@ function Editor() {
     return (
         <div className="flex flex-col h-[calc(100vh-3.5rem)]">
             <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-panel flex-wrap">
-                <Link to="/automations" className="p-1 text-fg-3 hover:text-fg" aria-label="Back"><ArrowLeft size={18} /></Link>
+                <Link to="/workflows" className="p-1 text-fg-3 hover:text-fg" aria-label="Back"><ArrowLeft size={18} /></Link>
                 <input className="text-base font-semibold text-fg border-b border-transparent focus:border-accent outline-hidden min-w-[220px]"
                     disabled={readOnly} value={meta.name} onChange={(e) => setMeta({ ...meta, name: e.target.value })} aria-label="Workflow name" />
                 {wf && <span className="num text-xs text-muted">v{wf.version}</span>}

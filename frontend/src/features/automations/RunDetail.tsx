@@ -55,7 +55,7 @@ export function StepPanel({ step, children = [] }: { step: RunStep; children?: C
                             <li key={c.id} className="flex items-center gap-2 px-2 py-1.5 text-xs">
                                 <span className="num w-10">#{c.loop_index}</span>
                                 <StatusBadge status={c.status} />
-                                <Link to={`/automations/runs/${c.id}`} className="ml-auto text-accent hover:underline">open</Link>
+                                <Link to={`/workflows/runs/${c.id}`} className="ml-auto text-accent hover:underline">open</Link>
                             </li>
                         ))}
                     </ul>
@@ -93,7 +93,7 @@ function Detail() {
     return (
         <div className="flex flex-col h-[calc(100vh-3.5rem)]">
             <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-panel flex-wrap">
-                <Link to={run.parent_run_id ? `/automations/runs/${run.parent_run_id}` : `/automations/${run.workflow_id}`} className="p-1 text-fg-3 hover:text-fg" aria-label="Back"><ArrowLeft size={18} /></Link>
+                <Link to={run.parent_run_id ? `/workflows/runs/${run.parent_run_id}` : `/workflows/${run.workflow_id}`} className="p-1 text-fg-3 hover:text-fg" aria-label="Back"><ArrowLeft size={18} /></Link>
                 <span className="font-semibold text-fg">{run.workflow_name}</span>
                 <span className="num text-xs text-muted">run {run.id} · v{run.workflow_version}{run.loop_index !== null && ` · item ${run.loop_index}`}</span>
                 <StatusBadge status={run.status} />

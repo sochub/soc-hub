@@ -94,7 +94,7 @@ export default function TenantSwitcher() {
             {mfaBlocked && (
                 <p role="alert" className="mt-1.5 px-1 text-xs text-red-300">
                     That tenant requires two-factor authentication.{' '}
-                    <Link to="/profile" className="underline font-medium" onClick={() => { setMfaBlocked(false); setOpen(false); }}>
+                    <Link to="/settings/profile" className="underline font-medium" onClick={() => { setMfaBlocked(false); setOpen(false); }}>
                         Set it up in your profile
                     </Link>{' '}then try again.
                 </p>

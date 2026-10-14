@@ -131,11 +131,11 @@ export default function AutomationsList() {
         <PageContainer className="space-y-0">
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
-                    <h1 className="text-xl font-semibold tracking-tight text-fg">Automations</h1>
+                    <h1 className="text-xl font-semibold tracking-tight text-fg">Workflows</h1>
                     <p className="label-mono mt-1">workflows for cases and alerts</p>
                 </div>
                 {isAdmin && (
-                    <button onClick={() => navigate('/automations/new')}
+                    <button onClick={() => navigate('/workflows/new')}
                         className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover">
                         <Plus size={15} /> New workflow
                     </button>
@@ -179,7 +179,7 @@ export default function AutomationsList() {
                             {workflows.map((w) => (
                                 <tr key={w.id} className="hover:bg-surface">
                                     <td className="px-4 py-2.5">
-                                        <Link to={`/automations/${w.id}`} className="font-medium text-fg hover:text-accent">{w.name}</Link>
+                                        <Link to={`/workflows/${w.id}`} className="font-medium text-fg hover:text-accent">{w.name}</Link>
                                         {w.description && <div className="text-xs text-fg-3">{w.description}</div>}
                                     </td>
                                     <td className="px-4 py-2.5 font-mono text-xs text-fg-2">{TRIGGER_LABEL[w.trigger_type]}</td>

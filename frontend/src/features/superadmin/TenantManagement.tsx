@@ -43,7 +43,7 @@ export default function TenantManagement() {
                 ) : tenants.map(tenant => (
                     <button
                         key={tenant.id}
-                        onClick={() => navigate(`/superadmin/tenants/${tenant.id}`)}
+                        onClick={() => navigate(`/settings/tenants/${tenant.id}`)}
                         className="flex items-center gap-4 p-4 bg-panel border border-line rounded-xl hover:bg-raised transition-colors text-left w-full"
                     >
                         <div className="w-10 h-10 rounded-lg bg-raised flex items-center justify-center shrink-0">

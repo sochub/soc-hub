@@ -100,7 +100,7 @@ export default function NotificationBell() {
                             className="text-xs text-accent hover:underline disabled:text-muted disabled:no-underline">
                             Mark all read
                         </button>
-                        <Link to="/notifications" onClick={() => setOpen(false)} className="text-xs text-accent hover:underline">
+                        <Link to="/queue" onClick={() => setOpen(false)} className="text-xs text-accent hover:underline">
                             View all
                         </Link>
                     </div>

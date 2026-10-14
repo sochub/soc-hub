@@ -238,7 +238,7 @@ export default function Settings() {
     return (
         <PageContainer width="narrow">
             <div>
-                <h1 className="text-xl font-semibold text-fg tracking-tight">Settings</h1>
+                <h1 className="text-xl font-semibold text-fg tracking-tight">Tenant settings</h1>
                 <p className="label-mono mt-1">tenant configuration</p>
             </div>
 

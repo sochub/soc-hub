@@ -8,9 +8,9 @@ const SIZES = { md: 'max-w-lg', lg: 'max-w-3xl', xl: 'max-w-5xl' } as const;
 /** Shared light-theme class strings for modal form controls and footer buttons. */
 export const modalInput = 'w-full bg-panel border border-line-strong px-3 py-2 text-sm text-fg placeholder:text-muted focus:outline-hidden focus:border-accent focus:ring-1 focus:ring-accent';
 export const modalLabel = 'block text-xs font-medium text-fg-2 mb-1.5';
-export const btnPrimary = 'h-9 px-4 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
-export const btnSecondary = 'h-9 px-4 border border-line-strong bg-panel text-fg-2 text-sm hover:bg-surface disabled:opacity-50 inline-flex items-center gap-1.5';
-export const btnDanger = 'h-9 px-4 bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
+export const btnPrimary = 'h-9 px-4 rounded-full bg-brand-gradient text-sm font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
+export const btnSecondary = 'h-9 px-4 rounded-full border border-line-strong bg-panel text-fg-2 text-sm hover:bg-surface disabled:opacity-50 inline-flex items-center gap-1.5';
+export const btnDanger = 'h-9 px-4 rounded-full bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
 
 const FOCUSABLE = 'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
 

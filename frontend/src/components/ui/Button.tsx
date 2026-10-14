@@ -6,7 +6,7 @@ type Size = 'sm' | 'md' | 'lg' | 'icon';
 
 const variants: Record<Variant, string> = {
     primary:
-        'bg-accent text-on-accent font-semibold hover:bg-accent shadow-xs hover:shadow-brand-glow',
+        'bg-brand-gradient font-semibold hover:opacity-90 shadow-xs hover:shadow-glow',
     secondary:
         'bg-raised text-fg hover:bg-raised-2 border border-line',
     outline:
@@ -34,7 +34,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
             type={type}
             className={cn(
                 'inline-flex items-center justify-center font-medium transition-all',
-                'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
+                'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas',
                 'disabled:opacity-50 disabled:pointer-events-none',
                 variants[variant],
                 sizes[size],

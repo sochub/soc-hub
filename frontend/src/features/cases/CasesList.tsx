@@ -39,17 +39,18 @@ const statusConfig: Record<string, { icon: any; color: string }> = {
 };
 
 export default function CasesList() {
-    const [searchParams] = useSearchParams();
-    const [showNewCaseModal, setShowNewCaseModal] = useState(false);
+    const [searchParams, setSearchParams] = useSearchParams();
+    const [modalOpen, setShowNewCaseModal] = useState(false);
+    const showNewCaseModal = modalOpen || searchParams.get('new') === '1'; // ⌘K "New case" deep link
     const [searchQuery, setSearchQuery] = useState('');
     const [severityFilter, setSeverityFilter] = useState<string>(searchParams.get('severity') || 'all');
     const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
     const [tagFilter, setTagFilter] = useState<string>('all');
-    const [view, setView] = useState<'table' | 'board'>(() => {
-        try { return localStorage.getItem('cases:view') === 'board' ? 'board' : 'table'; } catch { return 'table'; }
-    });
+    // URL wins (shareable links), else the last view this browser used
+    const storedView = (() => { try { return localStorage.getItem('cases:view'); } catch { return null; } })();
+    const view: 'table' | 'board' = (searchParams.get('view') ?? storedView) === 'board' ? 'board' : 'table';
     const changeView = (v: 'table' | 'board') => {
-        setView(v);
+        setSearchParams(p => { p.set('view', v); return p; }, { replace: true });
         try { localStorage.setItem('cases:view', v); } catch { /* storage unavailable */ }
     };
     const queryClient = useQueryClient();
@@ -108,6 +109,7 @@ export default function CasesList() {
 
     const closeModal = () => {
         setShowNewCaseModal(false);
+        if (searchParams.has('new')) setSearchParams(p => { p.delete('new'); return p; }, { replace: true });
     };
 
     const filteredCases = cases?.filter(c => {
@@ -138,7 +140,7 @@ export default function CasesList() {
             {/* Improved Header with Filters */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-fg tracking-tight">Engineering Cases</h1>
+                    <h1 className="text-2xl font-bold text-fg tracking-tight">Cases</h1>
                     <p className="text-fg-3 text-sm mt-0.5">
                         {filteredCases.length} records found
                     </p>
@@ -221,7 +223,7 @@ export default function CasesList() {
 
                     <button
                         onClick={() => setShowNewCaseModal(true)}
-                        className="px-3 py-1.5 bg-raised hover:bg-panel text-on-accent rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5 shadow-xs ml-2"
+                        className="px-3.5 py-1.5 bg-brand-gradient hover:opacity-90 rounded-full text-sm font-semibold transition-opacity flex items-center gap-1.5 ml-2"
                     >
                         <Plus size={16} />
                         New Case

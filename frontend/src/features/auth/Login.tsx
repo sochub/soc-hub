@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldAlert, KeyRound, ArrowLeft } from 'lucide-react';
+import { KeyRound, ArrowLeft } from 'lucide-react';
 import { api } from '../../api/client';
 import { Button, Input, Label } from '../../components/ui';
 import MfaSetupDialog from '../profile/MfaSetupDialog';
@@ -108,14 +108,12 @@ export default function Login() {
                 <div className="w-full max-w-sm space-y-8">
                     <div className="space-y-2">
                         <div className="flex items-center gap-2.5 mb-6">
-                            <div className="w-9 h-9 flex items-center justify-center bg-accent/15 border border-accent/30 rounded-lg">
-                                <ShieldAlert size={20} className="text-accent" />
+                            <div className="w-9 h-9 flex items-center justify-center bg-brand-gradient rounded-lg font-mono text-xs font-bold">
+                                SH
                             </div>
-                            <span className="text-lg font-bold tracking-tight">
-                                SOC<span className="text-accent">HUB</span>
-                            </span>
+                            <span className="font-display text-xl font-semibold tracking-tight">sochub</span>
                         </div>
-                        <h1 className="text-3xl font-bold tracking-tight">Access Portal</h1>
+                        <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
                         <p className="text-fg-2">Enter your credentials to access the SOC hub.</p>
                     </div>
 
@@ -261,7 +259,7 @@ export default function Login() {
             <div className="hidden lg:flex items-center justify-center bg-canvas relative overflow-hidden">
                 <div className="absolute inset-0 bg-linear-to-tr from-accent/20 to-raised/40" />
                 <div className="relative z-10 text-center space-y-4 p-8">
-                    <h2 className="text-4xl font-bold bg-linear-to-br from-panel to-raised bg-clip-text text-transparent">
+                    <h2 className="text-4xl font-bold text-brand-gradient">
                         Secure Operations
                     </h2>
                     <p className="text-fg-2 max-w-md mx-auto">

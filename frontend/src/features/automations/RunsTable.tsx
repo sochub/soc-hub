@@ -59,7 +59,7 @@ export default function RunsTable({ workflowId, caseId }: { workflowId?: number;
                     {!isLoading && runs.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-muted">No runs yet</td></tr>}
                     {runs.map((r) => (
                         <tr key={r.id} className="hover:bg-surface">
-                            <td className="px-4 py-2 num"><Link to={`/automations/runs/${r.id}`} className="text-accent hover:underline">{r.id}</Link></td>
+                            <td className="px-4 py-2 num"><Link to={`/workflows/runs/${r.id}`} className="text-accent hover:underline">{r.id}</Link></td>
                             <td className="px-4 py-2">{r.workflow_name ?? r.workflow_id} <span className="num text-xs text-muted">v{r.workflow_version}</span></td>
                             <td className="px-4 py-2 flex items-center gap-1.5">
                                 <StatusBadge status={r.status} />

@@ -135,7 +135,7 @@ export default function TenantDetail() {
     return (
         <PageContainer>
             <button
-                onClick={() => navigate('/superadmin/tenants')}
+                onClick={() => navigate('/settings/tenants')}
                 className="flex items-center gap-2 text-sm text-fg-3 hover:text-fg transition-colors"
             >
                 <ArrowLeft size={16} />

@@ -23,7 +23,7 @@ export default function CaseAutomation({ caseId }: { caseId: number }) {
 
     const run = useMutation({
         mutationFn: async () => (await api.post(`/workflows/${picked}/run`, { case_id: caseId })).data as { run_id: number },
-        onSuccess: ({ run_id }) => { qc.invalidateQueries({ queryKey: ['workflow-runs'] }); navigate(`/automations/runs/${run_id}`); },
+        onSuccess: ({ run_id }) => { qc.invalidateQueries({ queryKey: ['workflow-runs'] }); navigate(`/workflows/runs/${run_id}`); },
         onError: (err: { response?: { data?: { detail?: unknown } } }) => { const d = err?.response?.data?.detail; setError(typeof d === 'string' ? d : 'Run failed'); },
     });
 
@@ -56,7 +56,7 @@ export function AlertRuns({ alertId }: { alertId: number }) {
         <div className="flex items-center gap-3 flex-wrap text-xs mb-2">
             <span className="label-mono">automation</span>
             {runs.map((r) => (
-                <Link key={r.id} to={`/automations/runs/${r.id}`} className="flex items-center gap-1.5 text-accent hover:underline">
+                <Link key={r.id} to={`/workflows/runs/${r.id}`} className="flex items-center gap-1.5 text-accent hover:underline">
                     {r.workflow_name} <StatusBadge status={r.status} />
                 </Link>
             ))}

@@ -6,7 +6,8 @@ import { NotificationRow } from './NotificationBell';
 import { useOpenNotification } from './useOpenNotification';
 import { PAGE_SIZE, fetchNotifications, markAllRead, useTenantId, useUnreadCount } from './api';
 
-export default function NotificationsPage() {
+/** `bare` drops the page wrapper so My Queue can embed the inbox. */
+export default function NotificationsPage({ bare = false }: { bare?: boolean }) {
     const [unreadOnly, setUnreadOnly] = useState(false);
     const qc = useQueryClient();
     const open = useOpenNotification();
@@ -30,10 +31,10 @@ export default function NotificationsPage() {
     const tab = (active: boolean) => cn('px-3 py-1.5 text-sm border-b-2 -mb-px',
         active ? 'border-accent text-fg font-medium' : 'border-transparent text-fg-3 hover:text-fg');
 
-    return (
-        <PageContainer width="narrow">
+    const body = (
+        <>
             <div className="flex items-center justify-between">
-                <h1 className="text-lg font-semibold text-fg">Notifications</h1>
+                <h1 className={bare ? 'label-mono' : 'text-lg font-semibold text-fg'}>{bare ? '// inbox' : 'Notifications'}</h1>
                 <button type="button" onClick={() => readAll.mutate()} disabled={count === 0 || readAll.isPending}
                     className="text-sm text-accent hover:underline disabled:text-muted disabled:no-underline">Mark all read</button>
             </div>
@@ -58,6 +59,7 @@ export default function NotificationsPage() {
                     </button>
                 </div>
             )}
-        </PageContainer>
+        </>
     );
+    return bare ? <div className="space-y-3">{body}</div> : <PageContainer width="narrow">{body}</PageContainer>;
 }

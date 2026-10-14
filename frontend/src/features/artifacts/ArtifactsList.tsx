@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link } from 'react-router-dom';
@@ -19,6 +20,7 @@ const ARTIFACT_ICONS: Record<string, any> = {
 export default function ArtifactsList() {
     const queryClient = useQueryClient();
     const { options: ARTIFACT_TYPE_OPTIONS } = useArtifactTypes();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editData, setEditData] = useState({ artifact_type: '', value: '', description: '' });
 
@@ -83,9 +85,12 @@ export default function ArtifactsList() {
         <PageContainer>
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-fg tracking-tight mb-1">Artifact Repository</h1>
-                    <p className="text-fg-3 text-sm">Centralized view of all Indicators of Compromise (IOCs) and evidence.</p>
+                    <h1 className="text-2xl font-bold text-fg tracking-tight mb-1">Artifacts</h1>
+                    <p className="text-fg-3 text-sm">Every value observed across cases. Confirmed-malicious ones live under IOCs.</p>
                 </div>
+                <input type="search" value={searchParams.get('q') ?? ''} placeholder="Filter by value…"
+                    onChange={e => setSearchParams(e.target.value ? { q: e.target.value } : {}, { replace: true })}
+                    className="w-56 bg-surface border border-line rounded-full px-3 py-1.5 text-sm text-fg placeholder:text-muted focus:outline-hidden focus:ring-1 focus:ring-accent" />
             </div>
 
             {artifacts && artifacts.length > 0 ? (
@@ -102,7 +107,7 @@ export default function ArtifactsList() {
                         </thead>
                         <tbody className="divide-y divide-line">
                             <AnimatePresence>
-                                {artifacts.map((artifact: any) => {
+                                {artifacts.filter((a: { value: string }) => String(a.value).toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase())).map((artifact: any) => {
                                     const isEditing = editingId === artifact.id;
                                     const Icon = ARTIFACT_ICONS[artifact.artifact_type] || FileText;
                                     const caseIds: number[] = artifact.case_ids || [];

@@ -25,7 +25,7 @@ export default function ApiDocs() {
                 <ol className="text-sm text-fg-2 list-decimal list-inside space-y-1">
                     <li>
                         Create a webhook on the{' '}
-                        <Link to="/integrations" className="text-accent hover:underline">Integrations</Link>{' '}
+                        <Link to="/settings/integrations" className="text-accent hover:underline">Integrations</Link>{' '}
                         page (admin only). Each webhook has its own <span className="font-mono">X-API-Key</span>;
                         the alert's <span className="font-mono">source</span> is set from the webhook's name.
                     </li>

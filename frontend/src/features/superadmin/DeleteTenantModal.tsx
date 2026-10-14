@@ -24,7 +24,7 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['tenants'] });
-            navigate('/superadmin/tenants');
+            navigate('/settings/tenants');
         },
         onError: (err: any) => {
             setError(err.response?.data?.detail || 'Failed to delete tenant.');

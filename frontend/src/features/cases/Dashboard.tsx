@@ -189,7 +189,7 @@ export default function Dashboard() {
             {/* Header */}
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
-                    <h1 className="text-xl font-semibold tracking-tight text-fg">Operations Overview</h1>
+                    <h1 className="text-xl font-semibold tracking-tight text-fg">Overview</h1>
                     <p className="label-mono mt-1">soc_hub // case telemetry</p>
                 </div>
                 <button onClick={() => setShowNewCaseModal(true)}
@@ -237,7 +237,7 @@ export default function Dashboard() {
                     <div className="flex h-full">
                         <ResponsiveContainer width="60%" height="100%">
                             <PieChart>
-                                <Pie data={stats?.cases_by_severity ?? []} dataKey="count" nameKey="severity"
+                                <Pie isAnimationActive={false} data={stats?.cases_by_severity ?? []} dataKey="count" nameKey="severity"
                                     cx="50%" cy="50%" innerRadius={42} outerRadius={64} paddingAngle={2} stroke="none">
                                     {(stats?.cases_by_severity ?? []).map(e => (
                                         <Cell key={e.severity} fill={SEVERITY_COLORS[e.severity] ?? '#8e8e95'} />

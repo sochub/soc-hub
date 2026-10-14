@@ -80,7 +80,7 @@ export default function UserManagement() {
         <PageContainer>
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-fg">User Management</h1>
+                    <h1 className="text-2xl font-bold text-fg">Users</h1>
                     <p className="text-sm text-fg-3 mt-1">Manage users in your organization</p>
                 </div>
                 <button

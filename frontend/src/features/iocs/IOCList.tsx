@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { AlertOctagon, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
@@ -60,6 +61,7 @@ const defaultForm = {
 
 export default function IOCList() {
     const queryClient = useQueryClient();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [showModal, setShowModal] = useState(false);
     const [form, setForm] = useState(defaultForm);
     const [openId, setOpenId] = useState<number | null>(null);
@@ -102,18 +104,23 @@ export default function IOCList() {
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-fg tracking-tight flex items-center gap-3">
-                        <AlertOctagon size={24} className="text-purple-300" />
+                        <AlertOctagon size={24} className="text-magenta" />
                         Indicators of Compromise
                     </h1>
                     <p className="text-fg-3 text-sm mt-1">Track and manage threat indicators across all cases.</p>
                 </div>
+                <div className="flex items-center gap-2">
+                <input type="search" value={searchParams.get('q') ?? ''} placeholder="Filter by value…"
+                    onChange={e => setSearchParams(e.target.value ? { q: e.target.value } : {}, { replace: true })}
+                    className="w-56 bg-surface border border-line rounded-full px-3 py-1.5 text-sm text-fg placeholder:text-muted focus:outline-hidden focus:ring-1 focus:ring-accent" />
                 <button
                     onClick={() => setShowModal(true)}
-                    className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-medium transition-all shadow-lg shadow-purple-200"
+                    className="flex items-center gap-2 bg-brand-gradient hover:opacity-90 px-4 py-2 rounded-full text-sm font-semibold transition-all"
                 >
                     <Plus size={16} />
                     Add IOC
                 </button>
+                </div>
             </div>
 
             {/* Table */}
@@ -145,7 +152,7 @@ export default function IOCList() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
-                                {iocs.map((ioc) => (
+                                {iocs.filter(i => i.value.toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase())).map((ioc) => (
                                     <Fragment key={ioc.id}>
                                     <tr className="hover:bg-panel transition-colors group">
                                         <td className="px-2 py-3">

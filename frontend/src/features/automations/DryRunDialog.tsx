@@ -38,7 +38,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
             if (source === 'payload') body.payload = JSON.parse(payload);
             return (await api.post(`/workflows/${workflow.id}/dry-run`, body)).data as { run_id: number };
         },
-        onSuccess: ({ run_id }) => navigate(`/automations/runs/${run_id}`),
+        onSuccess: ({ run_id }) => navigate(`/workflows/runs/${run_id}`),
         onError: (err: { response?: { data?: { detail?: { errors?: unknown } | string } } }) => setError(err instanceof SyntaxError ? `Invalid JSON: ${err.message}` :
             (err?.response?.data?.detail as { errors?: unknown } | undefined)?.errors ? 'Workflow has validation errors — fix them first' :
             (typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : 'Dry run failed')),
