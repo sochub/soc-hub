@@ -11,10 +11,12 @@ export interface BoardCase {
     title: string;
     severity: string;
     status: string;
+    tags?: string[];
     sla_overall_status?: SLAStatus | null;
 }
 
 // Mirrors backend CaseStatus enum
+const MAX_TAGS = 3;
 const COLUMNS = ['new', 'open', 'in_progress', 'pending', 'resolved', 'closed'];
 
 export default function CasesBoard({ cases, severityConfig }: {
@@ -82,6 +84,16 @@ export default function CasesBoard({ cases, severityConfig }: {
                                             </span>
                                         </div>
                                         <div className="text-sm font-medium text-fg line-clamp-2">{c.title}</div>
+                                        {!!c.tags?.length && (
+                                            <div className="flex flex-wrap gap-1 mt-1.5">
+                                                {c.tags.slice(0, MAX_TAGS).map(t => (
+                                                    <span key={t} className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono bg-raised text-fg-2 border border-line truncate max-w-full">{t}</span>
+                                                ))}
+                                                {c.tags.length > MAX_TAGS && (
+                                                    <span className="px-1 py-0.5 text-[10px] font-mono text-muted" title={c.tags.slice(MAX_TAGS).join(', ')}>+{c.tags.length - MAX_TAGS}</span>
+                                                )}
+                                            </div>
+                                        )}
                                         {c.sla_overall_status && <div className="mt-1.5"><SLABadge status={c.sla_overall_status} /></div>}
                                     </Link>
                                 );
