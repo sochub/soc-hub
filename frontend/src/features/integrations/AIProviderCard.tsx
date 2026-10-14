@@ -112,7 +112,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
     // Stored secrets only carry over when the provider and base URL are unchanged.
     const secretIsSet = (f: SecretField) => saved && provider === data.provider && data.secrets_set[f]
         && (!spec.plain.includes('api_base') || (form.api_base || null) === data.api_base);
-    const input = 'w-full border border-zinc-300 px-2 py-1.5 text-sm';
+    const input = 'w-full border border-line-strong px-2 py-1.5 text-sm';
     const readOnly = !data.override_allowed;
     const status = data.source === 'tenant' ? `this tenant · ${data.provider}`
         : saved && !readOnly ? `saved · disabled · deployment default ${data.deployment.provider}`
@@ -131,20 +131,20 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
     };
 
     return (
-        <div className="bg-white border border-zinc-200 p-5 space-y-3">
+        <div className="bg-panel border border-line p-5 space-y-3">
             <div className="flex items-center gap-2">
-                <Bot size={16} className="text-accent-600" />
-                <h2 className="font-semibold text-zinc-800">AI provider</h2>
+                <Bot size={16} className="text-accent" />
+                <h2 className="font-semibold text-fg">AI provider</h2>
                 <span className="ml-auto label-mono">{status}</span>
             </div>
             {readOnly ? (
                 <div className="space-y-1">
-                    <p className="text-sm text-zinc-600">Managed by the deployment: <span className="font-mono">{data.deployment.provider} / {data.deployment.model}</span></p>
-                    <p className="text-xs text-zinc-500">Per-tenant AI provider overrides are turned off on this deployment.</p>
+                    <p className="text-sm text-fg-2">Managed by the deployment: <span className="font-mono">{data.deployment.provider} / {data.deployment.model}</span></p>
+                    <p className="text-xs text-fg-3">Per-tenant AI provider overrides are turned off on this deployment.</p>
                 </div>
             ) : (
                 <>
-                    <p className="text-xs text-zinc-500">Case data sent to the AI goes to this provider. Leave unset to use the deployment default ({data.deployment.provider} / {data.deployment.model}).</p>
+                    <p className="text-xs text-fg-3">Case data sent to the AI goes to this provider. Leave unset to use the deployment default ({data.deployment.provider} / {data.deployment.model}).</p>
                     <label className="block"><span className="label-mono">provider</span>
                         <select className={input} value={provider} onChange={(e) => { setDraft(e.target.value === data.provider ? seed(data) : { provider: e.target.value, model: '', enabled: true, auth_mode: 'role' }); setMsg(null); }}>
                             {(Object.keys(LABEL) as Provider[]).map((p) => <option key={p} value={p}>{LABEL[p]}</option>)}
@@ -169,28 +169,28 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                                         <div>
                                             <div className="flex items-center justify-between">
                                                 <span className="label-mono">trust policy for that role · external id <span className="num">{data.external_id}</span></span>
-                                                <button type="button" className="text-xs text-accent-600 flex items-center gap-1" onClick={copyTrust}><Copy size={12} />Copy</button>
+                                                <button type="button" className="text-xs text-accent flex items-center gap-1" onClick={copyTrust}><Copy size={12} />Copy</button>
                                             </div>
-                                            <pre className="text-[11px] font-mono bg-zinc-50 border border-zinc-200 p-2 overflow-x-auto">{trust}</pre>
-                                            {!data.deployment_principal_arn && <p className="text-xs text-zinc-500 mt-1">Replace the placeholder principal with the ARN of the role the SOC Hub server runs as.</p>}
+                                            <pre className="text-[11px] font-mono bg-surface border border-line p-2 overflow-x-auto">{trust}</pre>
+                                            {!data.deployment_principal_arn && <p className="text-xs text-fg-3 mt-1">Replace the placeholder principal with the ARN of the role the SOC Hub server runs as.</p>}
                                         </div>
-                                    ) : <p className="text-xs text-zinc-500">Save with role mode to generate the External ID.</p>}
+                                    ) : <p className="text-xs text-fg-3">Save with role mode to generate the External ID.</p>}
                                 </>
                             )}
                         </fieldset>
                     )}
                     {secretFields.map((f) => (
-                        <label key={f} className="block"><span className="label-mono">{FIELD_LABEL[f]}{secretIsSet(f) && <span className="ml-2 text-emerald-700">· set</span>}</span>
+                        <label key={f} className="block"><span className="label-mono">{FIELD_LABEL[f]}{secretIsSet(f) && <span className="ml-2 text-emerald-300">· set</span>}</span>
                             {f === 'service_account_json'
                                 ? <textarea rows={4} className={`${input} font-mono text-xs`} value={(form[`secret_${f}`] as string) ?? ''} onChange={(e) => set(`secret_${f}`, e.target.value)} placeholder={secretIsSet(f) ? '•••• (saved — leave blank to keep)' : 'Paste the service-account JSON key'} />
                                 : <input type="password" autoComplete="off" className={`${input} font-mono`} value={(form[`secret_${f}`] as string) ?? ''} onChange={(e) => set(`secret_${f}`, e.target.value)} placeholder={secretIsSet(f) ? '•••• (saved — leave blank to keep)' : ''} />}
                         </label>
                     ))}
                     <div className="flex items-center gap-2 flex-wrap">
-                        <button onClick={() => save.mutate()} disabled={save.isPending || !form.model} className="h-8 px-3 bg-accent-600 text-white text-sm disabled:opacity-50">Save</button>
-                        <button onClick={() => test.mutate()} disabled={test.isPending || (!!draft && !form.model)} className="h-8 px-3 border border-zinc-300 text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test'}</button>
-                        {saved && <button onClick={() => { if (confirm('Remove this tenant\'s AI provider and use the deployment default?')) reset.mutate(); }} disabled={reset.isPending} className="h-8 px-3 border border-zinc-300 text-sm disabled:opacity-50">Reset to deployment default</button>}
-                        {msg && <span role="status" className={msg.ok ? 'text-xs text-emerald-700' : 'text-xs text-red-700'}>{msg.text}</span>}
+                        <button onClick={() => save.mutate()} disabled={save.isPending || !form.model} className="h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50">Save</button>
+                        <button onClick={() => test.mutate()} disabled={test.isPending || (!!draft && !form.model)} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test'}</button>
+                        {saved && <button onClick={() => { if (confirm('Remove this tenant\'s AI provider and use the deployment default?')) reset.mutate(); }} disabled={reset.isPending} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">Reset to deployment default</button>}
+                        {msg && <span role="status" className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</span>}
                     </div>
                 </>
             )}

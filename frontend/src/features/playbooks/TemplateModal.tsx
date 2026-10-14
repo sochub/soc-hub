@@ -62,7 +62,7 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
     const removeTask = (i: number) => setDraft((d) => d ? { ...d, tasks: d.tasks.filter((_, j) => j !== i) } : d);
 
     const body = () => {
-        if (!isNew && isLoading) return <p className="font-mono text-xs text-zinc-400">$ loading…</p>;
+        if (!isNew && isLoading) return <p className="font-mono text-xs text-muted">$ loading…</p>;
         if (!draft) return null;
 
         if (!editable) {
@@ -70,7 +70,7 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
             const grouped = groupByPhase((template?.tasks ?? []) as PlaybookTaskTemplate[]);
             return (
                 <div className="space-y-5">
-                    {template?.description && <p className="text-sm text-zinc-600">{template.description}</p>}
+                    {template?.description && <p className="text-sm text-fg-2">{template.description}</p>}
                     {grouped.map(([phase, tasks]) => (
                         <div key={phase}>
                             <div className="flex items-center gap-2 mb-2">
@@ -80,8 +80,8 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
                             <ul className="space-y-1.5 pl-4">
                                 {tasks.map((t, i) => (
                                     <li key={i} className="text-sm">
-                                        <span className="text-zinc-800">{t.title}</span>
-                                        {t.description && <span className="block text-xs text-zinc-500">{t.description}</span>}
+                                        <span className="text-fg">{t.title}</span>
+                                        {t.description && <span className="block text-xs text-fg-3">{t.description}</span>}
                                     </li>
                                 ))}
                             </ul>
@@ -98,43 +98,43 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
                     <div>
                         <label className="label-mono block mb-1">name</label>
                         <input value={draft.name} onChange={(e) => update({ name: e.target.value })}
-                            className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                            className="w-full border border-line-strong px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent" />
                     </div>
                     <div>
                         <label className="label-mono block mb-1">category</label>
                         <input value={draft.category} onChange={(e) => update({ category: e.target.value })}
-                            className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                            className="w-full border border-line-strong px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent" />
                     </div>
                 </div>
                 <div>
                     <label className="label-mono block mb-1">description</label>
                     <textarea value={draft.description} onChange={(e) => update({ description: e.target.value })} rows={2}
-                        className="w-full border border-zinc-300 px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                        className="w-full border border-line-strong px-2.5 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent" />
                 </div>
 
                 <div className="flex items-center justify-between">
                     <span className="label-mono">tasks ({draft.tasks.length})</span>
-                    <button onClick={addTask} className="inline-flex items-center gap-1 text-xs text-accent-700 font-medium hover:text-accent-800">
+                    <button onClick={addTask} className="inline-flex items-center gap-1 text-xs text-accent font-medium hover:text-accent">
                         <Plus size={13} /> Add task
                     </button>
                 </div>
                 <div className="space-y-2">
                     {draft.tasks.map((t, i) => (
-                        <div key={i} className="flex items-start gap-2 border border-zinc-200 p-2">
+                        <div key={i} className="flex items-start gap-2 border border-line p-2">
                             <select value={t.phase} onChange={(e) => updateTask(i, { phase: e.target.value })}
-                                className="border border-zinc-300 text-xs px-1.5 py-1.5 font-mono shrink-0 w-32">
+                                className="border border-line-strong text-xs px-1.5 py-1.5 font-mono shrink-0 w-32">
                                 {PHASES.map((p) => <option key={p} value={p}>{PHASE_LABEL[p]}</option>)}
                             </select>
                             <div className="flex-1 space-y-1">
                                 <input value={t.title} placeholder="Task title" onChange={(e) => updateTask(i, { title: e.target.value })}
-                                    className="w-full border border-zinc-300 px-2 py-1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                                    className="w-full border border-line-strong px-2 py-1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent" />
                                 <input value={t.description ?? ''} placeholder="Description (optional)" onChange={(e) => updateTask(i, { description: e.target.value })}
-                                    className="w-full border border-zinc-200 px-2 py-1 text-xs text-zinc-600 focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                                    className="w-full border border-line px-2 py-1 text-xs text-fg-2 focus:outline-hidden focus:ring-1 focus:ring-accent" />
                             </div>
-                            <button onClick={() => removeTask(i)} aria-label="Remove task" className="text-zinc-300 hover:text-severity-critical p-1"><Trash2 size={14} /></button>
+                            <button onClick={() => removeTask(i)} aria-label="Remove task" className="text-muted hover:text-severity-critical p-1"><Trash2 size={14} /></button>
                         </div>
                     ))}
-                    {draft.tasks.length === 0 && <p className="text-xs text-zinc-400 font-mono">no tasks — add one</p>}
+                    {draft.tasks.length === 0 && <p className="text-xs text-muted font-mono">no tasks — add one</p>}
                 </div>
             </div>
         );

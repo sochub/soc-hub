@@ -80,19 +80,19 @@ export default function TenantSwitcher() {
                 disabled={busy}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 border border-zinc-200 bg-white text-sm text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50 transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-accent-500 disabled:opacity-60"
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 border border-line bg-panel text-sm text-fg hover:border-line-strong hover:bg-surface transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-60"
             >
                 <span className="flex items-center gap-2 min-w-0">
-                    <Building2 size={14} className="text-accent-600 shrink-0" />
+                    <Building2 size={14} className="text-accent shrink-0" />
                     <span className="truncate font-medium">{active?.name ?? 'Select a tenant'}</span>
                 </span>
                 {busy
-                    ? <Loader2 size={14} className="animate-spin text-zinc-400 shrink-0" />
-                    : <ChevronsUpDown size={14} className="text-zinc-400 shrink-0" />}
+                    ? <Loader2 size={14} className="animate-spin text-muted shrink-0" />
+                    : <ChevronsUpDown size={14} className="text-muted shrink-0" />}
             </button>
 
             {mfaBlocked && (
-                <p role="alert" className="mt-1.5 px-1 text-xs text-red-700">
+                <p role="alert" className="mt-1.5 px-1 text-xs text-red-300">
                     That tenant requires two-factor authentication.{' '}
                     <Link to="/profile" className="underline font-medium" onClick={() => { setMfaBlocked(false); setOpen(false); }}>
                         Set it up in your profile
@@ -101,13 +101,13 @@ export default function TenantSwitcher() {
             )}
 
             {switchError && (
-                <p role="alert" className="mt-1.5 px-1 text-xs text-red-700">{switchError}</p>
+                <p role="alert" className="mt-1.5 px-1 text-xs text-red-300">{switchError}</p>
             )}
 
             {open && (
                 <ul
                     role="listbox"
-                    className="absolute z-50 left-0 right-0 mt-1 max-h-72 overflow-auto border border-zinc-200 bg-white shadow-lg py-1 animate-fade-in"
+                    className="absolute z-50 left-0 right-0 mt-1 max-h-72 overflow-auto border border-line bg-panel shadow-lg py-1 animate-fade-in"
                 >
                     {options.map((o) => {
                         const isActive = o.id === me.active_tenant_id;
@@ -116,14 +116,14 @@ export default function TenantSwitcher() {
                                 <button
                                     onClick={() => choose(o.id)}
                                     className={cn(
-                                        'w-full flex items-center justify-between gap-2 px-2.5 py-2 text-sm hover:bg-zinc-100 transition-colors',
-                                        isActive ? 'text-accent-700 font-medium' : 'text-zinc-700',
+                                        'w-full flex items-center justify-between gap-2 px-2.5 py-2 text-sm hover:bg-raised transition-colors',
+                                        isActive ? 'text-accent font-medium' : 'text-fg-2',
                                     )}
                                 >
                                     <span className="truncate">{o.name}</span>
                                     <span className="flex items-center gap-2 shrink-0">
-                                        {o.role && <span className="font-mono text-[10px] uppercase text-zinc-400">{o.role}</span>}
-                                        {isActive && <Check size={13} className="text-accent-600" />}
+                                        {o.role && <span className="font-mono text-[10px] uppercase text-muted">{o.role}</span>}
+                                        {isActive && <Check size={13} className="text-accent" />}
                                     </span>
                                 </button>
                             </li>

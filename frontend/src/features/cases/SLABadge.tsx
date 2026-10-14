@@ -10,16 +10,16 @@ const SLA_LABEL: Record<SLAStatus, string> = {
 };
 
 const SLA_STYLE: Record<SLAStatus, string> = {
-    not_tracked: 'text-zinc-400 bg-zinc-50 border-zinc-200',
-    met: 'text-emerald-700 bg-emerald-50 border-emerald-200',
-    on_track: 'text-emerald-700 bg-emerald-50 border-emerald-200',
-    at_risk: 'text-amber-700 bg-amber-50 border-amber-200',
-    breached: 'text-red-700 bg-red-50 border-red-200',
+    not_tracked: 'text-muted bg-surface border-line',
+    met: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
+    on_track: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
+    at_risk: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
+    breached: 'text-red-300 bg-red-500/10 border-red-500/30',
 };
 
 export function SLABadge({ status }: { status?: SLAStatus | null }) {
     if (!status || status === 'not_tracked') {
-        return <span className="text-[10px] text-zinc-300">—</span>;
+        return <span className="text-[10px] text-muted">—</span>;
     }
     return (
         <span className={cn(

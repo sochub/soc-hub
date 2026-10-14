@@ -103,20 +103,20 @@ export default function Login() {
     };
 
     return (
-        <div className="min-h-screen grid lg:grid-cols-2 bg-slate-950 text-slate-100 font-sans">
-            <div className="flex items-center justify-center p-6 sm:p-8 bg-slate-900 lg:border-r border-slate-800">
+        <div className="min-h-screen grid lg:grid-cols-2 bg-canvas text-fg font-sans">
+            <div className="flex items-center justify-center p-6 sm:p-8 bg-panel lg:border-r border-line">
                 <div className="w-full max-w-sm space-y-8">
                     <div className="space-y-2">
                         <div className="flex items-center gap-2.5 mb-6">
-                            <div className="w-9 h-9 flex items-center justify-center bg-brand-500/15 border border-brand-500/30 rounded-lg">
-                                <ShieldAlert size={20} className="text-brand-400" />
+                            <div className="w-9 h-9 flex items-center justify-center bg-accent/15 border border-accent/30 rounded-lg">
+                                <ShieldAlert size={20} className="text-accent" />
                             </div>
                             <span className="text-lg font-bold tracking-tight">
-                                SOC<span className="text-brand-400">HUB</span>
+                                SOC<span className="text-accent">HUB</span>
                             </span>
                         </div>
                         <h1 className="text-3xl font-bold tracking-tight">Access Portal</h1>
-                        <p className="text-slate-400">Enter your credentials to access the SOC hub.</p>
+                        <p className="text-fg-2">Enter your credentials to access the SOC hub.</p>
                     </div>
 
                     {challenge?.kind === 'code' ? (
@@ -139,7 +139,7 @@ export default function Login() {
                                     invalid={!!error}
                                     aria-describedby={error ? 'login-error' : undefined}
                                 />
-                                <p className="text-xs text-slate-500">Enter the 6-digit code from your authenticator app.</p>
+                                <p className="text-xs text-fg-3">Enter the 6-digit code from your authenticator app.</p>
                             </div>
                             {error && (
                                 <p id="login-error" role="alert" className="text-severity-critical text-sm">{error}</p>
@@ -148,13 +148,13 @@ export default function Login() {
                                 {isLoading ? 'Verifying…' : 'Verify'}
                             </Button>
                             <button type="button" onClick={() => resetChallenge()}
-                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-fg-2 hover:text-fg transition-colors">
                                 <ArrowLeft size={14} /> Back
                             </button>
                         </form>
                     ) : challenge?.kind === 'setup' ? (
                         <div className="space-y-4">
-                            <p className="text-sm text-slate-300">
+                            <p className="text-sm text-fg-2">
                                 Your organization requires two-factor authentication. Set it up to continue.
                             </p>
                             <MfaSetupDialog
@@ -169,7 +169,7 @@ export default function Login() {
                                 }}
                             />
                             <button type="button" onClick={() => resetChallenge()}
-                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-fg-2 hover:text-fg transition-colors">
                                 <ArrowLeft size={14} /> Back
                             </button>
                         </div>
@@ -187,7 +187,7 @@ export default function Login() {
                                     value={ssoSlug}
                                     onChange={(e) => setSsoSlug(e.target.value)}
                                 />
-                                <p className="text-xs text-slate-500">Ask your admin if you don't know your organization's slug.</p>
+                                <p className="text-xs text-fg-3">Ask your admin if you don't know your organization's slug.</p>
                             </div>
 
                             {error && (
@@ -198,7 +198,7 @@ export default function Login() {
                                 <KeyRound size={16} /> Continue with SSO
                             </Button>
                             <button type="button" onClick={() => { setSsoMode(false); setError(''); }}
-                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                                className="w-full inline-flex items-center justify-center gap-1.5 text-sm text-fg-2 hover:text-fg transition-colors">
                                 <ArrowLeft size={14} /> Back to password sign-in
                             </button>
                         </form>
@@ -246,8 +246,8 @@ export default function Login() {
                             </Button>
 
                             <div className="relative py-1">
-                                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-800" /></div>
-                                <div className="relative flex justify-center"><span className="bg-slate-900 px-3 text-xs text-slate-500 uppercase tracking-wider">or</span></div>
+                                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-line" /></div>
+                                <div className="relative flex justify-center"><span className="bg-panel px-3 text-xs text-fg-3 uppercase tracking-wider">or</span></div>
                             </div>
 
                             <Button type="button" variant="outline" size="lg" className="w-full"
@@ -258,13 +258,13 @@ export default function Login() {
                     )}
                 </div>
             </div>
-            <div className="hidden lg:flex items-center justify-center bg-slate-950 relative overflow-hidden">
-                <div className="absolute inset-0 bg-linear-to-tr from-brand-900/20 to-slate-900/40" />
+            <div className="hidden lg:flex items-center justify-center bg-canvas relative overflow-hidden">
+                <div className="absolute inset-0 bg-linear-to-tr from-accent/20 to-raised/40" />
                 <div className="relative z-10 text-center space-y-4 p-8">
-                    <h2 className="text-4xl font-bold bg-linear-to-br from-white to-slate-500 bg-clip-text text-transparent">
+                    <h2 className="text-4xl font-bold bg-linear-to-br from-panel to-raised bg-clip-text text-transparent">
                         Secure Operations
                     </h2>
-                    <p className="text-slate-400 max-w-md mx-auto">
+                    <p className="text-fg-2 max-w-md mx-auto">
                         Advanced case management powered by AI for modern security teams.
                     </p>
                 </div>

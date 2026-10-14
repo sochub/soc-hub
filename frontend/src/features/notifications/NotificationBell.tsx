@@ -21,17 +21,17 @@ export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpe
     const tz = useMyTimezone();
     return (
         <button type="button" role={role} onClick={() => onOpen(n)}
-            className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-zinc-100 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-hidden',
-                unread && 'bg-accent-50/40')}>
-            <Icon size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
+            className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-line hover:bg-surface focus:bg-surface focus:outline-hidden',
+                unread && 'bg-accent/10')}>
+            <Icon size={15} className="mt-0.5 shrink-0 text-fg-3" aria-hidden />
             <span className="flex-1 min-w-0">
-                <span className={cn('block text-sm text-zinc-900 wrap-break-word', unread && 'font-medium')}>{n.summary}</span>
+                <span className={cn('block text-sm text-fg wrap-break-word', unread && 'font-medium')}>{n.summary}</span>
                 <span className="block label-mono truncate mt-0.5">#{n.case_id} · {n.case_title ?? ''}</span>
             </span>
             <span className="shrink-0 flex items-center gap-2">
-                <time dateTime={n.created_at} title={formatDateTime(n.created_at, tz)} className="num text-xs text-zinc-400">{relativeTime(n.created_at, tz)}</time>
+                <time dateTime={n.created_at} title={formatDateTime(n.created_at, tz)} className="num text-xs text-muted">{relativeTime(n.created_at, tz)}</time>
                 {unread
-                    ? <span className="w-1.5 h-1.5 bg-accent-600"><span className="sr-only">Unread</span></span>
+                    ? <span className="w-1.5 h-1.5 bg-accent"><span className="sr-only">Unread</span></span>
                     : <span className="w-1.5 h-1.5" aria-hidden />}
             </span>
         </button>
@@ -85,31 +85,31 @@ export default function NotificationBell() {
         <div ref={ref} className="relative">
             <button ref={btnRef} type="button" onClick={() => setOpen(o => !o)}
                 aria-label={`Notifications, ${count} unread`} aria-haspopup="menu" aria-expanded={open}
-                className="relative p-2 text-zinc-500 hover:text-zinc-900">
+                className="relative p-2 text-fg-3 hover:text-fg">
                 <Bell size={17} />
                 {count > 0 && (
-                    <span className="absolute top-0.5 right-0 min-w-[16px] h-4 px-1 bg-accent-600 text-white num text-[10px] leading-4 text-center">
+                    <span className="absolute top-0.5 right-0 min-w-[16px] h-4 px-1 bg-accent text-on-accent num text-[10px] leading-4 text-center">
                         {count > 99 ? '99+' : count}
                     </span>
                 )}
             </button>
             {open && (
-                <div className="absolute right-0 top-full mt-1 w-[360px] max-w-[calc(100vw-2rem)] bg-white border border-zinc-200 shadow-lg z-50">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200">
+                <div className="absolute right-0 top-full mt-1 w-[360px] max-w-[calc(100vw-2rem)] bg-panel border border-line shadow-lg z-50">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-line">
                         <button type="button" onClick={() => readAll.mutate()} disabled={count === 0 || readAll.isPending}
-                            className="text-xs text-accent-600 hover:underline disabled:text-zinc-400 disabled:no-underline">
+                            className="text-xs text-accent hover:underline disabled:text-muted disabled:no-underline">
                             Mark all read
                         </button>
-                        <Link to="/notifications" onClick={() => setOpen(false)} className="text-xs text-accent-600 hover:underline">
+                        <Link to="/notifications" onClick={() => setOpen(false)} className="text-xs text-accent hover:underline">
                             View all
                         </Link>
                     </div>
                     {list.isLoading ? (
-                        <p className="px-3 py-6 text-center text-sm text-zinc-400">Loading…</p>
+                        <p className="px-3 py-6 text-center text-sm text-muted">Loading…</p>
                     ) : list.isError ? (
-                        <p className="px-3 py-6 text-center text-sm text-zinc-500">Could not load notifications</p>
+                        <p className="px-3 py-6 text-center text-sm text-fg-3">Could not load notifications</p>
                     ) : items.length === 0 ? (
-                        <p className="px-3 py-6 text-center text-sm text-zinc-500">You're all caught up</p>
+                        <p className="px-3 py-6 text-center text-sm text-fg-3">You're all caught up</p>
                     ) : (
                         <div ref={menuRef} role="menu" aria-label="Notifications" onKeyDown={onMenuKey}
                             className="max-h-[420px] overflow-y-auto">

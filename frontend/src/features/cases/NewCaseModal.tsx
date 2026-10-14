@@ -105,17 +105,17 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                 {steps.map((s, index) => (
                     <div key={s.id} className="flex items-center flex-1">
                         <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${index < currentStepIndex ? 'bg-accent-600 text-white' :
-                                index === currentStepIndex ? 'bg-accent-600 text-white' :
-                                    'bg-zinc-100 text-zinc-400'
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${index < currentStepIndex ? 'bg-accent text-on-accent' :
+                                index === currentStepIndex ? 'bg-accent text-on-accent' :
+                                    'bg-raised text-muted'
                                 }`}>
                                 {index < currentStepIndex ? <Check size={16} /> : index + 1}
                             </div>
-                            <span className={`text-sm font-medium ${index <= currentStepIndex ? 'text-zinc-800' : 'text-zinc-400'
+                            <span className={`text-sm font-medium ${index <= currentStepIndex ? 'text-fg' : 'text-muted'
                                 }`}>{s.label}</span>
                         </div>
                         {index < steps.length - 1 && (
-                            <div className={`flex-1 h-0.5 mx-4 ${index < currentStepIndex ? 'bg-accent-600' : 'bg-zinc-100'
+                            <div className={`flex-1 h-0.5 mx-4 ${index < currentStepIndex ? 'bg-accent' : 'bg-raised'
                                 }`} />
                         )}
                     </div>
@@ -215,7 +215,7 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                             </div>
 
                             <div>
-                                <label className={modalLabel}>Start from playbook <span className="text-zinc-400 font-normal">(optional)</span></label>
+                                <label className={modalLabel}>Start from playbook <span className="text-muted font-normal">(optional)</span></label>
                                 <select
                                     value={caseData.playbook_template_id}
                                     onChange={(e) => setCaseData({ ...caseData, playbook_template_id: e.target.value })}
@@ -225,7 +225,7 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                                     {playbooks.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.task_count} tasks)</option>)}
                                 </select>
                                 {playbooks.length === 0 && (
-                                    <p className="text-xs text-zinc-400 mt-1">Import playbooks from the Playbooks page to use them here.</p>
+                                    <p className="text-xs text-muted mt-1">Import playbooks from the Playbooks page to use them here.</p>
                                 )}
                             </div>
                         </motion.div>
@@ -250,34 +250,34 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                             exit={{ opacity: 0, x: -20 }}
                             className="space-y-4"
                         >
-                            <div className="p-4 border border-zinc-200 bg-zinc-50">
-                                <h3 className="text-sm font-semibold text-zinc-500 uppercase mb-3">Case Details</h3>
+                            <div className="p-4 border border-line bg-surface">
+                                <h3 className="text-sm font-semibold text-fg-3 uppercase mb-3">Case Details</h3>
                                 <div className="space-y-2">
                                     <div>
-                                        <p className="text-xs text-zinc-400">Title</p>
-                                        <p className="text-zinc-800">{caseData.title}</p>
+                                        <p className="text-xs text-muted">Title</p>
+                                        <p className="text-fg">{caseData.title}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs text-zinc-400">Description</p>
-                                        <p className="text-zinc-800">{caseData.description}</p>
+                                        <p className="text-xs text-muted">Description</p>
+                                        <p className="text-fg">{caseData.description}</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs text-zinc-400">Severity</p>
-                                        <p className="text-zinc-800 capitalize">{caseData.severity}</p>
+                                        <p className="text-xs text-muted">Severity</p>
+                                        <p className="text-fg capitalize">{caseData.severity}</p>
                                     </div>
                                 </div>
                             </div>
 
                             {artifacts.length > 0 && (
-                                <div className="p-4 border border-zinc-200 bg-zinc-50">
-                                    <h3 className="text-sm font-semibold text-zinc-500 uppercase mb-3">
+                                <div className="p-4 border border-line bg-surface">
+                                    <h3 className="text-sm font-semibold text-fg-3 uppercase mb-3">
                                         Artifacts ({artifacts.length})
                                     </h3>
                                     <div className="space-y-2">
                                         {artifacts.map((artifact, index) => (
-                                            <div key={index} className="flex items-center gap-3 p-2 bg-zinc-100 rounded-sm">
-                                                <span className="text-xs text-zinc-400 uppercase font-semibold">{artifact.type}</span>
-                                                <span className="text-sm text-zinc-800 font-mono">{artifact.value}</span>
+                                            <div key={index} className="flex items-center gap-3 p-2 bg-raised rounded-sm">
+                                                <span className="text-xs text-muted uppercase font-semibold">{artifact.type}</span>
+                                                <span className="text-sm text-fg font-mono">{artifact.value}</span>
                                             </div>
                                         ))}
                                     </div>

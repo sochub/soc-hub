@@ -3,8 +3,8 @@ import { cn } from '../../lib/utils';
 type Variant = 'default' | 'brand' | 'critical' | 'high' | 'medium' | 'low' | 'info';
 
 const variants: Record<Variant, string> = {
-    default: 'bg-slate-800 text-slate-300 border-slate-700',
-    brand: 'bg-brand-500/15 text-brand-300 border-brand-500/30',
+    default: 'bg-raised text-fg-2 border-line',
+    brand: 'bg-accent/15 text-accent border-accent/30',
     critical: 'bg-severity-critical/15 text-severity-critical border-severity-critical/30',
     high: 'bg-severity-high/15 text-severity-high border-severity-high/30',
     medium: 'bg-severity-medium/15 text-severity-medium border-severity-medium/30',

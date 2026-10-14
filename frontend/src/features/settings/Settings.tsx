@@ -43,40 +43,40 @@ function SLAPoliciesSection() {
     };
 
     return (
-        <section className="bg-white border border-zinc-200">
-            <div className="flex items-center justify-between px-4 h-11 border-b border-zinc-200">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-                    <Timer size={15} className="text-accent-600" /> SLA Policies
+        <section className="bg-panel border border-line">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-line">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <Timer size={15} className="text-accent" /> SLA Policies
                 </h2>
             </div>
 
             {isLoading ? (
-                <p className="p-4 font-mono text-xs text-zinc-400">$ loading…</p>
+                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
             ) : (
                 <div className="p-4 space-y-4">
-                    <p className="text-xs text-zinc-400">
+                    <p className="text-xs text-muted">
                         Response/resolution targets per severity, in minutes. Leave blank to disable SLA tracking
                         for that severity.
                     </p>
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="text-left label-mono text-zinc-400">
+                            <tr className="text-left label-mono text-muted">
                                 <th className="pb-2 font-normal">Severity</th>
                                 <th className="pb-2 font-normal">Response (min)</th>
                                 <th className="pb-2 font-normal">Resolution (min)</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100">
+                        <tbody className="divide-y divide-line">
                             {rows.map((r) => (
                                 <tr key={r.severity}>
-                                    <td className="py-2 text-zinc-700">{SEVERITY_LABEL[r.severity] ?? r.severity}</td>
+                                    <td className="py-2 text-fg-2">{SEVERITY_LABEL[r.severity] ?? r.severity}</td>
                                     <td className="py-2 pr-4">
                                         <input
                                             type="number" min={0}
                                             value={r.response_target_minutes ?? ''}
                                             onChange={(e) => updateRow(r.severity, 'response_target_minutes', e.target.value)}
                                             placeholder="—"
-                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent-500"
+                                            className="w-28 border border-line-strong px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent"
                                         />
                                     </td>
                                     <td className="py-2">
@@ -85,7 +85,7 @@ function SLAPoliciesSection() {
                                             value={r.resolution_target_minutes ?? ''}
                                             onChange={(e) => updateRow(r.severity, 'resolution_target_minutes', e.target.value)}
                                             placeholder="—"
-                                            className="w-28 border border-zinc-300 px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent-500"
+                                            className="w-28 border border-line-strong px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent"
                                         />
                                     </td>
                                 </tr>
@@ -95,7 +95,7 @@ function SLAPoliciesSection() {
 
                     <button onClick={() => save.mutate()} disabled={save.isPending}
                         className={cn('inline-flex items-center gap-1.5 h-9 px-4 text-sm font-medium text-white transition-colors disabled:opacity-50',
-                            savedFlash ? 'bg-emerald-600' : 'bg-accent-600 hover:bg-accent-700')}>
+                            savedFlash ? 'bg-emerald-600' : 'bg-accent hover:bg-accent-hover')}>
                         {save.isPending ? <Loader2 size={14} className="animate-spin" /> : savedFlash ? <Check size={14} /> : <Save size={14} />}
                         {savedFlash ? 'Saved' : 'Save SLA policies'}
                     </button>
@@ -120,29 +120,29 @@ function MfaRequirementSection() {
     });
     const n = data?.members_without_mfa ?? 0;
     return (
-        <section className="bg-white border border-zinc-200">
-            <div className="flex items-center justify-between px-4 h-11 border-b border-zinc-200">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-                    <ShieldCheck size={15} className="text-accent-600" /> Two-factor authentication
+        <section className="bg-panel border border-line">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-line">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <ShieldCheck size={15} className="text-accent" /> Two-factor authentication
                 </h2>
             </div>
             {isLoading || !data ? (
-                <p className="p-4 font-mono text-xs text-zinc-400">$ loading…</p>
+                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
             ) : (
                 <div className="p-4 space-y-3">
-                    <label className="flex items-center gap-2 text-sm text-zinc-800 cursor-pointer">
+                    <label className="flex items-center gap-2 text-sm text-fg cursor-pointer">
                         <input type="checkbox" checked={data.require_mfa} disabled={toggle.isPending}
                             onChange={(e) => (e.target.checked ? setConfirmOn(true) : toggle.mutate(false))}
-                            className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                            className="border-line-strong text-accent focus:ring-accent" />
                         Require two-factor authentication
                     </label>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-fg-3">
                         {n === 0
                             ? 'All members have two-factor authentication enabled.'
                             : `${n} member${n === 1 ? '' : 's'} ${n === 1 ? "doesn't" : "don't"} have MFA yet.`}
                         {data.require_mfa && n > 0 && ' They will be asked to set it up at their next sign-in.'}
                     </p>
-                    {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
+                    {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
                 </div>
             )}
             <Modal open={confirmOn} onClose={() => setConfirmOn(false)} title="Require two-factor authentication?" size="md"
@@ -152,7 +152,7 @@ function MfaRequirementSection() {
                         {toggle.isPending && <Loader2 size={14} className="animate-spin" />} Require two-factor
                     </button>
                 </>}>
-                <div className="space-y-2 text-sm text-zinc-700">
+                <div className="space-y-2 text-sm text-fg-2">
                     <p>Every member of this organization will need two-factor authentication to sign in or switch into it.</p>
                     {n > 0 && <p>{n} member{n === 1 ? '' : 's'} without it will be asked to set it up at their next sign-in.</p>}
                     <p>Members who sign in through single sign-on are not affected; their identity provider handles two-factor.</p>
@@ -173,9 +173,9 @@ function CopyField({ label, value }: { label: string; value: string }) {
         <div>
             <p className="label-mono mb-1">{label}</p>
             <div className="flex items-center gap-1.5">
-                <code className="flex-1 num text-[11px] text-zinc-700 bg-zinc-50 border border-zinc-200 px-2 py-1.5 truncate">{value}</code>
-                <button onClick={copy} className="p-1.5 border border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50" aria-label={`Copy ${label}`}>
-                    {copied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                <code className="flex-1 num text-[11px] text-fg-2 bg-surface border border-line px-2 py-1.5 truncate">{value}</code>
+                <button onClick={copy} className="p-1.5 border border-line text-fg-3 hover:text-fg hover:bg-surface" aria-label={`Copy ${label}`}>
+                    {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
                 </button>
             </div>
         </div>
@@ -231,37 +231,37 @@ export default function Settings() {
             <label className="label-mono block mb-1">{label}</label>
             <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                 placeholder={placeholder}
-                className="w-full bg-white border border-zinc-300 px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
         </div>
     );
 
     return (
         <PageContainer width="narrow">
             <div>
-                <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Settings</h1>
+                <h1 className="text-xl font-semibold text-fg tracking-tight">Settings</h1>
                 <p className="label-mono mt-1">tenant configuration</p>
             </div>
 
             {!isAdmin ? (
-                <div className="bg-white border border-zinc-200 p-8 text-center text-sm text-zinc-500">
+                <div className="bg-panel border border-line p-8 text-center text-sm text-fg-3">
                     Tenant settings are managed by your tenant admin.
                 </div>
             ) : (
-                <section className="bg-white border border-zinc-200">
-                    <div className="flex items-center justify-between px-4 h-11 border-b border-zinc-200">
-                        <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-                            <KeyRound size={15} className="text-accent-600" /> Single Sign-On (SAML)
+                <section className="bg-panel border border-line">
+                    <div className="flex items-center justify-between px-4 h-11 border-b border-line">
+                        <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                            <KeyRound size={15} className="text-accent" /> Single Sign-On (SAML)
                         </h2>
-                        <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                        <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                             <input type="checkbox" checked={form.enabled}
                                 onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))}
-                                className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                                className="border-line-strong text-accent focus:ring-accent" />
                             enabled
                         </label>
                     </div>
 
                     {isLoading ? (
-                        <p className="p-4 font-mono text-xs text-zinc-400">$ loading…</p>
+                        <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
                     ) : (
                         <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
                             {/* IdP side */}
@@ -274,21 +274,21 @@ export default function Settings() {
                                     <textarea value={form.idp_x509_cert}
                                         onChange={e => setForm(f => ({ ...f, idp_x509_cert: e.target.value }))}
                                         rows={6} placeholder="-----BEGIN CERTIFICATE-----"
-                                        className="w-full bg-white border border-zinc-300 px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                                        className="w-full bg-panel border border-line-strong px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent" />
                                 </div>
                                 <div className="flex items-center gap-4 flex-wrap">
-                                    <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                                    <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                         <input type="checkbox" checked={form.auto_provision}
                                             onChange={e => setForm(f => ({ ...f, auto_provision: e.target.checked }))}
-                                            className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                                            className="border-line-strong text-accent focus:ring-accent" />
                                         auto-provision new users
                                     </label>
-                                    <label className="flex items-center gap-2 text-xs text-zinc-600">
+                                    <label className="flex items-center gap-2 text-xs text-fg-2">
                                         default role
                                         <select value={form.default_role}
                                             onChange={e => setForm(f => ({ ...f, default_role: e.target.value as 'analyst' | 'viewer' }))}
                                             disabled={!form.auto_provision}
-                                            className="border border-zinc-300 px-1.5 py-1 text-xs font-mono disabled:opacity-50">
+                                            className="border border-line-strong px-1.5 py-1 text-xs font-mono disabled:opacity-50">
                                             <option value="viewer">viewer</option>
                                             <option value="analyst">analyst</option>
                                         </select>
@@ -297,7 +297,7 @@ export default function Settings() {
                                 <div className="flex items-center gap-3">
                                     <button onClick={() => save.mutate()} disabled={save.isPending}
                                         className={cn('inline-flex items-center gap-1.5 h-9 px-4 text-sm font-medium text-white transition-colors disabled:opacity-50',
-                                            savedFlash ? 'bg-emerald-600' : 'bg-accent-600 hover:bg-accent-700')}>
+                                            savedFlash ? 'bg-emerald-600' : 'bg-accent hover:bg-accent-hover')}>
                                         {save.isPending ? <Loader2 size={14} className="animate-spin" /> : savedFlash ? <Check size={14} /> : <Save size={14} />}
                                         {savedFlash ? 'Saved' : 'Save SSO settings'}
                                     </button>
@@ -310,7 +310,7 @@ export default function Settings() {
                             </div>
 
                             {/* SP side */}
-                            <div className="space-y-3 lg:border-l lg:border-zinc-200 lg:pl-6">
+                            <div className="space-y-3 lg:border-l lg:border-line lg:pl-6">
                                 <p className="label-mono">// service provider (give these to your idp)</p>
                                 {cfg && (
                                     <>
@@ -320,7 +320,7 @@ export default function Settings() {
                                         <CopyField label="sso login url (for your users)" value={cfg.sp_login_url} />
                                     </>
                                 )}
-                                <p className="text-[11px] text-zinc-400 leading-relaxed pt-1">
+                                <p className="text-[11px] text-muted leading-relaxed pt-1">
                                     Users sign in via “Sign in with SSO” on the login page using your tenant slug.
                                     NameID must be the user's email address. Password login remains available.
                                 </p>

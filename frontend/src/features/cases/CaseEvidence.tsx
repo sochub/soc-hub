@@ -145,9 +145,9 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
     return (
         <div className="space-y-4">
             <div className="flex justify-between items-center">
-                <h3 className="text-sm font-semibold text-zinc-700">Evidence</h3>
+                <h3 className="text-sm font-semibold text-fg-2">Evidence</h3>
                 {isAdmin && (
-                    <label className="text-xs text-zinc-500 flex items-center gap-2 cursor-pointer">
+                    <label className="text-xs text-fg-3 flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
                         Show deleted
                     </label>
@@ -155,15 +155,15 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
             </div>
 
             {canWrite && (
-                <div className="glass-panel p-4 rounded-lg bg-white border border-zinc-200 space-y-3">
+                <div className="glass-panel p-4 rounded-lg bg-panel border border-line space-y-3">
                     <div
                         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                         onDragLeave={() => setDragOver(false)}
                         onDrop={(e) => { e.preventDefault(); setDragOver(false); startUpload(e.dataTransfer.files?.[0]); }}
                         onClick={() => { if (!upload.isPending) fileInput.current?.click(); }}
                         className={cn(
-                            'border-2 border-dashed rounded-lg py-8 flex flex-col items-center justify-center gap-2 text-zinc-400 cursor-pointer transition-colors',
-                            dragOver ? 'border-accent-600 bg-blue-50' : 'border-zinc-200 hover:border-zinc-300'
+                            'border-2 border-dashed rounded-lg py-8 flex flex-col items-center justify-center gap-2 text-muted cursor-pointer transition-colors',
+                            dragOver ? 'border-accent bg-accent/10' : 'border-line hover:border-line-strong'
                         )}
                     >
                         <Upload size={20} />
@@ -177,11 +177,11 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                             onChange={(e) => { startUpload(e.target.files?.[0]); e.target.value = ''; }}
                         />
                     </div>
-                    <label className="flex items-start gap-2 text-sm text-zinc-700 cursor-pointer">
+                    <label className="flex items-start gap-2 text-sm text-fg-2 cursor-pointer">
                         <input type="checkbox" className="mt-1" checked={malicious} onChange={(e) => setMalicious(e.target.checked)} />
                         <span>
                             Malicious sample
-                            <span className="block text-xs text-zinc-400">Stored and downloaded as a ZIP, password <span className="num">infected</span></span>
+                            <span className="block text-xs text-muted">Stored and downloaded as a ZIP, password <span className="num">infected</span></span>
                         </span>
                     </label>
                     <input
@@ -190,35 +190,35 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder="Description (optional)"
-                        className="w-full text-sm border border-zinc-200 rounded-sm px-3 py-1.5 bg-white text-zinc-800 focus:outline-hidden focus:border-accent-600"
+                        className="w-full text-sm border border-line rounded-sm px-3 py-1.5 bg-panel text-fg focus:outline-hidden focus:border-accent"
                     />
                     {progress !== null && (
                         <div className="flex items-center gap-3">
-                            <div className="flex-1 h-1.5 bg-zinc-100 rounded-sm overflow-hidden">
-                                <div className="h-full bg-accent-600 transition-all" style={{ width: `${progress}%` }} />
+                            <div className="flex-1 h-1.5 bg-raised rounded-sm overflow-hidden">
+                                <div className="h-full bg-accent transition-all" style={{ width: `${progress}%` }} />
                             </div>
-                            <span className="num text-xs text-zinc-500">{progress}%</span>
+                            <span className="num text-xs text-fg-3">{progress}%</span>
                         </div>
                     )}
                 </div>
             )}
 
             {error && (
-                <div role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>
+                <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">{error}</div>
             )}
 
             {isLoading ? (
-                <div className="text-center py-8 text-zinc-400">Loading evidence...</div>
+                <div className="text-center py-8 text-muted">Loading evidence...</div>
             ) : items.length === 0 ? (
-                <div className="glass-panel p-4 rounded-lg border-dashed border-2 border-zinc-200 flex flex-col items-center justify-center text-zinc-400 py-12">
+                <div className="glass-panel p-4 rounded-lg border-dashed border-2 border-line flex flex-col items-center justify-center text-muted py-12">
                     <Paperclip size={24} className="mb-2 opacity-50" />
                     <p className="text-sm">No evidence attached to this case.</p>
                 </div>
             ) : (
-                <div className="glass-panel rounded-lg bg-white border border-zinc-200 overflow-x-auto">
+                <div className="glass-panel rounded-lg bg-panel border border-line overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="text-left text-xs text-zinc-400 uppercase tracking-wider border-b border-zinc-200">
+                            <tr className="text-left text-xs text-muted uppercase tracking-wider border-b border-line">
                                 <th className="px-4 py-2 font-semibold">Name</th>
                                 <th className="px-4 py-2 font-semibold">Size</th>
                                 <th className="px-4 py-2 font-semibold">SHA-256</th>
@@ -230,48 +230,48 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                             {items.map((a) => {
                                 const deleted = !!a.deleted_at;
                                 return (
-                                    <tr key={a.id} className={cn('border-b border-zinc-100 last:border-0', deleted && 'opacity-50')}>
+                                    <tr key={a.id} className={cn('border-b border-line last:border-0', deleted && 'opacity-50')}>
                                         <td className="px-4 py-2 min-w-0">
                                             <div className="flex items-center gap-2">
-                                                <span className={cn('text-zinc-800 break-all', deleted && 'line-through')}>{a.filename}</span>
+                                                <span className={cn('text-fg break-all', deleted && 'line-through')}>{a.filename}</span>
                                                 {a.is_malicious && (
-                                                    <span className="text-[10px] bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded-sm uppercase font-bold">malicious</span>
+                                                    <span className="text-[10px] bg-red-500/10 text-red-300 border border-red-500/30 px-1.5 py-0.5 rounded-sm uppercase font-bold">malicious</span>
                                                 )}
                                             </div>
-                                            {a.description && <p className="text-xs text-zinc-400 mt-0.5">{a.description}</p>}
+                                            {a.description && <p className="text-xs text-muted mt-0.5">{a.description}</p>}
                                         </td>
-                                        <td className="px-4 py-2 num text-zinc-600 whitespace-nowrap">{formatSize(a.size_bytes)}</td>
+                                        <td className="px-4 py-2 num text-fg-2 whitespace-nowrap">{formatSize(a.size_bytes)}</td>
                                         <td className="px-4 py-2 whitespace-nowrap">
-                                            <span className="num text-zinc-600" title={a.sha256}>{a.sha256.slice(0, 12)}</span>
-                                            <button onClick={() => copyHash(a.sha256)} className="ml-2 p-1 text-zinc-400 hover:text-zinc-700 rounded-sm" title="Copy SHA-256" aria-label="Copy SHA-256">
+                                            <span className="num text-fg-2" title={a.sha256}>{a.sha256.slice(0, 12)}</span>
+                                            <button onClick={() => copyHash(a.sha256)} className="ml-2 p-1 text-muted hover:text-fg-2 rounded-sm" title="Copy SHA-256" aria-label="Copy SHA-256">
                                                 <Copy size={12} />
                                             </button>
                                         </td>
-                                        <td className="px-4 py-2 text-xs text-zinc-500">
+                                        <td className="px-4 py-2 text-xs text-fg-3">
                                             <div>{a.uploaded_by_email ?? 'unknown'}</div>
-                                            <div className="text-zinc-400">{relTime(a.created_at)}</div>
-                                            {deleted && <div className="text-red-700">deleted by {a.deleted_by_email ?? 'unknown'}</div>}
+                                            <div className="text-muted">{relTime(a.created_at)}</div>
+                                            {deleted && <div className="text-red-300">deleted by {a.deleted_by_email ?? 'unknown'}</div>}
                                         </td>
                                         <td className="px-4 py-2 text-right whitespace-nowrap">
                                             {!deleted && (
                                                 confirmId === a.id ? (
                                                     <span className="inline-flex items-center gap-2 text-xs">
-                                                        <span className="text-zinc-600">Delete this file?</span>
+                                                        <span className="text-fg-2">Delete this file?</span>
                                                         <button onClick={() => remove.mutate(a.id)} disabled={remove.isPending} className="px-2 py-1 bg-red-600 text-white rounded-sm hover:bg-red-700 disabled:opacity-50">Delete</button>
-                                                        <button onClick={() => setConfirmId(null)} className="px-2 py-1 bg-zinc-100 text-zinc-700 rounded-sm hover:bg-zinc-200">Cancel</button>
+                                                        <button onClick={() => setConfirmId(null)} className="px-2 py-1 bg-raised text-fg-2 rounded-sm hover:bg-raised-2">Cancel</button>
                                                     </span>
                                                 ) : (
                                                     <span className="inline-flex items-center gap-2">
                                                         <button
                                                             onClick={() => download(a)}
                                                             disabled={downloading}
-                                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                                            className="text-xs bg-raised hover:bg-raised-2 text-fg-2 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
                                                         >
                                                             <Download size={12} />
                                                             {a.is_malicious ? 'Download (ZIP, pw: infected)' : 'Download'}
                                                         </button>
                                                         {canWrite && (
-                                                            <button onClick={() => setConfirmId(a.id)} className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors" title="Delete" aria-label="Delete">
+                                                            <button onClick={() => setConfirmId(a.id)} className="p-1.5 text-muted hover:text-red-300 hover:bg-raised rounded-sm transition-colors" title="Delete" aria-label="Delete">
                                                                 <Trash2 size={14} />
                                                             </button>
                                                         )}

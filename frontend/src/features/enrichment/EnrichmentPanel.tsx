@@ -10,10 +10,10 @@ const SOURCE_LABEL: Record<string, string> = {
     virustotal: 'VirusTotal', urlhaus: 'URLhaus', threatfox: 'ThreatFox', rdap: 'RDAP', crtsh: 'crt.sh',
 };
 const VERDICT_BADGE: Record<string, string> = {
-    malicious: 'bg-red-50 text-red-700 border-red-200',
-    suspicious: 'bg-amber-50 text-amber-700 border-amber-200',
-    harmless: 'bg-green-50 text-green-700 border-green-200',
-    unknown: 'bg-zinc-100 text-zinc-500 border-zinc-200',
+    malicious: 'bg-red-500/10 text-red-300 border-red-500/30',
+    suspicious: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
+    harmless: 'bg-green-500/10 text-green-300 border-green-500/30',
+    unknown: 'bg-raised text-fg-3 border-line',
 };
 
 const relTime = (iso: string): string => {
@@ -91,8 +91,8 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
         onError: (e) => setErr(errText(e, 'Could not apply the suggestion')),
     });
 
-    if (isLoading || !data) return <p className="text-xs text-zinc-400">Loading…</p>;
-    if (!data.enrichable) return <p className="text-xs text-zinc-400">Not enrichable ({data.indicator_type ?? ioc?.ioc_type ?? kind})</p>;
+    if (isLoading || !data) return <p className="text-xs text-muted">Loading…</p>;
+    if (!data.enrichable) return <p className="text-xs text-muted">Not enrichable ({data.indicator_type ?? ioc?.ioc_type ?? kind})</p>;
 
     const tlp = data.effective_tlp ?? 'unknown';
     const sug = kind === 'ioc' ? data.suggestion : null;
@@ -100,21 +100,21 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
     return (
         <div className="space-y-2">
             {data.results.length === 0 ? (
-                <p className="text-xs text-zinc-500">Not checked yet{!data.auto && ` (TLP:${tlp} — run manually)`}</p>
+                <p className="text-xs text-fg-3">Not checked yet{!data.auto && ` (TLP:${tlp} — run manually)`}</p>
             ) : (
-                <ul className="divide-y divide-zinc-100">
+                <ul className="divide-y divide-line">
                     {data.results.map((r) => {
                         const st = statusText(r);
                         const f = facts(r.summary);
                         return (
                             <li key={r.source} className="py-1.5 flex items-center gap-2 flex-wrap text-xs">
-                                <span className="font-semibold text-zinc-700 w-24">{SOURCE_LABEL[r.source] ?? r.source}</span>
+                                <span className="font-semibold text-fg-2 w-24">{SOURCE_LABEL[r.source] ?? r.source}</span>
                                 {r.verdict && <span className={cn('px-1.5 py-0.5 border text-[11px] font-bold uppercase', VERDICT_BADGE[r.verdict] ?? VERDICT_BADGE.unknown)}>{r.verdict}</span>}
-                                {r.score && <span className="num text-zinc-700">{r.score}</span>}
-                                {st && <span className={r.status === 'error' || r.status === 'rate_limited' ? 'text-red-700' : 'text-zinc-500'}>{st}</span>}
-                                {f.map((x) => <span key={x} className="text-zinc-500 font-mono">{x}</span>)}
-                                {r.link && <a href={r.link} target="_blank" rel="noopener noreferrer" className="text-accent-600 inline-flex items-center gap-0.5">view<ExternalLink size={11} /></a>}
-                                {r.fetched_at && <span className="ml-auto text-zinc-400">{relTime(r.fetched_at)}</span>}
+                                {r.score && <span className="num text-fg-2">{r.score}</span>}
+                                {st && <span className={r.status === 'error' || r.status === 'rate_limited' ? 'text-red-300' : 'text-fg-3'}>{st}</span>}
+                                {f.map((x) => <span key={x} className="text-fg-3 font-mono">{x}</span>)}
+                                {r.link && <a href={r.link} target="_blank" rel="noopener noreferrer" className="text-accent inline-flex items-center gap-0.5">view<ExternalLink size={11} /></a>}
+                                {r.fetched_at && <span className="ml-auto text-muted">{relTime(r.fetched_at)}</span>}
                             </li>
                         );
                     })}
@@ -122,26 +122,26 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
             )}
 
             {sug && (sug.threat_level || sug.tags.length > 0) && (
-                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 px-2 py-1 text-xs text-amber-800">
+                <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-xs text-amber-300">
                     <span>Suggest: {sug.threat_level ?? ''}{sug.tags.length > 0 && ` +${sug.tags.join(' +')}`}</span>
                     {canRun && <button onClick={() => apply.mutate()} disabled={apply.isPending} className="ml-auto h-6 px-2 bg-amber-600 text-white disabled:opacity-50">Apply</button>}
                 </div>
             )}
 
             {canRun && (confirmMsg ? (
-                <div className="bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800 space-y-2">
+                <div className="bg-amber-500/10 border border-amber-500/30 p-2 text-xs text-amber-300 space-y-2">
                     <p>{confirmMsg}</p>
                     <div className="flex gap-2">
-                        <button onClick={() => run.mutate(true)} disabled={run.isPending} className="h-7 px-3 bg-accent-600 text-white disabled:opacity-50">Send</button>
-                        <button onClick={() => setConfirmMsg(null)} className="h-7 px-3 border border-zinc-300 bg-white text-zinc-700">Cancel</button>
+                        <button onClick={() => run.mutate(true)} disabled={run.isPending} className="h-7 px-3 bg-accent text-on-accent disabled:opacity-50">Send</button>
+                        <button onClick={() => setConfirmMsg(null)} className="h-7 px-3 border border-line-strong bg-panel text-fg-2">Cancel</button>
                     </div>
                 </div>
             ) : (
-                <button onClick={() => { setErr(null); run.mutate(false); }} disabled={run.isPending} className="h-7 px-3 border border-zinc-300 text-xs disabled:opacity-50">
+                <button onClick={() => { setErr(null); run.mutate(false); }} disabled={run.isPending} className="h-7 px-3 border border-line-strong text-xs disabled:opacity-50">
                     {data.results.length === 0 ? 'Enrich' : 'Re-check'}
                 </button>
             ))}
-            {err && <p role="status" className="text-xs text-red-700">{err}</p>}
+            {err && <p role="status" className="text-xs text-red-300">{err}</p>}
         </div>
     );
 }

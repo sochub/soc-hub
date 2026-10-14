@@ -97,16 +97,16 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken, re
                 </button>
             </>}>
             <form id="mfa-setup-form" className="space-y-4" onSubmit={(e) => { e.preventDefault(); void confirm(); }}>
-                <p className="text-sm text-zinc-600">
+                <p className="text-sm text-fg-2">
                     Scan the QR code with an authenticator app, then enter the 6-digit code it shows.
                 </p>
-                {loading && <p className="font-mono text-xs text-zinc-400">$ generating key…</p>}
-                {qr && <img src={qr} alt="Scan with your authenticator app" width={192} height={192} className="border border-zinc-200" />}
+                {loading && <p className="font-mono text-xs text-muted">$ generating key…</p>}
+                {qr && <img src={qr} alt="Scan with your authenticator app" width={192} height={192} className="border border-line" />}
                 {secret && (
                     <div>
                         <span className={modalLabel}>Can't scan? Enter this key manually</span>
                         <div className="flex items-center gap-2">
-                            <code className="font-mono text-sm bg-zinc-50 border border-zinc-200 px-2 py-1.5 break-all select-all">{secret}</code>
+                            <code className="font-mono text-sm bg-surface border border-line px-2 py-1.5 break-all select-all">{secret}</code>
                             <button type="button" className={btnSecondary} onClick={() => void copy()} aria-label="Copy key">
                                 {copied ? <Check size={14} /> : <Copy size={14} />}
                             </button>
@@ -126,7 +126,7 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken, re
                         autoComplete="one-time-code" maxLength={6} value={code}
                         onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
                 </div>
-                {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+                {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
             </form>
         </Modal>
     );

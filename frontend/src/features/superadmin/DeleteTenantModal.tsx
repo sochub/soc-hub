@@ -44,7 +44,7 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
             open={isOpen}
             onClose={handleClose}
             size="md"
-            title={<span className="text-red-700 flex items-center gap-2"><AlertTriangle size={16} />Delete Tenant Permanently</span>}
+            title={<span className="text-red-300 flex items-center gap-2"><AlertTriangle size={16} />Delete Tenant Permanently</span>}
             footer={<>
                 <button onClick={handleClose} className={btnSecondary}>Cancel</button>
                 <button
@@ -57,15 +57,15 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
             </>}
         >
             <div className="space-y-4">
-                <p className="text-sm text-zinc-600">
-                    This permanently deletes <span className="font-medium text-zinc-900">{tenant.name}</span> and
+                <p className="text-sm text-fg-2">
+                    This permanently deletes <span className="font-medium text-fg">{tenant.name}</span> and
                     all of its cases, artifacts, audit history, IOCs, invitations, copilot conversations,
                     playbooks, and webhooks. This cannot be undone.
                 </p>
 
                 <div>
                     <label className={modalLabel}>
-                        Type <span className="font-mono text-red-700">{tenant.slug}</span> to confirm
+                        Type <span className="font-mono text-red-300">{tenant.slug}</span> to confirm
                     </label>
                     <input
                         type="text"
@@ -75,7 +75,7 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
                     />
                 </div>
 
-                {error && <p className="text-red-700 text-sm">{error}</p>}
+                {error && <p className="text-red-300 text-sm">{error}</p>}
             </div>
         </Modal>
     );

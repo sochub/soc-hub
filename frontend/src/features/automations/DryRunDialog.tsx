@@ -60,7 +60,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
             </>}
         >
             <div className="space-y-4 text-sm">
-                <p className="text-zinc-600">Conditions, loops and case search run for real. Everything else is simulated — nothing is changed, sent or called.</p>
+                <p className="text-fg-2">Conditions, loops and case search run for real. Everything else is simulated — nothing is changed, sent or called.</p>
                 <div className="flex gap-4">
                     {(['case', 'alert', 'payload'] as const).map((s) => (
                         <label key={s} className="flex items-center gap-1.5 capitalize">
@@ -126,7 +126,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
                         </div>
                     </details>
                 )}
-                {error && <p className="text-red-700 text-xs">{error}</p>}
+                {error && <p className="text-red-300 text-xs">{error}</p>}
             </div>
         </Modal>
     );

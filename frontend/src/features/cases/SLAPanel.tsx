@@ -17,9 +17,9 @@ function Clock({ label, status, dueAt }: {
 
     return (
         <div className="flex items-center gap-2">
-            <span className="label-mono text-zinc-400">{label}</span>
+            <span className="label-mono text-muted">{label}</span>
             <SLABadge status={status} />
-            {countdown && <span className="num text-xs text-zinc-500">{countdown}</span>}
+            {countdown && <span className="num text-xs text-fg-3">{countdown}</span>}
         </div>
     );
 }
@@ -33,9 +33,9 @@ export default function SLAPanel({ caseData }: { caseData: Case }) {
     }
 
     return (
-        <div className="border border-zinc-200 bg-white mb-6 px-4 h-11 flex items-center gap-6">
-            <span className="label-mono flex items-center gap-2 text-zinc-500 shrink-0">
-                <Timer size={13} className="text-accent-600" /> SLA
+        <div className="border border-line bg-panel mb-6 px-4 h-11 flex items-center gap-6">
+            <span className="label-mono flex items-center gap-2 text-fg-3 shrink-0">
+                <Timer size={13} className="text-accent" /> SLA
             </span>
             <Clock label="response" status={caseData.sla_response_status} dueAt={caseData.sla_response_due_at} />
             <Clock label="resolution" status={caseData.sla_resolution_status} dueAt={caseData.sla_resolution_due_at} />

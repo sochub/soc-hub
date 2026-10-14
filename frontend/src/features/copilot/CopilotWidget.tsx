@@ -34,7 +34,7 @@ export default function CopilotWidget() {
                 animate={{ scale: open ? 0 : 1, opacity: open ? 0 : 1 }}
                 transition={{ duration: 0.15 }}
                 aria-label="Open copilot"
-                className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-2xl bg-linear-to-tr from-brand-600 to-brand-400 text-slate-950 shadow-xl shadow-brand-900/30 flex items-center justify-center hover:shadow-brand-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-2xl bg-linear-to-tr from-accent to-accent text-on-accent shadow-xl shadow-accent/30 flex items-center justify-center hover:shadow-brand-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
             >
                 <Sparkles size={24} />
             </motion.button>
@@ -48,7 +48,7 @@ export default function CopilotWidget() {
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
                             onClick={() => setOpen(false)}
-                            className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-xs"
+                            className="fixed inset-0 z-40 bg-canvas/50 backdrop-blur-xs"
                             aria-hidden="true"
                         />
                         <motion.aside
@@ -58,7 +58,7 @@ export default function CopilotWidget() {
                             transition={{ type: 'spring', stiffness: 320, damping: 34 }}
                             role="dialog"
                             aria-label="Copilot"
-                            className="fixed top-0 right-0 z-50 h-full w-full max-w-md border-l border-slate-800/60 bg-slate-950 shadow-2xl"
+                            className="fixed top-0 right-0 z-50 h-full w-full max-w-md border-l border-line bg-canvas shadow-2xl"
                         >
                             {/* key forces a fresh chat (and session fetch) when switching between case/general context */}
                             <CopilotChat key={caseId ?? 'general'} caseId={caseId} onClose={() => setOpen(false)} />

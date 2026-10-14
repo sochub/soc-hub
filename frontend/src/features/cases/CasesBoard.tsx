@@ -56,13 +56,13 @@ export default function CasesBoard({ cases, severityConfig }: {
                         onDragLeave={() => setDragOver(null)}
                         onDrop={e => onDrop(e, status)}
                         className={cn(
-                            "flex-1 min-w-56 bg-zinc-50 border border-zinc-200 rounded-lg flex flex-col max-h-[calc(100vh-12rem)]",
-                            dragOver === status && "border-accent-500 bg-blue-50/50"
+                            "flex-1 min-w-56 bg-surface border border-line rounded-lg flex flex-col max-h-[calc(100vh-12rem)]",
+                            dragOver === status && "border-accent bg-accent/10"
                         )}
                     >
-                        <div className="px-3 py-2 border-b border-zinc-200 flex items-center justify-between">
-                            <span className="label-mono text-xs uppercase tracking-wider text-zinc-600">{status.replace('_', ' ')}</span>
-                            <span className="num text-xs text-zinc-400">{col.length}</span>
+                        <div className="px-3 py-2 border-b border-line flex items-center justify-between">
+                            <span className="label-mono text-xs uppercase tracking-wider text-fg-2">{status.replace('_', ' ')}</span>
+                            <span className="num text-xs text-muted">{col.length}</span>
                         </div>
                         <div className="p-2 space-y-2 overflow-y-auto">
                             {col.map(c => {
@@ -73,15 +73,15 @@ export default function CasesBoard({ cases, severityConfig }: {
                                         to={`/cases/${c.id}`}
                                         draggable
                                         onDragStart={e => e.dataTransfer.setData('text/plain', String(c.id))}
-                                        className="block bg-white border border-zinc-200 rounded-md p-2.5 hover:border-accent-500 cursor-grab active:cursor-grabbing"
+                                        className="block bg-panel border border-line rounded-md p-2.5 hover:border-accent cursor-grab active:cursor-grabbing"
                                     >
                                         <div className="flex items-center justify-between gap-2 mb-1">
-                                            <span className="font-mono text-xs text-zinc-400">#{c.id}</span>
+                                            <span className="font-mono text-xs text-muted">#{c.id}</span>
                                             <span className={cn("px-1.5 py-0.5 rounded-sm text-[10px] font-bold uppercase border", sev.color, sev.bg, sev.border)}>
                                                 {c.severity}
                                             </span>
                                         </div>
-                                        <div className="text-sm font-medium text-zinc-800 line-clamp-2">{c.title}</div>
+                                        <div className="text-sm font-medium text-fg line-clamp-2">{c.title}</div>
                                         {c.sla_overall_status && <div className="mt-1.5"><SLABadge status={c.sla_overall_status} /></div>}
                                     </Link>
                                 );

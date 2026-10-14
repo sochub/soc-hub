@@ -20,9 +20,9 @@ interface Alert {
 }
 
 const statusColor: Record<string, string> = {
-    pending: 'text-amber-700 bg-amber-50 border-amber-200',
-    promoted: 'text-emerald-700 bg-emerald-50 border-emerald-200',
-    dismissed: 'text-zinc-500 bg-zinc-100 border-zinc-200',
+    pending: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
+    promoted: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
+    dismissed: 'text-fg-3 bg-raised border-line',
 };
 
 export default function AlertsList() {
@@ -50,41 +50,41 @@ export default function AlertsList() {
 
     if (isLoading) {
         return <PageContainer><div className="flex items-center justify-center h-[50vh]">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-300" /></div></PageContainer>;
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-line-strong" /></div></PageContainer>;
     }
 
     return (
         <PageContainer className="space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Alerts</h1>
-                    <p className="text-zinc-500 text-sm mt-0.5">{filtered.length} alerts</p>
+                    <h1 className="text-2xl font-bold text-fg tracking-tight">Alerts</h1>
+                    <p className="text-fg-3 text-sm mt-0.5">{filtered.length} alerts</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
                         <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm text-zinc-700 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent-500">
+                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
                             <option value="all">All Sources</option>
                             {sources.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                     </div>
                     <div className="relative">
                         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm text-zinc-700 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent-500">
+                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
                             <option value="all">All Statuses</option>
                             <option value="pending">Pending</option>
                             <option value="promoted">Promoted</option>
                             <option value="dismissed">Dismissed</option>
                         </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                     </div>
                 </div>
             </div>
 
-            <div className="glass-panel rounded-lg border border-zinc-200 overflow-hidden">
+            <div className="glass-panel rounded-lg border border-line overflow-hidden">
                 <table className="w-full text-sm text-left">
-                    <thead className="bg-white border-b border-zinc-200 text-xs uppercase text-zinc-500 font-semibold tracking-wider">
+                    <thead className="bg-panel border-b border-line text-xs uppercase text-fg-3 font-semibold tracking-wider">
                         <tr>
                             <th className="px-4 py-3 w-8"></th>
                             <th className="px-4 py-3 w-40">Source</th>
@@ -94,39 +94,39 @@ export default function AlertsList() {
                             <th className="px-4 py-3 w-56">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-200">
+                    <tbody className="divide-y divide-line">
                         {filtered.length === 0 ? (
-                            <tr><td colSpan={6} className="px-6 py-12 text-center text-zinc-400">
+                            <tr><td colSpan={6} className="px-6 py-12 text-center text-muted">
                                 <Search size={32} className="mb-2 opacity-50 mx-auto" />No alerts</td></tr>
                         ) : filtered.map(a => (
                             <Fragment key={a.id}>
-                                <tr className="group hover:bg-zinc-100">
+                                <tr className="group hover:bg-raised">
                                     <td className="px-4 py-2.5">
-                                        <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="text-zinc-400 hover:text-zinc-700">
+                                        <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="text-muted hover:text-fg-2">
                                             {expanded === a.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                         </button>
                                     </td>
-                                    <td className="px-4 py-2.5"><span className="font-mono text-xs text-zinc-600">{a.source}</span></td>
-                                    <td className="px-4 py-2.5 font-medium text-zinc-800">{a.title}</td>
+                                    <td className="px-4 py-2.5"><span className="font-mono text-xs text-fg-2">{a.source}</span></td>
+                                    <td className="px-4 py-2.5 font-medium text-fg">{a.title}</td>
                                     <td className="px-4 py-2.5">
                                         <span className={cn("inline-flex px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border", statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
                                     </td>
-                                    <td className="px-4 py-2.5 text-zinc-500 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>
+                                    <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>
                                     <td className="px-4 py-2.5">
                                         {a.status === 'pending' ? (
                                             <div className="flex items-center gap-2">
-                                                <button onClick={() => setPromoting(a)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent-600 text-white hover:bg-accent-700 flex items-center gap-1"><CheckCircle size={12} />Promote</button>
-                                                <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-zinc-100 text-zinc-600 hover:bg-zinc-200 flex items-center gap-1"><X size={12} />Dismiss</button>
+                                                <button onClick={() => setPromoting(a)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent text-on-accent hover:bg-accent-hover flex items-center gap-1"><CheckCircle size={12} />Promote</button>
+                                                <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 flex items-center gap-1"><X size={12} />Dismiss</button>
                                             </div>
                                         ) : a.case_id ? (
-                                            <Link to={`/cases/${a.case_id}`} className="text-xs text-accent-600 hover:underline">Case #{a.case_id}</Link>
-                                        ) : <span className="text-xs text-zinc-400">—</span>}
+                                            <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
+                                        ) : <span className="text-xs text-muted">—</span>}
                                     </td>
                                 </tr>
                                 {expanded === a.id && (
-                                    <tr><td colSpan={6} className="px-6 py-3 bg-zinc-50">
+                                    <tr><td colSpan={6} className="px-6 py-3 bg-surface">
                                         <AlertRuns alertId={a.id} />
-                                        <pre className="text-xs text-zinc-600 overflow-x-auto">{JSON.stringify(a.payload, null, 2)}</pre>
+                                        <pre className="text-xs text-fg-2 overflow-x-auto">{JSON.stringify(a.payload, null, 2)}</pre>
                                     </td></tr>
                                 )}
                             </Fragment>

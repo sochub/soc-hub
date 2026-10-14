@@ -164,34 +164,34 @@ function Editor() {
 
     return (
         <div className="flex flex-col h-[calc(100vh-3.5rem)]">
-            <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-200 bg-white flex-wrap">
-                <Link to="/automations" className="p-1 text-zinc-500 hover:text-zinc-900" aria-label="Back"><ArrowLeft size={18} /></Link>
-                <input className="text-base font-semibold text-zinc-900 border-b border-transparent focus:border-accent-500 outline-hidden min-w-[220px]"
+            <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-panel flex-wrap">
+                <Link to="/automations" className="p-1 text-fg-3 hover:text-fg" aria-label="Back"><ArrowLeft size={18} /></Link>
+                <input className="text-base font-semibold text-fg border-b border-transparent focus:border-accent outline-hidden min-w-[220px]"
                     disabled={readOnly} value={meta.name} onChange={(e) => setMeta({ ...meta, name: e.target.value })} aria-label="Workflow name" />
-                {wf && <span className="num text-xs text-zinc-400">v{wf.version}</span>}
+                {wf && <span className="num text-xs text-muted">v{wf.version}</span>}
                 <div className="flex gap-3 ml-2">
                     {(['editor', 'runs'] as const).map((t) => (
                         <button key={t} disabled={isNew && t === 'runs'} onClick={() => setTab(t)}
-                            className={cn('text-sm capitalize', tab === t ? 'text-accent-700 font-medium' : 'text-zinc-500')}>{t}</button>
+                            className={cn('text-sm capitalize', tab === t ? 'text-accent font-medium' : 'text-fg-3')}>{t}</button>
                     ))}
                 </div>
                 <div className="ml-auto flex items-center gap-2">
-                    {banner && <span className="text-xs text-zinc-600">{banner}</span>}
+                    {banner && <span className="text-xs text-fg-2">{banner}</span>}
                     {!readOnly && (
                         <button onClick={() => save.mutate()} disabled={save.isPending}
-                            className="inline-flex items-center gap-1.5 h-8 px-3 bg-accent-600 text-white text-sm hover:bg-accent-700 disabled:opacity-50">
+                            className="inline-flex items-center gap-1.5 h-8 px-3 bg-accent text-on-accent text-sm hover:bg-accent-hover disabled:opacity-50">
                             <Save size={14} /> Save
                         </button>
                     )}
                     {!readOnly && !isNew && wf && (
                         <button onClick={() => setDryRunOpen(true)} title="Uses the last saved version"
-                            className="inline-flex items-center gap-1.5 h-8 px-3 border border-violet-300 text-violet-700 text-sm hover:bg-violet-50">
+                            className="inline-flex items-center gap-1.5 h-8 px-3 border border-violet-500/30 text-violet-300 text-sm hover:bg-violet-500/10">
                             <FlaskConical size={14} /> Dry run
                         </button>
                     )}
                     {!readOnly && !isNew && (
                         <button onClick={() => toggle.mutate()} disabled={toggle.isPending}
-                            className={cn('h-8 px-3 text-sm border', wf?.enabled ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : 'border-zinc-300 text-zinc-700')}>
+                            className={cn('h-8 px-3 text-sm border', wf?.enabled ? 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10' : 'border-line-strong text-fg-2')}>
                             {wf?.enabled ? 'Enabled' : 'Disabled'}
                         </button>
                     )}
@@ -200,14 +200,14 @@ function Editor() {
 
             {tab === 'runs' && wf ? <div className="p-4 overflow-auto"><RunsTable workflowId={wf.id} /></div> : (
                 <div className="flex flex-1 min-h-0">
-                    <aside className="w-56 border-r border-zinc-200 bg-white overflow-y-auto p-3 space-y-4">
+                    <aside className="w-56 border-r border-line bg-panel overflow-y-auto p-3 space-y-4">
                         <div className="space-y-2">
                             <p className="label-mono">trigger</p>
-                            <select className="w-full border border-zinc-300 px-2 py-1.5 text-sm" disabled={readOnly} value={meta.trigger_type}
+                            <select className="w-full border border-line-strong px-2 py-1.5 text-sm" disabled={readOnly} value={meta.trigger_type}
                                 onChange={(e) => setMeta({ ...meta, trigger_type: e.target.value as TriggerType })}>
                                 {Object.entries(TRIGGER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                             </select>
-                            <textarea rows={2} className="w-full border border-zinc-300 px-2 py-1.5 font-mono text-xs" disabled={readOnly}
+                            <textarea rows={2} className="w-full border border-line-strong px-2 py-1.5 font-mono text-xs" disabled={readOnly}
                                 placeholder="filter, e.g. 'x' in case.tags" value={meta.trigger_filter}
                                 onChange={(e) => setMeta({ ...meta, trigger_filter: e.target.value })} />
                         </div>
@@ -220,8 +220,8 @@ function Editor() {
                                     {items.map((d) => (
                                         <div key={d.type} draggable onDragStart={(e) => { e.dataTransfer.setData('application/wf-node', d.type); e.dataTransfer.effectAllowed = 'move'; }}
                                             onClick={() => addNode(d.type, screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }))}
-                                            className="flex items-center gap-2 px-2 py-1.5 mb-1 border border-zinc-200 text-sm cursor-grab hover:border-accent-400 bg-zinc-50">
-                                            <d.icon size={14} className="text-accent-600" />{d.label}
+                                            className="flex items-center gap-2 px-2 py-1.5 mb-1 border border-line text-sm cursor-grab hover:border-accent/40 bg-surface">
+                                            <d.icon size={14} className="text-accent" />{d.label}
                                         </div>
                                     ))}
                                 </div>
@@ -231,33 +231,33 @@ function Editor() {
 
                     <div className="flex-1 relative" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }} onDrop={onDrop}>
                         {graphErrors.length > 0 && (
-                            <div className="absolute z-10 top-2 left-2 right-2 bg-red-50 border border-red-200 text-red-700 text-xs p-2">
+                            <div className="absolute z-10 top-2 left-2 right-2 bg-red-500/10 border border-red-500/30 text-red-300 text-xs p-2">
                                 <AlertTriangle size={12} className="inline mr-1" />{graphErrors.map((e) => e.message).join(' · ')}
                             </div>
                         )}
                         {errors.length === 0 && loadedVersion !== null && loadedVersion > 0 && (
-                            <div className="absolute z-10 top-2 right-2 text-xs text-emerald-700 flex items-center gap-1"><CheckCircle2 size={12} />valid</div>
+                            <div className="absolute z-10 top-2 right-2 text-xs text-emerald-300 flex items-center gap-1"><CheckCircle2 size={12} />valid</div>
                         )}
-                        <ReactFlow nodes={displayNodes} edges={edges} nodeTypes={nodeTypes}
+                        <ReactFlow colorMode="dark" nodes={displayNodes} edges={edges} nodeTypes={nodeTypes}
                             onNodesChange={readOnly ? undefined : onNodesChange} onEdgesChange={readOnly ? undefined : onEdgesChange}
                             onConnect={readOnly ? undefined : onConnect}
                             onNodeClick={(_, n) => setSelectedId(n.id)} onPaneClick={() => setSelectedId(null)}
                             nodesDraggable={!readOnly} nodesConnectable={!readOnly} deleteKeyCode={readOnly ? null : undefined} onBeforeDelete={onBeforeDelete} fitView>
-                            <Background gap={16} color="#e4e4e7" />
+                            <Background gap={16} color="#27272a" />
                             <Controls />
                             <MiniMap pannable zoomable />
                         </ReactFlow>
                     </div>
 
-                    <aside className="w-80 border-l border-zinc-200 bg-white overflow-y-auto">
+                    <aside className="w-80 border-l border-line bg-panel overflow-y-auto">
                         {selected ? (
                             <NodeInspector key={selected.id} node={selected} readOnly={readOnly} errors={selectedErrors}
                                 onChange={updateNode} onRename={renameNode} onDelete={() => deleteNode(selected.id)} />
                         ) : (
-                            <div className="p-4 text-sm text-zinc-500 space-y-3">
+                            <div className="p-4 text-sm text-fg-3 space-y-3">
                                 <p>Select a node to configure it. Drag nodes from the left palette; connect handles to build the flow.</p>
                                 <label className="block"><span className="label-mono">description</span>
-                                    <textarea rows={3} className="w-full border border-zinc-300 px-2 py-1.5 text-sm" disabled={readOnly}
+                                    <textarea rows={3} className="w-full border border-line-strong px-2 py-1.5 text-sm" disabled={readOnly}
                                         value={meta.description} onChange={(e) => setMeta({ ...meta, description: e.target.value })} /></label>
                             </div>
                         )}

@@ -18,31 +18,31 @@ const TLP_LEVELS = ['white', 'green', 'amber', 'red'];
 
 const threatLevelBadge = (level: string) => {
     const map: Record<string, string> = {
-        critical: 'bg-red-50 text-red-700 border-red-200',
-        high: 'bg-orange-50 text-orange-700 border-orange-200',
-        medium: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-        low: 'bg-blue-50 text-accent-600 border-blue-200',
-        info: 'bg-zinc-100 text-zinc-500 border-zinc-200',
+        critical: 'bg-red-500/10 text-red-300 border-red-500/30',
+        high: 'bg-orange-500/10 text-orange-300 border-orange-500/30',
+        medium: 'bg-yellow-500/10 text-yellow-300 border-yellow-500/30',
+        low: 'bg-accent/10 text-accent border-accent/40',
+        info: 'bg-raised text-fg-3 border-line',
     };
     return map[level] ?? map.info;
 };
 
 const statusBadge = (status: string) => {
     const map: Record<string, string> = {
-        active: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-        expired: 'bg-zinc-100 text-zinc-500 border-zinc-200',
-        whitelisted: 'bg-blue-50 text-accent-600 border-blue-200',
-        false_positive: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+        active: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
+        expired: 'bg-raised text-fg-3 border-line',
+        whitelisted: 'bg-accent/10 text-accent border-accent/40',
+        false_positive: 'bg-yellow-500/10 text-yellow-300 border-yellow-500/30',
     };
     return map[status] ?? map.expired;
 };
 
 const tlpBadge = (tlp: string) => {
     const map: Record<string, string> = {
-        white: 'bg-zinc-100 text-zinc-700 border-zinc-300',
-        green: 'bg-green-50 text-green-700 border-green-200',
-        amber: 'bg-amber-50 text-amber-700 border-amber-200',
-        red: 'bg-red-50 text-red-700 border-red-200',
+        white: 'bg-raised text-fg-2 border-line-strong',
+        green: 'bg-green-500/10 text-green-300 border-green-500/30',
+        amber: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
+        red: 'bg-red-500/10 text-red-300 border-red-500/30',
     };
     return map[tlp] ?? map.amber;
 };
@@ -101,11 +101,11 @@ export default function IOCList() {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-zinc-900 tracking-tight flex items-center gap-3">
-                        <AlertOctagon size={24} className="text-purple-700" />
+                    <h1 className="text-2xl font-bold text-fg tracking-tight flex items-center gap-3">
+                        <AlertOctagon size={24} className="text-purple-300" />
                         Indicators of Compromise
                     </h1>
-                    <p className="text-zinc-500 text-sm mt-1">Track and manage threat indicators across all cases.</p>
+                    <p className="text-fg-3 text-sm mt-1">Track and manage threat indicators across all cases.</p>
                 </div>
                 <button
                     onClick={() => setShowModal(true)}
@@ -117,13 +117,13 @@ export default function IOCList() {
             </div>
 
             {/* Table */}
-            <div className="glass-panel rounded-xl border border-zinc-200 overflow-hidden">
+            <div className="glass-panel rounded-xl border border-line overflow-hidden">
                 {isLoading ? (
                     <div className="flex items-center justify-center py-20">
-                        <div className="w-8 h-8 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+                        <div className="w-8 h-8 rounded-full border-4 border-line border-t-accent animate-spin" />
                     </div>
                 ) : !iocs || iocs.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-zinc-400">
+                    <div className="flex flex-col items-center justify-center py-20 text-muted">
                         <AlertOctagon size={40} className="mb-3 opacity-30" />
                         <p className="text-sm">No IOCs recorded yet. Add one to get started.</p>
                     </div>
@@ -131,7 +131,7 @@ export default function IOCList() {
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="border-b border-zinc-200 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                                <tr className="border-b border-line text-xs font-semibold text-muted uppercase tracking-wider">
                                     <th className="px-2 py-3 w-8"></th>
                                     <th className="px-4 py-3 text-left">Type</th>
                                     <th className="px-4 py-3 text-left">Value</th>
@@ -144,21 +144,21 @@ export default function IOCList() {
                                     <th className="px-4 py-3 text-right">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-zinc-200">
+                            <tbody className="divide-y divide-line">
                                 {iocs.map((ioc) => (
                                     <Fragment key={ioc.id}>
-                                    <tr className="hover:bg-white transition-colors group">
+                                    <tr className="hover:bg-panel transition-colors group">
                                         <td className="px-2 py-3">
-                                            <button onClick={() => setOpenId(openId === ioc.id ? null : ioc.id)} className="text-zinc-400 hover:text-zinc-700" title="Threat intel" aria-expanded={openId === ioc.id}>
+                                            <button onClick={() => setOpenId(openId === ioc.id ? null : ioc.id)} className="text-muted hover:text-fg-2" title="Threat intel" aria-expanded={openId === ioc.id}>
                                                 {openId === ioc.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                             </button>
                                         </td>
                                         <td className="px-4 py-3">
-                                            <span className="font-mono text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-sm">
+                                            <span className="font-mono text-xs text-fg-3 bg-raised px-2 py-0.5 rounded-sm">
                                                 {ioc.ioc_type.replace('_', ' ')}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 font-mono text-zinc-800 max-w-[200px] truncate" title={ioc.value}>
+                                        <td className="px-4 py-3 font-mono text-fg max-w-[200px] truncate" title={ioc.value}>
                                             {ioc.enrichment_verdict && VERDICT_DOT[ioc.enrichment_verdict] && (
                                                 <span title={ioc.enrichment_verdict} className={cn('inline-block w-2 h-2 rounded-full mr-2 align-middle', VERDICT_DOT[ioc.enrichment_verdict])} />
                                             )}
@@ -171,13 +171,13 @@ export default function IOCList() {
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-2">
-                                                <div className="w-16 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                                                <div className="w-16 h-1.5 bg-raised rounded-full overflow-hidden">
                                                     <div
                                                         className="h-full bg-purple-500 rounded-full"
                                                         style={{ width: `${ioc.confidence}%` }}
                                                     />
                                                 </div>
-                                                <span className="text-xs text-zinc-400">{ioc.confidence}%</span>
+                                                <span className="text-xs text-muted">{ioc.confidence}%</span>
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
@@ -190,8 +190,8 @@ export default function IOCList() {
                                                 TLP:{ioc.tlp}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 text-zinc-500 text-xs">{ioc.source || '—'}</td>
-                                        <td className="px-4 py-3 text-zinc-400 text-xs">
+                                        <td className="px-4 py-3 text-fg-3 text-xs">{ioc.source || '—'}</td>
+                                        <td className="px-4 py-3 text-muted text-xs">
                                             {new Date(ioc.created_at).toLocaleDateString()}
                                         </td>
                                         <td className="px-4 py-3 text-right">
@@ -201,7 +201,7 @@ export default function IOCList() {
                                                         deleteMutation.mutate(ioc.id);
                                                     }
                                                 }}
-                                                className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors opacity-0 group-hover:opacity-100"
+                                                className="p-1.5 text-muted hover:text-red-300 hover:bg-raised rounded-sm transition-colors opacity-0 group-hover:opacity-100"
                                                 title="Delete IOC"
                                             >
                                                 <Trash2 size={14} />
@@ -209,7 +209,7 @@ export default function IOCList() {
                                         </td>
                                     </tr>
                                     {openId === ioc.id && (
-                                        <tr className="bg-zinc-50">
+                                        <tr className="bg-surface">
                                             <td></td>
                                             <td colSpan={9} className="px-4 py-3"><EnrichmentPanel kind="ioc" id={ioc.id} canRun={canRun} ioc={ioc} /></td>
                                         </tr>

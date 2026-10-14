@@ -59,12 +59,12 @@ export default function Playbooks() {
         <PageContainer className="space-y-0">
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
-                    <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Playbooks</h1>
+                    <h1 className="text-xl font-semibold tracking-tight text-fg">Playbooks</h1>
                     <p className="label-mono mt-1">incident response templates</p>
                 </div>
                 {tab === 'mine' && canManage && (
                     <button onClick={() => { setNewMarketplace(false); setEditId('new'); }}
-                        className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent-600 text-white text-sm font-medium hover:bg-accent-700 transition-colors">
+                        className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover transition-colors">
                         <Plus size={15} /> New Playbook
                     </button>
                 )}
@@ -72,14 +72,14 @@ export default function Playbooks() {
                     <div className="flex items-center gap-2">
                         {isSuper && (
                             <button onClick={() => { setNewMarketplace(true); setEditId('new'); }}
-                                className="inline-flex items-center gap-1.5 h-9 px-3.5 border border-zinc-300 text-zinc-700 text-sm font-medium hover:bg-zinc-100 transition-colors">
+                                className="inline-flex items-center gap-1.5 h-9 px-3.5 border border-line-strong text-fg-2 text-sm font-medium hover:bg-raised transition-colors">
                                 <Plus size={15} /> New template
                             </button>
                         )}
                         {canManage && (
                             <button onClick={() => importMutation.mutate([...selected])}
                                 disabled={selected.size === 0 || importMutation.isPending}
-                                className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent-600 text-white text-sm font-medium hover:bg-accent-700 transition-colors disabled:opacity-50">
+                                className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50">
                                 <Download size={15} /> Import {selected.size > 0 ? `(${selected.size})` : ''}
                             </button>
                         )}
@@ -88,30 +88,30 @@ export default function Playbooks() {
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b border-zinc-200 mb-4">
+            <div className="flex border-b border-line mb-4">
                 {([['mine', 'My Playbooks', BookText], ['marketplace', 'Marketplace', Store]] as const).map(([key, label, Icon]) => (
                     <button key={key} onClick={() => setTab(key)}
                         className={cn('relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors',
-                            tab === key ? 'text-accent-700' : 'text-zinc-500 hover:text-zinc-800')}>
+                            tab === key ? 'text-accent' : 'text-fg-3 hover:text-fg')}>
                         <Icon size={15} /> {label}
-                        {tab === key && <span className="absolute -bottom-px left-0 right-0 h-0.5 bg-accent-600" />}
+                        {tab === key && <span className="absolute -bottom-px left-0 right-0 h-0.5 bg-accent" />}
                     </button>
                 ))}
             </div>
 
             {loading ? (
-                <p className="font-mono text-xs text-zinc-400">$ loading…</p>
+                <p className="font-mono text-xs text-muted">$ loading…</p>
             ) : list.length === 0 ? (
-                <div className="border border-dashed border-zinc-300 bg-white p-10 text-center">
-                    <ListChecks size={28} className="mx-auto text-zinc-300 mb-3" />
-                    <p className="text-sm text-zinc-600">
+                <div className="border border-dashed border-line-strong bg-panel p-10 text-center">
+                    <ListChecks size={28} className="mx-auto text-muted mb-3" />
+                    <p className="text-sm text-fg-2">
                         {tab === 'mine'
                             ? 'No playbooks yet. Import from the Marketplace or create one.'
                             : 'No marketplace templates available.'}
                     </p>
                     {tab === 'mine' && (
                         <button onClick={() => setTab('marketplace')}
-                            className="mt-3 text-sm text-accent-700 hover:text-accent-800 font-medium">Browse marketplace →</button>
+                            className="mt-3 text-sm text-accent hover:text-accent font-medium">Browse marketplace →</button>
                     )}
                 </div>
             ) : (
@@ -120,38 +120,38 @@ export default function Playbooks() {
                         const isSel = selected.has(t.id);
                         return (
                             <div key={t.id}
-                                className={cn('group bg-white border p-4 flex flex-col transition-all',
-                                    isSel ? 'border-accent-500 shadow-console-hover' : 'border-zinc-200 hover:border-accent-300')}>
+                                className={cn('group bg-panel border p-4 flex flex-col transition-all',
+                                    isSel ? 'border-accent shadow-console-hover' : 'border-line hover:border-accent/40')}>
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
-                                        <h3 className="text-sm font-semibold text-zinc-900 truncate">{t.name}</h3>
-                                        <span className="font-mono text-[10px] uppercase tracking-wide text-zinc-400">{t.category}</span>
+                                        <h3 className="text-sm font-semibold text-fg truncate">{t.name}</h3>
+                                        <span className="font-mono text-[10px] uppercase tracking-wide text-muted">{t.category}</span>
                                     </div>
                                     {tab === 'marketplace' && (
                                         t.already_imported ? (
-                                            <span className="shrink-0 inline-flex items-center gap-1 font-mono text-[10px] uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5">
+                                            <span className="shrink-0 inline-flex items-center gap-1 font-mono text-[10px] uppercase text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5">
                                                 <Check size={11} /> imported
                                             </span>
                                         ) : canManage ? (
                                             <button onClick={() => toggle(t.id)}
                                                 className={cn('shrink-0 w-5 h-5 border flex items-center justify-center',
-                                                    isSel ? 'bg-accent-600 border-accent-600 text-white' : 'border-zinc-300 hover:border-accent-400')}>
+                                                    isSel ? 'bg-accent border-accent text-on-accent' : 'border-line-strong hover:border-accent/40')}>
                                                 {isSel && <Check size={13} />}
                                             </button>
                                         ) : null
                                     )}
                                 </div>
-                                {t.description && <p className="text-xs text-zinc-500 mt-2 line-clamp-2 flex-1">{t.description}</p>}
+                                {t.description && <p className="text-xs text-fg-3 mt-2 line-clamp-2 flex-1">{t.description}</p>}
                                 <div className="mt-3 flex items-center justify-between">
-                                    <span className="num text-[11px] text-zinc-500">{t.task_count} tasks</span>
+                                    <span className="num text-[11px] text-fg-3">{t.task_count} tasks</span>
                                     <div className="flex items-center gap-2">
                                         <button onClick={() => { setNewMarketplace(false); setEditId(t.id); }}
-                                            className="text-xs text-accent-700 hover:text-accent-800 font-medium">
+                                            className="text-xs text-accent hover:text-accent font-medium">
                                             {((tab === 'mine' && canManage && !t.is_system) || (tab === 'marketplace' && isSuper)) ? 'Edit' : 'View'}
                                         </button>
                                         {((tab === 'mine' && canManage) || (tab === 'marketplace' && isSuper)) && (
                                             <button onClick={() => { if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id); }}
-                                                className="text-zinc-300 hover:text-severity-critical" title="Delete">
+                                                className="text-muted hover:text-severity-critical" title="Delete">
                                                 <Trash2 size={14} />
                                             </button>
                                         )}

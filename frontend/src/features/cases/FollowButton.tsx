@@ -26,7 +26,7 @@ export default function FollowButton({ caseId, isOwner, ready }: { caseId: numbe
         return (
             <span
                 title="Owners always follow their case"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border bg-accent text-white border-accent opacity-60 cursor-default"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border bg-accent text-on-accent border-accent opacity-60 cursor-default"
             >
                 <Bell size={14} /> Following (owner)
             </span>
@@ -41,8 +41,8 @@ export default function FollowButton({ caseId, isOwner, ready }: { caseId: numbe
             className={cn(
                 'group inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border transition-colors disabled:opacity-50',
                 following
-                    ? 'bg-accent text-white border-accent hover:bg-red-600 hover:border-red-600'
-                    : 'bg-white text-accent border-accent hover:bg-accent/10'
+                    ? 'bg-accent text-on-accent border-accent hover:bg-red-600 hover:border-red-600'
+                    : 'bg-panel text-accent border-accent hover:bg-accent/10'
             )}
         >
             {following ? <Bell size={14} className="group-hover:hidden group-focus-visible:hidden" /> : <Bell size={14} />}

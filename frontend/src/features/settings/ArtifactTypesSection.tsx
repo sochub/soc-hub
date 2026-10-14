@@ -7,7 +7,7 @@ import { useArtifactTypes, type ArtifactTypeDef } from '../artifacts/useArtifact
 
 type Draft = { id?: number; key: string; label: string; payload_key: string; show_in_mindmap: boolean; private: boolean };
 const EMPTY: Draft = { key: '', label: '', payload_key: '', show_in_mindmap: true, private: false };
-const input = 'mt-1 w-full h-8 px-2 text-sm border border-zinc-300 bg-white focus:outline-hidden focus:border-accent-500';
+const input = 'mt-1 w-full h-8 px-2 text-sm border border-line-strong bg-panel focus:outline-hidden focus:border-accent';
 
 function errorText(e: unknown): string {
     const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
@@ -34,10 +34,10 @@ export default function ArtifactTypesSection() {
     const edit = (d: ArtifactTypeDef) => { setError(null); setDraft({ ...d, payload_key: d.payload_key ?? '' }); };
 
     return (
-        <section className="bg-white border border-zinc-200">
-            <div className="flex items-center justify-between px-4 h-11 border-b border-zinc-200">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-                    <Tags size={15} className="text-accent-600" /> Artifact types
+        <section className="bg-panel border border-line">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-line">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <Tags size={15} className="text-accent" /> Artifact types
                 </h2>
                 {!draft && (
                     <button type="button" className={btnSecondary} onClick={() => { setError(null); setDraft(EMPTY); }}>
@@ -46,7 +46,7 @@ export default function ArtifactTypesSection() {
                 )}
             </div>
             <div className="p-4 space-y-3">
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-fg-3">
                     Custom types appear next to the built-in ones. With an alert payload key, promoting an alert fills them automatically.
                     Workflows read them as <code className="font-mono">{'{{ case.attributes.<key> }}'}</code>. Private types are only visible to workflows; making an existing type private hides it from now on but doesn't remove timeline entries already written. Raw alert payloads still show the original values.
                 </p>
@@ -54,7 +54,7 @@ export default function ArtifactTypesSection() {
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="label-mono text-left text-zinc-400">
+                                <tr className="label-mono text-left text-muted">
                                     <th className="py-1 pr-3 font-normal">key</th><th className="pr-3 font-normal">label</th>
                                     <th className="pr-3 font-normal">payload key</th><th className="pr-3 font-normal">mindmap</th>
                                     <th className="pr-3 font-normal">private</th><th />
@@ -62,18 +62,18 @@ export default function ArtifactTypesSection() {
                             </thead>
                             <tbody>
                                 {custom.map((d) => (
-                                    <tr key={d.id} className="border-t border-zinc-100">
+                                    <tr key={d.id} className="border-t border-line">
                                         <td className="py-1.5 pr-3 font-mono">{d.key}</td>
                                         <td className="pr-3">{d.label}</td>
-                                        <td className="pr-3 font-mono text-zinc-500">{d.payload_key ?? '—'}</td>
+                                        <td className="pr-3 font-mono text-fg-3">{d.payload_key ?? '—'}</td>
                                         <td className="pr-3">{d.private ? '—' : d.show_in_mindmap ? 'yes' : 'no'}</td>
                                         <td className="pr-3">{d.private ? 'yes' : 'no'}</td>
                                         <td className="text-right whitespace-nowrap">
                                             <button type="button" aria-label={`Edit ${d.key}`} onClick={() => edit(d)}
-                                                className="p-1 text-zinc-500 hover:text-zinc-900"><Pencil size={14} /></button>
+                                                className="p-1 text-fg-3 hover:text-fg"><Pencil size={14} /></button>
                                             <button type="button" aria-label={`Delete ${d.key}`} disabled={remove.isPending}
                                                 onClick={() => remove.mutate(d.id)}
-                                                className="p-1 text-zinc-500 hover:text-red-700"><Trash2 size={14} /></button>
+                                                className="p-1 text-fg-3 hover:text-red-300"><Trash2 size={14} /></button>
                                         </td>
                                     </tr>
                                 ))}
@@ -82,32 +82,32 @@ export default function ArtifactTypesSection() {
                     </div>
                 )}
                 {draft && (
-                    <form className="grid grid-cols-1 sm:grid-cols-2 gap-3 border border-zinc-200 p-3"
+                    <form className="grid grid-cols-1 sm:grid-cols-2 gap-3 border border-line p-3"
                         onSubmit={(e) => { e.preventDefault(); save.mutate(draft); }}>
-                        <label className="text-xs text-zinc-600">Key
+                        <label className="text-xs text-fg-2">Key
                             <input className={`${input} font-mono`} value={draft.key} disabled={!!draft.id} required
                                 pattern="[a-z][a-z0-9_]{0,31}" title="lowercase letters, digits and _; starts with a letter"
                                 placeholder="username" onChange={(e) => setDraft({ ...draft, key: e.target.value })} />
                         </label>
-                        <label className="text-xs text-zinc-600">Label
+                        <label className="text-xs text-fg-2">Label
                             <input className={input} value={draft.label} required maxLength={64} placeholder="Username"
                                 onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
                         </label>
-                        <label className="text-xs text-zinc-600 sm:col-span-2">Alert payload key (optional)
+                        <label className="text-xs text-fg-2 sm:col-span-2">Alert payload key (optional)
                             <input className={`${input} font-mono`} value={draft.payload_key} maxLength={128}
                                 placeholder="user_name or user.email"
                                 onChange={(e) => setDraft({ ...draft, payload_key: e.target.value })} />
                         </label>
-                        <label className="flex items-center gap-2 text-sm text-zinc-800">
+                        <label className="flex items-center gap-2 text-sm text-fg">
                             <input type="checkbox" checked={draft.show_in_mindmap && !draft.private} disabled={draft.private}
                                 onChange={(e) => setDraft({ ...draft, show_in_mindmap: e.target.checked })}
-                                className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                                className="border-line-strong text-accent focus:ring-accent" />
                             Show in mindmap
                         </label>
-                        <label className="flex items-center gap-2 text-sm text-zinc-800">
+                        <label className="flex items-center gap-2 text-sm text-fg">
                             <input type="checkbox" checked={draft.private}
                                 onChange={(e) => setDraft({ ...draft, private: e.target.checked })}
-                                className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                                className="border-line-strong text-accent focus:ring-accent" />
                             Private (workflows only)
                         </label>
                         <div className="sm:col-span-2 flex gap-2">
@@ -118,7 +118,7 @@ export default function ArtifactTypesSection() {
                         </div>
                     </form>
                 )}
-                {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
+                {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
             </div>
         </section>
     );

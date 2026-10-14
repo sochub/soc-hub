@@ -118,7 +118,7 @@ function TlpSelect({ value, onChange, min, disabled, label }:
             disabled={disabled}
             onChange={(e) => onChange(e.target.value as TLPLevel)}
             style={TLP_STYLE[value]}
-            className="h-8 px-2 text-xs font-bold num border border-zinc-400 focus:outline-hidden focus:ring-1 focus:ring-accent-500 disabled:opacity-100 disabled:cursor-default"
+            className="h-8 px-2 text-xs font-bold num border border-line-strong focus:outline-hidden focus:ring-1 focus:ring-accent disabled:opacity-100 disabled:cursor-default"
         >
             {TLP_ORDER.map((t) => {
                 const below = tlpIndex(t) < tlpIndex(min);
@@ -155,11 +155,11 @@ function ChartPreview({ caseId, name, version, alt }: { caseId: number; name: 'l
 
     const current = state?.key === key ? state : null;
     return (
-        <div className="border border-zinc-200 bg-white p-3 overflow-hidden">
+        <div className="border border-line bg-panel p-3 overflow-hidden">
             {current?.url ? (
                 <img src={current.url} alt={alt} style={{ maxWidth: '100%', height: 'auto' }} className="block mx-auto" />
             ) : (
-                <div className="py-10 text-center text-xs text-zinc-400">{current?.failed ? 'Chart unavailable' : 'Loading chart...'}</div>
+                <div className="py-10 text-center text-xs text-muted">{current?.failed ? 'Chart unavailable' : 'Loading chart...'}</div>
             )}
         </div>
     );
@@ -275,9 +275,9 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
         }
     };
 
-    if (isLoading) return <div className="text-center py-8 text-zinc-400">Loading report...</div>;
+    if (isLoading) return <div className="text-center py-8 text-muted">Loading report...</div>;
     if (isError || !data || !form) {
-        return <div role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">Could not load the report.</div>;
+        return <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">Could not load the report.</div>;
     }
 
     const ms = data.milestones;
@@ -290,9 +290,9 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     return (
         <div className="space-y-4">
             {/* Header */}
-            <div className="glass-panel p-4 rounded-lg bg-white border border-zinc-200 flex flex-wrap items-center gap-3">
-                <h3 className="text-sm font-semibold text-zinc-700 mr-auto">Incident report</h3>
-                <label className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="glass-panel p-4 rounded-lg bg-panel border border-line flex flex-wrap items-center gap-3">
+                <h3 className="text-sm font-semibold text-fg-2 mr-auto">Incident report</h3>
+                <label className="flex items-center gap-2 text-xs text-fg-3">
                     <span className="label-mono">TLP</span>
                     <TlpSelect label="Report TLP" value={form.tlp} min={data.min_tlp} disabled={readOnly}
                         onChange={(t) => update({ tlp: t })} />
@@ -300,13 +300,13 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                 {canWrite && data.ai_available && (
                     confirmDraft ? (
                         <span className="inline-flex items-center gap-2 text-xs">
-                            <span className="text-zinc-600">Replace current text with an AI draft?</span>
+                            <span className="text-fg-2">Replace current text with an AI draft?</span>
                             <button onClick={() => draft.mutate()} disabled={draft.isPending}
-                                className="px-2 py-1 bg-accent-600 text-white rounded-sm hover:bg-accent-700 disabled:opacity-50">
+                                className="px-2 py-1 bg-accent text-on-accent rounded-sm hover:bg-accent-hover disabled:opacity-50">
                                 {draft.isPending ? 'Drafting...' : 'Replace'}
                             </button>
                             <button onClick={() => setConfirmDraft(false)} disabled={draft.isPending}
-                                className="px-2 py-1 bg-zinc-100 text-zinc-700 rounded-sm hover:bg-zinc-200 disabled:opacity-50">Cancel</button>
+                                className="px-2 py-1 bg-raised text-fg-2 rounded-sm hover:bg-raised-2 disabled:opacity-50">Cancel</button>
                         </span>
                     ) : (
                         <button onClick={requestDraft} disabled={draft.isPending} className={btnSecondary}>
@@ -314,28 +314,28 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                         </button>
                     )
                 )}
-                <div className="w-full text-xs text-zinc-400">
+                <div className="w-full text-xs text-muted">
                     {data.report.updated_at
                         ? <>Last saved by {data.report.updated_by_email ?? 'unknown'} · {relTime(data.report.updated_at)}</>
                         : 'Not saved yet'}
-                    {dirty && <span className="ml-2 text-amber-700">· Unsaved changes</span>}
+                    {dirty && <span className="ml-2 text-amber-300">· Unsaved changes</span>}
                 </div>
             </div>
 
             {error && (
-                <div role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>
+                <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">{error}</div>
             )}
             {notice && !error && (
-                <div role="status" className="text-xs text-accent-700 bg-blue-50 border border-blue-200 rounded-sm px-3 py-2">{notice}</div>
+                <div role="status" className="text-xs text-accent bg-accent/10 border border-accent/40 rounded-sm px-3 py-2">{notice}</div>
             )}
 
             {/* Narrative */}
-            <div className="glass-panel p-4 rounded-lg bg-white border border-zinc-200 space-y-4">
+            <div className="glass-panel p-4 rounded-lg bg-panel border border-line space-y-4">
                 {TEXT_FIELDS.map(({ key, label }) => (
                     <div key={key}>
                         <div className="flex items-baseline justify-between mb-1.5">
-                            <label htmlFor={`report-${key}`} className="text-xs font-medium text-zinc-600">{label}</label>
-                            <span className={cn('num text-[11px]', form[key].length >= TEXT_MAX ? 'text-red-700' : 'text-zinc-400')}>
+                            <label htmlFor={`report-${key}`} className="text-xs font-medium text-fg-2">{label}</label>
+                            <span className={cn('num text-[11px]', form[key].length >= TEXT_MAX ? 'text-red-300' : 'text-muted')}>
                                 {form[key].length.toLocaleString()} / {TEXT_MAX.toLocaleString()}
                             </span>
                         </div>
@@ -347,21 +347,21 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                             value={form[key]}
                             onChange={(e) => update({ [key]: e.target.value } as Partial<Form>)}
                             placeholder={readOnly ? '' : `${label}...`}
-                            className={cn('w-full text-sm border border-zinc-200 rounded-sm px-3 py-2 bg-white text-zinc-800 focus:outline-hidden focus:border-accent-600 resize-y',
-                                readOnly && 'bg-zinc-50 text-zinc-700')}
+                            className={cn('w-full text-sm border border-line rounded-sm px-3 py-2 bg-panel text-fg focus:outline-hidden focus:border-accent resize-y',
+                                readOnly && 'bg-surface text-fg-2')}
                         />
                     </div>
                 ))}
             </div>
 
             {/* Milestones */}
-            <div className="glass-panel p-4 rounded-lg bg-white border border-zinc-200 space-y-3">
+            <div className="glass-panel p-4 rounded-lg bg-panel border border-line space-y-3">
                 <div className="flex items-baseline justify-between">
-                    <h4 className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Milestones</h4>
-                    <span className="text-[11px] text-zinc-400">Local time · leave blank to use the computed value</span>
+                    <h4 className="text-xs font-semibold text-fg-2 uppercase tracking-wider">Milestones</h4>
+                    <span className="text-[11px] text-muted">Local time · leave blank to use the computed value</span>
                 </div>
                 {outOfOrder.length > 0 && (
-                    <div className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-sm px-3 py-2">
+                    <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-sm px-3 py-2">
                         <AlertTriangle size={14} className="mt-px shrink-0" />
                         <span>
                             Milestones are out of order ({DURATIONS.filter((d) => outOfOrder.includes(d.key)).map((d) => d.span).join(', ')}).
@@ -376,7 +376,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                         const hasOverride = form[key] !== '';
                         return (
                             <div key={key}>
-                                <label htmlFor={`report-ms-${key}`} className="block text-xs font-medium text-zinc-600 mb-1.5">{label}</label>
+                                <label htmlFor={`report-ms-${key}`} className="block text-xs font-medium text-fg-2 mb-1.5">{label}</label>
                                 <input
                                     id={`report-ms-${key}`}
                                     type="datetime-local"
@@ -384,15 +384,15 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                                     value={form[key]}
                                     placeholder={computedText ?? ''}
                                     onChange={(e) => update({ [key]: e.target.value } as Partial<Form>)}
-                                    className="w-full text-sm num border border-zinc-200 rounded-sm px-2 py-1.5 bg-white text-zinc-800 focus:outline-hidden focus:border-accent-600 disabled:bg-zinc-50"
+                                    className="w-full text-sm num border border-line rounded-sm px-2 py-1.5 bg-panel text-fg focus:outline-hidden focus:border-accent disabled:bg-surface"
                                 />
-                                <div className="mt-1 text-[11px] text-zinc-400 flex items-center gap-2 min-h-[16px]">
+                                <div className="mt-1 text-[11px] text-muted flex items-center gap-2 min-h-[16px]">
                                     {hasOverride ? (
                                         <>
                                             <span>Override</span>
                                             {!readOnly && (
                                                 <button type="button" onClick={() => update({ [key]: '' } as Partial<Form>)}
-                                                    className="text-accent-700 hover:underline">use computed</button>
+                                                    className="text-accent hover:underline">use computed</button>
                                             )}
                                         </>
                                     ) : (
@@ -408,9 +408,9 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                         );
                     })}
                 </div>
-                <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-zinc-500 pt-1">
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-fg-3 pt-1">
                     {DURATIONS.map((d) => (
-                        <span key={d.key}>{d.label}: <span className="num text-zinc-800">{fmtDuration(ms[d.key])}</span></span>
+                        <span key={d.key}>{d.label}: <span className="num text-fg">{fmtDuration(ms[d.key])}</span></span>
                     ))}
                 </div>
             </div>
@@ -430,20 +430,20 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
 
             {/* Previews */}
             <div className="space-y-3">
-                <h4 className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Preview</h4>
+                <h4 className="text-xs font-semibold text-fg-2 uppercase tracking-wider">Preview</h4>
                 <ChartPreview caseId={caseId} name="lifecycle" version={chartVersion} alt="Incident lifecycle chart" />
                 <ChartPreview caseId={caseId} name="timeline" version={chartVersion} alt="Incident timeline chart" />
             </div>
 
             {/* Export */}
             {canWrite && (
-                <div className="glass-panel p-4 rounded-lg bg-white border border-zinc-200 flex flex-wrap items-center gap-3">
-                    <h4 className="text-xs font-semibold text-zinc-600 uppercase tracking-wider mr-auto">Export</h4>
-                    <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                <div className="glass-panel p-4 rounded-lg bg-panel border border-line flex flex-wrap items-center gap-3">
+                    <h4 className="text-xs font-semibold text-fg-2 uppercase tracking-wider mr-auto">Export</h4>
+                    <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                         <input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} />
                         Include full timeline &amp; audit trail
                     </label>
-                    <label className="flex items-center gap-2 text-xs text-zinc-500">
+                    <label className="flex items-center gap-2 text-xs text-fg-3">
                         <span className="label-mono">TLP</span>
                         <TlpSelect label="Export TLP" value={exportValue} min={data.min_tlp} onChange={setExportTlp} />
                     </label>
@@ -453,7 +453,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                     <button onClick={() => runExport('json')} disabled={!!exporting} className={btnSecondary}>
                         <FileJson size={14} />{exporting === 'json' ? 'Exporting...' : 'Export JSON'}
                     </button>
-                    {dirty && <p className="w-full text-[11px] text-amber-700">Exports use the last saved report. Save first to include your changes.</p>}
+                    {dirty && <p className="w-full text-[11px] text-amber-300">Exports use the last saved report. Save first to include your changes.</p>}
                 </div>
             )}
         </div>
