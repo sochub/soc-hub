@@ -39,11 +39,11 @@ export default function Avatar({ userId, name, hasAvatar, version, size = 32, cl
 
     const box = { width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.38)) };
     if (url && hasAvatar) {
-        return <img src={url} alt="" style={box} className={cn('object-cover shrink-0 bg-zinc-100', className)} />;
+        return <img src={url} alt="" style={box} className={cn('object-cover shrink-0 bg-raised', className)} />;
     }
     return (
         <span style={box} aria-hidden="true"
-            className={cn('bg-zinc-900 text-white flex items-center justify-center font-mono font-semibold shrink-0', className)}>
+            className={cn('bg-fg text-on-accent flex items-center justify-center font-mono font-semibold shrink-0', className)}>
             {initials(name)}
         </span>
     );

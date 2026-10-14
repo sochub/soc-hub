@@ -38,7 +38,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
             if (source === 'payload') body.payload = JSON.parse(payload);
             return (await api.post(`/workflows/${workflow.id}/dry-run`, body)).data as { run_id: number };
         },
-        onSuccess: ({ run_id }) => navigate(`/automations/runs/${run_id}`),
+        onSuccess: ({ run_id }) => navigate(`/workflows/runs/${run_id}`),
         onError: (err: { response?: { data?: { detail?: { errors?: unknown } | string } } }) => setError(err instanceof SyntaxError ? `Invalid JSON: ${err.message}` :
             (err?.response?.data?.detail as { errors?: unknown } | undefined)?.errors ? 'Workflow has validation errors — fix them first' :
             (typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : 'Dry run failed')),
@@ -60,7 +60,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
             </>}
         >
             <div className="space-y-4 text-sm">
-                <p className="text-zinc-600">Conditions, loops and case search run for real. Everything else is simulated — nothing is changed, sent or called.</p>
+                <p className="text-fg-2">Conditions, loops and case search run for real. Everything else is simulated — nothing is changed, sent or called.</p>
                 <div className="flex gap-4">
                     {(['case', 'alert', 'payload'] as const).map((s) => (
                         <label key={s} className="flex items-center gap-1.5 capitalize">
@@ -126,7 +126,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
                         </div>
                     </details>
                 )}
-                {error && <p className="text-red-700 text-xs">{error}</p>}
+                {error && <p className="text-red-300 text-xs">{error}</p>}
             </div>
         </Modal>
     );

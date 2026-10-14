@@ -59,31 +59,31 @@ export function SecretDialog({ secret, prefill, tenantId, onClose, onSaved }: {
                 <label className="block"><span className={modalLabel}>Name</span>
                     <input className={`${modalInput} font-mono`} value={name} disabled={edit} placeholder="EXAMPLE_API_KEY"
                         onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))} />
-                    {!edit && name && !nameOk && <span className="text-xs text-red-700">Start with a letter; A-Z, 0-9 and _ only, 2-64 characters.</span>}
+                    {!edit && name && !nameOk && <span className="text-xs text-red-300">Start with a letter; A-Z, 0-9 and _ only, 2-64 characters.</span>}
                 </label>
                 <label className="block"><span className={modalLabel}>Value</span>
                     <input type="password" autoComplete="new-password" className={`${modalInput} font-mono`} value={value}
                         onChange={(e) => setValue(e.target.value)}
                         placeholder={edit ? '•••• (saved — leave blank to keep)' : ''} />
-                    <span className="text-xs text-zinc-500">Write-only. It is encrypted and never shown again.</span>
+                    <span className="text-xs text-fg-3">Write-only. It is encrypted and never shown again.</span>
                 </label>
                 <label className="block"><span className={modalLabel}>Allowed hosts (one per line)</span>
                     <textarea rows={3} className={`${modalInput} font-mono text-xs`} value={hosts} placeholder={'api.example.com\n*.example.org'}
                         onChange={(e) => setHosts(e.target.value)} />
                     <ul className="text-xs space-y-0.5 mt-1">
                         {list.map((h, i) => statuses[i] !== 'ok' && (
-                            <li key={`${h}-${i}`} className={statuses[i] === 'bad' ? 'text-red-700' : 'text-amber-700'}>
+                            <li key={`${h}-${i}`} className={statuses[i] === 'bad' ? 'text-red-300' : 'text-amber-300'}>
                                 <span className="font-mono">{h}</span>: {statuses[i] === 'bad'
                                     ? 'not a valid host pattern (lowercase hostname or *.domain)'
                                     : 'must be on the tenant HTTP allowlist'}
                             </li>
                         ))}
                     </ul>
-                    {list.length === 0 && <span className="text-xs text-amber-700">With no hosts the secret cannot be sent anywhere.</span>}
+                    {list.length === 0 && <span className="text-xs text-amber-300">With no hosts the secret cannot be sent anywhere.</span>}
                 </label>
                 <label className="block"><span className={modalLabel}>Description</span>
                     <input className={modalInput} value={desc} maxLength={500} onChange={(e) => setDesc(e.target.value)} /></label>
-                {err && <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 p-2">{err}</p>}
+                {err && <p role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 p-2">{err}</p>}
             </form>
         </Modal>
     );
@@ -113,53 +113,53 @@ export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
         },
     });
 
-    if (isError) return <div role="alert" className="bg-white border border-zinc-200 p-5 text-sm text-red-700">Secrets: {errText(error, 'could not load secrets')}</div>;
+    if (isError) return <div role="alert" className="bg-panel border border-line p-5 text-sm text-red-300">Secrets: {errText(error, 'could not load secrets')}</div>;
     if (!data) return null;
     const btn = 'h-8 px-3 text-sm';
 
     return (
-        <div className="bg-white border border-zinc-200 p-5 space-y-3">
+        <div className="bg-panel border border-line p-5 space-y-3">
             <div className="flex items-center gap-2">
-                <KeyRound size={16} className="text-accent-600" />
-                <h2 className="font-semibold text-zinc-800">Secrets</h2>
+                <KeyRound size={16} className="text-accent" />
+                <h2 className="font-semibold text-fg">Secrets</h2>
                 <button onClick={() => { setMsg(null); setDialog({ secret: null }); }}
-                    className={`ml-auto ${btn} bg-accent-600 text-white inline-flex items-center gap-1.5`}><Plus size={14} />Add secret</button>
+                    className={`ml-auto ${btn} bg-accent text-on-accent inline-flex items-center gap-1.5`}><Plus size={14} />Add secret</button>
             </div>
-            <p className="text-xs text-zinc-500">Credentials for workflow HTTP requests. Reference one as <code className="font-mono">{'{{ secrets.NAME }}'}</code> in a URL, header value or body. Values are encrypted, only sent to the allowed hosts, and redacted from run history.</p>
-            {msg && <p role="status" className={msg.ok ? 'text-xs text-emerald-700' : 'text-xs text-red-700'}>{msg.text}</p>}
+            <p className="text-xs text-fg-3">Credentials for workflow HTTP requests. Reference one as <code className="font-mono">{'{{ secrets.NAME }}'}</code> in a URL, header value or body. Values are encrypted, only sent to the allowed hosts, and redacted from run history.</p>
+            {msg && <p role="status" className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</p>}
 
-            <div className="border border-zinc-200 overflow-x-auto">
+            <div className="border border-line overflow-x-auto">
                 <table className="w-full text-sm">
-                    <thead className="bg-zinc-50 text-left label-mono">
+                    <thead className="bg-surface text-left label-mono">
                         <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Description</th><th className="px-3 py-2">Hosts</th>
                             <th className="px-3 py-2">Used by</th><th className="px-3 py-2">Last used</th><th className="px-3 py-2"></th></tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-100">
-                        {data.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-zinc-400">No secrets yet</td></tr>}
+                    <tbody className="divide-y divide-line">
+                        {data.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-muted">No secrets yet</td></tr>}
                         {data.map((s) => (
                             <tr key={s.name} className="align-top">
-                                <td className="px-3 py-2 font-mono text-xs text-zinc-900">{s.name}</td>
-                                <td className="px-3 py-2 text-xs text-zinc-600">{s.description || '—'}</td>
+                                <td className="px-3 py-2 font-mono text-xs text-fg">{s.name}</td>
+                                <td className="px-3 py-2 text-xs text-fg-2">{s.description || '—'}</td>
                                 <td className="px-3 py-2">
                                     <div className="flex flex-wrap gap-1">
-                                        {s.allowed_hosts.length === 0 && <span className="text-xs text-amber-700">none</span>}
-                                        {s.allowed_hosts.map((h) => <span key={h} className="px-1.5 py-0.5 border border-zinc-200 bg-zinc-50 font-mono text-[11px]">{h}</span>)}
+                                        {s.allowed_hosts.length === 0 && <span className="text-xs text-amber-300">none</span>}
+                                        {s.allowed_hosts.map((h) => <span key={h} className="px-1.5 py-0.5 border border-line bg-surface font-mono text-[11px]">{h}</span>)}
                                     </div>
                                 </td>
                                 <td className="px-3 py-2 text-xs">
                                     <span className="num">{s.in_use_by.length}</span>
-                                    {s.in_use_by.length > 0 && <span className="text-zinc-500"> · {s.in_use_by.map((w) => w.name).join(', ')}</span>}
+                                    {s.in_use_by.length > 0 && <span className="text-fg-3"> · {s.in_use_by.map((w) => w.name).join(', ')}</span>}
                                 </td>
-                                <td className="px-3 py-2 text-xs text-zinc-500">{s.last_used_at ? new Date(s.last_used_at).toLocaleString() : 'never'}</td>
+                                <td className="px-3 py-2 text-xs text-fg-3">{s.last_used_at ? new Date(s.last_used_at).toLocaleString() : 'never'}</td>
                                 <td className="px-3 py-2 whitespace-nowrap">
                                     {confirm === s.name ? (
-                                        <span className="flex items-center gap-2 text-xs text-zinc-700">Delete?
+                                        <span className="flex items-center gap-2 text-xs text-fg-2">Delete?
                                             <button onClick={() => del.mutate({ name: s.name, force: false })} disabled={del.isPending} className={`${btn} bg-red-600 text-white disabled:opacity-50`}>Delete</button>
-                                            <button onClick={() => setConfirm(null)} className={`${btn} border border-zinc-300`}>Cancel</button></span>
+                                            <button onClick={() => setConfirm(null)} className={`${btn} border border-line-strong`}>Cancel</button></span>
                                     ) : (
                                         <span className="flex items-center gap-2">
-                                            <button aria-label={`Edit ${s.name}`} onClick={() => { setMsg(null); setDialog({ secret: s }); }} className="p-1 text-zinc-400 hover:text-accent-600"><Pencil size={14} /></button>
-                                            <button aria-label={`Delete ${s.name}`} onClick={() => { setMsg(null); setInUse(null); setConfirm(s.name); }} className="p-1 text-zinc-400 hover:text-red-600"><Trash2 size={14} /></button>
+                                            <button aria-label={`Edit ${s.name}`} onClick={() => { setMsg(null); setDialog({ secret: s }); }} className="p-1 text-muted hover:text-accent"><Pencil size={14} /></button>
+                                            <button aria-label={`Delete ${s.name}`} onClick={() => { setMsg(null); setInUse(null); setConfirm(s.name); }} className="p-1 text-muted hover:text-red-400"><Trash2 size={14} /></button>
                                         </span>
                                     )}
                                 </td>
@@ -170,11 +170,11 @@ export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
             </div>
 
             {inUse && (
-                <div role="alert" className="text-xs border border-amber-200 bg-amber-50 text-amber-900 p-3 space-y-2">
+                <div role="alert" className="text-xs border border-amber-500/30 bg-amber-500/10 text-amber-300 p-3 space-y-2">
                     <p><span className="font-mono">{inUse.name}</span> is used by {inUse.workflows.length} workflow(s): {inUse.workflows.map((w) => w.name).join(', ')}. Deleting it will make those workflows fail.</p>
                     <div className="flex gap-2">
                         <button onClick={() => del.mutate({ name: inUse.name, force: true })} disabled={del.isPending} className={`${btn} bg-red-600 text-white disabled:opacity-50`}>Delete anyway</button>
-                        <button onClick={() => setInUse(null)} className={`${btn} border border-zinc-300 bg-white`}>Cancel</button>
+                        <button onClick={() => setInUse(null)} className={`${btn} border border-line-strong bg-panel`}>Cancel</button>
                     </div>
                 </div>
             )}

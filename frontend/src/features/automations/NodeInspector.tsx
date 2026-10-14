@@ -18,7 +18,7 @@ interface Props {
     onDelete: () => void;
 }
 
-const inputCls = 'w-full border border-zinc-300 px-2 py-1.5 text-sm bg-white focus:outline-hidden focus:border-accent-500 disabled:bg-zinc-50';
+const inputCls = 'w-full border border-line-strong px-2 py-1.5 text-sm bg-panel focus:outline-hidden focus:border-accent disabled:bg-surface';
 const monoCls = inputCls + ' font-mono text-xs';
 
 const CRED_HEADERS = new Set(['authorization', 'x-api-key', 'api-key', 'apikey', 'x-auth-token', 'x-apikey', 'private-token']);
@@ -46,13 +46,13 @@ function SecretPicker({ onPick, disabled }: { onPick: (name: string) => void; di
     const cur = names.find((n) => n.name === picked);
     return (
         <div className="mt-1 flex items-center gap-2 flex-wrap">
-            <Lock size={12} className="text-zinc-400" />
-            <select aria-label="Insert secret" className="border border-zinc-300 px-1.5 py-0.5 text-xs bg-white font-mono" value=""
+            <Lock size={12} className="text-muted" />
+            <select aria-label="Insert secret" className="border border-line-strong px-1.5 py-0.5 text-xs bg-panel font-mono" value=""
                 onChange={(e) => { if (e.target.value) { setPicked(e.target.value); onPick(e.target.value); } }}>
                 <option value="">{names.length ? 'Insert secret…' : 'No secrets defined'}</option>
                 {names.map((n) => <option key={n.name} value={n.name}>{n.name}</option>)}
             </select>
-            {cur && <span className="text-[11px] text-zinc-500">allowed: <span className="font-mono">{cur.allowed_hosts.join(', ') || 'no hosts'}</span></span>}
+            {cur && <span className="text-[11px] text-fg-3">allowed: <span className="font-mono">{cur.allowed_hosts.join(', ') || 'no hosts'}</span></span>}
         </div>
     );
 }
@@ -105,7 +105,7 @@ function JsonField({ value, disabled, onChange, secrets, object }: { value: unkn
             <textarea ref={ref} rows={4} className={monoCls} disabled={disabled} value={text} onChange={(e) => setText(e.target.value)}
                 onBlur={() => commit(text)} />
             {secrets && <SecretPicker disabled={disabled} onPick={(n) => { const t = jsonInsert(ref.current, text, n, !!object); setText(t); commit(t); }} />}
-            {err && <p role={err.hard ? 'alert' : undefined} className={`text-[11px] mt-0.5 ${err.hard ? 'text-red-700' : 'text-amber-700'}`}>{err.text}</p>}
+            {err && <p role={err.hard ? 'alert' : undefined} className={`text-[11px] mt-0.5 ${err.hard ? 'text-red-300' : 'text-amber-300'}`}>{err.text}</p>}
         </>
     );
 }
@@ -151,18 +151,18 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
     return (
         <div className="p-4 space-y-4 text-sm" key={node.id}>
             <div className="flex items-center justify-between">
-                <span className="font-semibold text-zinc-900">{def?.label ?? node.type}</span>
+                <span className="font-semibold text-fg">{def?.label ?? node.type}</span>
                 {!readOnly && node.type !== 'trigger' && (
-                    <button onClick={onDelete} className="p-1 text-zinc-400 hover:text-red-600" aria-label="Delete node"><Trash2 size={15} /></button>
+                    <button onClick={onDelete} className="p-1 text-muted hover:text-red-400" aria-label="Delete node"><Trash2 size={15} /></button>
                 )}
             </div>
-            {errors.length > 0 && <ul className="text-xs text-red-700 bg-red-50 border border-red-200 p-2 space-y-0.5">{errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+            {errors.length > 0 && <ul className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 p-2 space-y-0.5">{errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
 
             <label className="block">
                 <span className="label-mono">node id</span>
                 <input className={monoCls} disabled={readOnly} value={idDraft} onChange={(e) => setIdDraft(e.target.value)}
                     onBlur={() => { if (idDraft !== node.id && /^[a-z0-9_]+$/.test(idDraft)) { if (!onRename(node.id, idDraft)) setIdDraft(node.id); } else setIdDraft(node.id); }} />
-                <span className="text-[11px] text-zinc-500">Reference outputs as <code className="font-mono">{`{{ steps.${node.id}.output }}`}</code></span>
+                <span className="text-[11px] text-fg-3">Reference outputs as <code className="font-mono">{`{{ steps.${node.id}.output }}`}</code></span>
             </label>
 
             {def?.fields.map((f) => (
@@ -170,11 +170,11 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
                     <span className="label-mono">{f.label}{f.required && ' *'}</span>
                     <Field f={node.type === 'case_add_artifact' && f.key === 'artifact_type' ? { ...f, options: artifactTypeKeys } : f} value={node.config[f.key]} disabled={readOnly} onChange={(v) => setCfg(f.key, v)}
                         secrets={node.type === 'http_request' && ['url', 'headers', 'body'].includes(f.key)} />
-                    {f.help && <span className="text-[11px] text-zinc-500">{f.help}</span>}
+                    {f.help && <span className="text-[11px] text-fg-3">{f.help}</span>}
                     {f.key === 'headers' && !readOnly && literalHeaders.map(([k, v]) => (
-                        <div key={k} className="mt-1 flex items-center gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1">
+                        <div key={k} className="mt-1 flex items-center gap-2 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-1">
                             <span className="flex-1"><span className="font-mono">{k}</span> holds a literal credential.</span>
-                            {isAdmin && <button type="button" className="px-2 py-0.5 border border-amber-300 bg-white hover:bg-amber-100"
+                            {isAdmin && <button type="button" className="px-2 py-0.5 border border-amber-500/30 bg-panel hover:bg-amber-500/10"
                                 onClick={(ev) => {
                                     ev.preventDefault();
                                     const m = k.toLowerCase() === 'authorization' ? SCHEME_RE.exec(v as string) : null;
@@ -187,8 +187,8 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
             ))}
 
             {node.type !== 'trigger' && (
-                <div className="border-t border-zinc-200 pt-3 space-y-2">
-                    <label className="flex items-center gap-2 text-xs text-zinc-700">
+                <div className="border-t border-line pt-3 space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-fg-2">
                         <input type="checkbox" disabled={readOnly} checked={!!node.continue_on_error}
                             onChange={(e) => onChange({ ...node, continue_on_error: e.target.checked })} /> Continue on error (output.error is set)
                     </label>
@@ -197,7 +197,7 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
                             <label className="block"><span className="label-mono">retries (0-2)</span>
                                 <input type="number" min={0} max={2} className={inputCls} disabled={readOnly} value={node.retries ?? 2}
                                     onChange={(e) => onChange({ ...node, retries: Number(e.target.value) })} /></label>
-                            <label className="flex items-center gap-2 text-xs text-zinc-700">
+                            <label className="flex items-center gap-2 text-xs text-fg-2">
                                 <input type="checkbox" disabled={readOnly} checked={!!node.execute_in_dry_run}
                                     onChange={(e) => onChange({ ...node, execute_in_dry_run: e.target.checked })} /> Really execute during dry runs (read-only lookups only)
                             </label>
@@ -217,7 +217,7 @@ export default function NodeInspector({ node, readOnly, errors, onChange, onRena
                     onSaved={(name) => setCfg('headers', { ...headers, [move.key]: move.prefix + secretTemplate(name) })} />
             )}
 
-            <div className="border-t border-zinc-200 pt-3 text-[11px] text-zinc-500 space-y-0.5">
+            <div className="border-t border-line pt-3 text-[11px] text-fg-3 space-y-0.5">
                 <p className="label-mono">available in templates</p>
                 <p className="font-mono">case.* · alert.* · trigger.* · steps.&lt;id&gt;.output · loop.item · loop.index · dry_run</p>
             </div>

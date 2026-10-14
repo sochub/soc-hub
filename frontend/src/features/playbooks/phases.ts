@@ -10,11 +10,11 @@ export const PHASE_LABEL: Record<string, string> = {
 
 // Accent hue per phase for the light console look.
 export const PHASE_COLOR: Record<string, string> = {
-    identification: '#2563eb', // blue
-    containment: '#d97706',    // amber
+    identification: '#8fc3ff', // blue
+    containment: '#fbbf24',    // amber
     eradication: '#dc2626',    // red
-    recovery: '#059669',       // green
-    lessons_learned: '#7c3aed', // violet
+    recovery: '#d6e37f',       // green
+    lessons_learned: '#e08cff', // violet
 };
 
 export const PHASES = [...IR_PHASES];

@@ -13,19 +13,19 @@ export default function ApiDocs() {
     return (
         <PageContainer>
             <div>
-                <h1 className="text-3xl font-bold text-zinc-900 tracking-tight">API Docs</h1>
-                <p className="text-zinc-500 mt-1">Build integrations against the SOC Hub API.</p>
+                <h1 className="text-3xl font-bold text-fg tracking-tight">API Docs</h1>
+                <p className="text-fg-3 mt-1">Build integrations against the SOC Hub API.</p>
             </div>
 
-            <div className="glass-panel p-5 rounded-xl border border-zinc-200 space-y-3">
-                <h2 className="font-semibold text-zinc-800">Webhook quickstart</h2>
-                <p className="text-sm text-zinc-600">
+            <div className="glass-panel p-5 rounded-xl border border-line space-y-3">
+                <h2 className="font-semibold text-fg">Webhook quickstart</h2>
+                <p className="text-sm text-fg-2">
                     Push alerts from a SIEM or automation into a tenant in three steps:
                 </p>
-                <ol className="text-sm text-zinc-600 list-decimal list-inside space-y-1">
+                <ol className="text-sm text-fg-2 list-decimal list-inside space-y-1">
                     <li>
                         Create a webhook on the{' '}
-                        <Link to="/integrations" className="text-accent-600 hover:underline">Integrations</Link>{' '}
+                        <Link to="/settings/integrations" className="text-accent hover:underline">Integrations</Link>{' '}
                         page (admin only). Each webhook has its own <span className="font-mono">X-API-Key</span>;
                         the alert's <span className="font-mono">source</span> is set from the webhook's name.
                     </li>
@@ -37,15 +37,15 @@ export default function ApiDocs() {
                     </li>
                     <li>
                         The new alert appears in the{' '}
-                        <Link to="/alerts" className="text-accent-600 hover:underline">Alerts</Link>{' '}
+                        <Link to="/alerts" className="text-accent hover:underline">Alerts</Link>{' '}
                         queue, where an analyst can promote it to a case or dismiss it.
                     </li>
                 </ol>
-                <pre className="text-xs text-zinc-600 bg-zinc-50 rounded-lg p-3 overflow-x-auto">{curlSample}</pre>
+                <pre className="text-xs text-fg-2 bg-surface rounded-lg p-3 overflow-x-auto">{curlSample}</pre>
             </div>
 
-            <div className="glass-panel rounded-xl border border-zinc-200 overflow-hidden">
-                <ApiReferenceReact configuration={{ url: '/api/v1/openapi.json', theme: 'default' }} />
+            <div className="glass-panel rounded-xl border border-line overflow-hidden">
+                <ApiReferenceReact configuration={{ url: '/api/v1/openapi.json', theme: 'purple', forceDarkModeState: 'dark', hideDarkModeToggle: true }} />
             </div>
         </PageContainer>
     );

@@ -87,10 +87,10 @@ export default function CreateTenantModal({ isOpen, onClose }: CreateTenantModal
                         value={slug}
                         onChange={e => setSlug(e.target.value)}
                     />
-                    <p className="text-xs text-zinc-400 mt-1">URL-friendly identifier. Lowercase, numbers, hyphens only.</p>
+                    <p className="text-xs text-muted mt-1">URL-friendly identifier. Lowercase, numbers, hyphens only.</p>
                 </div>
 
-                {error && <p className="text-red-700 text-sm">{error}</p>}
+                {error && <p className="text-red-300 text-sm">{error}</p>}
             </form>
         </Modal>
     );

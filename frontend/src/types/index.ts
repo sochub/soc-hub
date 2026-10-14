@@ -206,6 +206,7 @@ export interface Case {
   description: string;
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   status: string;
+  owner_id?: number | null;
   created_at: string;
   updated_at: string | null;
   resolved_at: string | null;

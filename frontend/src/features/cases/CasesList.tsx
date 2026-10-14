@@ -1,10 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Clock, AlertCircle, CheckCircle, XCircle, Plus, Search, ChevronDown } from 'lucide-react';
+import { Clock, AlertCircle, CheckCircle, XCircle, Plus, Search, ChevronDown, LayoutList, Columns3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useState } from 'react';
 import NewCaseModal from './NewCaseModal';
+import CasesBoard from './CasesBoard';
 import { SLABadge } from './SLABadge';
 import type { SLAStatus } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
@@ -23,27 +24,35 @@ interface Case {
 }
 
 const severityConfig = {
-    critical: { color: 'text-red-700', bg: 'bg-red-50', border: 'border-red-400/20' },
-    high: { color: 'text-orange-700', bg: 'bg-orange-50', border: 'border-orange-400/20' },
-    medium: { color: 'text-yellow-700', bg: 'bg-yellow-50', border: 'border-yellow-400/20' },
-    low: { color: 'text-accent-600', bg: 'bg-blue-50', border: 'border-blue-400/20' },
-    info: { color: 'text-zinc-500', bg: 'bg-zinc-100', border: 'border-zinc-200' },
+    critical: { color: 'text-red-300', bg: 'bg-red-500/10', border: 'border-red-400/20' },
+    high: { color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-400/20' },
+    medium: { color: 'text-yellow-300', bg: 'bg-yellow-500/10', border: 'border-yellow-400/20' },
+    low: { color: 'text-accent', bg: 'bg-accent/10', border: 'border-accent/20' },
+    info: { color: 'text-fg-3', bg: 'bg-raised', border: 'border-line' },
 };
 
 const statusConfig: Record<string, { icon: any; color: string }> = {
-    open: { icon: AlertCircle, color: 'text-red-700' },
-    investigating: { icon: Clock, color: 'text-orange-700' },
-    resolved: { icon: CheckCircle, color: 'text-emerald-700' },
-    closed: { icon: XCircle, color: 'text-zinc-400' },
+    open: { icon: AlertCircle, color: 'text-red-300' },
+    investigating: { icon: Clock, color: 'text-orange-300' },
+    resolved: { icon: CheckCircle, color: 'text-emerald-300' },
+    closed: { icon: XCircle, color: 'text-muted' },
 };
 
 export default function CasesList() {
-    const [searchParams] = useSearchParams();
-    const [showNewCaseModal, setShowNewCaseModal] = useState(false);
+    const [searchParams, setSearchParams] = useSearchParams();
+    const [modalOpen, setShowNewCaseModal] = useState(false);
+    const showNewCaseModal = modalOpen || searchParams.get('new') === '1'; // ⌘K "New case" deep link
     const [searchQuery, setSearchQuery] = useState('');
     const [severityFilter, setSeverityFilter] = useState<string>(searchParams.get('severity') || 'all');
     const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
     const [tagFilter, setTagFilter] = useState<string>('all');
+    // URL wins (shareable links), else the last view this browser used
+    const storedView = (() => { try { return localStorage.getItem('cases:view'); } catch { return null; } })();
+    const view: 'table' | 'board' = (searchParams.get('view') ?? storedView) === 'board' ? 'board' : 'table';
+    const changeView = (v: 'table' | 'board') => {
+        setSearchParams(p => { p.set('view', v); return p; }, { replace: true });
+        try { localStorage.setItem('cases:view', v); } catch { /* storage unavailable */ }
+    };
     const queryClient = useQueryClient();
 
     const { data: cases, isLoading } = useQuery<Case[]>({
@@ -100,6 +109,7 @@ export default function CasesList() {
 
     const closeModal = () => {
         setShowNewCaseModal(false);
+        if (searchParams.has('new')) setSearchParams(p => { p.delete('new'); return p; }, { replace: true });
     };
 
     const filteredCases = cases?.filter(c => {
@@ -119,7 +129,7 @@ export default function CasesList() {
         return (
             <PageContainer>
                 <div className="flex items-center justify-center h-[50vh]">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-300"></div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-line-strong"></div>
                 </div>
             </PageContainer>
         );
@@ -130,8 +140,8 @@ export default function CasesList() {
             {/* Improved Header with Filters */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">Engineering Cases</h1>
-                    <p className="text-zinc-500 text-sm mt-0.5">
+                    <h1 className="text-2xl font-bold text-fg tracking-tight">Cases</h1>
+                    <p className="text-fg-3 text-sm mt-0.5">
                         {filteredCases.length} records found
                     </p>
                 </div>
@@ -139,13 +149,13 @@ export default function CasesList() {
                 <div className="flex flex-wrap items-center gap-2">
                     {/* Search */}
                     <div className="relative group">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-zinc-700 transition-colors" />
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted group-focus-within:text-fg-2 transition-colors" />
                         <input
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder="Search (ID, Title)..."
-                            className="bg-white border border-zinc-200 rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all w-48 lg:w-64 placeholder:text-zinc-400"
+                            className="bg-panel border border-line rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all w-48 lg:w-64 placeholder:text-muted"
                         />
                     </div>
 
@@ -154,7 +164,7 @@ export default function CasesList() {
                         <select
                             value={severityFilter}
                             onChange={(e) => setSeverityFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
+                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
                         >
                             <option value="all">All Severities</option>
                             <option value="critical">Critical</option>
@@ -163,41 +173,57 @@ export default function CasesList() {
                             <option value="low">Low</option>
                             <option value="info">Info</option>
                         </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                     </div>
 
                     <div className="relative">
                         <select
                             value={tagFilter}
                             onChange={(e) => setTagFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
+                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
                         >
                             <option value="all">All Tags</option>
                             {availableTags?.map(tag => (
                                 <option key={tag} value={tag}>{tag}</option>
                             ))}
                         </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                     </div>
 
                     <div className="relative">
                         <select
                             value={statusFilter}
                             onChange={(e) => setStatusFilter(e.target.value)}
-                            className="appearance-none bg-white border border-zinc-200 rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent-500 focus:border-accent-500 transition-all text-zinc-700 cursor-pointer"
+                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
                         >
                             <option value="all">All Statuses</option>
+                            <option value="new">New</option>
                             <option value="open">Open</option>
-                            <option value="investigating">Investigating</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="pending">Pending</option>
                             <option value="resolved">Resolved</option>
                             <option value="closed">Closed</option>
                         </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+                    </div>
+
+                    <div className="flex border border-line rounded-lg overflow-hidden">
+                        {([['table', LayoutList], ['board', Columns3]] as const).map(([v, Icon]) => (
+                            <button
+                                key={v}
+                                onClick={() => changeView(v)}
+                                title={v === 'table' ? 'Table view' : 'Board view'}
+                                aria-pressed={view === v}
+                                className={cn("px-2 py-1.5", view === v ? "bg-fg text-on-accent" : "bg-panel text-fg-3 hover:text-fg")}
+                            >
+                                <Icon size={14} />
+                            </button>
+                        ))}
                     </div>
 
                     <button
                         onClick={() => setShowNewCaseModal(true)}
-                        className="px-3 py-1.5 bg-zinc-100 hover:bg-white text-slate-900 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5 shadow-xs ml-2"
+                        className="px-3.5 py-1.5 bg-brand-gradient hover:opacity-90 rounded-full text-sm font-semibold transition-opacity flex items-center gap-1.5 ml-2"
                     >
                         <Plus size={16} />
                         New Case
@@ -205,11 +231,13 @@ export default function CasesList() {
                 </div>
             </div>
 
-            {/* Dense Table View */}
-            <div className="glass-panel rounded-lg border border-zinc-200 overflow-hidden">
+            {view === 'board' ? (
+                <CasesBoard cases={filteredCases} severityConfig={severityConfig} />
+            ) : (
+            <div className="glass-panel rounded-lg border border-line overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
-                        <thead className="bg-white border-b border-zinc-200 text-xs uppercase text-zinc-500 font-semibold tracking-wider">
+                        <thead className="bg-panel border-b border-line text-xs uppercase text-fg-3 font-semibold tracking-wider">
                             <tr>
                                 <th className="px-4 py-3 w-20">ID</th>
                                 <th className="px-4 py-3">Case Title</th>
@@ -220,11 +248,11 @@ export default function CasesList() {
                                 <th className="px-4 py-3 w-40">Updated</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-200">
+                        <tbody className="divide-y divide-line">
                             {filteredCases.length === 0 ? (
                                 <tr>
                                     <td colSpan={7} className="px-6 py-12 text-center">
-                                        <div className="flex flex-col items-center justify-center text-zinc-400">
+                                        <div className="flex flex-col items-center justify-center text-muted">
                                             <Search size={32} className="mb-2 opacity-50" />
                                             <p>No matching cases found</p>
                                         </div>
@@ -234,23 +262,23 @@ export default function CasesList() {
                                 filteredCases.map((c) => {
                                     const config = severityConfig[c.severity] || severityConfig.info;
                                     const StatusIcon = statusConfig[c.status]?.icon || AlertCircle;
-                                    const statusColor = statusConfig[c.status]?.color || 'text-zinc-500';
+                                    const statusColor = statusConfig[c.status]?.color || 'text-fg-3';
 
                                     return (
                                         <tr
                                             key={c.id}
-                                            className="group hover:bg-zinc-100 transition-colors"
+                                            className="group hover:bg-raised transition-colors"
                                         >
-                                            <td className="px-4 py-2.5 font-mono text-zinc-400 group-hover:text-zinc-500">
+                                            <td className="px-4 py-2.5 font-mono text-muted group-hover:text-fg-3">
                                                 #{c.id}
                                             </td>
                                             <td className="px-4 py-2.5">
                                                 <Link to={`/cases/${c.id}`} className="block">
-                                                    <div className="font-medium text-zinc-800 group-hover:text-accent-600 transition-colors truncate max-w-md">
+                                                    <div className="font-medium text-fg group-hover:text-accent transition-colors truncate max-w-md">
                                                         {c.title}
                                                     </div>
                                                     {c.description && (
-                                                        <div className="text-xs text-zinc-400 mt-0.5 truncate max-w-md hidden md:block">
+                                                        <div className="text-xs text-muted mt-0.5 truncate max-w-md hidden md:block">
                                                             {c.description}
                                                         </div>
                                                     )}
@@ -275,13 +303,13 @@ export default function CasesList() {
                                             <td className="px-4 py-2.5">
                                                 <SLABadge status={c.sla_overall_status} />
                                             </td>
-                                            <td className="px-4 py-2.5 text-zinc-500 text-xs whitespace-nowrap">
+                                            <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">
                                                 {new Date(c.created_at).toLocaleDateString()}
-                                                <span className="text-zinc-400 ml-1">
+                                                <span className="text-muted ml-1">
                                                     {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-2.5 text-zinc-500 text-xs whitespace-nowrap">
+                                            <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">
                                                 {new Date(c.updated_at).toLocaleDateString()}
                                             </td>
                                         </tr>
@@ -292,6 +320,7 @@ export default function CasesList() {
                     </table>
                 </div>
             </div>
+            )}
 
             {/* New Case Modal */}
             <NewCaseModal

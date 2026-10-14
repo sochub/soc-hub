@@ -48,26 +48,26 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
     return (
         <Modal open onClose={onClose} size="lg" title="Plaintext credentials in workflows"
             footer={<button type="button" className={btnSecondary} onClick={onClose}>Close</button>}>
-            <p className="text-xs text-zinc-500 mb-3">Each credential becomes a secret restricted to the request host, and the workflow is rewritten to reference it. Pick the names, then convert per workflow.</p>
-            {status && <p role="status" className={`mb-3 text-xs ${status.ok ? 'text-emerald-700' : 'text-red-700'}`}>{status.text}</p>}
+            <p className="text-xs text-fg-3 mb-3">Each credential becomes a secret restricted to the request host, and the workflow is rewritten to reference it. Pick the names, then convert per workflow.</p>
+            {status && <p role="status" className={`mb-3 text-xs ${status.ok ? 'text-emerald-300' : 'text-red-300'}`}>{status.text}</p>}
             <div className="space-y-4">
                 {[...byWf.entries()].map(([wid, its]) => {
                     const todo = its.filter((i) => i.convertible);
                     const valid = todo.length > 0 && todo.every((i) => NAME_RE.test(names[`${wid}|${itemKey(i)}`] ?? ''));
                     return (
-                        <div key={wid} className="border border-zinc-200">
-                            <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-200">
-                                <span className="font-medium text-sm text-zinc-900">{its[0].workflow_name}</span>
+                        <div key={wid} className="border border-line">
+                            <div className="flex items-center gap-2 px-3 py-2 bg-surface border-b border-line">
+                                <span className="font-medium text-sm text-fg">{its[0].workflow_name}</span>
                                 <button type="button" className={`${btnPrimary} ml-auto h-8!`} disabled={busy !== null || !valid} onClick={() => convert(wid, todo)}>
                                     {busy === wid ? 'Converting…' : 'Convert'}</button>
                             </div>
-                            <ul className="divide-y divide-zinc-100">
+                            <ul className="divide-y divide-line">
                                 {its.map((i) => {
                                     const k = `${wid}|${itemKey(i)}`;
                                     return (
-                                        <li key={k} className={`px-3 py-2 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-2 items-center ${i.convertible ? '' : 'bg-zinc-50'}`}>
-                                            <div className="text-xs text-zinc-600"><span className="font-mono">{i.node_id}</span> · {i.location} <span className="font-mono">{i.key}</span> · <span className="font-mono">{i.host}</span>
-                                                {!i.convertible && <div className="mt-0.5 text-amber-700">Not convertible: {i.reason ?? 'host not supported'}</div>}</div>
+                                        <li key={k} className={`px-3 py-2 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-2 items-center ${i.convertible ? '' : 'bg-surface'}`}>
+                                            <div className="text-xs text-fg-2"><span className="font-mono">{i.node_id}</span> · {i.location} <span className="font-mono">{i.key}</span> · <span className="font-mono">{i.host}</span>
+                                                {!i.convertible && <div className="mt-0.5 text-amber-300">Not convertible: {i.reason ?? 'host not supported'}</div>}</div>
                                             <input aria-label="Secret name" disabled={!i.convertible} title={i.convertible ? undefined : i.reason}
                                                 className={`${modalInput} font-mono py-1! text-xs! disabled:opacity-50 disabled:cursor-not-allowed`} value={names[k] ?? ''}
                                                 onChange={(e) => setNames((p) => ({ ...p, [k]: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') }))} />
@@ -75,11 +75,11 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
                                     );
                                 })}
                             </ul>
-                            {res[wid] && <p role="status" className={`px-3 py-2 text-xs ${res[wid].ok ? 'text-emerald-700' : 'text-red-700'}`}>{res[wid].text}</p>}
+                            {res[wid] && <p role="status" className={`px-3 py-2 text-xs ${res[wid].ok ? 'text-emerald-300' : 'text-red-300'}`}>{res[wid].text}</p>}
                         </div>
                     );
                 })}
-                {items.length === 0 && <p className="text-sm text-zinc-500">Nothing left to convert.</p>}
+                {items.length === 0 && <p className="text-sm text-fg-3">Nothing left to convert.</p>}
             </div>
         </Modal>
     );
@@ -131,67 +131,67 @@ export default function AutomationsList() {
         <PageContainer className="space-y-0">
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
-                    <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Automations</h1>
+                    <h1 className="text-xl font-semibold tracking-tight text-fg">Workflows</h1>
                     <p className="label-mono mt-1">workflows for cases and alerts</p>
                 </div>
                 {isAdmin && (
-                    <button onClick={() => navigate('/automations/new')}
-                        className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent-600 text-white text-sm font-medium hover:bg-accent-700">
+                    <button onClick={() => navigate('/workflows/new')}
+                        className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover">
                         <Plus size={15} /> New workflow
                     </button>
                 )}
             </div>
 
-            <div className="flex gap-4 border-b border-zinc-200 mb-4">
+            <div className="flex gap-4 border-b border-line mb-4">
                 {(['workflows', 'runs'] as const).map((t) => (
                     <button key={t} onClick={() => setTab(t)}
-                        className={cn('pb-2 text-sm capitalize', tab === t ? 'text-accent-700 border-b-2 border-accent-600' : 'text-zinc-500 hover:text-zinc-800')}>{t}</button>
+                        className={cn('pb-2 text-sm capitalize', tab === t ? 'text-accent border-b-2 border-accent' : 'text-fg-3 hover:text-fg')}>{t}</button>
                 ))}
             </div>
 
             {isAdmin && scan.length > 0 && !dismissed && (
-                <div className="mb-3 px-3 py-2 text-sm border border-amber-200 bg-amber-50 text-amber-900 flex items-center gap-3 flex-wrap">
+                <div className="mb-3 px-3 py-2 text-sm border border-amber-500/30 bg-amber-500/10 text-amber-300 flex items-center gap-3 flex-wrap">
                     <KeyRound size={15} />
                     <span>{scanWfCount} workflow{scanWfCount === 1 ? '' : 's'} contain{scanWfCount === 1 ? 's' : ''} plaintext credentials — move them to Secrets</span>
-                    <button onClick={() => setReview(true)} className="ml-auto h-8 px-3 border border-amber-300 bg-white text-sm hover:bg-amber-100">Review</button>
+                    <button onClick={() => setReview(true)} className="ml-auto h-8 px-3 border border-amber-500/30 bg-panel text-sm hover:bg-amber-500/10">Review</button>
                     <button onClick={() => { try { localStorage.setItem(dismissKey, '1'); } catch { /* storage unavailable */ } setDismissedKey(dismissKey); }}
-                        className="h-8 px-3 text-sm text-amber-800 hover:underline">Dismiss</button>
+                        className="h-8 px-3 text-sm text-amber-300 hover:underline">Dismiss</button>
                 </div>
             )}
             {review && <ScanReview items={scan} onClose={() => setReview(false)} onDone={() => undefined} />}
 
-            {toggleError && <div role="alert" className="mb-3 px-3 py-2 text-sm border border-red-200 bg-red-50 text-red-700">{toggleError}</div>}
+            {toggleError && <div role="alert" className="mb-3 px-3 py-2 text-sm border border-red-500/30 bg-red-500/10 text-red-300">{toggleError}</div>}
 
             {tab === 'runs' ? <RunsTable /> : (
-                <div className="bg-white border border-zinc-200">
+                <div className="bg-panel border border-line">
                     <table className="w-full text-sm">
-                        <thead className="bg-zinc-50 text-left label-mono">
+                        <thead className="bg-surface text-left label-mono">
                             <tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Trigger</th><th className="px-4 py-2">Enabled</th>
                                 <th className="px-4 py-2">Last run</th><th className="px-4 py-2">Runs</th></tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100">
-                            {isLoading && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">Loading…</td></tr>}
+                        <tbody className="divide-y divide-line">
+                            {isLoading && <tr><td colSpan={5} className="px-4 py-8 text-center text-muted">Loading…</td></tr>}
                             {!isLoading && workflows.length === 0 && (
-                                <tr><td colSpan={5} className="px-4 py-12 text-center text-zinc-400">
+                                <tr><td colSpan={5} className="px-4 py-12 text-center text-muted">
                                     <WorkflowIcon className="mx-auto mb-2 opacity-50" />No workflows yet
                                 </td></tr>
                             )}
                             {workflows.map((w) => (
-                                <tr key={w.id} className="hover:bg-zinc-50">
+                                <tr key={w.id} className="hover:bg-surface">
                                     <td className="px-4 py-2.5">
-                                        <Link to={`/automations/${w.id}`} className="font-medium text-zinc-900 hover:text-accent-700">{w.name}</Link>
-                                        {w.description && <div className="text-xs text-zinc-500">{w.description}</div>}
+                                        <Link to={`/workflows/${w.id}`} className="font-medium text-fg hover:text-accent">{w.name}</Link>
+                                        {w.description && <div className="text-xs text-fg-3">{w.description}</div>}
                                     </td>
-                                    <td className="px-4 py-2.5 font-mono text-xs text-zinc-600">{TRIGGER_LABEL[w.trigger_type]}</td>
+                                    <td className="px-4 py-2.5 font-mono text-xs text-fg-2">{TRIGGER_LABEL[w.trigger_type]}</td>
                                     <td className="px-4 py-2.5">
                                         <button type="button" role="switch" aria-checked={w.enabled} aria-label={`${w.name} enabled`}
                                             title={isAdmin ? undefined : 'Only admins can enable workflows'}
                                             disabled={!isAdmin || toggle.isPending} onClick={() => toggle.mutate(w)}
-                                            className={cn('w-9 h-5 relative transition-colors disabled:opacity-50', w.enabled ? 'bg-accent-600' : 'bg-zinc-300')}>
-                                            <span className={cn('absolute top-0.5 w-4 h-4 bg-white transition-all', w.enabled ? 'left-[18px]' : 'left-0.5')} />
+                                            className={cn('w-9 h-5 relative transition-colors disabled:opacity-50', w.enabled ? 'bg-accent' : 'bg-line-strong')}>
+                                            <span className={cn('absolute top-0.5 w-4 h-4 bg-panel transition-all', w.enabled ? 'left-[18px]' : 'left-0.5')} />
                                         </button>
                                     </td>
-                                    <td className="px-4 py-2.5 text-xs text-zinc-500">
+                                    <td className="px-4 py-2.5 text-xs text-fg-3">
                                         {w.last_run_status ? <span className="flex items-center gap-2"><StatusBadge status={w.last_run_status} />
                                             {w.last_run_at && new Date(w.last_run_at).toLocaleString()}</span> : '—'}
                                     </td>

@@ -209,20 +209,20 @@ export default function CaseDetail() {
             <PageContainer>
                 <div className="flex items-center justify-center h-[50vh]">
                     <div className="flex flex-col items-center gap-4">
-                        <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+                        <div className="w-10 h-10 rounded-full border-4 border-line border-t-accent animate-spin" />
                     </div>
                 </div>
             </PageContainer>
         );
     }
 
-    if (!caseData) return <PageContainer><div className="text-red-700 font-mono">ERROR: CASE_NOT_FOUND</div></PageContainer>;
+    if (!caseData) return <PageContainer><div className="text-red-300 font-mono">ERROR: CASE_NOT_FOUND</div></PageContainer>;
 
-    const severityColor = caseData.severity === 'critical' ? 'text-severity-critical bg-red-50 border-red-200' :
-        caseData.severity === 'high' ? 'text-severity-high bg-orange-50 border-orange-200' :
-            caseData.severity === 'medium' ? 'text-severity-medium bg-amber-50 border-amber-200' :
-                caseData.severity === 'low' ? 'text-severity-low bg-blue-50 border-blue-200' :
-                    'text-zinc-600 bg-zinc-100 border-zinc-200';
+    const severityColor = caseData.severity === 'critical' ? 'text-severity-critical bg-red-500/10 border-red-500/30' :
+        caseData.severity === 'high' ? 'text-severity-high bg-orange-500/10 border-orange-500/30' :
+            caseData.severity === 'medium' ? 'text-severity-medium bg-amber-500/10 border-amber-500/30' :
+                caseData.severity === 'low' ? 'text-severity-low bg-accent/10 border-accent/40' :
+                    'text-fg-2 bg-raised border-line';
 
     const storyEvents = caseData?.timeline_events?.map((event: any) => ({
         ...event,
@@ -238,19 +238,19 @@ export default function CaseDetail() {
 
     return (
         <PageContainer>
-            <div className="min-w-0 flex flex-col bg-white rounded-2xl border border-zinc-200 relative">
+            <div className="min-w-0 flex flex-col bg-panel rounded-2xl border border-line relative">
                 {/* Top Decoration */}
-                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl bg-linear-to-r from-accent-500 via-accent-400 to-accent-500 opacity-50" />
+                <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl bg-linear-to-r from-accent via-accent to-accent opacity-50" />
 
                 {/* Header */}
                 <div className="p-6 pb-2">
                     <div className="flex items-center gap-4 mb-6">
-                        <Link to="/" className="p-2 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors">
+                        <Link to="/" className="p-2 rounded-lg text-fg-3 hover:text-fg hover:bg-raised transition-colors">
                             <ArrowLeft size={20} />
                         </Link>
                         <div className="flex-1">
                             <div className="flex items-center gap-3 mb-1">
-                                <h1 className="text-2xl font-bold text-zinc-900 tracking-tight">{caseData.title}</h1>
+                                <h1 className="text-2xl font-bold text-fg tracking-tight">{caseData.title}</h1>
                                 <span className={cn(
                                     "px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border tracking-wider",
                                     severityColor
@@ -258,7 +258,7 @@ export default function CaseDetail() {
                                     {caseData.severity}
                                 </span>
                             </div>
-                            <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
+                            <div className="flex items-center gap-4 text-xs font-mono text-muted">
                                 <span className="flex items-center gap-1.5">
                                     <Hash size={12} />
                                     ID: {String(caseData.id).padStart(4, '0')}
@@ -276,18 +276,18 @@ export default function CaseDetail() {
                         {id && <FollowButton caseId={parseInt(id)} ready={!!me} isOwner={!!me && caseData.owner_id === me.id} />}
                         <button
                             onClick={() => setShowEditModal(true)}
-                            className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
+                            className="p-2 text-fg-3 hover:text-fg hover:bg-raised rounded-lg transition-colors"
                         >
                             <Edit size={20} />
                         </button>
                     </div>
 
-                    <div className="glass-panel p-5 rounded-xl mb-6 bg-white">
-                        <h3 className="text-xs font-bold text-zinc-400 mb-2 uppercase tracking-wider flex items-center gap-2">
+                    <div className="glass-panel p-5 rounded-xl mb-6 bg-panel">
+                        <h3 className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-2">
                             <MessageSquare size={12} />
                             Initial Report
                         </h3>
-                        <p className="text-zinc-700 leading-relaxed text-sm">{caseData.description}</p>
+                        <p className="text-fg-2 leading-relaxed text-sm">{caseData.description}</p>
                     </div>
 
                     {id && <TriagePanel caseId={parseInt(id)} />}
@@ -296,34 +296,34 @@ export default function CaseDetail() {
                 </div>
 
                 {/* Tabs (sticky while the page scrolls inside <main>) */}
-                <div className="sticky top-0 z-10 bg-white px-6 pt-3">
-                    <div className="flex border-b border-zinc-200 relative space-x-6">
+                <div className="sticky top-0 z-10 bg-panel px-6 pt-3">
+                    <div className="flex border-b border-line relative space-x-6">
                         {CASE_TABS.map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => selectTab(tab)}
                                 className={cn(
                                     "pb-3 text-sm font-medium transition-colors relative focus:outline-hidden",
-                                    activeTab === tab ? "text-accent-700" : "text-zinc-400 hover:text-zinc-700"
+                                    activeTab === tab ? "text-accent" : "text-muted hover:text-fg-2"
                                 )}
                             >
                                 <span className="capitalize">{tab}</span>
                                 {activeTab === tab && (
                                     <motion.div
                                         layoutId="activeTab"
-                                        className="absolute -bottom-px left-0 right-0 h-0.5 bg-accent-600"
+                                        className="absolute -bottom-px left-0 right-0 h-0.5 bg-accent"
                                     />
                                 )}
                             </button>
                         ))}
                     </div>
                     {pendingTab && (
-                        <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 mt-2">
+                        <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-2 mt-2">
                             <span className="mr-auto">The report has unsaved changes. Discard them and switch to <span className="capitalize font-medium">{pendingTab}</span>?</span>
                             <button onClick={() => { setReportDirty(false); setActiveTab(pendingTab); setPendingTab(null); }}
                                 className="px-2 py-1 bg-red-600 text-white rounded-sm hover:bg-red-700">Discard</button>
                             <button onClick={() => setPendingTab(null)}
-                                className="px-2 py-1 bg-white border border-zinc-300 text-zinc-700 rounded-sm hover:bg-zinc-50">Keep editing</button>
+                                className="px-2 py-1 bg-panel border border-line-strong text-fg-2 rounded-sm hover:bg-surface">Keep editing</button>
                         </div>
                     )}
                 </div>
@@ -344,7 +344,7 @@ export default function CaseDetail() {
                                     <div className="flex justify-end mb-2">
                                         <button
                                             onClick={() => setShowAddEvent(true)}
-                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-2"
+                                            className="text-xs bg-raised hover:bg-raised-2 text-fg-2 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-2"
                                         >
                                             <Plus size={12} /> Add Event
                                         </button>
@@ -359,10 +359,10 @@ export default function CaseDetail() {
                                                 animate={{ opacity: 1, y: 0 }}
                                                 exit={{ opacity: 0, y: -4 }}
                                             >
-                                                <div className="glass-panel p-4 rounded-xl border border-zinc-200 bg-white space-y-3">
+                                                <div className="glass-panel p-4 rounded-xl border border-line bg-panel space-y-3">
                                                     <div className="flex items-center justify-between">
-                                                        <h4 className="text-sm font-semibold text-zinc-800">New Timeline Event</h4>
-                                                        <button onClick={() => setShowAddEvent(false)} className="text-zinc-400 hover:text-zinc-900">
+                                                        <h4 className="text-sm font-semibold text-fg">New Timeline Event</h4>
+                                                        <button onClick={() => setShowAddEvent(false)} className="text-muted hover:text-fg">
                                                             <X size={16} />
                                                         </button>
                                                     </div>
@@ -372,7 +372,7 @@ export default function CaseDetail() {
                                                             const t = e.target.value;
                                                             setNewEvent((n) => ({ ...n, event_type: t, content: t === 'comment' ? n.content : stripMentions(n.content) }));
                                                         }}
-                                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50"
+                                                        className="w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                     >
                                                         {EVENT_TYPES.map(t => (
                                                             <option key={t} value={t}>{t.replace('_', ' ')}</option>
@@ -390,20 +390,20 @@ export default function CaseDetail() {
                                                         onChange={(e) => setNewEvent({ ...newEvent, content: e.target.value })}
                                                         placeholder="Describe the event..."
                                                         rows={3}
-                                                        className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
+                                                        className="w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
                                                     />
                                                     )}
                                                     <div className="flex justify-end gap-2">
                                                         <button
                                                             onClick={() => setShowAddEvent(false)}
-                                                            className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-900 transition-colors"
+                                                            className="px-3 py-1.5 text-xs text-fg-3 hover:text-fg transition-colors"
                                                         >
                                                             Cancel
                                                         </button>
                                                         <button
                                                             onClick={() => addTimelineEventMutation.mutate(newEvent)}
                                                             disabled={!newEvent.content.trim() || addTimelineEventMutation.isPending}
-                                                            className="px-3 py-1.5 text-xs bg-white text-black rounded-sm font-medium hover:bg-zinc-200 disabled:opacity-50 transition-colors"
+                                                            className="px-3 py-1.5 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50 transition-colors"
                                                         >
                                                             {addTimelineEventMutation.isPending ? 'Adding...' : 'Add Event'}
                                                         </button>
@@ -413,7 +413,7 @@ export default function CaseDetail() {
                                         )}
                                     </AnimatePresence>
 
-                                    <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-zinc-100" />
+                                    <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-raised" />
                                     {storyEvents.map((event: any, i: number) => {
                                         const Icon = event.icon;
                                         const isEditing = editingEventId === event.id;
@@ -421,18 +421,18 @@ export default function CaseDetail() {
                                         return (
                                             <div key={event.id || i} id={`event-${event.id}`}
                                                 className="relative pl-12 group scroll-mt-24">
-                                                <div className="absolute left-[-22px] top-0 p-1.5 rounded-full bg-white border border-zinc-200 group-hover:border-white/50 group-hover:shadow-[0_0_10px_rgba(255,255,255,0.2)] transition-all z-10">
-                                                    <Icon size={14} className="text-zinc-500 group-hover:text-zinc-900 transition-colors" />
+                                                <div className="absolute left-[-22px] top-0 p-1.5 rounded-full bg-panel border border-line group-hover:border-white/50 group-hover:shadow-[0_0_10px_rgba(255,255,255,0.2)] transition-all z-10">
+                                                    <Icon size={14} className="text-fg-3 group-hover:text-fg transition-colors" />
                                                 </div>
 
                                                 <div className="flex flex-col gap-1">
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-xs font-mono text-zinc-400">{formatDateTime(event.created_at, me?.timezone)}</span>
-                                                        <span className="text-[10px] font-mono text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-sm">
+                                                        <span className="text-xs font-mono text-muted">{formatDateTime(event.created_at, me?.timezone)}</span>
+                                                        <span className="text-[10px] font-mono text-muted bg-raised px-1.5 py-0.5 rounded-sm">
                                                             {event.event_type?.replace('_', ' ')}
                                                         </span>
                                                         {event.user && (
-                                                            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-zinc-400">
+                                                            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-muted">
                                                                 <Avatar userId={event.user.id} name={event.user.full_name || event.user.email}
                                                                     hasAvatar={event.user.has_avatar} version={event.user.avatar_version} size={18} />
                                                                 by {event.user.full_name || event.user.email}
@@ -441,14 +441,14 @@ export default function CaseDetail() {
                                                     </div>
 
                                                     {isEditing ? (
-                                                        <div className="glass-panel p-4 rounded-xl border border-blue-200 bg-white space-y-2">
+                                                        <div className="glass-panel p-4 rounded-xl border border-accent/40 bg-panel space-y-2">
                                                             <select
                                                                 value={editEventData.event_type}
                                                                 onChange={(e) => {
                                                                     const t = e.target.value;
                                                                     setEditEventData((d) => ({ ...d, event_type: t, content: t === 'comment' ? d.content : stripMentions(d.content) }));
                                                                 }}
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50"
+                                                                className="w-full bg-panel border border-line rounded-lg px-3 py-1.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                             >
                                                                 {EVENT_TYPES.map(t => (
                                                                     <option key={t} value={t}>{t.replace('_', ' ')}</option>
@@ -464,28 +464,28 @@ export default function CaseDetail() {
                                                                 value={editEventData.content}
                                                                 onChange={(e) => setEditEventData({ ...editEventData, content: e.target.value })}
                                                                 rows={3}
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
+                                                                className="w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
                                                             />
                                                             )}
                                                             <div className="flex justify-end gap-2">
                                                                 <button
                                                                     onClick={() => setEditingEventId(null)}
-                                                                    className="px-2 py-1 text-xs text-zinc-500 hover:text-zinc-900 transition-colors"
+                                                                    className="px-2 py-1 text-xs text-fg-3 hover:text-fg transition-colors"
                                                                 >
                                                                     Cancel
                                                                 </button>
                                                                 <button
                                                                     onClick={() => updateTimelineEventMutation.mutate({ eventId: event.id, data: editEventData })}
                                                                     disabled={!editEventData.content.trim() || updateTimelineEventMutation.isPending}
-                                                                    className="px-2 py-1 text-xs bg-white text-black rounded-sm font-medium hover:bg-zinc-200 disabled:opacity-50 flex items-center gap-1 transition-colors"
+                                                                    className="px-2 py-1 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50 flex items-center gap-1 transition-colors"
                                                                 >
                                                                     <Check size={12} /> Save
                                                                 </button>
                                                             </div>
                                                         </div>
                                                     ) : (
-                                                        <div className="glass-panel p-4 rounded-xl border border-zinc-200 bg-white group-hover:bg-white transition-colors relative">
-                                                            <p className="text-zinc-700 text-sm leading-relaxed pr-16 whitespace-pre-wrap">
+                                                        <div className="glass-panel p-4 rounded-xl border border-line bg-panel group-hover:bg-panel transition-colors relative">
+                                                            <p className="text-fg-2 text-sm leading-relaxed pr-16 whitespace-pre-wrap">
                                                                 {event.event_type === 'comment' ? <MentionText content={event.content} /> : event.content}
                                                             </p>
                                                             {/* Edit/Delete buttons - visible on hover */}
@@ -493,7 +493,7 @@ export default function CaseDetail() {
                                                                 {canModify(event) && (
                                                                 <button
                                                                     onClick={() => startEditing(event)}
-                                                                    className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded-sm transition-colors"
+                                                                    className="p-1.5 text-muted hover:text-accent hover:bg-raised rounded-sm transition-colors"
                                                                     title="Edit event"
                                                                 >
                                                                     <Pencil size={12} />
@@ -506,7 +506,7 @@ export default function CaseDetail() {
                                                                             deleteTimelineEventMutation.mutate(event.id);
                                                                         }
                                                                     }}
-                                                                    className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors"
+                                                                    className="p-1.5 text-muted hover:text-red-300 hover:bg-raised rounded-sm transition-colors"
                                                                     title="Delete event"
                                                                 >
                                                                     <Trash2 size={12} />
@@ -520,7 +520,7 @@ export default function CaseDetail() {
                                         );
                                     })}
                                     {(!storyEvents || storyEvents.length === 0) && !showAddEvent && (
-                                        <div className="pl-12 text-zinc-400 text-sm italic">No events recorded yet.</div>
+                                        <div className="pl-12 text-muted text-sm italic">No events recorded yet.</div>
                                     )}
                                 </div>
                             )}
@@ -538,48 +538,48 @@ export default function CaseDetail() {
                             {activeTab === 'artifacts' && (
                                 <div className="space-y-4">
                                     <div className="flex justify-between items-center mb-4">
-                                        <h3 className="text-sm font-semibold text-zinc-700">Case Artifacts</h3>
+                                        <h3 className="text-sm font-semibold text-fg-2">Case Artifacts</h3>
                                         <button
                                             onClick={() => setShowArtifactModal(true)}
-                                            className="text-xs bg-zinc-100 hover:bg-zinc-200 text-zinc-700 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-2"
+                                            className="text-xs bg-raised hover:bg-raised-2 text-fg-2 px-3 py-1.5 rounded-sm transition-colors flex items-center gap-2"
                                         >
                                             <Plus size={12} /> Add Artifact
                                         </button>
                                     </div>
 
                                     {isLoadingArtifacts ? (
-                                        <div className="text-center py-8 text-zinc-400">Loading artifacts...</div>
+                                        <div className="text-center py-8 text-muted">Loading artifacts...</div>
                                     ) : artifacts && artifacts.length > 0 ? (
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             {artifacts.map((artifact: any) => {
                                                 const Icon = ARTIFACT_ICONS[artifact.artifact_type] || FileText;
                                                 const isShared = !artifact.isolated && (artifact.case_ids?.length || 0) > 1;
                                                 return (
-                                                    <div key={artifact.id} className="glass-panel p-4 rounded-lg bg-white border border-zinc-200 flex items-start gap-3 group/artifact">
-                                                        <div className="p-2 bg-zinc-100 rounded-md">
-                                                            <Icon size={16} className="text-accent-600" />
+                                                    <div key={artifact.id} className="glass-panel p-4 rounded-lg bg-panel border border-line flex items-start gap-3 group/artifact">
+                                                        <div className="p-2 bg-raised rounded-md">
+                                                            <Icon size={16} className="text-accent" />
                                                         </div>
                                                         <div className="min-w-0 flex-1">
                                                             <div className="flex items-center gap-2 mb-0.5">
-                                                                <p className="text-xs text-zinc-400 uppercase font-bold tracking-wider">{artifact.artifact_type}</p>
+                                                                <p className="text-xs text-muted uppercase font-bold tracking-wider">{artifact.artifact_type}</p>
                                                                 {isShared && (
-                                                                    <span className="text-[10px] bg-blue-50 text-accent-600 border border-blue-200 px-1.5 py-0.5 rounded-sm uppercase font-bold flex items-center gap-1">
+                                                                    <span className="text-[10px] bg-accent/10 text-accent border border-accent/40 px-1.5 py-0.5 rounded-sm uppercase font-bold flex items-center gap-1">
                                                                         <Link2 size={10} />
                                                                         Shared ({artifact.case_ids.length})
                                                                     </span>
                                                                 )}
                                                                 {artifact.isolated && (
-                                                                    <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-sm uppercase font-bold">
+                                                                    <span className="text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded-sm uppercase font-bold">
                                                                         Isolated
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <p className="text-sm text-zinc-800 font-mono truncate">{artifact.value}</p>
-                                                            <p className="text-xs text-zinc-400 mt-2">
+                                                            <p className="text-sm text-fg font-mono truncate">{artifact.value}</p>
+                                                            <p className="text-xs text-muted mt-2">
                                                                 Added {new Date(artifact.created_at).toLocaleDateString()}
                                                             </p>
                                                             <button onClick={() => setIntelOpen(intelOpen === artifact.id ? null : artifact.id)}
-                                                                aria-expanded={intelOpen === artifact.id} className="mt-2 text-xs text-accent-600 hover:underline">Intel</button>
+                                                                aria-expanded={intelOpen === artifact.id} className="mt-2 text-xs text-accent hover:underline">Intel</button>
                                                             {intelOpen === artifact.id && <div className="mt-2"><EnrichmentPanel kind="artifact" id={artifact.id} canRun={canRunIntel} /></div>}
                                                         </div>
                                                         <button
@@ -588,7 +588,7 @@ export default function CaseDetail() {
                                                                     removeArtifactMutation.mutate(artifact.id);
                                                                 }
                                                             }}
-                                                            className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors opacity-0 group-hover/artifact:opacity-100"
+                                                            className="p-1.5 text-muted hover:text-red-300 hover:bg-raised rounded-sm transition-colors opacity-0 group-hover/artifact:opacity-100"
                                                             title="Remove from case"
                                                         >
                                                             <Unlink size={14} />
@@ -598,7 +598,7 @@ export default function CaseDetail() {
                                             })}
                                         </div>
                                     ) : (
-                                        <div className="glass-panel p-4 rounded-lg border-dashed border-2 border-zinc-200 flex flex-col items-center justify-center text-zinc-400 py-12">
+                                        <div className="glass-panel p-4 rounded-lg border-dashed border-2 border-line flex flex-col items-center justify-center text-muted py-12">
                                             <Database size={24} className="mb-2 opacity-50" />
                                             <p className="text-sm">No artifacts associated with this case.</p>
                                         </div>
@@ -607,47 +607,47 @@ export default function CaseDetail() {
                             )}
 
                             {activeTab === 'network' && (
-                                <div className="flex items-center justify-center h-48 text-zinc-400">
+                                <div className="flex items-center justify-center h-48 text-muted">
                                     <p className="text-sm">Network graph visualization unavailable.</p>
                                 </div>
                             )}
 
                             {activeTab === 'audit' && (
                                 <div className="relative space-y-4 my-4">
-                                    <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-zinc-100" />
+                                    <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-raised" />
                                     {isLoadingAuditLogs ? (
-                                        <div className="pl-12 text-zinc-400 text-sm">Loading audit logs...</div>
+                                        <div className="pl-12 text-muted text-sm">Loading audit logs...</div>
                                     ) : auditLogs && auditLogs.length > 0 ? (
                                         auditLogs.map((log: any, i: number) => (
                                             <div key={log.id || i} className="relative pl-12 group">
-                                                <div className="absolute left-[-22px] top-0 p-1.5 rounded-full bg-white border border-zinc-200 group-hover:border-white/50 group-hover:shadow-[0_0_10px_rgba(255,255,255,0.2)] transition-all z-10">
-                                                    <Shield size={14} className="text-zinc-500 group-hover:text-zinc-900 transition-colors" />
+                                                <div className="absolute left-[-22px] top-0 p-1.5 rounded-full bg-panel border border-line group-hover:border-white/50 group-hover:shadow-[0_0_10px_rgba(255,255,255,0.2)] transition-all z-10">
+                                                    <Shield size={14} className="text-fg-3 group-hover:text-fg transition-colors" />
                                                 </div>
 
                                                 <div className="flex flex-col gap-1">
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-xs font-mono text-zinc-400">{formatDateTime(log.created_at, me?.timezone)}</span>
+                                                        <span className="text-xs font-mono text-muted">{formatDateTime(log.created_at, me?.timezone)}</span>
                                                         <span className={cn(
                                                             "text-xs font-bold px-2 py-0.5 rounded-sm uppercase",
-                                                            log.action === 'create' ? "bg-green-50 text-green-700 border border-green-200" :
-                                                                log.action === 'update' ? "bg-blue-50 text-accent-600 border border-blue-200" :
-                                                                    "bg-red-50 text-red-700 border border-red-200"
+                                                            log.action === 'create' ? "bg-green-500/10 text-green-300 border border-green-500/30" :
+                                                                log.action === 'update' ? "bg-accent/10 text-accent border border-accent/40" :
+                                                                    "bg-red-500/10 text-red-300 border border-red-500/30"
                                                         )}>
                                                             {log.action}
                                                         </span>
                                                     </div>
-                                                    <div className="glass-panel p-4 rounded-xl border border-zinc-200 bg-white group-hover:bg-white transition-colors">
-                                                        <p className="text-zinc-700 text-sm leading-relaxed mb-2">
+                                                    <div className="glass-panel p-4 rounded-xl border border-line bg-panel group-hover:bg-panel transition-colors">
+                                                        <p className="text-fg-2 text-sm leading-relaxed mb-2">
                                                             {log.entity_type === 'case' ? 'Case' : 'Artifact'} {log.action}d
                                                         </p>
                                                         {log.changes && Object.keys(log.changes).length > 0 && (
                                                             <div className="mt-2 space-y-1">
                                                                 {Object.entries(log.changes).map(([field, change]: [string, any]) => (
                                                                     <div key={field} className="text-xs font-mono">
-                                                                        <span className="text-zinc-400">{field}:</span>{' '}
-                                                                        <span className="text-red-700">{JSON.stringify(change.from)}</span>
+                                                                        <span className="text-muted">{field}:</span>{' '}
+                                                                        <span className="text-red-300">{JSON.stringify(change.from)}</span>
                                                                         {' → '}
-                                                                        <span className="text-green-700">{JSON.stringify(change.to)}</span>
+                                                                        <span className="text-green-300">{JSON.stringify(change.to)}</span>
                                                                     </div>
                                                                 ))}
                                                             </div>
@@ -657,7 +657,7 @@ export default function CaseDetail() {
                                             </div>
                                         ))
                                     ) : (
-                                        <div className="pl-12 text-zinc-400 text-sm italic">No audit logs recorded yet.</div>
+                                        <div className="pl-12 text-muted text-sm italic">No audit logs recorded yet.</div>
                                     )}
                                 </div>
                             )}

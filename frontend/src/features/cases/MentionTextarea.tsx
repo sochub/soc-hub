@@ -118,14 +118,14 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
                 onKeyUp={(e) => { if (!['Enter', 'Tab', 'Escape'].includes(e.key)) { setDismissed(false); syncCaret(e.currentTarget); } }}
                 onClick={(e) => syncCaret(e.currentTarget)}
                 onBlur={() => setDismissed(true)}
-                className={className ?? 'w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-accent resize-none disabled:opacity-60'}
+                className={className ?? 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-accent resize-none disabled:opacity-60'}
             />
             {open && (
                 <ul
                     id={listId}
                     role="listbox"
                     aria-label="Mention a teammate"
-                    className="absolute left-0 right-0 z-30 mt-1 max-h-48 overflow-auto bg-white border border-zinc-200 shadow-lg text-sm"
+                    className="absolute left-0 right-0 z-30 mt-1 max-h-48 overflow-auto bg-panel border border-line shadow-lg text-sm"
                 >
                     {options.map((u, i) => (
                         <li
@@ -138,8 +138,8 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
                             className={`px-3 py-1.5 cursor-pointer flex items-baseline gap-2 ${i === activeIdx ? 'bg-accent/10' : ''}`}
                         >
                             <Avatar userId={u.id} name={u.name} hasAvatar={u.has_avatar} version={u.avatar_version} size={20} className="self-center" />
-                            <span className="font-medium text-zinc-900">{u.name ?? ''}</span>
-                            <span className="text-xs text-zinc-500 truncate">{u.email}</span>
+                            <span className="font-medium text-fg">{u.name ?? ''}</span>
+                            <span className="text-xs text-fg-3 truncate">{u.email}</span>
                         </li>
                     ))}
                 </ul>

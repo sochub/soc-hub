@@ -23,7 +23,7 @@ export default function CaseAutomation({ caseId }: { caseId: number }) {
 
     const run = useMutation({
         mutationFn: async () => (await api.post(`/workflows/${picked}/run`, { case_id: caseId })).data as { run_id: number },
-        onSuccess: ({ run_id }) => { qc.invalidateQueries({ queryKey: ['workflow-runs'] }); navigate(`/automations/runs/${run_id}`); },
+        onSuccess: ({ run_id }) => { qc.invalidateQueries({ queryKey: ['workflow-runs'] }); navigate(`/workflows/runs/${run_id}`); },
         onError: (err: { response?: { data?: { detail?: unknown } } }) => { const d = err?.response?.data?.detail; setError(typeof d === 'string' ? d : 'Run failed'); },
     });
 
@@ -31,14 +31,14 @@ export default function CaseAutomation({ caseId }: { caseId: number }) {
         <div className="space-y-4">
             {canRun && (
                 <div className="flex items-center gap-2">
-                    <select className="border border-zinc-300 px-2 py-1.5 text-sm bg-white min-w-[240px]" value={picked} onChange={(e) => setPicked(e.target.value)}
+                    <select className="border border-line-strong px-2 py-1.5 text-sm bg-panel min-w-[240px]" value={picked} onChange={(e) => setPicked(e.target.value)}
                         aria-label="Manual workflow">
                         <option value="">{manual.length ? 'Run a workflow on this case…' : 'No manual workflows enabled'}</option>
                         {manual.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                     </select>
                     <button disabled={!picked || run.isPending} onClick={() => { setError(null); run.mutate(); }}
-                        className="inline-flex items-center gap-1.5 h-8 px-3 bg-accent-600 text-white text-sm disabled:opacity-50"><Play size={13} />Run</button>
-                    {error && <span className="text-xs text-red-700">{error}</span>}
+                        className="inline-flex items-center gap-1.5 h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50"><Play size={13} />Run</button>
+                    {error && <span className="text-xs text-red-300">{error}</span>}
                 </div>
             )}
             <RunsTable caseId={caseId} />
@@ -56,7 +56,7 @@ export function AlertRuns({ alertId }: { alertId: number }) {
         <div className="flex items-center gap-3 flex-wrap text-xs mb-2">
             <span className="label-mono">automation</span>
             {runs.map((r) => (
-                <Link key={r.id} to={`/automations/runs/${r.id}`} className="flex items-center gap-1.5 text-accent-600 hover:underline">
+                <Link key={r.id} to={`/workflows/runs/${r.id}`} className="flex items-center gap-1.5 text-accent hover:underline">
                     {r.workflow_name} <StatusBadge status={r.status} />
                 </Link>
             ))}

@@ -11,8 +11,8 @@ import MfaSetupDialog from './MfaSetupDialog';
 import { mfaErrorMessage } from './mfaErrors';
 import { formatDateTime } from '../../utils/datetime';
 
-const card = 'bg-white border border-zinc-200';
-const cardHead = 'px-4 h-11 flex items-center border-b border-zinc-200 text-sm font-semibold text-zinc-900';
+const card = 'bg-panel border border-line';
+const cardHead = 'px-4 h-11 flex items-center border-b border-line text-sm font-semibold text-fg';
 const MAX_AVATAR = 2 * 1024 * 1024;
 
 function apiError(err: unknown, fallback: string): string {
@@ -105,7 +105,7 @@ function ProfileCard({ me }: { me: User }) {
                     </div>
                     <div>
                         <label htmlFor="pf-email" className={modalLabel}>Email</label>
-                        <input id="pf-email" className={`${modalInput} bg-zinc-50 text-zinc-500`} value={me.email} readOnly />
+                        <input id="pf-email" className={`${modalInput} bg-surface text-fg-3`} value={me.email} readOnly />
                     </div>
                     <div>
                         <label htmlFor="pf-tzf" className={modalLabel}>Timezone</label>
@@ -115,14 +115,14 @@ function ProfileCard({ me }: { me: User }) {
                             <option value="">Browser default</option>
                             {shown.map((z) => <option key={z} value={z}>{z}</option>)}
                         </select>
-                        <p className="text-xs text-zinc-500 mt-1">Times will show as <span className="num">{formatDateTime(now, tz || null)}</span></p>
+                        <p className="text-xs text-fg-3 mt-1">Times will show as <span className="num">{formatDateTime(now, tz || null)}</span></p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
                     <button type="button" className={btnPrimary} disabled={save.isPending || !name.trim()} onClick={() => { setMsg(null); save.mutate(); }}>
                         {save.isPending && <Loader2 size={14} className="animate-spin" />} Save changes
                     </button>
-                    {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
+                    {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-emerald-300' : 'text-red-400'}`}>{msg.text}</p>}
                 </div>
             </div>
         </section>
@@ -151,7 +151,7 @@ function PasswordCard({ me }: { me: User }) {
             <h2 className={cardHead}>Password</h2>
             <div className="p-4">
                 {me.has_password === false ? (
-                    <p className="text-sm text-zinc-600">This account signs in through single sign-on and has no password.</p>
+                    <p className="text-sm text-fg-2">This account signs in through single sign-on and has no password.</p>
                 ) : (
                     <form className="space-y-4 max-w-md" onSubmit={(e) => { e.preventDefault(); setMsg(null); change.mutate(); }}>
                         <div>
@@ -161,18 +161,18 @@ function PasswordCard({ me }: { me: User }) {
                         <div>
                             <label htmlFor="pw-new" className={modalLabel}>New password</label>
                             <input id="pw-new" type="password" autoComplete="new-password" className={modalInput} value={next} onChange={(e) => setNext(e.target.value)} />
-                            <p className="text-xs text-zinc-400 mt-1">At least 12 characters; avoid common or reused passwords.</p>
+                            <p className="text-xs text-muted mt-1">At least 12 characters; avoid common or reused passwords.</p>
                         </div>
                         <div>
                             <label htmlFor="pw-again" className={modalLabel}>Confirm new password</label>
                             <input id="pw-again" type="password" autoComplete="new-password" className={modalInput} value={again} onChange={(e) => setAgain(e.target.value)} />
-                            {mismatch && <p className="text-xs text-red-600 mt-1">Passwords do not match.</p>}
+                            {mismatch && <p className="text-xs text-red-400 mt-1">Passwords do not match.</p>}
                         </div>
                         <div className="flex items-center gap-3">
                             <button type="submit" className={btnPrimary} disabled={change.isPending || !cur || !next || next !== again}>
                                 {change.isPending && <Loader2 size={14} className="animate-spin" />} Change password
                             </button>
-                            {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
+                            {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-emerald-300' : 'text-red-400'}`}>{msg.text}</p>}
                         </div>
                     </form>
                 )}
@@ -211,7 +211,7 @@ function DisableMfaModal({ open, onClose }: { open: boolean; onClose: () => void
                     <input id="off-code" className={`${modalInput} font-mono tracking-widest`} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
                         value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
                 </div>
-                {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+                {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
             </form>
         </Modal>
     );
@@ -228,21 +228,21 @@ function MfaCard({ me }: { me: User }) {
             <h2 className={cardHead}>Two-factor authentication</h2>
             <div className="p-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm">
-                    {enabled ? <ShieldCheck size={16} className="text-emerald-600" /> : <ShieldOff size={16} className="text-zinc-400" />}
-                    <span className="text-zinc-700">{enabled ? 'Two-factor authentication is on.' : 'Two-factor authentication is off.'}</span>
+                    {enabled ? <ShieldCheck size={16} className="text-emerald-400" /> : <ShieldOff size={16} className="text-muted" />}
+                    <span className="text-fg-2">{enabled ? 'Two-factor authentication is on.' : 'Two-factor authentication is off.'}</span>
                 </div>
                 {!enabled && me.has_password !== false && <button type="button" className={btnPrimary} onClick={() => setSetupOpen(true)}>Turn on</button>}
                 {!enabled && me.has_password === false && (
-                    <p className="text-xs text-zinc-500 w-full">This account signs in through single sign-on; your identity provider handles two-factor.</p>
+                    <p className="text-xs text-fg-3 w-full">This account signs in through single sign-on; your identity provider handles two-factor.</p>
                 )}
                 {enabled && !me.mfa_required_by_tenant && me.has_password !== false && (
                     <button type="button" className={btnSecondary} onClick={() => setOffOpen(true)}>Turn off</button>
                 )}
                 {enabled && me.mfa_required_by_tenant && (
-                    <p className="text-xs text-zinc-500 w-full">Your organization requires two-factor authentication, so it cannot be turned off.</p>
+                    <p className="text-xs text-fg-3 w-full">Your organization requires two-factor authentication, so it cannot be turned off.</p>
                 )}
                 {enabled && !me.mfa_required_by_tenant && me.has_password === false && (
-                    <p className="text-xs text-zinc-500 w-full">Two-factor for single sign-on accounts can only be reset by an admin.</p>
+                    <p className="text-xs text-fg-3 w-full">Two-factor for single sign-on accounts can only be reset by an admin.</p>
                 )}
             </div>
             <MfaSetupDialog open={setupOpen} requirePassword onClose={() => setSetupOpen(false)}
@@ -260,9 +260,9 @@ export default function ProfilePage() {
     });
     return (
         <PageContainer width="narrow">
-            <h1 className="text-lg font-semibold text-zinc-900">Your profile</h1>
+            <h1 className="text-lg font-semibold text-fg">Your profile</h1>
             {isLoading || !me
-                ? <p className="font-mono text-xs text-zinc-400">$ loading…</p>
+                ? <p className="font-mono text-xs text-muted">$ loading…</p>
                 : <>
                     <ProfileCard key={me.id} me={me} />
                     <PasswordCard me={me} />

@@ -57,11 +57,11 @@ export default function PromoteAlertModal({ alert, onClose }: Props) {
                 </button>
             </>}
         >
-            <p className="text-sm text-zinc-500 mb-4 truncate">{alert.title}</p>
+            <p className="text-sm text-fg-3 mb-4 truncate">{alert.title}</p>
 
             <div className="flex gap-2 mb-4">
-                <button onClick={() => setMode('existing')} className={`flex-1 py-1.5 text-sm border ${mode === 'existing' ? 'bg-accent-600 text-white border-accent-600' : 'bg-white text-zinc-600 border-zinc-300'}`}>Existing case</button>
-                <button onClick={() => setMode('new')} className={`flex-1 py-1.5 text-sm border ${mode === 'new' ? 'bg-accent-600 text-white border-accent-600' : 'bg-white text-zinc-600 border-zinc-300'}`}>New case</button>
+                <button onClick={() => setMode('existing')} className={`flex-1 py-1.5 text-sm border ${mode === 'existing' ? 'bg-accent text-on-accent border-accent' : 'bg-panel text-fg-2 border-line-strong'}`}>Existing case</button>
+                <button onClick={() => setMode('new')} className={`flex-1 py-1.5 text-sm border ${mode === 'new' ? 'bg-accent text-on-accent border-accent' : 'bg-panel text-fg-2 border-line-strong'}`}>New case</button>
             </div>
 
             {mode === 'existing' && (
@@ -71,7 +71,7 @@ export default function PromoteAlertModal({ alert, onClose }: Props) {
                 </select>
             )}
             {mode === 'new' && (
-                <p className="text-xs text-zinc-500">A new case titled "{alert.title}" will be created from this alert and linked.</p>
+                <p className="text-xs text-fg-3">A new case titled "{alert.title}" will be created from this alert and linked.</p>
             )}
         </Modal>
     );

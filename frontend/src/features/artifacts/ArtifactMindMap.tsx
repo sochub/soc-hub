@@ -16,7 +16,7 @@ import { useArtifactTypes } from './useArtifactTypes';
  * ------------------------------------------------------------------ */
 
 const SEV: Record<string, string> = {
-    critical: '#dc2626', high: '#ea580c', medium: '#d97706', low: '#2563eb', info: '#64748b',
+    critical: '#f87171', high: '#fb923c', medium: '#fbbf24', low: '#8fc3ff', info: '#8e8e95',
 };
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const THREATS = ['critical', 'high', 'medium', 'low'];
@@ -78,21 +78,21 @@ export default function ArtifactMindMap() {
             cases.forEach((c: any) => {
                 if (sevFilter.size && !sevFilter.has(c.severity)) return;
                 if (!matches(c.title)) return;
-                ns.push({ id: `case-${c.id}`, kind: 'case', label: c.title, color: SEV[c.severity] ?? '#2563eb', data: c, x: 0, y: 0, vx: 0, vy: 0 });
+                ns.push({ id: `case-${c.id}`, kind: 'case', label: c.title, color: SEV[c.severity] ?? '#a4a8ff', data: c, x: 0, y: 0, vx: 0, vy: 0 });
             });
         }
         if (showKind.artifact) {
             artifacts.forEach((a: any) => {
                 if (hiddenTypes.has(a.artifact_type)) return;
                 if (!matches(a.value)) return;
-                ns.push({ id: `artifact-${a.id}`, kind: 'artifact', label: a.value, color: '#52525b', data: a, x: 0, y: 0, vx: 0, vy: 0 });
+                ns.push({ id: `artifact-${a.id}`, kind: 'artifact', label: a.value, color: '#8e8e95', data: a, x: 0, y: 0, vx: 0, vy: 0 });
             });
         }
         if (showKind.ioc) {
             iocs.forEach((i: any) => {
                 if (threatFilter.size && !threatFilter.has(i.threat_level)) return;
                 if (!matches(i.value)) return;
-                ns.push({ id: `ioc-${i.id}`, kind: 'ioc', label: i.value, color: SEV[i.threat_level] ?? '#7c3aed', data: i, x: 0, y: 0, vx: 0, vy: 0 });
+                ns.push({ id: `ioc-${i.id}`, kind: 'ioc', label: i.value, color: SEV[i.threat_level] ?? '#e08cff', data: i, x: 0, y: 0, vx: 0, vy: 0 });
             });
         }
 
@@ -277,47 +277,47 @@ export default function ArtifactMindMap() {
         <div className="p-4 sm:p-6 flex flex-col h-[calc(100vh-3.5rem)]">
             <div className="flex justify-between items-end mb-4 shrink-0 flex-wrap gap-2">
                 <div>
-                    <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Investigation Graph</h1>
+                    <h1 className="text-xl font-semibold text-fg tracking-tight">Investigation Graph</h1>
                     <p className="label-mono mt-1">cases ◉ · artifacts ▢ · iocs ◇ — drag, zoom, click for details</p>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-zinc-500">
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-accent-600" /> case</span>
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-zinc-500" /> artifact</span>
+                <div className="flex items-center gap-4 text-xs text-fg-3">
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-accent" /> case</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-muted" /> artifact</span>
                     <span className="flex items-center gap-1.5"><span className="w-3 h-3 rotate-45 bg-severity-high" /> ioc</span>
                     <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-amber-500" /> value match</span>
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 flex border border-zinc-200 bg-white relative overflow-hidden">
+            <div className="flex-1 min-h-0 flex border border-line bg-panel relative overflow-hidden">
                 {/* Filter rail */}
-                <aside className={cn('shrink-0 border-r border-zinc-200 bg-zinc-50/70 transition-[width] duration-200 overflow-hidden',
+                <aside className={cn('shrink-0 border-r border-line bg-surface/70 transition-[width] duration-200 overflow-hidden',
                     railOpen ? 'w-56' : 'w-9')}>
                     {railOpen ? (
                         <div className="p-3 space-y-4 w-56">
                             <div className="flex items-center justify-between">
                                 <span className="label-mono">// filters</span>
-                                <button onClick={() => setRailOpen(false)} className="p-1 text-zinc-400 hover:text-zinc-900" aria-label="Collapse filters">
+                                <button onClick={() => setRailOpen(false)} className="p-1 text-muted hover:text-fg" aria-label="Collapse filters">
                                     <ChevronLeft size={14} />
                                 </button>
                             </div>
 
                             <div className="relative">
-                                <Search size={13} className="absolute left-2 top-2 text-zinc-400" />
+                                <Search size={13} className="absolute left-2 top-2 text-muted" />
                                 <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search value / title…"
-                                    className="w-full bg-white border border-zinc-200 pl-7 pr-2 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent-500" />
+                                    className="w-full bg-panel border border-line pl-7 pr-2 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
                             </div>
 
                             <div className="space-y-1">
                                 {(Object.keys(kindMeta) as Array<keyof typeof kindMeta>).map(k => {
                                     const Meta = kindMeta[k];
                                     return (
-                                        <label key={k} className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer hover:bg-zinc-100 px-1.5 py-1">
+                                        <label key={k} className="flex items-center gap-2 text-sm text-fg-2 cursor-pointer hover:bg-raised px-1.5 py-1">
                                             <input type="checkbox" checked={showKind[k]}
                                                 onChange={() => setShowKind(s => ({ ...s, [k]: !s[k] }))}
-                                                className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
-                                            <Meta.icon size={13} className="text-zinc-500" />
+                                                className="border-line-strong text-accent focus:ring-accent" />
+                                            <Meta.icon size={13} className="text-fg-3" />
                                             {Meta.label}
-                                            <span className="num text-[10px] text-zinc-400 ml-auto">{counts[k]}</span>
+                                            <span className="num text-[10px] text-muted ml-auto">{counts[k]}</span>
                                         </label>
                                     );
                                 })}
@@ -352,20 +352,20 @@ export default function ArtifactMindMap() {
                                 </div>
                             </div>
 
-                            <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                            <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                 <input type="checkbox" checked={connectedOnly} onChange={() => setConnectedOnly(v => !v)}
-                                    className="border-zinc-300 text-accent-600 focus:ring-accent-500" />
+                                    className="border-line-strong text-accent focus:ring-accent" />
                                 connected nodes only
                             </label>
 
                             <button onClick={resetView}
-                                className="w-full inline-flex items-center justify-center gap-1.5 border border-zinc-300 text-zinc-600 text-xs py-1.5 hover:bg-zinc-100">
+                                className="w-full inline-flex items-center justify-center gap-1.5 border border-line-strong text-fg-2 text-xs py-1.5 hover:bg-raised">
                                 <Maximize2 size={12} /> reset view
                             </button>
                         </div>
                     ) : (
                         <button onClick={() => setRailOpen(true)}
-                            className="w-9 h-full flex items-start justify-center pt-3 text-zinc-400 hover:text-zinc-900" aria-label="Open filters">
+                            className="w-9 h-full flex items-start justify-center pt-3 text-muted hover:text-fg" aria-label="Open filters">
                             <SlidersHorizontal size={15} />
                         </button>
                     )}
@@ -383,7 +383,7 @@ export default function ArtifactMindMap() {
                                 const inFocus = !focusSet || (focusSet.has(l.source) && focusSet.has(l.target));
                                 return (
                                     <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y}
-                                        stroke={l.match ? '#d97706' : inFocus && focusSet ? '#2563eb' : '#d4d4d8'}
+                                        stroke={l.match ? '#fbbf24' : inFocus && focusSet ? '#a4a8ff' : '#3f3f46'}
                                         strokeWidth={l.match ? 1.6 : inFocus && focusSet ? 1.6 : 1}
                                         strokeDasharray={l.match ? '5 4' : undefined}
                                         opacity={inFocus ? (l.match ? 0.95 : 0.7) : 0.08} />
@@ -401,20 +401,20 @@ export default function ArtifactMindMap() {
                                         onMouseLeave={() => setHoverId(null)}
                                         onClick={(e) => { e.stopPropagation(); setSelected(n); }}>
                                         {n.kind === 'case' && (
-                                            <circle r={r} fill={n.color} stroke={isSel ? '#1e3a8a' : '#fff'} strokeWidth={isSel ? 3 : 2} />
+                                            <circle r={r} fill={n.color} stroke={isSel ? '#d6e37f' : '#111113'} strokeWidth={isSel ? 3 : 2} />
                                         )}
                                         {n.kind === 'artifact' && (
                                             <rect x={-r} y={-r} width={r * 2} height={r * 2} fill={n.color}
-                                                stroke={isSel ? '#1e3a8a' : '#fff'} strokeWidth={isSel ? 3 : 2} />
+                                                stroke={isSel ? '#d6e37f' : '#111113'} strokeWidth={isSel ? 3 : 2} />
                                         )}
                                         {n.kind === 'ioc' && (
                                             <rect x={-r} y={-r} width={r * 2} height={r * 2} fill={n.color} transform="rotate(45)"
-                                                stroke={isSel ? '#1e3a8a' : '#fff'} strokeWidth={isSel ? 3 : 2} />
+                                                stroke={isSel ? '#d6e37f' : '#111113'} strokeWidth={isSel ? 3 : 2} />
                                         )}
                                         {n.kind === 'case' && <ShieldAlert size={15} x={-7.5} y={-7.5} className="text-white pointer-events-none" />}
                                         <text y={n.kind === 'case' ? 28 : 22} textAnchor="middle"
                                             className={cn('text-[10px] pointer-events-none',
-                                                isSel ? 'fill-accent-700 font-semibold' : 'fill-zinc-500',
+                                                isSel ? 'fill-accent font-semibold' : 'fill-muted',
                                                 n.kind === 'case' && 'font-medium')}>
                                             {(n.label || '').length > 22 ? n.label.slice(0, 20) + '…' : n.label}
                                         </text>
@@ -425,70 +425,70 @@ export default function ArtifactMindMap() {
                     </svg>
 
                     {/* stats strip */}
-                    <div className="absolute bottom-2 left-2 font-mono text-[10px] text-zinc-400 bg-white/80 border border-zinc-200 px-2 py-1">
-                        {nodes.length} nodes · {graph.links.length} links · <span className="text-amber-600">{matchCount} value match{matchCount === 1 ? '' : 'es'}</span> · zoom {Math.round(view.k * 100)}%
+                    <div className="absolute bottom-2 left-2 font-mono text-[10px] text-muted bg-panel/80 border border-line px-2 py-1">
+                        {nodes.length} nodes · {graph.links.length} links · <span className="text-amber-400">{matchCount} value match{matchCount === 1 ? '' : 'es'}</span> · zoom {Math.round(view.k * 100)}%
                     </div>
 
                     {nodes.length === 0 && (
-                        <div className="absolute inset-0 flex items-center justify-center text-zinc-400 font-mono text-xs pointer-events-none">
+                        <div className="absolute inset-0 flex items-center justify-center text-muted font-mono text-xs pointer-events-none">
                             {graph.nodes.length === 0 ? 'nothing matches the current filters' : '$ rendering graph…'}
                         </div>
                     )}
 
                     {/* Detail dossier */}
                     {selected && (
-                        <div className="absolute top-3 right-3 w-72 bg-white border border-zinc-200 shadow-lg animate-fade-in" onMouseDown={e => e.stopPropagation()}>
-                            <div className="flex items-center justify-between px-3 h-9 border-b border-zinc-200">
+                        <div className="absolute top-3 right-3 w-72 bg-panel border border-line shadow-lg animate-fade-in" onMouseDown={e => e.stopPropagation()}>
+                            <div className="flex items-center justify-between px-3 h-9 border-b border-line">
                                 <span className="label-mono">{selected.kind} detail</span>
-                                <button onClick={() => setSelected(null)} className="text-zinc-400 hover:text-zinc-900"><X size={15} /></button>
+                                <button onClick={() => setSelected(null)} className="text-muted hover:text-fg"><X size={15} /></button>
                             </div>
                             <div className="p-3 space-y-2 text-sm">
                                 {selected.kind === 'case' && (
                                     <>
-                                        <p className="font-semibold text-zinc-900">{selected.data.title}</p>
+                                        <p className="font-semibold text-fg">{selected.data.title}</p>
                                         <div className="flex items-center gap-2">
                                             <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border"
                                                 style={{ color: selected.color, borderColor: selected.color + '55' }}>{selected.data.severity}</span>
-                                            <span className="font-mono text-[10px] uppercase text-zinc-500">{selected.data.status}</span>
+                                            <span className="font-mono text-[10px] uppercase text-fg-3">{selected.data.status}</span>
                                         </div>
-                                        {selected.data.description && <p className="text-xs text-zinc-500 line-clamp-3">{selected.data.description}</p>}
-                                        <p className="text-xs text-zinc-500">
-                                            linked: <span className="num text-zinc-800">{(neighbors.get(selected.id)?.size ?? 0)}</span> node(s)
+                                        {selected.data.description && <p className="text-xs text-fg-3 line-clamp-3">{selected.data.description}</p>}
+                                        <p className="text-xs text-fg-3">
+                                            linked: <span className="num text-fg">{(neighbors.get(selected.id)?.size ?? 0)}</span> node(s)
                                         </p>
-                                        <Link to={`/cases/${selected.data.id}`} className="inline-flex items-center gap-1 text-xs text-accent-700 hover:text-accent-800 font-medium">
+                                        <Link to={`/cases/${selected.data.id}`} className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent font-medium">
                                             Open case #{selected.data.id} <ArrowUpRight size={12} />
                                         </Link>
                                     </>
                                 )}
                                 {selected.kind === 'artifact' && (
                                     <>
-                                        <p className="num text-sm text-zinc-900 break-all">{selected.data.value}</p>
+                                        <p className="num text-sm text-fg break-all">{selected.data.value}</p>
                                         <div className="flex items-center gap-2">
-                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border border-zinc-200 text-zinc-600">{selected.data.artifact_type}</span>
-                                            {selected.data.isolated && <span className="font-mono text-[10px] uppercase text-amber-700">isolated</span>}
+                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border border-line text-fg-2">{selected.data.artifact_type}</span>
+                                            {selected.data.isolated && <span className="font-mono text-[10px] uppercase text-amber-300">isolated</span>}
                                         </div>
-                                        <p className="text-xs text-zinc-500">in <span className="num text-zinc-800">{selected.data.case_ids?.length ?? 0}</span> case(s)</p>
+                                        <p className="text-xs text-fg-3">in <span className="num text-fg">{selected.data.case_ids?.length ?? 0}</span> case(s)</p>
                                         <div className="flex flex-wrap gap-1.5">
                                             {(selected.data.case_ids || []).map((cid: number) => (
-                                                <Link key={cid} to={`/cases/${cid}`} className="num text-[11px] text-accent-700 hover:text-accent-800 border border-zinc-200 px-1.5">#{cid}</Link>
+                                                <Link key={cid} to={`/cases/${cid}`} className="num text-[11px] text-accent hover:text-accent border border-line px-1.5">#{cid}</Link>
                                             ))}
                                         </div>
                                     </>
                                 )}
                                 {selected.kind === 'ioc' && (
                                     <>
-                                        <p className="num text-sm text-zinc-900 break-all">{selected.data.value}</p>
+                                        <p className="num text-sm text-fg break-all">{selected.data.value}</p>
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border border-zinc-200 text-zinc-600">{selected.data.ioc_type}</span>
+                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border border-line text-fg-2">{selected.data.ioc_type}</span>
                                             <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border"
                                                 style={{ color: selected.color, borderColor: selected.color + '55' }}>{selected.data.threat_level}</span>
-                                            <span className="font-mono text-[10px] uppercase text-zinc-500">tlp:{selected.data.tlp}</span>
+                                            <span className="font-mono text-[10px] uppercase text-fg-3">tlp:{selected.data.tlp}</span>
                                         </div>
-                                        <p className="text-xs text-zinc-500">
-                                            confidence <span className="num text-zinc-800">{selected.data.confidence}%</span> · status <span className="text-zinc-700">{selected.data.status}</span>
+                                        <p className="text-xs text-fg-3">
+                                            confidence <span className="num text-fg">{selected.data.confidence}%</span> · status <span className="text-fg-2">{selected.data.status}</span>
                                         </p>
                                         {selected.data.case_id && (
-                                            <Link to={`/cases/${selected.data.case_id}`} className="inline-flex items-center gap-1 text-xs text-accent-700 hover:text-accent-800 font-medium">
+                                            <Link to={`/cases/${selected.data.case_id}`} className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent font-medium">
                                                 Open case #{selected.data.case_id} <ArrowUpRight size={12} />
                                             </Link>
                                         )}

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link } from 'react-router-dom';
@@ -19,6 +20,7 @@ const ARTIFACT_ICONS: Record<string, any> = {
 export default function ArtifactsList() {
     const queryClient = useQueryClient();
     const { options: ARTIFACT_TYPE_OPTIONS } = useArtifactTypes();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editData, setEditData] = useState({ artifact_type: '', value: '', description: '' });
 
@@ -72,7 +74,7 @@ export default function ArtifactsList() {
             <PageContainer>
                 <div className="flex items-center justify-center h-[50vh]">
                     <div className="flex flex-col items-center gap-4">
-                        <div className="w-10 h-10 rounded-full border-4 border-zinc-200 border-t-accent-600 animate-spin" />
+                        <div className="w-10 h-10 rounded-full border-4 border-line border-t-accent animate-spin" />
                     </div>
                 </div>
             </PageContainer>
@@ -83,26 +85,29 @@ export default function ArtifactsList() {
         <PageContainer>
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-zinc-900 tracking-tight mb-1">Artifact Repository</h1>
-                    <p className="text-zinc-500 text-sm">Centralized view of all Indicators of Compromise (IOCs) and evidence.</p>
+                    <h1 className="text-2xl font-bold text-fg tracking-tight mb-1">Artifacts</h1>
+                    <p className="text-fg-3 text-sm">Every value observed across cases. Confirmed-malicious ones live under IOCs.</p>
                 </div>
+                <input type="search" value={searchParams.get('q') ?? ''} placeholder="Filter by value…"
+                    onChange={e => setSearchParams(e.target.value ? { q: e.target.value } : {}, { replace: true })}
+                    className="w-56 bg-surface border border-line rounded-full px-3 py-1.5 text-sm text-fg placeholder:text-muted focus:outline-hidden focus:ring-1 focus:ring-accent" />
             </div>
 
             {artifacts && artifacts.length > 0 ? (
-                <div className="glass-panel rounded-xl overflow-hidden border border-zinc-200">
+                <div className="glass-panel rounded-xl overflow-hidden border border-line">
                     <table className="w-full text-left border-collapse">
                         <thead>
-                            <tr className="border-b border-zinc-200 bg-white">
-                                <th className="p-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider w-32">Type</th>
-                                <th className="p-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Value</th>
-                                <th className="p-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider w-64">Related Cases</th>
-                                <th className="p-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider w-40">Created</th>
-                                <th className="p-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider w-24 text-right">Actions</th>
+                            <tr className="border-b border-line bg-panel">
+                                <th className="p-4 text-xs font-semibold text-muted uppercase tracking-wider w-32">Type</th>
+                                <th className="p-4 text-xs font-semibold text-muted uppercase tracking-wider">Value</th>
+                                <th className="p-4 text-xs font-semibold text-muted uppercase tracking-wider w-64">Related Cases</th>
+                                <th className="p-4 text-xs font-semibold text-muted uppercase tracking-wider w-40">Created</th>
+                                <th className="p-4 text-xs font-semibold text-muted uppercase tracking-wider w-24 text-right">Actions</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-200">
+                        <tbody className="divide-y divide-line">
                             <AnimatePresence>
-                                {artifacts.map((artifact: any) => {
+                                {artifacts.filter((a: { value: string }) => String(a.value).toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase())).map((artifact: any) => {
                                     const isEditing = editingId === artifact.id;
                                     const Icon = ARTIFACT_ICONS[artifact.artifact_type] || FileText;
                                     const caseIds: number[] = artifact.case_ids || [];
@@ -111,7 +116,7 @@ export default function ArtifactsList() {
                                         <motion.tr
                                             key={artifact.id}
                                             layout
-                                            className={`group transition-colors ${isEditing ? 'bg-zinc-100' : 'hover:bg-zinc-100'}`}
+                                            className={`group transition-colors ${isEditing ? 'bg-raised' : 'hover:bg-raised'}`}
                                         >
                                             {isEditing ? (
                                                 <>
@@ -119,7 +124,7 @@ export default function ArtifactsList() {
                                                         <select
                                                             value={editData.artifact_type}
                                                             onChange={(e) => setEditData({ ...editData, artifact_type: e.target.value })}
-                                                            className="w-full bg-white border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-white/50"
+                                                            className="w-full bg-panel border border-line rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                         >
                                                             {ARTIFACT_TYPE_OPTIONS.map(opt => (
                                                                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -132,21 +137,21 @@ export default function ArtifactsList() {
                                                                 type="text"
                                                                 value={editData.value}
                                                                 onChange={(e) => setEditData({ ...editData, value: e.target.value })}
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm text-zinc-900 font-mono focus:outline-hidden focus:ring-1 focus:ring-white/50"
+                                                                className="w-full bg-panel border border-line rounded-lg px-3 py-1.5 text-sm text-fg font-mono focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                             />
                                                             <input
                                                                 type="text"
                                                                 value={editData.description}
                                                                 onChange={(e) => setEditData({ ...editData, description: e.target.value })}
                                                                 placeholder="Description (optional)"
-                                                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-xs text-zinc-500 focus:outline-hidden focus:ring-1 focus:ring-white/50"
+                                                                className="w-full bg-panel border border-line rounded-lg px-3 py-1.5 text-xs text-fg-3 focus:outline-hidden focus:ring-1 focus:ring-white/50"
                                                             />
                                                         </div>
                                                     </td>
                                                     <td className="p-3">
                                                         <div className="flex flex-wrap gap-2">
                                                             {caseIds.map((cid: number) => (
-                                                                <span key={cid} className="flex items-center gap-1 text-xs text-zinc-400">
+                                                                <span key={cid} className="flex items-center gap-1 text-xs text-muted">
                                                                     <Hash size={10} />
                                                                     {String(cid).padStart(4, '0')}
                                                                 </span>
@@ -154,7 +159,7 @@ export default function ArtifactsList() {
                                                         </div>
                                                     </td>
                                                     <td className="p-3">
-                                                        <div className="flex items-center gap-2 text-xs text-zinc-400">
+                                                        <div className="flex items-center gap-2 text-xs text-muted">
                                                             <Calendar size={12} />
                                                             {new Date(artifact.created_at).toLocaleDateString()}
                                                         </div>
@@ -164,14 +169,14 @@ export default function ArtifactsList() {
                                                             <button
                                                                 onClick={() => saveEdit(artifact.id)}
                                                                 disabled={!editData.value.trim() || updateMutation.isPending}
-                                                                className="p-1.5 text-green-700 hover:bg-green-50 rounded-sm transition-colors disabled:opacity-50"
+                                                                className="p-1.5 text-green-300 hover:bg-green-500/10 rounded-sm transition-colors disabled:opacity-50"
                                                                 title="Save"
                                                             >
                                                                 <Check size={14} />
                                                             </button>
                                                             <button
                                                                 onClick={cancelEdit}
-                                                                className="p-1.5 text-zinc-500 hover:bg-zinc-200 rounded-sm transition-colors"
+                                                                className="p-1.5 text-fg-3 hover:bg-raised-2 rounded-sm transition-colors"
                                                                 title="Cancel"
                                                             >
                                                                 <X size={14} />
@@ -183,29 +188,29 @@ export default function ArtifactsList() {
                                                 <>
                                                     <td className="p-4">
                                                         <div className="flex items-center gap-2">
-                                                            <div className="p-1.5 bg-zinc-100 rounded-sm text-accent-600">
+                                                            <div className="p-1.5 bg-raised rounded-sm text-accent">
                                                                 <Icon size={14} />
                                                             </div>
-                                                            <span className="text-xs font-medium text-zinc-500 uppercase">{artifact.artifact_type}</span>
+                                                            <span className="text-xs font-medium text-fg-3 uppercase">{artifact.artifact_type}</span>
                                                         </div>
                                                     </td>
                                                     <td className="p-4">
                                                         <div className="flex items-center gap-2">
-                                                            <span className="font-mono text-sm text-zinc-800">{artifact.value}</span>
+                                                            <span className="font-mono text-sm text-fg">{artifact.value}</span>
                                                             {!artifact.isolated && caseIds.length > 1 && (
-                                                                <span className="text-[10px] bg-blue-50 text-accent-600 border border-blue-200 px-1.5 py-0.5 rounded-sm uppercase font-bold flex items-center gap-1">
+                                                                <span className="text-[10px] bg-accent/10 text-accent border border-accent/40 px-1.5 py-0.5 rounded-sm uppercase font-bold flex items-center gap-1">
                                                                     <Link2 size={10} />
                                                                     Shared
                                                                 </span>
                                                             )}
                                                             {artifact.isolated && (
-                                                                <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-sm uppercase font-bold">
+                                                                <span className="text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded-sm uppercase font-bold">
                                                                     Isolated
                                                                 </span>
                                                             )}
                                                         </div>
                                                         {artifact.description && (
-                                                            <p className="text-xs text-zinc-400 mt-1">{artifact.description}</p>
+                                                            <p className="text-xs text-muted mt-1">{artifact.description}</p>
                                                         )}
                                                     </td>
                                                     <td className="p-4">
@@ -214,19 +219,19 @@ export default function ArtifactsList() {
                                                                 <Link
                                                                     key={cid}
                                                                     to={`/cases/${cid}`}
-                                                                    className="flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900 transition-colors group/link"
+                                                                    className="flex items-center gap-1 text-sm text-fg-3 hover:text-fg transition-colors group/link"
                                                                 >
                                                                     <Hash size={12} />
                                                                     <span>{String(cid).padStart(4, '0')}</span>
                                                                     <ArrowRight size={12} className="opacity-0 group-hover/link:opacity-100 transition-opacity" />
                                                                 </Link>
                                                             )) : (
-                                                                <span className="text-xs text-zinc-400">No cases</span>
+                                                                <span className="text-xs text-muted">No cases</span>
                                                             )}
                                                         </div>
                                                     </td>
                                                     <td className="p-4">
-                                                        <div className="flex items-center gap-2 text-xs text-zinc-400">
+                                                        <div className="flex items-center gap-2 text-xs text-muted">
                                                             <Calendar size={12} />
                                                             {new Date(artifact.created_at).toLocaleDateString()}
                                                         </div>
@@ -235,7 +240,7 @@ export default function ArtifactsList() {
                                                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                             <button
                                                                 onClick={() => startEdit(artifact)}
-                                                                className="p-1.5 text-zinc-400 hover:text-accent-600 hover:bg-zinc-100 rounded-sm transition-colors"
+                                                                className="p-1.5 text-muted hover:text-accent hover:bg-raised rounded-sm transition-colors"
                                                                 title="Edit artifact"
                                                             >
                                                                 <Pencil size={14} />
@@ -246,7 +251,7 @@ export default function ArtifactsList() {
                                                                         deleteMutation.mutate(artifact.id);
                                                                     }
                                                                 }}
-                                                                className="p-1.5 text-zinc-400 hover:text-red-700 hover:bg-zinc-100 rounded-sm transition-colors"
+                                                                className="p-1.5 text-muted hover:text-red-300 hover:bg-raised rounded-sm transition-colors"
                                                                 title="Delete artifact"
                                                             >
                                                                 <Trash2 size={14} />
@@ -263,9 +268,9 @@ export default function ArtifactsList() {
                     </table>
                 </div>
             ) : (
-                <div className="glass-panel p-12 rounded-xl border-dashed border-2 border-zinc-200 flex flex-col items-center justify-center text-zinc-400">
+                <div className="glass-panel p-12 rounded-xl border-dashed border-2 border-line flex flex-col items-center justify-center text-muted">
                     <Database size={48} className="mb-4 opacity-20" />
-                    <h3 className="text-lg font-medium text-zinc-500 mb-2">No Artifacts Found</h3>
+                    <h3 className="text-lg font-medium text-fg-3 mb-2">No Artifacts Found</h3>
                     <p className="text-sm">Artifacts added to cases will appear here automatically.</p>
                 </div>
             )}

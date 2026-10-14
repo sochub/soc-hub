@@ -21,28 +21,28 @@ function ParamPreview({ action }: { action: CopilotAction }) {
     switch (action.type) {
         case 'add_timeline_note':
             return p.content ? (
-                <blockquote className="border-l-2 border-brand-500/50 pl-2 my-1.5 text-slate-300 text-xs italic whitespace-pre-wrap">
+                <blockquote className="border-l-2 border-accent/50 pl-2 my-1.5 text-fg-2 text-xs italic whitespace-pre-wrap">
                     “{p.content}”
                 </blockquote>
             ) : null;
         case 'create_case':
             return (
                 <dl className="my-1.5 space-y-0.5 text-xs">
-                    <div><dt className="inline text-slate-500">title: </dt><dd className="inline text-slate-200">{p.title}</dd></div>
-                    {p.severity && <div><dt className="inline text-slate-500">severity: </dt><dd className="inline text-slate-200">{p.severity}</dd></div>}
-                    {p.description && <div><dt className="inline text-slate-500">description: </dt><dd className="inline text-slate-300">{String(p.description).slice(0, 140)}</dd></div>}
+                    <div><dt className="inline text-fg-3">title: </dt><dd className="inline text-fg">{p.title}</dd></div>
+                    {p.severity && <div><dt className="inline text-fg-3">severity: </dt><dd className="inline text-fg">{p.severity}</dd></div>}
+                    {p.description && <div><dt className="inline text-fg-3">description: </dt><dd className="inline text-fg-2">{String(p.description).slice(0, 140)}</dd></div>}
                 </dl>
             );
         case 'add_artifact':
             return (
                 <p className="my-1.5 text-xs">
-                    <code className="bg-slate-900 text-brand-300 px-1 py-0.5">{p.value}</code>
-                    <span className="text-slate-500 ml-1.5">({p.artifact_type})</span>
+                    <code className="bg-panel text-accent px-1 py-0.5">{p.value}</code>
+                    <span className="text-fg-3 ml-1.5">({p.artifact_type})</span>
                 </p>
             );
         case 'update_case':
             return (
-                <p className="my-1.5 text-xs text-slate-300">
+                <p className="my-1.5 text-xs text-fg-2">
                     {['status', 'severity'].filter(k => p[k]).map(k => `${k} → ${p[k]}`).join(' · ') || null}
                 </p>
             );
@@ -89,24 +89,24 @@ export default function CopilotActionCard({ action, caseId }: Props) {
     const result = exec.data;
 
     return (
-        <div className="mt-2 rounded-xl border border-brand-500/30 bg-brand-500/6 p-3 text-sm">
-            <div className="flex items-center gap-2 mb-1.5 text-brand-300 font-medium">
+        <div className="mt-2 rounded-xl border border-accent/30 bg-accent/6 p-3 text-sm">
+            <div className="flex items-center gap-2 mb-1.5 text-accent font-medium">
                 <Zap size={14} />
                 <span>{ACTION_LABEL[action.type] ?? action.type}</span>
             </div>
 
-            {action.summary && <p className="text-slate-300 mb-1">{action.summary}</p>}
+            {action.summary && <p className="text-fg-2 mb-1">{action.summary}</p>}
             {!result && !exec.isPending && <ParamPreview action={action} />}
 
             {/* Result */}
             {result && (
-                <div className="text-slate-200">
+                <div className="text-fg">
                     <p className="flex items-center gap-1.5">
                         <Check size={14} className="text-emerald-400 shrink-0" />
                         {result.message}
                     </p>
                     {result.case_id && action.type === 'create_case' && (
-                        <Link to={`/cases/${result.case_id}`} className="inline-flex items-center gap-1 mt-1.5 text-brand-300 hover:text-brand-200">
+                        <Link to={`/cases/${result.case_id}`} className="inline-flex items-center gap-1 mt-1.5 text-accent hover:text-accent">
                             Open case #{result.case_id} <ArrowUpRight size={13} />
                         </Link>
                     )}
@@ -114,10 +114,10 @@ export default function CopilotActionCard({ action, caseId }: Props) {
                         <ul className="mt-1.5 space-y-1">
                             {result.related.map((r) => (
                                 <li key={r.case_id}>
-                                    <Link to={`/cases/${r.case_id}`} className="text-brand-300 hover:text-brand-200 inline-flex items-center gap-1">
+                                    <Link to={`/cases/${r.case_id}`} className="text-accent hover:text-accent inline-flex items-center gap-1">
                                         #{r.case_id} {r.title} <ArrowUpRight size={12} />
                                     </Link>
-                                    <span className="text-xs text-slate-500"> — shares {r.shared_values.join(', ')}</span>
+                                    <span className="text-xs text-fg-3"> — shares {r.shared_values.join(', ')}</span>
                                 </li>
                             ))}
                         </ul>
@@ -134,7 +134,7 @@ export default function CopilotActionCard({ action, caseId }: Props) {
 
             {/* Pending */}
             {exec.isPending && (
-                <p className="flex items-center gap-2 text-slate-400">
+                <p className="flex items-center gap-2 text-fg-2">
                     <Loader2 size={14} className="animate-spin" /> Working…
                 </p>
             )}
@@ -142,18 +142,18 @@ export default function CopilotActionCard({ action, caseId }: Props) {
             {/* Confirm / cancel for write actions */}
             {isWrite && !result && !exec.isPending && (
                 state === 'cancelled' ? (
-                    <p className="text-slate-500 text-xs">Cancelled.</p>
+                    <p className="text-fg-3 text-xs">Cancelled.</p>
                 ) : (
                     <div className="flex items-center gap-2 mt-1">
                         <button
                             onClick={() => exec.mutate()}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500 text-slate-950 text-xs font-semibold hover:bg-brand-400 transition-colors"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-on-accent text-xs font-semibold hover:bg-accent transition-colors"
                         >
                             <Check size={13} /> Confirm
                         </button>
                         <button
                             onClick={() => setState('cancelled')}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 text-xs hover:bg-slate-800/60 transition-colors"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-fg-2 text-xs hover:bg-raised/60 transition-colors"
                         >
                             <X size={13} /> Cancel
                         </button>
@@ -201,18 +201,18 @@ export function CopilotSuggestionChip({ action, caseId }: Props) {
     return (
         <div className="mt-1.5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-2.5 py-2 text-xs">
             <Lightbulb size={13} className="text-amber-400 shrink-0 mt-0.5" />
-            <span className="flex-1 text-slate-300">{action.summary}</span>
+            <span className="flex-1 text-fg-2">{action.summary}</span>
             {exec.isError && <span className="text-severity-critical">failed</span>}
             {exec.isPending ? (
-                <Loader2 size={13} className="animate-spin text-slate-400 shrink-0 mt-0.5" />
+                <Loader2 size={13} className="animate-spin text-fg-2 shrink-0 mt-0.5" />
             ) : (
                 <span className="flex items-center gap-1 shrink-0">
                     <button onClick={() => exec.mutate()}
-                        className="px-2 py-0.5 rounded-sm bg-amber-500/90 text-slate-950 font-semibold hover:bg-amber-400 transition-colors">
+                        className="px-2 py-0.5 rounded-sm bg-amber-500/90 text-on-accent font-semibold hover:bg-amber-400 transition-colors">
                         Add
                     </button>
                     <button onClick={() => setDismissed(true)} aria-label="Dismiss suggestion"
-                        className="p-0.5 text-slate-500 hover:text-slate-300">
+                        className="p-0.5 text-fg-3 hover:text-fg-2">
                         <X size={13} />
                     </button>
                 </span>

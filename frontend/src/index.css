@@ -1,46 +1,38 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-brand-50: #ecfeff;
-  --color-brand-100: #cffafe;
-  --color-brand-200: #a5f3fc;
-  --color-brand-300: #67e8f9;
-  --color-brand-400: #22d3ee;
-  --color-brand-500: #06b6d4;
-  --color-brand-600: #0891b2;
-  --color-brand-700: #0e7490;
-  --color-brand-800: #155e75;
-  --color-brand-900: #164e63;
-  --color-brand-950: #083344;
+  /* sochub.io palette — dark canvas, lavender/lime accents */
+  --color-canvas: #0a0a0a;
+  --color-surface: #0f0f10;
+  --color-panel: #111113;
+  --color-raised: #18181b;
+  --color-raised-2: #212125;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.16);
+  --color-fg: #f2f2f0;
+  --color-fg-2: #c1c1c6;
+  --color-fg-3: #8e8e95;
+  --color-muted: #6b6b72;
 
-  --color-severity-critical: #dc2626;
-  --color-severity-high: #ea580c;
-  --color-severity-medium: #d97706;
-  --color-severity-low: #2563eb;
-  --color-severity-info: #64748b;
+  --color-accent: #a4a8ff;
+  --color-accent-hover: #c4c7ff;
+  --color-on-accent: #0a0a0a;
+  --color-lime: #d6e37f;
+  --color-magenta: #e08cff;
 
-  --color-accent-50: #eff6ff;
-  --color-accent-100: #dbeafe;
-  --color-accent-200: #bfdbfe;
-  --color-accent-300: #93c5fd;
-  --color-accent-400: #60a5fa;
-  --color-accent-500: #3b82f6;
-  --color-accent-600: #2563eb;
-  --color-accent-700: #1d4ed8;
-  --color-accent-800: #1e40af;
-  --color-accent-900: #1e3a8a;
-  --color-accent: #2563eb;
+  --color-severity-critical: #f87171;
+  --color-severity-high: #fb923c;
+  --color-severity-medium: #fbbf24;
+  --color-severity-low: #8fc3ff;
+  --color-severity-info: #8e8e95;
 
-  --font-sans:
-    IBM Plex Sans, ui-sans-serif, system-ui, -apple-system, Segoe UI,
-    Helvetica Neue, Arial, sans-serif;
-  --font-mono:
-    Roboto Mono, Monaco, ui-monospace, SFMono-Regular, Menlo, Consolas,
-    monospace;
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+  --font-display: "Inter Tight", Inter, ui-sans-serif, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --shadow-brand-glow: 0 0 20px -2px rgba(34, 211, 238, 0.35);
-  --shadow-console: 0 1px 2px 0 rgba(24, 24, 27, 0.04);
-  --shadow-console-hover: 0 4px 16px -4px rgba(37, 99, 235, 0.18);
+  --shadow-glow: 0 0 24px -4px rgb(164 168 255 / 0.45);
+  --shadow-console: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-console-hover: 0 4px 20px -6px rgb(164 168 255 / 0.25);
 
   --animate-fade-in: fade-in 0.2s ease-out;
 
@@ -54,6 +46,10 @@
       transform: translateY(0);
     }
   }
+}
+
+:root {
+  color-scheme: dark;
 }
 
 /*
@@ -70,7 +66,7 @@
   ::before,
   ::backdrop,
   ::file-selector-button {
-    border-color: var(--color-gray-200, currentcolor);
+    border-color: var(--color-line, currentcolor);
   }
 }
 
@@ -81,27 +77,40 @@
 
 @utility label-mono {
   /* Uppercase mono micro-label, e.g. // CASES BY SEVERITY */
-  @apply font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500;
+  @apply font-mono text-[10px] uppercase tracking-[0.14em] text-fg-3;
 }
 
 @utility console-grid {
   /* Faint engineering dot-grid backdrop for the console canvas. */
-  background-image: radial-gradient(
-    circle,
-    rgba(24, 24, 27, 0.05) 1px,
-    transparent 1px
-  );
-  background-size: 22px 22px;
+  /* sochub.io: faint dot grid + violet glow in the top-right corner */
+  background-image:
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgb(138 43 226 / 0.12), transparent 70%),
+    radial-gradient(circle, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 22px 22px;
+  background-attachment: local, local;
 }
 
 /* Custom Utilities for Glow Effects */
 
 @utility glass-panel {
-  @apply bg-white border border-zinc-200 shadow-xl;
+  @apply bg-panel border border-line shadow-xl;
 }
 
 @utility neon-border {
-  @apply relative after:absolute after:-inset-px after:rounded-lg after:bg-linear-to-r after:from-blue-500/50 after:to-purple-500/50 after:blur-xs after:-z-10;
+  @apply relative after:absolute after:-inset-px after:rounded-lg after:bg-linear-to-r after:from-accent/50 after:to-purple-500/50 after:blur-xs after:-z-10;
+}
+
+@utility bg-brand-gradient {
+  /* Primary CTA fill, as on sochub.io */
+  background-image: linear-gradient(90deg, var(--color-accent), var(--color-lime));
+  color: var(--color-on-accent);
+}
+
+@utility text-brand-gradient {
+  background-image: linear-gradient(90deg, var(--color-accent), var(--color-lime));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 @utility text-glow {
@@ -113,21 +122,26 @@
 }
 
 @layer base {
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
   body {
-    @apply bg-zinc-50 text-zinc-900 font-sans antialiased;
+    @apply bg-canvas text-fg font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
 /* Copilot Markdown Styles */
 .copilot-markdown h1 {
-  @apply text-base font-bold text-slate-100 mt-3 mb-1.5;
+  @apply text-base font-bold text-fg mt-3 mb-1.5;
 }
 .copilot-markdown h2 {
-  @apply text-sm font-bold text-slate-100 mt-3 mb-1.5;
+  @apply text-sm font-bold text-fg mt-3 mb-1.5;
 }
 .copilot-markdown h3 {
-  @apply text-sm font-semibold text-slate-200 mt-2 mb-1;
+  @apply text-sm font-semibold text-fg mt-2 mb-1;
 }
 .copilot-markdown p {
   @apply mb-2 last:mb-0 leading-relaxed;
@@ -139,41 +153,41 @@
   @apply list-decimal list-inside mb-2 space-y-0.5;
 }
 .copilot-markdown li {
-  @apply text-slate-300;
+  @apply text-fg-2;
 }
 .copilot-markdown li > p {
   @apply inline;
 }
 .copilot-markdown strong {
-  @apply font-bold text-slate-100;
+  @apply font-bold text-fg;
 }
 .copilot-markdown em {
-  @apply italic text-slate-300;
+  @apply italic text-fg-2;
 }
 .copilot-markdown code {
-  @apply bg-slate-900 text-purple-300 text-xs px-1.5 py-0.5 rounded-sm font-mono;
+  @apply bg-panel text-magenta text-xs px-1.5 py-0.5 rounded-sm font-mono;
 }
 .copilot-markdown pre {
-  @apply bg-slate-900 border border-slate-700/50 rounded-lg p-3 my-2 overflow-x-auto;
+  @apply bg-panel border border-line rounded-lg p-3 my-2 overflow-x-auto;
 }
 .copilot-markdown pre code {
-  @apply bg-transparent p-0 text-slate-200;
+  @apply bg-transparent p-0 text-fg;
 }
 .copilot-markdown blockquote {
-  @apply border-l-2 border-purple-500/50 pl-3 my-2 text-slate-400 italic;
+  @apply border-l-2 border-accent/50 pl-3 my-2 text-fg-2 italic;
 }
 .copilot-markdown a {
-  @apply text-blue-400 hover:text-blue-300 underline underline-offset-2;
+  @apply text-accent hover:text-accent underline underline-offset-2;
 }
 .copilot-markdown hr {
-  @apply border-slate-700/50 my-3;
+  @apply border-line my-3;
 }
 .copilot-markdown table {
   @apply w-full border-collapse my-2 text-xs;
 }
 .copilot-markdown th {
-  @apply bg-slate-900 text-slate-300 font-semibold text-left p-2 border border-slate-700/50;
+  @apply bg-panel text-fg-2 font-semibold text-left p-2 border border-line;
 }
 .copilot-markdown td {
-  @apply p-2 border border-slate-700/50 text-slate-300;
+  @apply p-2 border border-line text-fg-2;
 }
