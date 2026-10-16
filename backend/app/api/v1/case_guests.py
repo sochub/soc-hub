@@ -27,6 +27,7 @@ from app.utils.emails import normalize_email
 router = APIRouter()            # mounted under /cases
 settings_router = APIRouter()   # mounted under /tenants
 
+_UNSHAREABLE_EVENT_TYPES = {"guest_invited"}  # contain other guests' emails
 DEFAULT_EXPIRY = timedelta(days=30)
 MAX_EXPIRY = timedelta(days=365)
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
@@ -213,6 +214,8 @@ async def share_timeline_event(*, case_id: int, event_id: int, body: ShareIn, db
                                                        TimelineEvent.case_id == case.id))).scalars().first()
     if ev is None:
         raise HTTPException(status_code=404, detail="Timeline event not found")
+    if body.shared and ev.event_type in _UNSHAREABLE_EVENT_TYPES:
+        raise HTTPException(status_code=422, detail="This entry can't be shared with guests")
     if ev.shared_with_guests != body.shared:
         ev.shared_with_guests = body.shared
         await create_audit_log(db=db, entity_type="timeline_event", entity_id=ev.id,
