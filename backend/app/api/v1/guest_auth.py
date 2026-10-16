@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,6 +118,8 @@ async def link_login(body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> A
     grant, tenant = row
     if tenant.guest_require_sso:
         raise HTTPException(status_code=403, detail={"code": "sso_required", "slug": tenant.slug})
+    if await _account_by_email(db, grant.email):  # a link must not bypass the account's password/MFA
+        raise HTTPException(status_code=403, detail={"code": "account_login_required"})
     await create_audit_log(db=db, entity_type="case_guest", entity_id=grant.id, action="guest_link_login",
                            tenant_id=tenant.id, changes={"actor": f"guest:{grant.email}"})
     await db.commit()
@@ -181,14 +183,14 @@ async def login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession = Depen
 
 
 @router.post("/forgot", status_code=202)
-async def forgot(request: Request, body: EmailIn, db: AsyncSession = Depends(deps.get_db),
+async def forgot(request: Request, body: EmailIn, background_tasks: BackgroundTasks, db: AsyncSession = Depends(deps.get_db),
                  throttle: LoginThrottle = Depends(get_guest_throttle)) -> Response:
     email = normalize_email(body.email)
     if _EMAIL_RE.match(email) and not await throttle.reserve(f"reset:{email}", client_ip(request)):
         acct = await _account_by_email(db, email)
         if acct is not None:
             base = settings.FRONTEND_URL.rstrip("/")
-            send_guest_reset_email(email, f"{base}/guest/reset/{tokens.issue_reset(acct)}")
+            background_tasks.add_task(send_guest_reset_email, email, f"{base}/guest/reset/{tokens.issue_reset(acct)}")
     return Response(status_code=202)
 
 
@@ -241,13 +243,20 @@ async def mfa_enable(request: Request, body: CodeIn, db: AsyncSession = Depends(
 @router.post("/mfa/disable")
 async def mfa_disable(request: Request, body: DisableIn, db: AsyncSession = Depends(deps.get_db),
                       s: GuestSession = Depends(get_current_guest), redis=Depends(get_redis),
-                      throttle: LoginThrottle = Depends(get_mfa_throttle)) -> Any:
+                      throttle: LoginThrottle = Depends(get_mfa_throttle),
+                      pw_throttle: LoginThrottle = Depends(get_guest_throttle)) -> Any:
     acct = await _account_from_session(db, s)
     if acct.mfa_enabled_at is None:
         raise HTTPException(status_code=409, detail="Two-factor authentication is not enabled")
+    ip = client_ip(request)
+    retry = await pw_throttle.reserve(f"pw:g{acct.id}", ip)
+    if retry:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
+                            headers={"Retry-After": str(retry)})
     if not security.verify_password(body.password, acct.password_hash):
         raise HTTPException(status_code=400, detail="Incorrect password")
-    await verify_totp(redis, throttle, f"g{acct.id}", acct.mfa_secret_enc, body.code, client_ip(request))
+    await pw_throttle.reset(f"pw:g{acct.id}", ip)
+    await verify_totp(redis, throttle, f"g{acct.id}", acct.mfa_secret_enc, body.code, ip)
     acct.mfa_enabled_at, acct.mfa_secret_enc = None, None
     acct.token_version = (acct.token_version or 0) + 1
     await _audit_grants(db, acct.email, "guest_mfa_disabled")

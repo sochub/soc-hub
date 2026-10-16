@@ -105,7 +105,10 @@ def test_mfa_two_step_and_sso_required_link():
             await make_grant(db, await make_case(db, ids, t), e)
             g_sso = await make_grant(db, await make_case(db, ids, t_sso), ids.email("sso"))
             await make_account(db, e)
+            g_acct = await make_grant(db, await make_case(db, ids, t), e)
         async with client() as c:
+            r = await c.post("/api/v1/guest/auth/link", json={"token": tokens.issue_link(g_acct.id)})
+            assert r.status_code == 403 and r.json()["detail"] == {"code": "account_login_required"}
             r = await c.post("/api/v1/guest/auth/link", json={"token": tokens.issue_link(g_sso.id)})
             assert r.status_code == 403 and r.json()["detail"] == {"code": "sso_required", "slug": t_sso.slug}
 
