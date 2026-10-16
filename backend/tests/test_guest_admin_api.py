@@ -14,6 +14,8 @@ from tests.guest_fixtures import client, make_case, make_tenant, make_user, run
 
 
 def _as(user, tenant_id, role="analyst"):
+    from sqlalchemy.orm.attributes import set_committed_value
+    set_committed_value(user, "memberships", [])  # detached test user: avoid lazy load
     app.dependency_overrides[deps.get_current_active_user] = lambda: user
     app.dependency_overrides[deps.get_effective_tenant_id] = lambda: tenant_id
     ok = lambda: user  # noqa: E731
