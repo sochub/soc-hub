@@ -2,7 +2,7 @@ import secrets
 from typing import Any, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.core import security
 from app.core.config import settings
+from app.guests import tokens as guest_tokens
+from app.guests.access import ACTIVE as GUEST_ACTIVE, domain_allowed
+from app.models.case_guest import CaseGuest
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.tenant_sso_config import TenantSSOConfig
@@ -30,6 +33,32 @@ _ALLOWED_JIT_ROLES = {"analyst", "viewer"}
 def _error_redirect(message: str) -> RedirectResponse:
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     return RedirectResponse(f"{base}/login#sso_error={quote(message)}", status_code=303)
+
+
+GUEST_RELAY = "guest"
+GUEST_SSO_DENIED = "This account has no active guest access here."
+
+
+def _guest_error_redirect(slug: str, message: str) -> RedirectResponse:
+    base = settings.PUBLIC_BASE_URL.rstrip("/")
+    return RedirectResponse(f"{base}/guest/login?t={quote(slug)}#sso_error={quote(message)}", status_code=303)
+
+
+async def _guest_acs(db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
+    """The assertion proves `email`; issue a guest session only if it has an active grant in THIS tenant.
+    Never touches users/memberships (no provisioning)."""
+    email = email.strip().lower()
+    grants = (await db.execute(select(CaseGuest).join(Tenant, Tenant.id == CaseGuest.tenant_id).where(
+        CaseGuest.tenant_id == tenant.id, CaseGuest.email == email, *GUEST_ACTIVE()))).scalars().all()
+    if not grants or not domain_allowed(tenant, email):
+        return _guest_error_redirect(tenant.slug, GUEST_SSO_DENIED)
+    for g in grants:
+        await create_audit_log(db=db, entity_type="case_guest", entity_id=g.id, action="guest_sso_login",
+                               tenant_id=tenant.id, changes={"actor": f"guest:{email}"})
+    await db.commit()
+    token = guest_tokens.issue_session(email, "sso", sso_tenant_id=tenant.id)
+    base = settings.PUBLIC_BASE_URL.rstrip("/")
+    return RedirectResponse(f"{base}/guest/sso#token={quote(token)}", status_code=303)
 
 
 async def _tenant_and_config(db: AsyncSession, slug: str):
@@ -115,25 +144,31 @@ async def saml_metadata(*, db: AsyncSession = Depends(deps.get_db), slug: str) -
 
 
 @saml_router.get("/saml/{slug}/login")
-async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str) -> Any:
-    """SP-initiated login: redirect the browser to the tenant's IdP. Public."""
+async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str, guest: bool = Query(False)) -> Any:
+    """SP-initiated login: redirect the browser to the tenant's IdP. Public. `guest=1` starts a guest sign-in."""
     tenant, cfg = await _tenant_and_config(db, slug)
     if not tenant or not _sso_ready(cfg):
-        return _error_redirect("SSO is not enabled for this tenant.")
+        return _guest_error_redirect(slug, "SSO is not enabled for this organization.") if guest else \
+            _error_redirect("SSO is not enabled for this tenant.")
     req = saml_service.build_request_dict({}, {}, f"/api/v1/auth/saml/{slug}/login")
     auth = saml_service.make_auth(slug, cfg, req)
-    return RedirectResponse(auth.login(), status_code=303)
+    return RedirectResponse(auth.login(return_to=GUEST_RELAY) if guest else auth.login(), status_code=303)
 
 
 @saml_router.post("/saml/{slug}/acs")
 async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db), slug: str) -> Any:
     """Assertion Consumer Service: validate the IdP response, sign the user in,
     and bounce back to the frontend with the JWT in the URL fragment. Public."""
+    form = await request.form()
+    is_guest = form.get("RelayState") == GUEST_RELAY
+
+    def fail(msg: str) -> RedirectResponse:
+        return _guest_error_redirect(slug, msg) if is_guest else _error_redirect(msg)
+
     tenant, cfg = await _tenant_and_config(db, slug)
     if not tenant or not _sso_ready(cfg):
-        return _error_redirect("SSO is not enabled for this tenant.")
+        return fail("SSO is not enabled for this tenant.")
 
-    form = await request.form()
     req = saml_service.build_request_dict(
         {k: v for k, v in form.items()}, {}, f"/api/v1/auth/saml/{slug}/acs"
     )
@@ -141,7 +176,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     auth.process_response()
     if auth.get_errors() or not auth.is_authenticated():
         reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
-        return _error_redirect(f"SSO sign-in failed: {reason}")
+        return fail(f"SSO sign-in failed: {reason}")
 
     email = (auth.get_nameid() or "").strip()
     attrs = auth.get_attributes() or {}
@@ -153,7 +188,10 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
                 email = vals[0].strip()
                 break
     if "@" not in email:
-        return _error_redirect("SSO response did not include an email address.")
+        return fail("SSO response did not include an email address.")
+
+    if is_guest:
+        return await _guest_acs(db, tenant, email)
 
     full_name = ""
     for key in ("displayName", "cn", "name",
