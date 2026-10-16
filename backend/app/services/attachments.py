@@ -94,7 +94,8 @@ async def _file_chunks(f):
 
 
 async def store_upload(db, *, case, user_id, filename, content_type, chunks: AsyncIterator[bytes], is_malicious,
-                       description, storage=None, max_bytes: Optional[int] = None) -> CaseAttachment:
+                       description, storage=None, max_bytes: Optional[int] = None,
+                       guest_id: Optional[int] = None) -> CaseAttachment:
     storage = storage or get_storage()
     max_bytes = max_bytes if max_bytes is not None else settings.MAX_UPLOAD_MB * 1024 * 1024
     name = sanitize_filename(filename)
@@ -129,17 +130,18 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
         row = CaseAttachment(tenant_id=case.tenant_id, case_id=case.id, filename=name,
                              content_type=clean_content_type(content_type), size_bytes=size,
                              sha256=h.hexdigest(), is_malicious=bool(is_malicious), storage_key=key,
-                             description=description, uploaded_by=user_id)
+                             description=description, uploaded_by=user_id, uploaded_by_guest_id=guest_id)
         db.add(row)
         await db.flush()
         await add_artifact_to_case(db, case=case, artifact_type=ArtifactType.FILE_HASH, value=row.sha256,
                                    description=f"SHA-256 of attachment {name}", user_id=user_id)
         db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="attachment_added",
-                             content=f"Attached {name} (sha256 {row.sha256[:12]}…)"))
+                             content=f"Attached {name} (sha256 {row.sha256[:12]}…)",
+                             guest_id=guest_id, shared_with_guests=guest_id is not None))
         await create_audit_log(db=db, entity_type="attachment", entity_id=row.id, action="upload",
                                tenant_id=case.tenant_id, user_id=user_id,
                                changes={"filename": name, "sha256": row.sha256, "is_malicious": row.is_malicious,
-                                        "case_id": case.id})
+                                        "case_id": case.id, **({"guest_id": guest_id} if guest_id else {})})
         await db.commit()
         committed = True
         await db.refresh(row)
