@@ -105,3 +105,23 @@ async def send_sla_breach_email(to_email: str, case, breach_type: str) -> bool:
     </html>
     """
     return _send_email(to_email, subject, html_body)
+
+
+def send_guest_invite_email(to_email: str, *, tenant_name: str, case_id: int, case_title: str,
+                            permission: str, link: str, sso: bool) -> bool:
+    """Invite a guest to one case. No case content beyond the title."""
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest invite email")
+        return False
+    t, title, l = html.escape(tenant_name), html.escape(case_title), html.escape(link)
+    action = "Sign in with your company SSO" if sso else "Open the case"
+    verb = "contribute evidence and comments to" if permission == "contributor" else "follow updates on"
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>You've been invited to a case</h2>
+      <p><strong>{t}</strong> invited you to {verb} case #{case_id}: <strong>{title}</strong>.</p>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">{action}</a></p>
+      <p style="color:#666;font-size:12px;">If you weren't expecting this, you can ignore this email.</p>
+    </body></html>"""
+    return _send_email(to_email, f"{tenant_name}: you've been invited to case #{case_id}", body, log_recipient=False)

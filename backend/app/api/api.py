@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, guest_portal
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, guest_portal, case_guests
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -8,6 +8,8 @@ api_router.include_router(sso.saml_router, prefix="/auth", tags=["sso"])
 # /tenants/sso-config must register before tenants.router's /{tenant_id} routes
 api_router.include_router(sso.sso_admin_router, prefix="/tenants", tags=["sso"])
 api_router.include_router(mfa.security_router, prefix="/tenants", tags=["mfa"])
+api_router.include_router(case_guests.router, prefix="/cases", tags=["guests"])
+api_router.include_router(case_guests.settings_router, prefix="/tenants", tags=["guests"])
 # /users/me/mfa/* must register before users.router (/{user_id}/... routes)
 api_router.include_router(mfa.router, prefix="/users", tags=["mfa"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
