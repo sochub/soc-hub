@@ -36,6 +36,8 @@ def domain_allowed(tenant: Tenant, email: str) -> bool:
 
 
 def session_allowed(tenant: Tenant, s: GuestSession) -> bool:
+    if s.amr == "sso":  # an IdP vouches only for its own tenant
+        return s.sso_tenant_id == tenant.id
     if tenant.guest_require_sso:
         return s.amr == "sso" and s.sso_tenant_id == tenant.id
     return True
