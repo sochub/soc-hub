@@ -47,5 +47,5 @@ def provisioning_uri(secret_b32: str, email: str) -> str:
     return f"otpauth://totp/SOC%20Hub:{quote(email)}?secret={secret_b32}&issuer=SOC%20Hub"
 
 
-async def consume_step(redis, user_id: int, step: int) -> bool:
-    return bool(await redis.set(f"mfa:used:{user_id}:{step}", "1", nx=True, ex=90))
+async def consume_step(redis, subject: int | str, step: int) -> bool:
+    return bool(await redis.set(f"mfa:used:{subject}:{step}", "1", nx=True, ex=90))

@@ -125,3 +125,18 @@ def send_guest_invite_email(to_email: str, *, tenant_name: str, case_id: int, ca
       <p style="color:#666;font-size:12px;">If you weren't expecting this, you can ignore this email.</p>
     </body></html>"""
     return _send_email(to_email, f"{tenant_name}: you've been invited to case #{case_id}", body, log_recipient=False)
+
+
+def send_guest_reset_email(to_email: str, link: str) -> bool:
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest reset email")
+        return False
+    l = html.escape(link)
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>Reset your guest password</h2>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">Choose a new password</a></p>
+      <p style="color:#666;font-size:12px;">This link expires in 30 minutes. If you didn't ask for it, ignore this email.</p>
+    </body></html>"""
+    return _send_email(to_email, "Reset your SOC Hub guest password", body, log_recipient=False)
