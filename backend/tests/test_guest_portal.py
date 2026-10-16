@@ -31,6 +31,8 @@ def test_portal_visibility_and_contributions(monkeypatch, tmp_path):
             ve, ce = ids.email("viewer"), ids.email("contrib")
             await make_grant(db, c, ve, "viewer")
             gc = await make_grant(db, c, ce, "contributor")
+            oe = ids.email("other")
+            await make_grant(db, c, oe, "contributor")
             await make_grant(db, c_sso, ce, "contributor")
             db.add(CaseAttachment(tenant_id=t.id, case_id=c.id, filename="analyst.bin", size_bytes=1,
                                   sha256="0" * 64, storage_key=f"k-{ids.h}", uploaded_by=u.id))
@@ -57,7 +59,7 @@ def test_portal_visibility_and_contributions(monkeypatch, tmp_path):
 
             r = await cl.post(f"/api/v1/guest/cases/{c.id}/comments", json={"content": "Here is context"},
                               headers=C)
-            assert r.status_code == 201 and r.json()["author"] == ce
+            assert r.status_code == 201 and r.json()["author"] == "You"
             assert (await cl.post(f"/api/v1/guest/cases/{c.id}/comments", json={"content": "  "},
                                   headers=C)).status_code == 422
 
@@ -83,9 +85,16 @@ def test_portal_visibility_and_contributions(monkeypatch, tmp_path):
             assert [a["filename"] for a in r.json()] == ["evidence.eml"]
             assert (await cl.get(f"/api/v1/guest/cases/{c.id}/attachments", headers=V)).json() == []
 
-            r = await cl.get(f"/api/v1/guest/cases/{c.id}/timeline", headers=V)
+            r = await cl.get(f"/api/v1/guest/cases/{c.id}/timeline", headers=C)
             contents = [e["content"] for e in r.json()]
             assert "Here is context" in contents and any("evidence.eml" in x for x in contents)
+
+            # guests never see other guests' contributions; analyst shared notes stay visible
+            O = session_headers(oe)
+            r = await cl.get(f"/api/v1/guest/cases/{c.id}/timeline", headers=O)
+            oc = [e["content"] for e in r.json()]
+            assert "shared note" in oc and "Here is context" not in oc and not any("evidence.eml" in x for x in oc)
+            assert ce not in r.text
 
             me = (await cl.get("/api/v1/guest/me", headers=C)).json()
             assert me == {"email": ce, "has_account": False, "mfa_enabled": False, "amr": "link"}

@@ -12,7 +12,6 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.api.v1.attachments import _upload_chunks
 from app.core.config import settings
-from app.guests import notify as guest_notify
 from app.guests.access import GuestSession, get_current_guest, get_guest_grant, require_contributor, visible_grants
 from app.models.case import Case, TimelineEvent
 from app.models.case_attachment import CaseAttachment
@@ -68,9 +67,9 @@ def _v(x) -> str:
     return getattr(x, "value", x)
 
 
-def _event_out(ev: TimelineEvent) -> GuestEventOut:
-    if ev.guest is not None:
-        author = ev.guest.email
+def _event_out(ev: TimelineEvent, grant_id: int) -> GuestEventOut:
+    if ev.guest_id is not None:
+        author = "You"  # other guests' events are filtered out of the timeline
     elif ev.user is not None:
         author = ev.user.full_name or ev.user.email.split("@")[0]
     else:
@@ -116,10 +115,11 @@ async def guest_timeline(case_id: int, db: AsyncSession = Depends(deps.get_db),
                          grant: CaseGuest = Depends(get_guest_grant)) -> Any:
     rows = (await db.execute(
         select(TimelineEvent).options(selectinload(TimelineEvent.user))
-        .where(TimelineEvent.case_id == grant.case_id, TimelineEvent.shared_with_guests.is_(True))
+        .where(TimelineEvent.case_id == grant.case_id, TimelineEvent.shared_with_guests.is_(True),
+                (TimelineEvent.guest_id.is_(None)) | (TimelineEvent.guest_id == grant.id))
         .order_by(TimelineEvent.created_at, TimelineEvent.id)
     )).scalars().unique().all()
-    return [_event_out(e) for e in rows]
+    return [_event_out(e, grant.id) for e in rows]
 
 
 @router.post("/cases/{case_id}/comments", response_model=GuestEventOut, status_code=201)
@@ -136,12 +136,10 @@ async def guest_comment(case_id: int, body: CommentIn, db: AsyncSession = Depend
     await create_audit_log(db=db, entity_type="timeline_event", entity_id=ev.id, action="guest_comment",
                            tenant_id=case.tenant_id, changes={"actor": f"guest:{grant.email}", "case_id": case.id})
     await notify.on_comment(db, case, ev, None, actor_label=grant.email)
-    await guest_notify.enqueue(db, case, "shared_entry", f"New guest comment on case #{case.id}",
-                               exclude_grant_id=grant.id)
     await db.commit()
     ev = (await db.execute(select(TimelineEvent).options(selectinload(TimelineEvent.user))
                            .where(TimelineEvent.id == ev.id))).scalars().one()
-    return _event_out(ev)
+    return _event_out(ev, grant.id)
 
 
 @router.get("/cases/{case_id}/attachments", response_model=List[GuestAttachmentOut])
