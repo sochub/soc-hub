@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, guest_portal
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -34,3 +34,4 @@ api_router.include_router(attachments.router, prefix="/cases", tags=["attachment
 api_router.include_router(reports.router, prefix="/cases", tags=["reports"])
 api_router.include_router(secrets.router, prefix="/secrets", tags=["secrets"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(guest_portal.router, prefix="/guest", tags=["guest"])
