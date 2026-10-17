@@ -83,8 +83,7 @@ def _safe_slug_for_redirect(slug: str) -> str:
 
 def _guest_error_redirect(slug: str, message: str) -> RedirectResponse:
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    safe_slug = _safe_slug_for_redirect(slug)
-    return RedirectResponse(f"{base}/guest/login?t={quote(safe_slug)}#sso_error={quote(message)}", status_code=303)
+    return RedirectResponse(f"{base}/guest/login#sso_error={quote(message)}", status_code=303)
 
 
 async def _guest_acs(db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
