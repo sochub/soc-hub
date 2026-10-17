@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserPlus, Send, Ban, ShieldOff } from 'lucide-react';
 import { api } from '../../api/client';
@@ -27,6 +27,12 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
     const [summary, setSummary] = useState(guestSummary ?? '');
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
+    const [saved, setSaved] = useState(false);
+    useEffect(() => {
+        if (!saved) return;
+        const t = window.setTimeout(() => setSaved(false), 2000);
+        return () => window.clearTimeout(t);
+    }, [saved]);
 
     const { data: guests = [], isLoading } = useQuery({
         queryKey: key,
@@ -62,8 +68,8 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
     });
     const saveSummary = useMutation({
         mutationFn: async () => api.put(`/cases/${caseId}`, { guest_summary: summary }),
-        onSuccess: () => { setError(null); qc.invalidateQueries({ queryKey: ['case', String(caseId)] }); },
-        onError: onError('Could not save the guest summary.'),
+        onSuccess: () => { setError(null); setSaved(true); qc.invalidateQueries({ queryKey: ['case', String(caseId)] }); },
+        onError: (err: unknown) => { setSaved(false); setError(errText(err, 'Could not save the guest summary.')); },
     });
 
     return (
@@ -74,12 +80,15 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
             <section className="bg-panel border border-line p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-fg">Summary shown to guests</h3>
                 <p className="text-xs text-fg-3">Guests never see the internal description. Write what they should know.</p>
-                <textarea value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={4000} rows={4}
+                <textarea value={summary} onChange={(e) => { setSummary(e.target.value); setSaved(false); }} maxLength={4000} rows={4}
                     aria-label="Guest summary"
                     className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg" />
-                <Button size="sm" variant="secondary" onClick={() => saveSummary.mutate()} disabled={saveSummary.isPending}>
-                    Save summary
-                </Button>
+                <div className="flex items-center gap-3">
+                    <Button size="sm" variant="secondary" onClick={() => saveSummary.mutate()} disabled={saveSummary.isPending}>
+                        Save summary
+                    </Button>
+                    {saved && <span role="status" className="text-xs text-fg-2">Saved</span>}
+                </div>
             </section>
 
             <section className="bg-panel border border-line p-4">
