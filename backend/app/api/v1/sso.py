@@ -1,4 +1,5 @@
 import logging
+import re
 import secrets
 import time
 from typing import Any, Optional
@@ -72,11 +73,18 @@ def _error_redirect(message: str) -> RedirectResponse:
 
 GUEST_RELAY = "guest"
 GUEST_SSO_DENIED = "This account has no active guest access here."
+_SLUG_RE = re.compile(r"^[a-z0-9-]{1,64}$")
+
+
+def _safe_slug_for_redirect(slug: str) -> str:
+    value = (slug or "").strip().lower()
+    return value if _SLUG_RE.fullmatch(value) else ""
 
 
 def _guest_error_redirect(slug: str, message: str) -> RedirectResponse:
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    return RedirectResponse(f"{base}/guest/login?t={quote(slug)}#sso_error={quote(message)}", status_code=303)
+    safe_slug = _safe_slug_for_redirect(slug)
+    return RedirectResponse(f"{base}/guest/login?t={quote(safe_slug)}#sso_error={quote(message)}", status_code=303)
 
 
 async def _guest_acs(db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
