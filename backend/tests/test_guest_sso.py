@@ -1,3 +1,4 @@
+import uuid
 from urllib.parse import unquote
 
 from sqlalchemy import func, select
@@ -12,6 +13,7 @@ from tests.guest_fixtures import client, make_case, make_grant, make_tenant, run
 class FakeAuth:
     def __init__(self, email):
         self.email = email
+        self.aid = f"_{uuid.uuid4().hex}"
 
     def process_response(self):
         pass
@@ -27,6 +29,12 @@ class FakeAuth:
 
     def get_attributes(self):
         return {}
+
+    def get_last_assertion_id(self):
+        return self.aid
+
+    def get_last_assertion_not_on_or_after(self):
+        return None
 
     def login(self, return_to=None):
         FakeAuth.relay = return_to
@@ -64,4 +72,23 @@ def test_guest_sso(monkeypatch):
             n = (await db.execute(select(func.count()).select_from(User).where(
                 func.lower(User.email).in_([e, ids.emails[-1]])))).scalar()
             assert n == 0  # never provisions a User
+    run(body)
+
+
+def test_guest_sso_replayed_assertion_refused(monkeypatch):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            e = ids.email("replay")
+            await make_grant(db, await make_case(db, ids, t), e)
+        fixed = FakeAuth(e)
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: fixed)
+        async with client() as cl:
+            url = f"/api/v1/auth/saml/{t.slug}/acs"
+            r = await cl.post(url, data={"SAMLResponse": "x", "RelayState": "guest"})
+            assert "/guest/sso#token=" in r.headers["location"]
+            r = await cl.post(url, data={"SAMLResponse": "x", "RelayState": "guest"})
+            loc = r.headers["location"]
+            assert r.status_code == 303 and "/guest/login?t=" in loc and "#sso_error=" in loc
+            assert unquote(loc.split("#sso_error=", 1)[1]) == sso_mod.SSO_FAILED
     run(body)

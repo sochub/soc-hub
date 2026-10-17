@@ -1,4 +1,6 @@
+import logging
 import secrets
+import time
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -10,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.core import security
 from app.core.config import settings
+from app.core.login_throttle import get_login_throttle
 from app.guests import tokens as guest_tokens
 from app.guests.access import ACTIVE as GUEST_ACTIVE, domain_allowed
 from app.models.case_guest import CaseGuest
@@ -28,6 +31,34 @@ saml_router = APIRouter()
 sso_admin_router = APIRouter()
 
 _ALLOWED_JIT_ROLES = {"analyst", "viewer"}
+logger = logging.getLogger(__name__)
+SSO_FAILED = "SSO sign-in failed: invalid SAML response"
+_AID_DEFAULT_TTL, _AID_MIN_TTL, _AID_MAX_TTL, _AID_MARGIN = 600, 60, 86400, 60
+
+
+def _saml_redis():
+    """Async Redis client (same lazy factory as the login throttle); tests monkeypatch this."""
+    return get_login_throttle().redis
+
+
+async def _claim_assertion(tenant_id: int, auth) -> bool:
+    """Record the assertion ID once (SET NX). False on a replay, a missing ID or Redis trouble (fail closed)."""
+    aid = auth.get_last_assertion_id()
+    if not aid:
+        logger.warning("SAML assertion without an ID rejected tenant=%s", tenant_id)
+        return False
+    not_after = auth.get_last_assertion_not_on_or_after()
+    ttl = int(not_after - time.time()) + _AID_MARGIN if not_after else _AID_DEFAULT_TTL
+    ttl = max(_AID_MIN_TTL, min(_AID_MAX_TTL, ttl))
+    try:
+        ok = await _saml_redis().set(f"saml_aid:{tenant_id}:{aid}", "1", nx=True, ex=ttl)
+    except Exception:
+        logger.exception("SAML replay check unavailable; refusing sign-in tenant=%s", tenant_id)
+        return False
+    if not ok:
+        logger.warning("SAML assertion replay rejected tenant=%s", tenant_id)
+        return False
+    return True
 
 
 def _error_redirect(message: str) -> RedirectResponse:
@@ -177,6 +208,8 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     if auth.get_errors() or not auth.is_authenticated():
         reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
         return fail(f"SSO sign-in failed: {reason}")
+    if not await _claim_assertion(tenant.id, auth):
+        return fail(SSO_FAILED)
 
     email = (auth.get_nameid() or "").strip()
     attrs = auth.get_attributes() or {}
