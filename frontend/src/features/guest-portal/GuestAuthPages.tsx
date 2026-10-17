@@ -148,7 +148,7 @@ export function GuestResetPage() {
     const token = useUrlToken('/guest/reset');
     const navigate = useNavigate();
     const [password, setPassword] = useState('');
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(token ? null : 'This reset link is invalid or has expired.');
     const submit = async (e: React.FormEvent) => {
         e.preventDefault(); setError(null);
         try { await guestApi.post('/auth/reset', { token, password }); navigate('/guest/login?m=reset', { replace: true }); }
@@ -159,7 +159,7 @@ export function GuestResetPage() {
             <div><Label htmlFor="r-pw">New password</Label>
                 <Input id="r-pw" type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
-            <Button type="submit" className="w-full">Save password</Button>
+            <Button type="submit" className="w-full" disabled={!token}>Save password</Button>
         </form>
     </Card></GuestShell>;
 }
@@ -169,7 +169,7 @@ export function GuestRegisterPage() {
     const navigate = useNavigate();
     const [password, setPassword] = useState('');
     const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(token ? null : 'This link is invalid or has expired.');
     const submit = async (e: React.FormEvent) => {
         e.preventDefault(); setError(null); setBusy(true);
         try {

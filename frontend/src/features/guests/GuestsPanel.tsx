@@ -27,10 +27,12 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
     const [summary, setSummary] = useState(guestSummary ?? '');
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
-    const [saved, setSaved] = useState(false);
+    // Timestamp, not a boolean: a second save inside the 2s window restarts the timer.
+    // A fresh object per save restarts the timer; "Saved" only shows while the text on screen is what was saved.
+    const [saved, setSaved] = useState<{ text: string } | null>(null);
     useEffect(() => {
         if (!saved) return;
-        const t = window.setTimeout(() => setSaved(false), 2000);
+        const t = window.setTimeout(() => setSaved(null), 2000);
         return () => window.clearTimeout(t);
     }, [saved]);
 
@@ -67,9 +69,13 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
         onError: (err: unknown) => { setNotice(null); setError(errText(err, 'Could not reset two-factor authentication.')); },
     });
     const saveSummary = useMutation({
-        mutationFn: async () => api.put(`/cases/${caseId}`, { guest_summary: summary }),
-        onSuccess: () => { setError(null); setSaved(true); qc.invalidateQueries({ queryKey: ['case', String(caseId)] }); },
-        onError: (err: unknown) => { setSaved(false); setError(errText(err, 'Could not save the guest summary.')); },
+        mutationFn: async (text: string) => api.put(`/cases/${caseId}`, { guest_summary: text }),
+        onSuccess: (_r, text) => {
+            setError(null);
+            setSaved({ text });
+            qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
+        },
+        onError: (err: unknown) => { setSaved(null); setError(errText(err, 'Could not save the guest summary.')); },
     });
 
     return (
@@ -80,14 +86,14 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
             <section className="bg-panel border border-line p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-fg">Summary shown to guests</h3>
                 <p className="text-xs text-fg-3">Guests never see the internal description. Write what they should know.</p>
-                <textarea value={summary} onChange={(e) => { setSummary(e.target.value); setSaved(false); }} maxLength={4000} rows={4}
+                <textarea value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={4000} rows={4}
                     aria-label="Guest summary"
                     className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg" />
                 <div className="flex items-center gap-3">
-                    <Button size="sm" variant="secondary" onClick={() => saveSummary.mutate()} disabled={saveSummary.isPending}>
+                    <Button size="sm" variant="secondary" onClick={() => saveSummary.mutate(summary)} disabled={saveSummary.isPending}>
                         Save summary
                     </Button>
-                    {saved && <span role="status" className="text-xs text-fg-2">Saved</span>}
+                    {saved?.text === summary && <span role="status" className="text-xs text-fg-2">Saved</span>}
                 </div>
             </section>
 

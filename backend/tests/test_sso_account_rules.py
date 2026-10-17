@@ -226,8 +226,8 @@ def test_acs_rejects_replayed_assertion(monkeypatch):
             r = await c.post(url, data={"SAMLResponse": "x"})
             assert "#sso_token=" in r.headers["location"]
         keys = sso_mod._saml_redis().keys
-        assert keys[f"saml_aid:{ids['ta']}:_replay-1"] == 600  # no NotOnOrAfter -> 10 minutes
-        assert 355 <= keys[f"saml_aid:{ids['ta']}:_fresh-2"] <= 360  # NotOnOrAfter - now + 60s
+        assert keys[f"saml_aid:{ids['ta']}:_replay-1"] == 86400  # no NotOnOrAfter -> no library time bound -> max TTL
+        assert 655 <= keys[f"saml_aid:{ids['ta']}:_fresh-2"] <= 660  # NotOnOrAfter - now + clock drift (300s) + 60s
     _run(body)
 
 
@@ -245,7 +245,7 @@ def test_assertion_ttl_clamped():
         sso_mod._saml_redis = lambda: r
         try:
             assert await sso_mod._claim_assertion(1, _FixedAuth("a@b", "_a", int(time.time()) - 3600))
-            assert r.ex == 60
+            assert r.ex == 360
             assert await sso_mod._claim_assertion(1, _FixedAuth("a@b", "_b", int(time.time()) + 10 * 86400))
             assert r.ex == 86400
         finally:

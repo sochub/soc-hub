@@ -80,7 +80,7 @@ clears it from the address bar with `history.replaceState` before calling the AP
 and `/guest/reset/<token>` links still work.
 
 **SAML assertions are single-use.** After a valid response, the ACS records the assertion ID in Redis
-(`SET saml_aid:{tenant_id}:{id} NX`, expiring at the assertion's `NotOnOrAfter` + 60s, clamped to 60s–24h,
+(`SET saml_aid:{tenant_id}:{id} NX`, expiring at the assertion's `NotOnOrAfter` + the SAML library's 300s clock-drift allowance + 60s, minimum 6 minutes, maximum 24h (24h when the assertion has no `NotOnOrAfter`),
 10 minutes if absent). A replayed assertion, one without an ID, or Redis being unavailable fails with the
 generic SSO error. The check runs before the guest/analyst split, so it applies to analyst SSO too.
 

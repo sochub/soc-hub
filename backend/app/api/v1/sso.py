@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
+from onelogin.saml2.constants import OneLogin_Saml2_Constants
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +34,10 @@ sso_admin_router = APIRouter()
 _ALLOWED_JIT_ROLES = {"analyst", "viewer"}
 logger = logging.getLogger(__name__)
 SSO_FAILED = "SSO sign-in failed: invalid SAML response"
-_AID_DEFAULT_TTL, _AID_MIN_TTL, _AID_MAX_TTL, _AID_MARGIN = 600, 60, 86400, 60
+# python3-saml accepts an assertion until NotOnOrAfter + ALLOWED_CLOCK_DRIFT, so the replay key must outlive that.
+# No NotOnOrAfter means no library time bound at all: keep the key for the maximum.
+_AID_MARGIN = OneLogin_Saml2_Constants.ALLOWED_CLOCK_DRIFT + 60
+_AID_MIN_TTL, _AID_MAX_TTL = _AID_MARGIN, 86400
 
 
 def _saml_redis():
@@ -48,7 +52,7 @@ async def _claim_assertion(tenant_id: int, auth) -> bool:
         logger.warning("SAML assertion without an ID rejected tenant=%s", tenant_id)
         return False
     not_after = auth.get_last_assertion_not_on_or_after()
-    ttl = int(not_after - time.time()) + _AID_MARGIN if not_after else _AID_DEFAULT_TTL
+    ttl = int(not_after - time.time()) + _AID_MARGIN if not_after else _AID_MAX_TTL
     ttl = max(_AID_MIN_TTL, min(_AID_MAX_TTL, ttl))
     try:
         ok = await _saml_redis().set(f"saml_aid:{tenant_id}:{aid}", "1", nx=True, ex=ttl)
