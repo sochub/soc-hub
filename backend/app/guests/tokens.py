@@ -8,11 +8,12 @@ import jwt
 from app.core.config import settings
 from app.core.security import create_access_token
 
-LINK, SESSION, RESET, MFA = "guest-link", "guest", "guest-reset", "guest-mfa"
+LINK, SESSION, RESET, MFA, REGISTER = "guest-link", "guest", "guest-reset", "guest-mfa", "guest-register"
 LINK_TTL = timedelta(days=7)
 SESSION_TTL = timedelta(hours=12)
 RESET_TTL = timedelta(minutes=30)
 MFA_TTL = timedelta(minutes=5)
+REGISTER_TTL = timedelta(minutes=30)
 
 
 def issue_link(grant_id: int) -> str:
@@ -30,6 +31,11 @@ def issue_session(email: str, amr: str, *, sso_tenant_id: Optional[int] = None, 
 def issue_reset(account) -> str:
     return create_access_token({"sub": str(account.id), "purpose": RESET, "tv": account.token_version or 0},
                                expires_delta=RESET_TTL)
+
+
+def issue_register(email: str) -> str:
+    """Emailed to `email` to confirm it before a guest account is created for it."""
+    return create_access_token({"sub": email, "purpose": REGISTER}, expires_delta=REGISTER_TTL)
 
 
 def issue_mfa_challenge(account) -> str:

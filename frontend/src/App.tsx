@@ -9,7 +9,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import RequireRole from './components/auth/RequireRole';
 import Login from './features/auth/Login';
 import AcceptInvitation from './features/auth/AcceptInvitation';
-import { GuestForgotPage, GuestLinkPage, GuestLoginPage, GuestResetPage, GuestSsoPage } from './features/guest-portal/GuestAuthPages';
+import { GuestForgotPage, GuestLinkPage, GuestLoginPage, GuestRegisterPage, GuestResetPage, GuestSsoPage } from './features/guest-portal/GuestAuthPages';
 import { GuestCasePage, GuestHomePage } from './features/guest-portal/GuestCasePages';
 import SettingsHub from './features/settings/SettingsHub';
 
@@ -60,11 +60,14 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/invite/:token" element={<AcceptInvitation />} />
+            <Route path="/guest/link" element={<GuestLinkPage />} />
             <Route path="/guest/link/:token" element={<GuestLinkPage />} />
             <Route path="/guest/login" element={<GuestLoginPage />} />
             <Route path="/guest/sso" element={<GuestSsoPage />} />
             <Route path="/guest/forgot" element={<GuestForgotPage />} />
+            <Route path="/guest/reset" element={<GuestResetPage />} />
             <Route path="/guest/reset/:token" element={<GuestResetPage />} />
+            <Route path="/guest/register" element={<GuestRegisterPage />} />
             <Route path="/guest" element={<GuestHomePage />} />
             <Route path="/guest/cases/:id" element={<GuestCasePage />} />
             <Route element={<ProtectedRoute />}>

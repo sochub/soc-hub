@@ -142,6 +142,22 @@ def send_guest_reset_email(to_email: str, link: str) -> bool:
     return _send_email(to_email, "Reset your SOC Hub guest password", body, log_recipient=False)
 
 
+def send_guest_register_email(to_email: str, link: str) -> bool:
+    """Confirms the address before a guest account is created. No case content."""
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest register email")
+        return False
+    l = html.escape(link)
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>Confirm your guest account</h2>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">Choose a password</a></p>
+      <p style="color:#666;font-size:12px;">This link expires in 30 minutes. If you didn't ask for it, ignore this email.</p>
+    </body></html>"""
+    return _send_email(to_email, "Confirm your SOC Hub guest account", body, log_recipient=False)
+
+
 def send_guest_digest_email(to_email: str, *, tenant_name: str, case_id: int, case_title: str,
                             summaries: list, link: str) -> bool:
     """One email per guest per digest window: summaries only, never shared content."""

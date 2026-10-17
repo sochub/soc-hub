@@ -101,7 +101,7 @@ async def portal_link(db: AsyncSession, grant: CaseGuest, tenant: Tenant) -> str
         cfg = (await db.execute(select(TenantSSOConfig).where(TenantSSOConfig.tenant_id == tenant.id))
                ).scalars().first()
         return f"{base}/guest/login?t={tenant.slug}" if _sso_ready(cfg) else f"{base}/guest/login"
-    return f"{base}/guest/link/{tokens.issue_link(grant.id)}"
+    return f"{base}/guest/link#{tokens.issue_link(grant.id)}"
 
 
 async def _case(db: AsyncSession, case_id: int, tid: int) -> Case:

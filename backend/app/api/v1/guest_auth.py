@@ -9,6 +9,7 @@ import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -21,7 +22,7 @@ from app.guests import tokens
 from app.guests.access import ACTIVE, GuestSession, domain_allowed, get_current_guest
 from app.models.case_guest import CaseGuest, GuestAccount
 from app.models.tenant import Tenant
-from app.services.email_service import send_guest_reset_email
+from app.services.email_service import send_guest_register_email, send_guest_reset_email
 from app.utils.audit import create_audit_log
 from app.utils.crypto import encrypt
 from app.utils.emails import normalize_email
@@ -43,10 +44,6 @@ def get_guest_throttle() -> LoginThrottle:
 
 class LinkIn(BaseModel):
     token: str = Field(max_length=4096)
-
-
-class PasswordIn(BaseModel):
-    password: str = Field(max_length=1024)
 
 
 class LoginIn(BaseModel):
@@ -122,21 +119,44 @@ async def link_login(body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> A
     return _token(tokens.issue_session(grant.email, "link", link_tenant_id=tenant.id))
 
 
-@router.post("/register")
-async def register(body: PasswordIn, db: AsyncSession = Depends(deps.get_db),
-                   s: GuestSession = Depends(get_current_guest)) -> Any:
+@router.post("/register", status_code=202)
+async def register(request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(deps.get_db),
+                   s: GuestSession = Depends(get_current_guest),
+                   throttle: LoginThrottle = Depends(get_guest_throttle)) -> Response:
+    """Emails the session's address a confirmation link; the account is only created on confirm, so a
+    forwarded invite cannot claim the email's guest identity. Same 202 whether or not an account exists."""
     if s.amr != "link":
         raise HTTPException(status_code=403, detail="Open your invitation link to create an account")
+    if not await throttle.reserve(f"reg:{s.email}", client_ip(request)) and not await _account_by_email(db, s.email):
+        base = settings.FRONTEND_URL.rstrip("/")
+        background_tasks.add_task(send_guest_register_email, s.email,
+                                  f"{base}/guest/register#{tokens.issue_register(s.email)}")
+    return Response(status_code=202)
+
+
+@router.post("/register/confirm")
+async def register_confirm(body: ResetIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
+    bad = HTTPException(status_code=400, detail=BAD_LINK)
+    try:
+        email = normalize_email(tokens.decode(body.token, tokens.REGISTER)["sub"])
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError, AttributeError):
+        raise bad
+    if not _EMAIL_RE.match(email):
+        raise bad
     _check_password(body.password)
-    if await _account_by_email(db, s.email):
-        raise HTTPException(status_code=409, detail="An account already exists — sign in instead")
-    acct = GuestAccount(email=s.email, password_hash=security.get_password_hash(body.password))
+    if await _account_by_email(db, email):  # the token is spent once the account exists
+        raise bad
+    acct = GuestAccount(email=email, password_hash=security.get_password_hash(body.password))
     db.add(acct)
-    await db.flush()
-    await db.execute(update(CaseGuest).where(CaseGuest.email == s.email).values(guest_account_id=acct.id))
-    await _audit_grants(db, s.email, "guest_account_created")
+    try:
+        await db.flush()
+    except IntegrityError:  # concurrent confirm of the same token
+        await db.rollback()
+        raise bad
+    await db.execute(update(CaseGuest).where(CaseGuest.email == email).values(guest_account_id=acct.id))
+    await _audit_grants(db, email, "guest_account_created")
     await db.commit()
-    return _token(tokens.issue_session(s.email, "password", gav=acct.token_version or 0))
+    return _token(tokens.issue_session(email, "password", gav=acct.token_version or 0))
 
 
 @router.post("/login")
@@ -190,7 +210,7 @@ async def forgot(request: Request, body: EmailIn, background_tasks: BackgroundTa
         acct = await _account_by_email(db, email)
         if acct is not None:
             base = settings.FRONTEND_URL.rstrip("/")
-            background_tasks.add_task(send_guest_reset_email, email, f"{base}/guest/reset/{tokens.issue_reset(acct)}")
+            background_tasks.add_task(send_guest_reset_email, email, f"{base}/guest/reset#{tokens.issue_reset(acct)}")
     return Response(status_code=202)
 
 

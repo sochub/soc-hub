@@ -23,11 +23,21 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
     );
 }
 
+/** Single-use tokens ride in the URL fragment (never sent to the server, so never in access logs).
+ * Legacy `/:token` path links keep working. Either way the token is dropped from the URL bar/history. */
+function useUrlToken(basePath: string): string | undefined {
+    const params = useParams();
+    const [token] = useState(() => params.token ?? (window.location.hash.slice(1) || undefined));
+    useEffect(() => { window.history.replaceState(null, '', basePath); }, [basePath]);
+    return token;
+}
+
 export function GuestLinkPage() {
-    const { token } = useParams();
+    const token = useUrlToken('/guest/link');
     const navigate = useNavigate();
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(token ? null : 'This link is invalid or has expired.');
     useEffect(() => {
+        if (!token) return;
         guestApi.post('/auth/link', { token })
             .then((r) => { guestToken.set(r.data.access_token); navigate('/guest', { replace: true }); })
             .catch((err) => {
@@ -135,7 +145,7 @@ export function GuestForgotPage() {
 }
 
 export function GuestResetPage() {
-    const { token } = useParams();
+    const token = useUrlToken('/guest/reset');
     const navigate = useNavigate();
     const [password, setPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
@@ -150,6 +160,31 @@ export function GuestResetPage() {
                 <Input id="r-pw" type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
             <Button type="submit" className="w-full">Save password</Button>
+        </form>
+    </Card></GuestShell>;
+}
+
+export function GuestRegisterPage() {
+    const token = useUrlToken('/guest/register');
+    const navigate = useNavigate();
+    const [password, setPassword] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const submit = async (e: React.FormEvent) => {
+        e.preventDefault(); setError(null); setBusy(true);
+        try {
+            const r = await guestApi.post('/auth/register/confirm', { token, password });
+            guestToken.set(r.data.access_token);
+            navigate('/guest', { replace: true });
+        } catch (err) { setError(guestError(err, 'This link is invalid or has expired.')); }
+        finally { setBusy(false); }
+    };
+    return <GuestShell><Card title="Choose a password">
+        <form onSubmit={submit} className="space-y-3">
+            <div><Label htmlFor="reg-pw">Password</Label>
+                <Input id="reg-pw" type="password" autoComplete="new-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+            {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
+            <Button type="submit" className="w-full" disabled={busy || !token}>Create account</Button>
         </form>
     </Card></GuestShell>;
 }

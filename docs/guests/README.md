@@ -53,8 +53,11 @@ There are three ways in, and they all produce the same guest session:
 1. **Magic link** from the invite or digest email. Opening it starts a session for that organization's cases.
    Link sessions are per organization: the session carries the tenant of the grant that minted it
    (`link_tenant_id`), so a forwarded invite never opens the same email's cases in another organization.
-2. **Guest account (password + optional TOTP).** A link session can set a password; this links every grant for
-   that email. Forgot and reset work at `/guest/forgot`. Once an account exists, magic links refuse to sign in
+2. **Guest account (password + optional TOTP).** Account creation needs email confirmation. From a link
+   session, "Set password" (`POST /guest/auth/register`) only emails the session's address a confirmation link
+   (`/guest/register#<token>`); it always returns 202 and sends nothing if an account already exists. The
+   password is chosen on that page (`POST /guest/auth/register/confirm`), which creates the account, links every
+   grant for that email and signs in. A forwarded invite therefore can't claim the email's guest identity. Forgot and reset work at `/guest/forgot`. Once an account exists, magic links refuse to sign in
    and send the guest to the password login instead. Password and MFA sign-ins are audit-logged
    (`guest_password_login`, `guest_mfa_login`).
    - **Security panel.** Password sessions see a *Security* panel in the portal: set up TOTP (QR code or key),
@@ -68,7 +71,18 @@ There are three ways in, and they all produce the same guest session:
 | `guest-link` (magic link) | 7 days |
 | `guest` (session) | 12 hours |
 | `guest-reset` | 30 minutes, single use (bumps `token_version`) |
+| `guest-register` (confirm email, create account) | 30 minutes, single use (refused once the account exists) |
 | `guest-mfa` (TOTP challenge) | 5 minutes |
+
+Emailed single-use tokens travel in the URL fragment (`/guest/link#<token>`, `/guest/reset#<token>`,
+`/guest/register#<token>`), so they never reach the server or its access logs. The page reads the token and
+clears it from the address bar with `history.replaceState` before calling the API. Older `/guest/link/<token>`
+and `/guest/reset/<token>` links still work.
+
+**SAML assertions are single-use.** After a valid response, the ACS records the assertion ID in Redis
+(`SET saml_aid:{tenant_id}:{id} NX`, expiring at the assertion's `NotOnOrAfter` + 60s, clamped to 60s–24h,
+10 minutes if absent). A replayed assertion, one without an ID, or Redis being unavailable fails with the
+generic SSO error. The check runs before the guest/analyst split, so it applies to analyst SSO too.
 
 ## Email digests
 

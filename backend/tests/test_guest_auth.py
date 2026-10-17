@@ -63,12 +63,26 @@ def test_link_register_password_login_and_reset(monkeypatch):
             assert r.status_code == 200, r.text
             link_session = r.json()["access_token"]
 
-            assert (await c.post("/api/v1/guest/auth/register", json={"password": "short"},
-                                 headers=_bearer(link_session))).status_code == 422
-            r = await c.post("/api/v1/guest/auth/register", json={"password": PW}, headers=_bearer(link_session))
-            assert r.status_code == 200
-            assert (await c.post("/api/v1/guest/auth/register", json={"password": PW},
-                                 headers=_bearer(link_session))).status_code == 409
+            # register only emails a confirmation link; the account is created on confirm
+            r = await c.post("/api/v1/guest/auth/register", headers=_bearer(link_session))
+            assert r.status_code == 202
+            assert len(sent) == 1 and sent[0][0] == e and "/guest/register#" in sent[0][1]
+            reg_tok = sent[0][1].split("/guest/register#", 1)[1].split('"', 1)[0]
+            sent.clear()
+            async with AsyncSessionLocal() as db:
+                assert (await db.execute(select(GuestAccount).where(GuestAccount.email == e))).scalars().first() is None
+            assert (await c.post("/api/v1/guest/auth/register/confirm",
+                                 json={"token": reg_tok, "password": "short"})).status_code == 422
+            r = await c.post("/api/v1/guest/auth/register/confirm", json={"token": reg_tok, "password": PW})
+            assert r.status_code == 200, r.text
+            p = tokens.decode(r.json()["access_token"], tokens.SESSION)
+            assert p["amr"] == "password" and p["email"] == e
+            assert (await c.get("/api/v1/guest/cases", headers=_bearer(r.json()["access_token"]))).status_code == 200
+            r = await c.post("/api/v1/guest/auth/register/confirm", json={"token": reg_tok, "password": PW})
+            assert r.status_code == 400 and r.json()["detail"] == guest_auth.BAD_LINK  # spent once the account exists
+            # an account exists now: same 202, nothing sent (no enumeration)
+            assert (await c.post("/api/v1/guest/auth/register", headers=_bearer(link_session))).status_code == 202
+            assert sent == []
             async with AsyncSessionLocal() as db:
                 acct = (await db.execute(select(GuestAccount).where(GuestAccount.email == e))).scalars().one()
                 linked = (await db.execute(select(CaseGuest.guest_account_id).where(
@@ -86,8 +100,8 @@ def test_link_register_password_login_and_reset(monkeypatch):
             # forgot: identical response for known/unknown; email only for known
             assert (await c.post("/api/v1/guest/auth/forgot", json={"email": "nobody@dept.example"})).status_code == 202
             assert (await c.post("/api/v1/guest/auth/forgot", json={"email": e})).status_code == 202
-            assert len(sent) == 1 and "/guest/reset/" in sent[0][1]
-            reset_tok = sent[0][1].split("/guest/reset/", 1)[1].split('"', 1)[0]
+            assert len(sent) == 1 and "/guest/reset#" in sent[0][1] and "/guest/reset/ey" not in sent[0][1]
+            reset_tok = sent[0][1].split("/guest/reset#", 1)[1].split('"', 1)[0]
             new_pw = PW + "Z9"
             assert (await c.post("/api/v1/guest/auth/reset", json={"token": reset_tok, "password": new_pw})).status_code == 204
             assert (await c.post("/api/v1/guest/auth/reset", json={"token": reset_tok, "password": new_pw})).status_code == 400
@@ -140,4 +154,31 @@ def test_mfa_two_step_and_sso_required_link():
                 AuditLog.tenant_id == t.id, AuditLog.entity_type == "case_guest"))).all()
             acts = [a for a, ch in rows if ch.get("actor") == f"guest:{e}"]
             assert "guest_password_login" in acts and "guest_mfa_login" in acts and "guest_mfa_enabled" in acts
+    run(body)
+
+
+def test_register_confirm_rejects_other_tokens(monkeypatch):
+    monkeypatch.setattr(email_service, "_smtp_configured", lambda: True)
+    monkeypatch.setattr(email_service, "_send_email", lambda *a, **k: True)
+
+    async def body(ids):
+        _overrides()
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            e = ids.email("wp")
+            g = await make_grant(db, await make_case(db, ids, t), e)
+            acct = await make_account(db, ids.email("acct"))
+        async with client() as c:
+            for bad in (tokens.issue_link(g.id), tokens.issue_reset(acct), tokens.issue_session(e, "link"), "garbage"):
+                r = await c.post("/api/v1/guest/auth/register/confirm", json={"token": bad, "password": PW})
+                assert r.status_code in (400, 401), r.text
+            # a register token is no session and no reset token either
+            reg = tokens.issue_register(e)
+            assert (await c.get("/api/v1/guest/cases", headers=_bearer(reg))).status_code == 401
+            assert (await c.post("/api/v1/guest/auth/reset", json={"token": reg, "password": PW})).status_code == 400
+            # a password session can't ask for a register link
+            pw = tokens.issue_session(acct.email, "password", gav=0)
+            assert (await c.post("/api/v1/guest/auth/register", headers=_bearer(pw))).status_code == 403
+        async with AsyncSessionLocal() as db:
+            assert (await db.execute(select(GuestAccount).where(GuestAccount.email == e))).scalars().first() is None
     run(body)

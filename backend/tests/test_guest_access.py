@@ -20,7 +20,7 @@ def test_guest_token_rejected_by_every_existing_route():
             for url in EXISTING:
                 r = await c.get(url, headers=h)
                 assert r.status_code == 401, f"{url} -> {r.status_code}"
-            for purpose_token in (tokens.issue_link(1),):
+            for purpose_token in (tokens.issue_link(1), tokens.issue_register(ids.email("iso"))):
                 r = await c.get("/api/v1/cases/", headers={"Authorization": f"Bearer {purpose_token}"})
                 assert r.status_code == 401
     run(body)

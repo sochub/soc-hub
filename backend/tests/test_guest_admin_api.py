@@ -47,7 +47,8 @@ def test_invite_list_patch_revoke_resend(monkeypatch):
             assert g["email"] == mixed.lower() and g["permission"] == "contributor" and g["active"] is True
             exp = datetime.fromisoformat(g["expires_at"])
             assert timedelta(days=29) < exp - datetime.now(timezone.utc) <= timedelta(days=30)
-            assert len(sent) == 1 and sent[0][0] == mixed.lower() and "/guest/link/" in sent[0][1]
+            assert len(sent) == 1 and sent[0][0] == mixed.lower() and "/guest/link#ey" in sent[0][1]
+            assert "/link/ey" not in sent[0][1]
 
             r = await cl.post(base, json={"email": "x@evil.example", "permission": "viewer"})
             assert r.status_code == 422

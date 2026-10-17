@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload } from 'lucide-react';
-import { Badge, Button, Input, Label } from '../../components/ui';
+import { Badge, Button, Label } from '../../components/ui';
 import { GuestShell } from './GuestAuthPages';
 import { guestApi, guestError, guestToken } from './guestApi';
 import GuestSecurityPanel from './GuestSecurityPanel';
@@ -24,29 +24,27 @@ function SignOut() {
 }
 
 function CreateAccountBanner() {
-    const [open, setOpen] = useState(false);
-    const [pw, setPw] = useState('');
+    const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [done, setDone] = useState(false);
+    const [sent, setSent] = useState(false);
     const { data: me } = useQuery({ queryKey: ['guest-me'], queryFn: async () => (await guestApi.get('/me')).data as GuestMe, enabled: !!guestToken.get() });
-    if (!me || me.amr !== 'link' || me.has_account || done) return null;
-    const submit = async (e: React.FormEvent) => {
-        e.preventDefault(); setError(null);
-        try { guestToken.set((await guestApi.post('/auth/register', { password: pw })).data.access_token); setDone(true); }
-        catch (err) { setError(guestError(err, 'Could not create the account.')); }
+    if (!me || me.amr !== 'link' || me.has_account) return null;
+    // The account is only created from the emailed link, so a forwarded invite can't claim this address.
+    const send = async () => {
+        setBusy(true); setError(null);
+        try { await guestApi.post('/auth/register'); setSent(true); }
+        catch (err) { setError(guestError(err, 'Could not send the email.')); }
+        finally { setBusy(false); }
     };
     return (
         <div className="mb-6 border border-line bg-panel rounded-lg p-3 text-sm">
-            {!open ? (
-                <span>Create an account to return without a link <button type="button" className="text-accent" onClick={() => setOpen(true)}>Set password</button></span>
+            {sent ? (
+                <span role="status">We sent a link to <strong>{me.email}</strong> — open it to choose a password.</span>
             ) : (
-                <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
-                    <div className="flex-1 min-w-[12rem]"><Label htmlFor="new-pw">Password for {me.email}</Label>
-                        <Input id="new-pw" type="password" autoComplete="new-password" required value={pw} onChange={(e) => setPw(e.target.value)} /></div>
-                    <Button type="submit" size="sm">Create account</Button>
-                    {error && <p role="alert" className="w-full text-severity-critical">{error}</p>}
-                </form>
+                <span>Create an account to return without a link{' '}
+                    <button type="button" className="text-accent disabled:opacity-50" disabled={busy} onClick={send}>Set password</button></span>
             )}
+            {error && <p role="alert" className="mt-1 text-severity-critical">{error}</p>}
         </div>
     );
 }
