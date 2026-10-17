@@ -248,7 +248,10 @@ export default function CaseEvidence({ caseId }: { caseId: number }) {
                                             </button>
                                         </td>
                                         <td className="px-4 py-2 text-xs text-fg-3">
-                                            <div>{a.uploaded_by_email ?? 'unknown'}</div>
+                                            <div>{a.uploaded_by_guest_email ? (
+                                                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300"
+                                                    title="Uploaded by an external guest — untrusted origin">Guest · {a.uploaded_by_guest_email}</span>
+                                            ) : (a.uploaded_by_email ?? 'unknown')}</div>
                                             <div className="text-muted">{relTime(a.created_at)}</div>
                                             {deleted && <div className="text-red-300">deleted by {a.deleted_by_email ?? 'unknown'}</div>}
                                         </td>

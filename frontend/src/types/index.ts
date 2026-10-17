@@ -196,6 +196,9 @@ export interface TimelineEvent {
   content: string;
   created_at: string;
   user: TimelineEventUser | null;
+  shared_with_guests?: boolean;
+  guest_id?: number | null;
+  guest_email?: string | null;
 }
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';
@@ -212,6 +215,7 @@ export interface Case {
   resolved_at: string | null;
   acknowledged_at: string | null;
   timeline_events: TimelineEvent[];
+  guest_summary?: string | null;
 
   sla_response_target_minutes?: number | null;
   sla_response_status?: SLAStatus | null;
@@ -272,6 +276,7 @@ export interface Attachment {
   description: string | null;
   uploaded_by: number | null;
   uploaded_by_email: string | null;
+  uploaded_by_guest_email?: string | null;
   created_at: string;
   deleted_at: string | null;
   deleted_by: number | null;
@@ -364,4 +369,23 @@ export interface AppNotification {
   timeline_event_id: number | null;
   read_at: string | null;
   created_at: string;
+}
+
+export interface CaseGuest {
+  id: number;
+  case_id: number;
+  email: string;
+  permission: 'viewer' | 'contributor';
+  expires_at: string;
+  revoked_at: string | null;
+  last_seen_at: string | null;
+  created_at: string | null;
+  has_account: boolean;
+  active: boolean;
+}
+
+export interface GuestSettings {
+  domain_allowlist: string[];
+  require_sso: boolean;
+  sso_ready: boolean;
 }
