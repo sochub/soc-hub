@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload } from 'lucide-react';
 import { Badge, Button, Input, Label } from '../../components/ui';
 import { GuestShell } from './GuestAuthPages';
 import { guestApi, guestError, guestToken } from './guestApi';
+import GuestSecurityPanel from './GuestSecurityPanel';
 
 interface GuestCaseItem { id: number; title: string; tenant_name: string; permission: string }
 interface GuestCase { id: number; title: string; status: string; severity: string; guest_summary: string | null; permission: string }
@@ -52,14 +53,19 @@ function CreateAccountBanner() {
 
 export function GuestHomePage() {
     const navigate = useNavigate();
+    const [params] = useSearchParams();
+    const showAll = params.get('all') === '1';  // came back from a case: don't bounce a single-case guest
     const { data, isLoading } = useQuery({
         queryKey: ['guest-cases'], queryFn: async () => (await guestApi.get('/cases')).data as GuestCaseItem[],
         enabled: !!guestToken.get(),
     });
-    useEffect(() => { if (data?.length === 1) navigate(`/guest/cases/${data[0].id}`, { replace: true }); }, [data, navigate]);
+    useEffect(() => {
+        if (!showAll && data?.length === 1) navigate(`/guest/cases/${data[0].id}`, { replace: true });
+    }, [data, navigate, showAll]);
     return <RequireGuest><GuestShell>
         <div className="flex justify-between items-center mb-4"><h1 className="text-lg font-semibold">Your cases</h1><SignOut /></div>
         <CreateAccountBanner />
+        <GuestSecurityPanel />
         {isLoading ? <p className="font-mono text-xs text-muted">$ loading…</p> : !data?.length ? (
             <p className="text-sm text-fg-3">You don't have access to any active cases. Your access may have expired.</p>
         ) : (
@@ -91,12 +97,13 @@ export function GuestCasePage() {
         onSuccess: refresh, onError: (e) => setError(guestError(e, 'Could not upload the file.')),
     });
 
-    if (caseQ.isError) return <RequireGuest><GuestShell><p className="text-sm">This case isn't available. Your access may have been revoked or expired. <Link to="/guest" className="text-accent">Back</Link></p></GuestShell></RequireGuest>;
+    if (caseQ.isError) return <RequireGuest><GuestShell><p className="text-sm">This case isn't available. Your access may have been revoked or expired. <Link to="/guest?all=1" className="text-accent">Back</Link></p></GuestShell></RequireGuest>;
     const c = caseQ.data;
     const canWrite = c?.permission === 'contributor';
     return <RequireGuest><GuestShell>
-        <div className="flex justify-between items-center mb-4"><Link to="/guest" className="text-xs text-fg-3">← Your cases</Link><SignOut /></div>
+        <div className="flex justify-between items-center mb-4"><Link to="/guest?all=1" className="text-xs text-fg-3">← Your cases</Link><SignOut /></div>
         <CreateAccountBanner />
+        <GuestSecurityPanel />
         {!c ? <p className="font-mono text-xs text-muted">$ loading…</p> : (<div className="space-y-6">
             <header className="space-y-2">
                 <h1 className="text-xl font-semibold">#{c.id} {c.title}</h1>
@@ -114,14 +121,20 @@ export function GuestCasePage() {
                         <Upload size={18} /> {upload.isPending ? 'Uploading…' : 'Drop evidence here or click to choose a file'}
                         <input type="file" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ''; }} />
                     </label>
-                    {!!files.data?.length && <ul className="text-xs text-fg-3 space-y-1">{files.data.map((f) => (
-                        <li key={f.id}>{f.filename} · {(f.size_bytes / 1024).toFixed(1)} KB · sha256 {f.sha256.slice(0, 12)}…</li>))}</ul>}
                     <form onSubmit={(e) => { e.preventDefault(); if (comment.trim()) post.mutate(); }} className="space-y-2">
                         <Label htmlFor="g-comment">Add a comment for the SOC team</Label>
                         <textarea id="g-comment" rows={3} maxLength={10000} value={comment} onChange={(e) => setComment(e.target.value)}
                             className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg" />
                         <Button type="submit" size="sm" disabled={post.isPending || !comment.trim()}>Post comment</Button>
                     </form>
+                </section>
+            )}
+
+            {!!files.data?.length && (
+                <section>
+                    <h2 className="text-sm font-semibold mb-2">Your uploads</h2>
+                    <ul className="text-xs text-fg-3 space-y-1">{files.data.map((f) => (
+                        <li key={f.id}>{f.filename} · {(f.size_bytes / 1024).toFixed(1)} KB · sha256 {f.sha256.slice(0, 12)}…</li>))}</ul>
                 </section>
             )}
 

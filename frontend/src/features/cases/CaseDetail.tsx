@@ -111,6 +111,8 @@ export default function CaseDetail() {
         staleTime: 300_000,
     });
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
+    // Viewers can't list guests (the API returns 403), so they don't get the tab.
+    const canSeeGuests = isAdmin || me?.role === 'analyst';
     // Mirrors the backend rule for editing/deleting timeline entries: admin, or the analyst who wrote it.
     const canModify = (event: { user_id: number | null }) =>
         isAdmin || (!!me && me.role === 'analyst' && event.user_id === me.id);
@@ -310,7 +312,7 @@ export default function CaseDetail() {
                 {/* Tabs (sticky while the page scrolls inside <main>) */}
                 <div className="sticky top-0 z-10 bg-panel px-6 pt-3">
                     <div className="flex border-b border-line relative space-x-6">
-                        {CASE_TABS.map((tab) => (
+                        {CASE_TABS.filter((tab) => tab !== 'guests' || canSeeGuests).map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => selectTab(tab)}
@@ -557,7 +559,7 @@ export default function CaseDetail() {
                             )}
 
                             {activeTab === 'evidence' && id && <CaseEvidence caseId={parseInt(id)} />}
-                            {activeTab === 'guests' && id && <GuestsPanel caseId={parseInt(id)} guestSummary={caseData?.guest_summary} />}
+                            {activeTab === 'guests' && id && canSeeGuests && <GuestsPanel caseId={parseInt(id)} guestSummary={caseData?.guest_summary} isAdmin={isAdmin} />}
 
                             {activeTab === 'report' && id && <CaseReport key={id} caseId={parseInt(id)} onDirtyChange={setReportDirty} />}
 
