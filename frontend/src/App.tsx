@@ -9,6 +9,8 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import RequireRole from './components/auth/RequireRole';
 import Login from './features/auth/Login';
 import AcceptInvitation from './features/auth/AcceptInvitation';
+import { GuestForgotPage, GuestLinkPage, GuestLoginPage, GuestResetPage, GuestSsoPage } from './features/guest-portal/GuestAuthPages';
+import { GuestCasePage, GuestHomePage } from './features/guest-portal/GuestCasePages';
 import SettingsHub from './features/settings/SettingsHub';
 
 // Route-level code splitting: heavy pages (charts, React Flow, Scalar) load on first visit.
@@ -58,6 +60,13 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/invite/:token" element={<AcceptInvitation />} />
+            <Route path="/guest/link/:token" element={<GuestLinkPage />} />
+            <Route path="/guest/login" element={<GuestLoginPage />} />
+            <Route path="/guest/sso" element={<GuestSsoPage />} />
+            <Route path="/guest/forgot" element={<GuestForgotPage />} />
+            <Route path="/guest/reset/:token" element={<GuestResetPage />} />
+            <Route path="/guest" element={<GuestHomePage />} />
+            <Route path="/guest/cases/:id" element={<GuestCasePage />} />
             <Route element={<ProtectedRoute />}>
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
