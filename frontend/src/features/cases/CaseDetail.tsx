@@ -448,7 +448,7 @@ export default function CaseDetail() {
                                                             <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300"
                                                                 title="Written by an external guest — treat attachments as untrusted">Guest · {event.guest_email}</span>
                                                         )}
-                                                        {event.event_type !== 'guest_invited' && (
+                                                        {event.event_type !== 'guest_invited' && (isAdmin || me?.role === 'analyst') && (
                                                             <button type="button" onClick={() => shareEvent.mutate({ eventId: event.id, shared: !event.shared_with_guests })}
                                                                 aria-pressed={!!event.shared_with_guests}
                                                                 aria-label={event.shared_with_guests ? 'Stop sharing with guests' : 'Share with guests'}
@@ -457,6 +457,7 @@ export default function CaseDetail() {
                                                                 {event.shared_with_guests ? <Eye size={13} /> : <EyeOff size={13} />}
                                                             </button>
                                                         )}
+                                                        {event.shared_with_guests && <span className="text-[10px] font-medium text-accent">Shared</span>}
                                                         {event.user && (
                                                             <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-muted">
                                                                 <Avatar userId={event.user.id} name={event.user.full_name || event.user.email}

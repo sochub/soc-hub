@@ -31,7 +31,7 @@ export default function GuestsPanel({ caseId, guestSummary }: { caseId: number; 
 
     const invite = useMutation({
         mutationFn: async () => api.post(`/cases/${caseId}/guests`, {
-            email, permission, expires_at: new Date(`${expires}T23:59:59`).toISOString(),
+            email, permission, expires_at: `${expires}T23:59:59Z`,
         }),
         onSuccess: () => { setEmail(''); refresh(); },
         onError: onError('Could not invite this guest.'),
@@ -112,9 +112,9 @@ export default function GuestsPanel({ caseId, guestSummary }: { caseId: number; 
                                             <option value="viewer">Viewer</option>
                                             <option value="contributor">Contributor</option>
                                         </select>
-                                        <input type="date" aria-label={`Expiry for ${g.email}`} defaultValue={dateOnly(g.expires_at)}
+                                        <input type="date" key={g.expires_at} aria-label={`Expiry for ${g.email}`} defaultValue={dateOnly(g.expires_at)}
                                             min={plusDays(1)} max={plusDays(365)}
-                                            onChange={(e) => e.target.value && patch.mutate({ id: g.id, body: { expires_at: new Date(`${e.target.value}T23:59:59`).toISOString() } })}
+                                            onChange={(e) => e.target.value && patch.mutate({ id: g.id, body: { expires_at: `${e.target.value}T23:59:59Z` } })}
                                             className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg" />
                                         <Button size="sm" variant="ghost" onClick={() => resend.mutate(g.id)}><Send size={13} /> Resend</Button>
                                         <Button size="sm" variant="danger" onClick={() => revoke.mutate(g.id)}><Ban size={13} /> Revoke</Button>
