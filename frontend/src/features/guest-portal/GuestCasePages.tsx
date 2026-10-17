@@ -27,7 +27,7 @@ function CreateAccountBanner() {
     const [pw, setPw] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [done, setDone] = useState(false);
-    const { data: me } = useQuery({ queryKey: ['guest-me'], queryFn: async () => (await guestApi.get('/me')).data as GuestMe });
+    const { data: me } = useQuery({ queryKey: ['guest-me'], queryFn: async () => (await guestApi.get('/me')).data as GuestMe, enabled: !!guestToken.get() });
     if (!me || me.amr !== 'link' || me.has_account || done) return null;
     const submit = async (e: React.FormEvent) => {
         e.preventDefault(); setError(null);
@@ -37,7 +37,7 @@ function CreateAccountBanner() {
     return (
         <div className="mb-6 border border-line bg-panel rounded-lg p-3 text-sm">
             {!open ? (
-                <span>Create a password to come back without a link. <button type="button" className="text-accent" onClick={() => setOpen(true)}>Set password</button></span>
+                <span>Create an account to return without a link <button type="button" className="text-accent" onClick={() => setOpen(true)}>Set password</button></span>
             ) : (
                 <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
                     <div className="flex-1 min-w-[12rem]"><Label htmlFor="new-pw">Password for {me.email}</Label>
@@ -54,6 +54,7 @@ export function GuestHomePage() {
     const navigate = useNavigate();
     const { data, isLoading } = useQuery({
         queryKey: ['guest-cases'], queryFn: async () => (await guestApi.get('/cases')).data as GuestCaseItem[],
+        enabled: !!guestToken.get(),
     });
     useEffect(() => { if (data?.length === 1) navigate(`/guest/cases/${data[0].id}`, { replace: true }); }, [data, navigate]);
     return <RequireGuest><GuestShell>
@@ -77,7 +78,7 @@ export function GuestCasePage() {
     const qc = useQueryClient();
     const [comment, setComment] = useState('');
     const [error, setError] = useState<string | null>(null);
-    const caseQ = useQuery({ queryKey: ['guest-case', id], queryFn: async () => (await guestApi.get(`/cases/${id}`)).data as GuestCase, retry: false });
+    const caseQ = useQuery({ queryKey: ['guest-case', id], queryFn: async () => (await guestApi.get(`/cases/${id}`)).data as GuestCase, retry: false, enabled: !!guestToken.get() });
     const timeline = useQuery({ queryKey: ['guest-timeline', id], queryFn: async () => (await guestApi.get(`/cases/${id}/timeline`)).data as GuestEvent[], enabled: caseQ.isSuccess });
     const files = useQuery({ queryKey: ['guest-files', id], queryFn: async () => (await guestApi.get(`/cases/${id}/attachments`)).data as GuestFile[], enabled: caseQ.isSuccess });
     const refresh = () => { setError(null); qc.invalidateQueries({ queryKey: ['guest-timeline', id] }); qc.invalidateQueries({ queryKey: ['guest-files', id] }); };
@@ -129,7 +130,7 @@ export function GuestCasePage() {
                 {!timeline.data?.length ? <p className="text-sm text-fg-3">No updates shared yet.</p> : (
                     <ol className="space-y-3">{timeline.data.map((e) => (
                         <li key={e.id} className="bg-panel border border-line rounded-lg p-3 text-sm">
-                            <div className="text-xs text-fg-3 mb-1">{e.author}{e.from_guest && ' (guest)'} · {new Date(e.created_at).toLocaleString()}</div>
+                            <div className="text-xs text-fg-3 mb-1">{e.author} · {new Date(e.created_at).toLocaleString()}</div>
                             <p className="whitespace-pre-wrap">{e.content}</p>
                         </li>))}</ol>
                 )}

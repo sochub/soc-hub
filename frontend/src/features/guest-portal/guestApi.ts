@@ -1,12 +1,16 @@
 import axios from 'axios';
+import { queryClient } from '../../api/queryClient';
 
 // Never shares storage or interceptors with the analyst client (api/client.ts uses 'token').
 const KEY = 'guest_token';
 
+// Guest query keys all start with 'guest'; drop them whenever the guest identity changes.
+const dropGuestData = () => queryClient.removeQueries({ predicate: (q) => String(q.queryKey[0]).startsWith('guest') });
+
 export const guestToken = {
     get: () => { try { return localStorage.getItem(KEY); } catch { return null; } },
-    set: (t: string) => { try { localStorage.setItem(KEY, t); } catch { /* private mode */ } },
-    clear: () => { try { localStorage.removeItem(KEY); } catch { /* private mode */ } },
+    set: (t: string) => { try { localStorage.setItem(KEY, t); } catch { /* private mode */ } dropGuestData(); },
+    clear: () => { try { localStorage.removeItem(KEY); } catch { /* private mode */ } dropGuestData(); },
 };
 
 export const guestApi = axios.create({ baseURL: '/api/v1/guest' });

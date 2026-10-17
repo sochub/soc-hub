@@ -52,9 +52,13 @@ export function GuestLoginPage() {
     const [mfaToken, setMfaToken] = useState<string | null>(null);
     const [code, setCode] = useState('');
     const [busy, setBusy] = useState(false);
-    const hashError = new URLSearchParams(window.location.hash.slice(1)).get('sso_error');
-    const [error, setError] = useState<string | null>(hashError);
-    const notice = params.get('m') === 'account' ? 'Sign in with your guest password.' : null;
+    const [error, setError] = useState<string | null>(() => {
+        const h = new URLSearchParams(window.location.hash.slice(1)).get('sso_error');
+        if (h) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        return h;
+    });
+    const m = params.get('m');
+    const notice = m === 'account' ? 'Sign in with your guest password.' : m === 'reset' ? 'Password updated — sign in.' : null;
 
     const done = (tok: string) => { guestToken.set(tok); navigate('/guest', { replace: true }); };
     const submit = async (e: React.FormEvent) => {
@@ -66,7 +70,10 @@ export function GuestLoginPage() {
                 const r = await guestApi.post('/auth/login', { email, password });
                 if (r.data.mfa_required) setMfaToken(r.data.mfa_token); else done(r.data.access_token);
             }
-        } catch (err) { setError(guestError(err, 'Could not sign in.')); } finally { setBusy(false); }
+        } catch (err) {
+            if (mfaToken && (err as { response?: { status?: number } })?.response?.status === 401) { setMfaToken(null); setCode(''); }
+            setError(guestError(err, 'Could not sign in.'));
+        } finally { setBusy(false); }
     };
     return <GuestShell><Card title="Guest sign-in">
         {notice && <p role="status" className="text-sm text-fg-2">{notice}</p>}
@@ -88,6 +95,7 @@ export function GuestLoginPage() {
             )}
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
             <Button type="submit" className="w-full" disabled={busy}>{mfaToken ? 'Verify' : 'Sign in'}</Button>
+            {mfaToken && <button type="button" className="text-xs text-accent" onClick={() => { setMfaToken(null); setCode(''); setError(null); }}>Back</button>}
         </form>
         <p className="text-xs text-fg-3">No password yet? Open the link from your invitation email.
             {' '}<Link to="/guest/forgot" className="text-accent">Forgot password?</Link></p>
@@ -133,7 +141,7 @@ export function GuestResetPage() {
     const [error, setError] = useState<string | null>(null);
     const submit = async (e: React.FormEvent) => {
         e.preventDefault(); setError(null);
-        try { await guestApi.post('/auth/reset', { token, password }); navigate('/guest/login', { replace: true }); }
+        try { await guestApi.post('/auth/reset', { token, password }); navigate('/guest/login?m=reset', { replace: true }); }
         catch (err) { setError(guestError(err, 'This reset link is invalid or has expired.')); }
     };
     return <GuestShell><Card title="Choose a new password">
