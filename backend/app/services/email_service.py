@@ -140,3 +140,24 @@ def send_guest_reset_email(to_email: str, link: str) -> bool:
       <p style="color:#666;font-size:12px;">This link expires in 30 minutes. If you didn't ask for it, ignore this email.</p>
     </body></html>"""
     return _send_email(to_email, "Reset your SOC Hub guest password", body, log_recipient=False)
+
+
+def send_guest_digest_email(to_email: str, *, tenant_name: str, case_id: int, case_title: str,
+                            summaries: list, link: str) -> bool:
+    """One email per guest per digest window: summaries only, never shared content."""
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest digest email")
+        return False
+    items = "".join(f"<li>{html.escape(s)}</li>" for s in summaries)
+    l, title = html.escape(link), html.escape(case_title)
+    n = len(summaries)
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>{n} update{'s' if n != 1 else ''} on case #{case_id}</h2>
+      <p><strong>{title}</strong> ({html.escape(tenant_name)})</p>
+      <ul>{items}</ul>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">View the case</a></p>
+    </body></html>"""
+    return _send_email(to_email, f"{tenant_name}: {n} update{'s' if n != 1 else ''} on case #{case_id}", body,
+                       log_recipient=False)
