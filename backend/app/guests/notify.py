@@ -14,9 +14,16 @@ _KEY = "guest_digest:{}"
 _STASH = "guest_digest"
 
 
+_client = None
+
+
 def _redis():
-    import redis
-    return redis.Redis.from_url(settings.REDIS_URL)
+    """One lazy client per process; short timeouts so a Redis outage can't stall a request's commit hook."""
+    global _client
+    if _client is None:
+        import redis
+        _client = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=1, socket_timeout=1)
+    return _client
 
 
 def _dispatch(gid: int) -> None:
@@ -26,8 +33,13 @@ def _dispatch(gid: int) -> None:
 
 def _schedule(gid: int) -> None:
     # NX: at most one pending digest per guest; EX is a safety net if the task never runs.
-    if _redis().set(_KEY.format(gid), 1, nx=True, ex=DIGEST_DELAY_SECONDS * 3):
-        _dispatch(gid)
+    key = _KEY.format(gid)
+    if _redis().set(key, 1, nx=True, ex=DIGEST_DELAY_SECONDS * 3):
+        try:
+            _dispatch(gid)
+        except Exception:
+            _redis().delete(key)  # nothing is queued: let the next event re-arm instead of waiting out EX
+            raise
 
 
 def clear_pending(gid: int) -> None:

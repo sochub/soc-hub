@@ -38,16 +38,30 @@ Analysts and admins use the **Guests** tab on a case:
 - **Guest summary.** A short text written for guests. Guests never see `description`.
 - **Share entries.** Use the eye toggle on a timeline entry. Guest-authored entries and uploads carry an amber
   **Guest** chip. Guest uploads are labelled *untrusted origin*.
+- **Reset 2FA (admins).** Shown for guests with an account. It clears the guest's TOTP and signs out all their
+  sessions; it is audit-logged as `guest_mfa_reset`. If the account also has a grant in another organization,
+  the reset is refused (409, "This guest account is shared with another organization"): one tenant's admin
+  can't weaken another tenant's guest login.
+
+A guest shows as inactive (revoked / expired / blocked) when the grant is revoked or expired, the email domain
+is no longer allowlisted, or the organization is inactive. The Guests tab is hidden for viewers.
 
 ## Guest sign-in
 
 There are three ways in, and they all produce the same guest session:
 
-1. **Magic link** from the invite or digest email. Opening it starts a session for that grant.
-2. **Guest account (password + optional TOTP).** A link session can set a password. Forgot and reset work at
-   `/guest/forgot`. Once an account exists, magic links refuse to sign in and send the guest to the password
-   login instead.
-3. **SSO.** `/guest/login?t=<tenant-slug>` shows "Sign in with SSO".
+1. **Magic link** from the invite or digest email. Opening it starts a session for that organization's cases.
+   Link sessions are per organization: the session carries the tenant of the grant that minted it
+   (`link_tenant_id`), so a forwarded invite never opens the same email's cases in another organization.
+2. **Guest account (password + optional TOTP).** A link session can set a password; this links every grant for
+   that email. Forgot and reset work at `/guest/forgot`. Once an account exists, magic links refuse to sign in
+   and send the guest to the password login instead. Password and MFA sign-ins are audit-logged
+   (`guest_password_login`, `guest_mfa_login`).
+   - **Security panel.** Password sessions see a *Security* panel in the portal: set up TOTP (QR code or key),
+     then turn it on with the current password and a code. Turning it off also needs password and code. Both
+     sign out other sessions. Requiring the password on enable means a stolen session can't lock the owner out.
+3. **SSO.** `/guest/login?t=<tenant-slug>` shows "Sign in with SSO". Emails to account holders only add
+   `?t=<slug>` when the tenant's SSO is configured and enabled; otherwise they link to plain `/guest/login`.
 
 | Token (`purpose` claim) | Lifetime |
 |---|---|
@@ -71,7 +85,11 @@ content. A grant revoked before the email goes out gets no email.
   allowlisted and, when SSO is required, an SSO session from that same tenant. Anything not granted returns
   **404**.
 - Viewers get **403** on write routes. Uploads go through the same size and content validation as analyst
-  uploads.
+  uploads, with the same `MAX_UPLOAD_MB` size cap (nginx and backend).
+- **Upload limit:** 50 uploads per guest grant per 24 hours (Redis counter `gup:{grant_id}`, fixed window from
+  the first upload; failed attempts count). Past that, uploads return **429** "Upload limit reached. Try again
+  later." Like the login throttle, it fails open if Redis is down. Upload audit rows carry
+  `actor: guest:<email>`.
 - Login and forgot never reveal whether an account exists, and there is no tenant or grant discovery endpoint.
 
 Code: `backend/app/guests/`, `backend/app/api/v1/{case_guests,guest_auth,guest_portal}.py`,

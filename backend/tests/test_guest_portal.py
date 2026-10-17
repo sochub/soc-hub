@@ -6,7 +6,11 @@ from app.models.case import TimelineEvent
 from app.models.case_attachment import CaseAttachment
 from app.models.membership import TenantMembership
 from app.models.notification import CaseFollower, Notification
-from tests.guest_fixtures import client, make_case, make_grant, make_tenant, make_user, run, session_headers
+from app.api.v1 import guest_portal
+from app.main import app
+from app.models.audit_log import AuditLog
+from tests.guest_fixtures import (FakeAsyncRedis, client, make_case, make_grant, make_tenant, make_user, run,
+                                  session_headers)
 
 
 def test_portal_visibility_and_contributions(monkeypatch, tmp_path):
@@ -37,7 +41,8 @@ def test_portal_visibility_and_contributions(monkeypatch, tmp_path):
             db.add(CaseAttachment(tenant_id=t.id, case_id=c.id, filename="analyst.bin", size_bytes=1,
                                   sha256="0" * 64, storage_key=f"k-{ids.h}", uploaded_by=u.id))
             await db.commit()
-        V, C = session_headers(ve), session_headers(ce)
+        V, C = session_headers(ve, link_tenant_id=t.id), session_headers(ce, link_tenant_id=t.id)
+        app.dependency_overrides[guest_portal.get_upload_redis] = FakeAsyncRedis
         async with client() as cl:
             # Review Focus 3: SSO-required tenant's case hidden from a link session
             r = await cl.get("/api/v1/guest/cases", headers=C)
@@ -90,7 +95,7 @@ def test_portal_visibility_and_contributions(monkeypatch, tmp_path):
             assert "Here is context" in contents and any("evidence.eml" in x for x in contents)
 
             # guests never see other guests' contributions; analyst shared notes stay visible
-            O = session_headers(oe)
+            O = session_headers(oe, link_tenant_id=t.id)
             r = await cl.get(f"/api/v1/guest/cases/{c.id}/timeline", headers=O)
             oc = [e["content"] for e in r.json()]
             assert "shared note" in oc and "Here is context" not in oc and not any("evidence.eml" in x for x in oc)
@@ -107,4 +112,36 @@ def test_portal_visibility_and_contributions(monkeypatch, tmp_path):
             n = (await db.execute(select(Notification).where(Notification.case_id == c.id,
                                                              Notification.user_id == u.id))).scalars().all()
             assert any(ce in x.summary for x in n), [x.summary for x in n]
+            up = (await db.execute(select(AuditLog).where(AuditLog.entity_type == "attachment",
+                                                          AuditLog.entity_id == att.id))).scalars().one()
+            assert up.changes["actor"] == f"guest:{ce}" and up.changes["guest_id"] == gc.id
+    run(body)
+
+
+def test_guest_upload_limit_per_grant(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "STORAGE_LOCAL_PATH", str(tmp_path))
+    monkeypatch.setattr(guest_portal, "UPLOAD_LIMIT", 2)
+    fake = FakeAsyncRedis()
+
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            c = await make_case(db, ids, t)
+            e1, e2 = ids.email("up1"), ids.email("up2")
+            g1 = await make_grant(db, c, e1, "contributor")
+            await make_grant(db, c, e2, "contributor")
+        app.dependency_overrides[guest_portal.get_upload_redis] = lambda: fake
+        url = f"/api/v1/guest/cases/{c.id}/attachments"
+        h1 = session_headers(e1, link_tenant_id=t.id)
+        async with client() as cl:
+            for i in range(2):
+                r = await cl.post(url, files={"file": (f"f{i}.txt", b"data%d" % i, "text/plain")}, headers=h1)
+                assert r.status_code == 201, r.text
+            r = await cl.post(url, files={"file": ("f3.txt", b"more", "text/plain")}, headers=h1)
+            assert r.status_code == 429 and r.json()["detail"] == "Upload limit reached. Try again later."
+            # the limit is per grant: another guest on the same case is unaffected
+            r = await cl.post(url, files={"file": ("o.txt", b"other", "text/plain")},
+                              headers=session_headers(e2, link_tenant_id=t.id))
+            assert r.status_code == 201
+        assert f"gup:{g1.id}" in fake.data
     run(body)

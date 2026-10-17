@@ -102,3 +102,17 @@ def test_failed_send_rearms_digest(monkeypatch):
                 GuestNotification.case_id == c.id, GuestNotification.sent_at.is_(None)))).scalars().all()
             assert len(unsent) == 1
     run(body)
+
+
+def test_schedule_rearms_when_dispatch_fails(monkeypatch):
+    import pytest
+
+    def boom(gid):
+        raise RuntimeError("broker down")
+    monkeypatch.setattr(gnotify, "_dispatch", boom)
+    with pytest.raises(RuntimeError):
+        gnotify._schedule(424242)
+    calls = []
+    monkeypatch.setattr(gnotify, "_dispatch", lambda gid: calls.append(gid))
+    gnotify._schedule(424242)  # the NX key was released, so the next event schedules again
+    assert calls == [424242]

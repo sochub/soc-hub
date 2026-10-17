@@ -18,6 +18,7 @@ from app.guests.access import domain_allowed
 from app.models.case import Case, TimelineEvent
 from app.models.case_guest import CaseGuest, GuestAccount
 from app.models.tenant import Tenant
+from app.models.tenant_sso_config import TenantSSOConfig
 from app.models.user import User
 from app.schemas import case as case_schema
 from app.services.email_service import send_guest_invite_email
@@ -71,12 +72,13 @@ class GuestSettingsOut(GuestSettings):
     sso_ready: bool
 
 
-def _out(g: CaseGuest) -> GuestOut:
+def _out(g: CaseGuest, tenant: Tenant) -> GuestOut:
     now = datetime.now(timezone.utc)
     return GuestOut(id=g.id, case_id=g.case_id, email=g.email, permission=g.permission, expires_at=g.expires_at,
                     revoked_at=g.revoked_at, last_seen_at=g.last_seen_at, created_at=g.created_at,
                     has_account=g.guest_account_id is not None,
-                    active=g.revoked_at is None and g.expires_at > now)
+                    active=(g.revoked_at is None and g.expires_at > now and bool(tenant.is_active)
+                            and domain_allowed(tenant, g.email)))
 
 
 def _check_expiry(value: Optional[datetime]) -> datetime:
@@ -90,11 +92,15 @@ def _check_expiry(value: Optional[datetime]) -> datetime:
     return value
 
 
-def portal_link(grant: CaseGuest, tenant: Tenant) -> str:
+async def portal_link(db: AsyncSession, grant: CaseGuest, tenant: Tenant) -> str:
     """Where an email should send this guest: SSO/account login, or a fresh magic link."""
     base = settings.FRONTEND_URL.rstrip("/")
-    if tenant.guest_require_sso or grant.guest_account_id is not None:
+    if tenant.guest_require_sso:
         return f"{base}/guest/login?t={tenant.slug}"
+    if grant.guest_account_id is not None:  # ?t= offers the SSO button, so only when SSO actually works
+        cfg = (await db.execute(select(TenantSSOConfig).where(TenantSSOConfig.tenant_id == tenant.id))
+               ).scalars().first()
+        return f"{base}/guest/login?t={tenant.slug}" if _sso_ready(cfg) else f"{base}/guest/login"
     return f"{base}/guest/link/{tokens.issue_link(grant.id)}"
 
 
@@ -113,9 +119,10 @@ async def _grant(db: AsyncSession, case: Case, guest_id: int) -> CaseGuest:
     return g
 
 
-def _send_invite(g: CaseGuest, tenant: Tenant, case: Case) -> None:
+async def _send_invite(db: AsyncSession, g: CaseGuest, tenant: Tenant, case: Case) -> None:
+    link = await portal_link(db, g, tenant)
     send_guest_invite_email(g.email, tenant_name=tenant.name, case_id=case.id, case_title=case.title,
-                            permission=g.permission, link=portal_link(g, tenant), sso=bool(tenant.guest_require_sso))
+                            permission=g.permission, link=link, sso=bool(tenant.guest_require_sso))
 
 
 @router.post("/{case_id}/guests", response_model=GuestOut, status_code=201)
@@ -144,8 +151,8 @@ async def invite_guest(*, case_id: int, body: GuestInvite, db: AsyncSession = De
                            changes={"case_id": case.id, "email": email, "permission": body.permission})
     await db.commit()
     await db.refresh(g)
-    _send_invite(g, tenant, case)
-    return _out(g)
+    await _send_invite(db, g, tenant, case)
+    return _out(g, tenant)
 
 
 @router.get("/{case_id}/guests", response_model=List[GuestOut])
@@ -155,7 +162,8 @@ async def list_guests(*, case_id: int, db: AsyncSession = Depends(deps.get_db),
     case = await _case(db, case_id, tenant_id)
     rows = (await db.execute(select(CaseGuest).where(CaseGuest.case_id == case.id).order_by(CaseGuest.id))
             ).scalars().all()
-    return [_out(g) for g in rows]
+    tenant = await db.get(Tenant, tenant_id)
+    return [_out(g, tenant) for g in rows]
 
 
 @router.patch("/{case_id}/guests/{guest_id}", response_model=GuestOut)
@@ -176,7 +184,7 @@ async def update_guest(*, case_id: int, guest_id: int, body: GuestPatch, db: Asy
                                tenant_id=tenant_id, user_id=current_user.id, changes=changes)
     await db.commit()
     await db.refresh(g)
-    return _out(g)
+    return _out(g, await db.get(Tenant, tenant_id))
 
 
 @router.delete("/{case_id}/guests/{guest_id}", status_code=204)
@@ -199,9 +207,33 @@ async def resend_guest_invite(*, case_id: int, guest_id: int, db: AsyncSession =
                               tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Response:
     case = await _case(db, case_id, tenant_id)
     g = await _grant(db, case, guest_id)
-    if not _out(g).active:
+    tenant = await db.get(Tenant, tenant_id)
+    if not _out(g, tenant).active:
         raise HTTPException(status_code=409, detail="This guest's access is not active — invite them again")
-    _send_invite(g, await db.get(Tenant, tenant_id), case)
+    await _send_invite(db, g, tenant, case)
+    return Response(status_code=204)
+
+
+@router.post("/{case_id}/guests/{guest_id}/reset-mfa", status_code=204)
+async def reset_guest_mfa(*, case_id: int, guest_id: int, db: AsyncSession = Depends(deps.get_db),
+                          current_user: User = Depends(deps.require_admin),
+                          tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Response:
+    """Recovery for a guest who lost their authenticator: clear TOTP and sign out every session."""
+    case = await _case(db, case_id, tenant_id)
+    g = await _grant(db, case, guest_id)
+    acct = (await db.execute(select(GuestAccount).where(GuestAccount.email == g.email).with_for_update())
+            ).scalars().first()
+    if acct is None:
+        raise HTTPException(status_code=404, detail="This guest has no account")
+    foreign = (await db.execute(select(CaseGuest.id).where(CaseGuest.email == acct.email,
+                                                           CaseGuest.tenant_id != tenant_id).limit(1))).first()
+    if foreign is not None:  # one tenant's admin must not weaken another organization's guest login
+        raise HTTPException(status_code=409, detail="This guest account is shared with another organization")
+    acct.mfa_enabled_at, acct.mfa_secret_enc = None, None
+    acct.token_version = (acct.token_version or 0) + 1
+    await create_audit_log(db=db, entity_type="case_guest", entity_id=g.id, action="guest_mfa_reset",
+                           tenant_id=tenant_id, user_id=current_user.id, changes={"email": g.email})
+    await db.commit()
     return Response(status_code=204)
 
 

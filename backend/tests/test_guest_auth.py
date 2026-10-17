@@ -5,6 +5,7 @@ from app.core import totp
 from app.db.session import AsyncSessionLocal
 from app.guests import tokens
 from app.main import app
+from app.models.audit_log import AuditLog
 from app.models.case_guest import CaseGuest, GuestAccount
 from app.services import email_service
 from tests.guest_fixtures import PW, client, make_account, make_case, make_grant, make_tenant, run
@@ -115,7 +116,12 @@ def test_mfa_two_step_and_sso_required_link():
             s = (await c.post("/api/v1/guest/auth/login", json={"email": e, "password": PW})).json()["access_token"]
             setup = (await c.post("/api/v1/guest/auth/mfa/setup", headers=_bearer(s))).json()
             code = totp.totp_at(setup["secret"], int(__import__("time").time()))
-            r = await c.post("/api/v1/guest/auth/mfa/enable", json={"code": code}, headers=_bearer(s))
+            # the password is required too: a stolen session alone can't lock the owner out
+            assert (await c.post("/api/v1/guest/auth/mfa/enable", json={"code": code},
+                                 headers=_bearer(s))).status_code == 422
+            assert (await c.post("/api/v1/guest/auth/mfa/enable", json={"code": code, "password": "Wrong-Passw0rd!"},
+                                 headers=_bearer(s))).status_code == 400
+            r = await c.post("/api/v1/guest/auth/mfa/enable", json={"code": code, "password": PW}, headers=_bearer(s))
             assert r.status_code == 200
             assert (await c.get("/api/v1/guest/me", headers=_bearer(s))).status_code == 401  # old session dead
 
@@ -129,4 +135,9 @@ def test_mfa_two_step_and_sso_required_link():
             assert r.status_code == 200 and "access_token" in r.json()
             r = await c.post("/api/v1/guest/auth/login/mfa", json={"mfa_token": mfa_token, "code": code2})
             assert r.status_code in (400, 401)  # replayed step / spent challenge
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(AuditLog.action, AuditLog.changes).where(
+                AuditLog.tenant_id == t.id, AuditLog.entity_type == "case_guest"))).all()
+            acts = [a for a, ch in rows if ch.get("actor") == f"guest:{e}"]
+            assert "guest_password_login" in acts and "guest_mfa_login" in acts and "guest_mfa_enabled" in acts
     run(body)

@@ -10,7 +10,8 @@ from app.models.case import TimelineEvent
 from app.models.case_guest import CaseGuest
 from app.models.tenant import Tenant
 from app.services import email_service
-from tests.guest_fixtures import client, make_case, make_tenant, make_user, run
+from app.models.case_guest import GuestAccount
+from tests.guest_fixtures import client, make_account, make_case, make_grant, make_tenant, make_user, run
 
 
 def _as(user, tenant_id, role="analyst"):
@@ -164,4 +165,76 @@ def test_share_toggle_and_guest_summary(monkeypatch):
             assert r.status_code == 404
             r = await cl.put(f"/api/v1/cases/{c.id}", json={"guest_summary": "We are investigating."})
             assert r.status_code == 200 and r.json()["guest_summary"] == "We are investigating."
+    run(body)
+
+
+def test_reset_guest_mfa_admin_only_and_shared_account_guard():
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, other = await make_tenant(db, ids), await make_tenant(db, ids)
+            c, c_other = await make_case(db, ids, t), await make_case(db, ids, other)
+            u = await make_user(db, ids)
+            e, shared = ids.email("mfa1"), ids.email("mfa2")
+            for em in (e, shared):
+                a = await make_account(db, em)
+                a.mfa_enabled_at, a.mfa_secret_enc = datetime.now(timezone.utc), "enc"
+                await db.commit()
+            g = await make_grant(db, c, e)
+            g_shared = await make_grant(db, c, shared)
+            await make_grant(db, c_other, shared)
+            g_none = await make_grant(db, c, ids.email("noacct"))
+        url = lambda gid: f"/api/v1/cases/{c.id}/guests/{gid}/reset-mfa"  # noqa: E731
+        _as(u, t.id)  # analyst
+        async with client() as cl:
+            assert (await cl.post(url(g.id))).status_code == 403
+        _as(u, t.id, role="admin")
+        async with client() as cl:
+            assert (await cl.post(url(g.id))).status_code == 204
+            r = await cl.post(url(g_shared.id))
+            assert r.status_code == 409 and r.json()["detail"] == "This guest account is shared with another organization"
+            assert (await cl.post(url(g_none.id))).status_code == 404
+            assert (await cl.post(f"/api/v1/cases/{c_other.id}/guests/{g.id}/reset-mfa")).status_code == 404
+        async with AsyncSessionLocal() as db:
+            a = (await db.execute(select(GuestAccount).where(GuestAccount.email == e))).scalars().one()
+            assert a.mfa_enabled_at is None and a.mfa_secret_enc is None and a.token_version == 1
+            b = (await db.execute(select(GuestAccount).where(GuestAccount.email == shared))).scalars().one()
+            assert b.mfa_enabled_at is not None and (b.token_version or 0) == 0
+            acts = (await db.execute(select(AuditLog.action).where(AuditLog.tenant_id == t.id))).scalars().all()
+            assert "guest_mfa_reset" in acts
+    run(body)
+
+
+def test_active_reflects_allowlist_and_tenant_and_login_link(monkeypatch):
+    sent = []
+    monkeypatch.setattr(email_service, "_smtp_configured", lambda: True)
+    monkeypatch.setattr(email_service, "_send_email", lambda to, subj, body, log_recipient=True: sent.append(body) or True)
+
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            t_sso = await make_tenant(db, ids, sso=True)
+            c, c_sso = await make_case(db, ids, t), await make_case(db, ids, t_sso)
+            u = await make_user(db, ids)
+            e = ids.email("acct")
+            await make_account(db, e)
+        _as(u, t.id)
+        async with client() as cl:
+            r = await cl.post(f"/api/v1/cases/{c.id}/guests", json={"email": e, "permission": "viewer"})
+            assert r.status_code == 201 and r.json()["has_account"] is True
+            assert "/guest/login" in sent[-1] and "?t=" not in sent[-1]  # no SSO on this tenant: plain login link
+            async with AsyncSessionLocal() as db:
+                row = await db.get(Tenant, t.id)
+                row.guest_domain_allowlist = []
+                await db.commit()
+            assert (await cl.get(f"/api/v1/cases/{c.id}/guests")).json()[0]["active"] is False
+            async with AsyncSessionLocal() as db:
+                row = await db.get(Tenant, t.id)
+                row.guest_domain_allowlist, row.is_active = ["dept.example"], False
+                await db.commit()
+            assert (await cl.get(f"/api/v1/cases/{c.id}/guests")).json()[0]["active"] is False
+        _as(u, t_sso.id)
+        async with client() as cl:
+            r = await cl.post(f"/api/v1/cases/{c_sso.id}/guests", json={"email": e, "permission": "viewer"})
+            assert r.status_code == 201
+            assert f"/guest/login?t={t_sso.slug}" in sent[-1]
     run(body)

@@ -63,12 +63,16 @@ def test_grant_checks():
             expired = await make_grant(db, c2, ids.email("exp"), expires_in=timedelta(seconds=-1))
         async with client() as cl:
             url = lambda cid: f"/api/v1/guest/cases/{cid}"  # noqa: E731
-            assert (await cl.get(url(c.id), headers=session_headers(e))).status_code == 200
-            assert (await cl.get(url(c2.id), headers=session_headers(e))).status_code == 404       # wrong case
-            assert (await cl.get(url(c2.id), headers=session_headers(revoked.email))).status_code == 404
-            assert (await cl.get(url(c2.id), headers=session_headers(expired.email))).status_code == 404
-            assert (await cl.get(url(c_empty.id), headers=session_headers(e))).status_code == 404  # no allowlist
-            assert (await cl.get(url(c_sso.id), headers=session_headers(e))).status_code == 404    # link session
+            L = session_headers(e, link_tenant_id=t.id)
+            assert (await cl.get(url(c.id), headers=L)).status_code == 200
+            assert (await cl.get(url(c.id), headers=session_headers(e))).status_code == 404  # unbound link session
+            assert (await cl.get(url(c2.id), headers=L)).status_code == 404       # wrong case
+            assert (await cl.get(url(c2.id), headers=session_headers(revoked.email, link_tenant_id=t.id))).status_code == 404
+            assert (await cl.get(url(c2.id), headers=session_headers(expired.email, link_tenant_id=t.id))).status_code == 404
+            assert (await cl.get(url(c_empty.id),
+                                headers=session_headers(e, link_tenant_id=t_empty.id))).status_code == 404  # no allowlist
+            assert (await cl.get(url(c_sso.id),
+                                headers=session_headers(e, link_tenant_id=t_sso.id))).status_code == 404  # link session
             assert (await cl.get(url(c_sso.id), headers=session_headers(e, "sso", t.id))).status_code == 404
             assert (await cl.get(url(c_sso.id), headers=session_headers(e, "sso", t_sso.id))).status_code == 200
             # an IdP vouches only for its own tenant
@@ -79,6 +83,26 @@ def test_grant_checks():
                 row = await db.get(CaseGuest, g.id)
                 row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
                 await db.commit()
-            assert (await cl.get(url(c.id), headers=session_headers(e))).status_code == 404
+            assert (await cl.get(url(c.id), headers=L)).status_code == 404
             assert (await cl.get(url(c.id))).status_code == 401
+    run(body)
+
+
+def test_link_session_is_bound_to_its_tenant():
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            ta, tb = await make_tenant(db, ids), await make_tenant(db, ids)
+            ca, cb = await make_case(db, ids, ta), await make_case(db, ids, tb)
+            e = ids.email("fwd")
+            ga = await make_grant(db, ca, e)
+            await make_grant(db, cb, e)
+        async with client() as cl:
+            r = await cl.post("/api/v1/guest/auth/link", json={"token": tokens.issue_link(ga.id)})
+            assert r.status_code == 200, r.text
+            h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+            assert (await cl.get(f"/api/v1/guest/cases/{ca.id}", headers=h)).status_code == 200
+            assert (await cl.get(f"/api/v1/guest/cases/{cb.id}", headers=h)).status_code == 404
+            assert (await cl.get(f"/api/v1/guest/cases/{cb.id}/timeline", headers=h)).status_code == 404
+            assert [x["id"] for x in (await cl.get("/api/v1/guest/cases", headers=h)).json()] == [ca.id]
+            assert (await cl.get("/api/v1/guest/me", headers=h)).json()["email"] == e
     run(body)

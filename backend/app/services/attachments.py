@@ -95,7 +95,7 @@ async def _file_chunks(f):
 
 async def store_upload(db, *, case, user_id, filename, content_type, chunks: AsyncIterator[bytes], is_malicious,
                        description, storage=None, max_bytes: Optional[int] = None,
-                       guest_id: Optional[int] = None) -> CaseAttachment:
+                       guest_id: Optional[int] = None, actor: Optional[str] = None) -> CaseAttachment:
     storage = storage or get_storage()
     max_bytes = max_bytes if max_bytes is not None else settings.MAX_UPLOAD_MB * 1024 * 1024
     name = sanitize_filename(filename)
@@ -141,7 +141,8 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
         await create_audit_log(db=db, entity_type="attachment", entity_id=row.id, action="upload",
                                tenant_id=case.tenant_id, user_id=user_id,
                                changes={"filename": name, "sha256": row.sha256, "is_malicious": row.is_malicious,
-                                        "case_id": case.id, **({"guest_id": guest_id} if guest_id else {})})
+                                        "case_id": case.id, **({"guest_id": guest_id} if guest_id else {}),
+                                        **({"actor": actor} if actor else {})})
         await db.commit()
         committed = True
         await db.refresh(row)

@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.api.v1.attachments import _upload_chunks
 from app.core.config import settings
+from app.core.login_throttle import get_login_throttle
 from app.guests.access import GuestSession, get_current_guest, get_guest_grant, require_contributor, visible_grants
 from app.models.case import Case, TimelineEvent
 from app.models.case_attachment import CaseAttachment
@@ -61,6 +62,28 @@ class GuestAttachmentOut(BaseModel):
     size_bytes: int
     sha256: str
     created_at: datetime
+
+
+UPLOAD_LIMIT = 50                 # uploads per grant ...
+UPLOAD_WINDOW_SECONDS = 24 * 3600  # ... per fixed 24h window (from the first upload)
+
+
+def get_upload_redis():
+    """Same lazy Redis client as the login throttle; tests override it."""
+    return get_login_throttle().redis
+
+
+async def _reserve_upload(redis, grant_id: int) -> None:
+    """Fixed-window counter on gup:{grant}. Fails open like the login throttle: a Redis outage allows uploads."""
+    key = f"gup:{grant_id}"
+    try:
+        await redis.set(key, 0, nx=True, ex=UPLOAD_WINDOW_SECONDS)  # the window starts at the first upload
+        n = await redis.incr(key)
+    except Exception as exc:
+        logger.warning("guest upload limiter unavailable: %s", type(exc).__name__)
+        return
+    if n > UPLOAD_LIMIT:
+        raise HTTPException(status_code=429, detail="Upload limit reached. Try again later.")
 
 
 def _v(x) -> str:
@@ -154,13 +177,15 @@ async def guest_attachments(case_id: int, db: AsyncSession = Depends(deps.get_db
 
 @router.post("/cases/{case_id}/attachments", response_model=GuestAttachmentOut, status_code=201)
 async def guest_upload(case_id: int, file: UploadFile = File(...), db: AsyncSession = Depends(deps.get_db),
-                       grant: CaseGuest = Depends(require_contributor)) -> Any:
+                       grant: CaseGuest = Depends(require_contributor), redis=Depends(get_upload_redis)) -> Any:
+    await _reserve_upload(redis, grant.id)
     case = await _case(db, grant)
-    grant_id, tenant_id = grant.id, grant.tenant_id  # store_upload may roll back and expire ORM objects
+    # store_upload may roll back and expire ORM objects
+    grant_id, tenant_id, actor = grant.id, grant.tenant_id, f"guest:{grant.email}"
     try:
         row = await store_upload(db, case=case, user_id=None, filename=file.filename or "",
                                  content_type=file.content_type, chunks=_upload_chunks(file),
-                                 is_malicious=False, description=None, guest_id=grant_id)
+                                 is_malicious=False, description=None, guest_id=grant_id, actor=actor)
     except TooLarge:
         raise HTTPException(status_code=413, detail=f"File exceeds {settings.MAX_UPLOAD_MB} MB")
     except EmptyFile:

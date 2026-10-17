@@ -68,11 +68,7 @@ class ResetIn(BaseModel):
     password: str = Field(max_length=1024)
 
 
-class CodeIn(BaseModel):
-    code: str = Field(max_length=16)
-
-
-class DisableIn(BaseModel):
+class PasswordCodeIn(BaseModel):
     password: str = Field(max_length=1024)
     code: str = Field(max_length=16)
 
@@ -123,7 +119,7 @@ async def link_login(body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> A
     await create_audit_log(db=db, entity_type="case_guest", entity_id=grant.id, action="guest_link_login",
                            tenant_id=tenant.id, changes={"actor": f"guest:{grant.email}"})
     await db.commit()
-    return _token(tokens.issue_session(grant.email, "link"))
+    return _token(tokens.issue_session(grant.email, "link", link_tenant_id=tenant.id))
 
 
 @router.post("/register")
@@ -162,6 +158,8 @@ async def login(request: Request, body: LoginIn, db: AsyncSession = Depends(deps
     await throttle.reset(email, ip)
     if acct.mfa_enabled_at is not None:
         return {"mfa_required": True, "mfa_token": tokens.issue_mfa_challenge(acct)}
+    await _audit_grants(db, email, "guest_password_login")
+    await db.commit()
     return _token(tokens.issue_session(email, "password", gav=acct.token_version or 0))
 
 
@@ -179,6 +177,8 @@ async def login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession = Depen
     await verify_totp(redis, throttle, f"g{acct.id}", acct.mfa_secret_enc, body.code, client_ip(request))
     if not await spend_mfa_challenge(redis, p.get("jti")):
         raise expired
+    await _audit_grants(db, acct.email, "guest_mfa_login")
+    await db.commit()
     return _token(tokens.issue_session(acct.email, "password", gav=acct.token_version or 0))
 
 
@@ -212,6 +212,19 @@ async def reset(body: ResetIn, db: AsyncSession = Depends(deps.get_db)) -> Respo
     return Response(status_code=204)
 
 
+async def _verify_current_password(request: Request, acct: GuestAccount, password: str,
+                                   pw_throttle: LoginThrottle) -> str:
+    ip = client_ip(request)
+    retry = await pw_throttle.reserve(f"pw:g{acct.id}", ip)
+    if retry:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
+                            headers={"Retry-After": str(retry)})
+    if not security.verify_password(password, acct.password_hash):
+        raise HTTPException(status_code=400, detail="Incorrect password")
+    await pw_throttle.reset(f"pw:g{acct.id}", ip)
+    return ip
+
+
 @router.post("/mfa/setup")
 async def mfa_setup(db: AsyncSession = Depends(deps.get_db), s: GuestSession = Depends(get_current_guest)) -> Any:
     acct = await _account_from_session(db, s)
@@ -224,15 +237,18 @@ async def mfa_setup(db: AsyncSession = Depends(deps.get_db), s: GuestSession = D
 
 
 @router.post("/mfa/enable")
-async def mfa_enable(request: Request, body: CodeIn, db: AsyncSession = Depends(deps.get_db),
+async def mfa_enable(request: Request, body: PasswordCodeIn, db: AsyncSession = Depends(deps.get_db),
                      s: GuestSession = Depends(get_current_guest), redis=Depends(get_redis),
-                     throttle: LoginThrottle = Depends(get_mfa_throttle)) -> Any:
+                     throttle: LoginThrottle = Depends(get_mfa_throttle),
+                     pw_throttle: LoginThrottle = Depends(get_guest_throttle)) -> Any:
     acct = await _account_from_session(db, s)
     if acct.mfa_enabled_at is not None:
         raise HTTPException(status_code=409, detail="Two-factor authentication is already enabled")
     if not acct.mfa_secret_enc:
         raise HTTPException(status_code=400, detail="Start setup first")
-    await verify_totp(redis, throttle, f"g{acct.id}", acct.mfa_secret_enc, body.code, client_ip(request))
+    # the password too: a stolen session alone must not be able to lock the owner out
+    ip = await _verify_current_password(request, acct, body.password, pw_throttle)
+    await verify_totp(redis, throttle, f"g{acct.id}", acct.mfa_secret_enc, body.code, ip)
     acct.mfa_enabled_at = datetime.now(timezone.utc)
     acct.token_version = (acct.token_version or 0) + 1
     await _audit_grants(db, acct.email, "guest_mfa_enabled")
@@ -241,21 +257,14 @@ async def mfa_enable(request: Request, body: CodeIn, db: AsyncSession = Depends(
 
 
 @router.post("/mfa/disable")
-async def mfa_disable(request: Request, body: DisableIn, db: AsyncSession = Depends(deps.get_db),
+async def mfa_disable(request: Request, body: PasswordCodeIn, db: AsyncSession = Depends(deps.get_db),
                       s: GuestSession = Depends(get_current_guest), redis=Depends(get_redis),
                       throttle: LoginThrottle = Depends(get_mfa_throttle),
                       pw_throttle: LoginThrottle = Depends(get_guest_throttle)) -> Any:
     acct = await _account_from_session(db, s)
     if acct.mfa_enabled_at is None:
         raise HTTPException(status_code=409, detail="Two-factor authentication is not enabled")
-    ip = client_ip(request)
-    retry = await pw_throttle.reserve(f"pw:g{acct.id}", ip)
-    if retry:
-        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
-                            headers={"Retry-After": str(retry)})
-    if not security.verify_password(body.password, acct.password_hash):
-        raise HTTPException(status_code=400, detail="Incorrect password")
-    await pw_throttle.reset(f"pw:g{acct.id}", ip)
+    ip = await _verify_current_password(request, acct, body.password, pw_throttle)
     await verify_totp(redis, throttle, f"g{acct.id}", acct.mfa_secret_enc, body.code, ip)
     acct.mfa_enabled_at, acct.mfa_secret_enc = None, None
     acct.token_version = (acct.token_version or 0) + 1

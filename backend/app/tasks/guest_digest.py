@@ -36,8 +36,9 @@ async def send_digest(grant_id: int) -> bool:
             active = g.revoked_at is None and g.expires_at > now and t.is_active and domain_allowed(t, g.email)
             if active:
                 from app.api.v1.case_guests import portal_link
+                link = await portal_link(db, g, t)
                 sent = send_guest_digest_email(g.email, tenant_name=t.name, case_id=c.id, case_title=c.title,
-                                               summaries=[p.summary for p in pending], link=portal_link(g, t))
+                                               summaries=[p.summary for p in pending], link=link)
                 if not sent:
                     logger.warning("guest digest not sent grant=%s", grant_id)
                     if email_service._smtp_configured():  # transient failure: re-arm (unconfigured would loop)

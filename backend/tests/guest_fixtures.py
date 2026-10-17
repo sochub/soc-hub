@@ -83,9 +83,26 @@ async def make_account(db, email: str, *, password=PW) -> GuestAccount:
     return a
 
 
-def session_headers(email: str, amr="link", sso_tenant_id=None, gav=None) -> dict:
+def session_headers(email: str, amr="link", sso_tenant_id=None, gav=None, link_tenant_id=None) -> dict:
     from app.guests import tokens
-    return {"Authorization": f"Bearer {tokens.issue_session(email, amr, sso_tenant_id=sso_tenant_id, gav=gav)}"}
+    tok = tokens.issue_session(email, amr, sso_tenant_id=sso_tenant_id, gav=gav, link_tenant_id=link_tenant_id)
+    return {"Authorization": f"Bearer {tok}"}
+
+
+class FakeAsyncRedis:
+    """Enough of redis.asyncio for SET NX/EX + INCR counters."""
+    def __init__(self):
+        self.data = {}
+
+    async def set(self, key, val, nx=False, ex=None):
+        if nx and key in self.data:
+            return None
+        self.data[key] = int(val)
+        return True
+
+    async def incr(self, key):
+        self.data[key] = self.data.get(key, 0) + 1
+        return self.data[key]
 
 
 def client() -> httpx.AsyncClient:
