@@ -31,8 +31,8 @@ guestApi.interceptors.response.use((r) => r, (error) => {
 
 export function guestError(err: unknown, fallback: string): string {
     const e = err as { response?: { status?: number; data?: { detail?: unknown } } };
-    if (e?.response?.status === 429) return 'Too many attempts. Try again later.';
     const d = e?.response?.data?.detail;
+    if (e?.response?.status === 429) return typeof d === 'string' ? d : 'Too many attempts. Try again later.';
     if (typeof d === 'string') return d;
     const m = (d as { message?: unknown } | undefined)?.message;
     if (typeof m === 'string') return m;

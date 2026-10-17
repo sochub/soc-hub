@@ -77,8 +77,9 @@ async def _reserve_upload(redis, grant_id: int) -> None:
     """Fixed-window counter on gup:{grant}. Fails open like the login throttle: a Redis outage allows uploads."""
     key = f"gup:{grant_id}"
     try:
-        await redis.set(key, 0, nx=True, ex=UPLOAD_WINDOW_SECONDS)  # the window starts at the first upload
         n = await redis.incr(key)
+        # EXPIRE NX (Redis 7+): the window starts at the first upload, and a key can never be left without a TTL
+        await redis.expire(key, UPLOAD_WINDOW_SECONDS, nx=True)
     except Exception as exc:
         logger.warning("guest upload limiter unavailable: %s", type(exc).__name__)
         return

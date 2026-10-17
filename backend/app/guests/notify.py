@@ -38,7 +38,10 @@ def _schedule(gid: int) -> None:
         try:
             _dispatch(gid)
         except Exception:
-            _redis().delete(key)  # nothing is queued: let the next event re-arm instead of waiting out EX
+            try:
+                _redis().delete(key)  # nothing is queued: let the next event re-arm instead of waiting out EX
+            except Exception:
+                pass  # Redis is down too; EX still expires the key, and the dispatch error is the one worth logging
             raise
 
 

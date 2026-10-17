@@ -104,6 +104,9 @@ class FakeAsyncRedis:
         self.data[key] = self.data.get(key, 0) + 1
         return self.data[key]
 
+    async def expire(self, key, seconds, nx=False):
+        return True
+
 
 def client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
