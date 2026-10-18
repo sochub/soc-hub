@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import func
 
+from app.audit.context import audit_read
 from app.api import deps
 from app.core.config import settings
 from app.models.case import Case, TimelineEvent
@@ -137,7 +138,7 @@ async def list_attachments(
     return AttachmentList(max_upload_mb=settings.MAX_UPLOAD_MB, items=await _out(db, *where))
 
 
-@router.get("/{case_id}/attachments/{att_id}/download")
+@router.get("/{case_id}/attachments/{att_id}/download", dependencies=[audit_read("attachment.download")])
 async def download_attachment(
     *,
     db: AsyncSession = Depends(deps.get_db),

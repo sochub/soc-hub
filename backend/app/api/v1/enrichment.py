@@ -124,7 +124,7 @@ async def put_config(body: EnrichmentConfigIn, db: AsyncSession = Depends(deps.g
     await db.flush()
     await create_audit_log(db, entity_type="enrichment_config", entity_id=row.id,
                            action="create" if created else "update", tenant_id=tenant_id,
-                           user_id=current_user.id, changes={"fields": fields, "credentials": touched})
+                           user_id=current_user.id, changes={"fields": fields, "credentials_updated": touched})
     await db.commit()
     _log("save", tenant_id, "created" if created else "updated")
     return _out(row, keys)
@@ -140,7 +140,7 @@ async def delete_config(db: AsyncSession = Depends(deps.get_db), current_user: U
     row_id = row.id
     await db.delete(row)
     await create_audit_log(db, entity_type="enrichment_config", entity_id=row_id, action="delete",
-                           tenant_id=tenant_id, user_id=current_user.id, changes={"fields": [], "credentials": []})
+                           tenant_id=tenant_id, user_id=current_user.id, changes={"fields": [], "credentials_updated": []})
     await db.commit()
     _log("delete", tenant_id, "deleted")
     return Response(status_code=204)

@@ -12,6 +12,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.api.v1.auth import _safe_domain
+from app.audit.events import audit_event
 from app.core import security
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
@@ -90,18 +92,22 @@ def _guest_error_redirect(tenant: Optional[Tenant], message: str) -> RedirectRes
     return RedirectResponse(f"{base}/guest/login{retry}#sso_error={quote(message)}", status_code=303)
 
 
-async def _guest_acs(db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
+async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
     """The assertion proves `email`; issue a guest session only if it has an active grant in THIS tenant.
     Never touches users/memberships (no provisioning)."""
     email = email.strip().lower()
     grants = (await db.execute(select(CaseGuest).join(Tenant, Tenant.id == CaseGuest.tenant_id).where(
         CaseGuest.tenant_id == tenant.id, CaseGuest.email == email, *GUEST_ACTIVE()))).scalars().all()
     if not grants or not domain_allowed(tenant, email):
+        dom = _safe_domain(email)
+        await audit_event("security", "guest.login.sso", request=request, outcome="denied", tenant_id=tenant.id,
+                          changes={"email_domain": dom} if dom else None)
         return _guest_error_redirect(tenant, GUEST_SSO_DENIED)
     for g in grants:
         await create_audit_log(db=db, entity_type="case_guest", entity_id=g.id, action="guest_sso_login",
                                tenant_id=tenant.id, changes={"actor": f"guest:{email}"})
     await db.commit()
+    await audit_event("security", "guest.login.sso", request=request, actor=f"guest:{email}", tenant_id=tenant.id)
     token = guest_tokens.issue_session(email, "sso", sso_tenant_id=tenant.id)
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     return RedirectResponse(f"{base}/guest/sso#token={quote(token)}", status_code=303)
@@ -201,6 +207,14 @@ async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str, gues
     return RedirectResponse(auth.login(return_to=GUEST_RELAY) if guest else auth.login(), status_code=303)
 
 
+async def _acs_fail(request: Request, tenant, message: str, code: str, *, guest: bool,
+                    retry_tenant: Optional[Tenant], action: str = "sso.failed") -> RedirectResponse:
+    """Record the failure (fixed reason code, never IdP text) and send the user back to the right login page."""
+    await audit_event("security", action, request=request, outcome="denied",
+                      tenant_id=tenant.id if tenant else None, changes={"reason": code})
+    return _guest_error_redirect(retry_tenant, message) if guest else _error_redirect(message)
+
+
 @saml_router.post("/saml/{slug}/acs")
 async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db), slug: str) -> Any:
     """Assertion Consumer Service: validate the IdP response, sign the user in,
@@ -211,11 +225,12 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     tenant, cfg = await _tenant_and_config(db, slug)
     ready = tenant is not None and _sso_ready(cfg)
 
-    def fail(msg: str) -> RedirectResponse:
-        return _guest_error_redirect(tenant if ready else None, msg) if is_guest else _error_redirect(msg)
+    async def fail(msg: str, code: str, action: str = "sso.failed") -> RedirectResponse:
+        return await _acs_fail(request, tenant, msg, code, guest=is_guest,
+                               retry_tenant=tenant if ready else None, action=action)
 
     if not ready:
-        return fail("SSO is not enabled for this tenant.")
+        return await fail("SSO is not enabled for this tenant.", "not_enabled")
 
     req = saml_service.build_request_dict(
         {k: v for k, v in form.items()}, {}, f"/api/v1/auth/saml/{slug}/acs"
@@ -224,9 +239,9 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     auth.process_response()
     if auth.get_errors() or not auth.is_authenticated():
         reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
-        return fail(f"SSO sign-in failed: {reason}")
+        return await fail(f"SSO sign-in failed: {reason}", "saml_invalid")
     if not await _claim_assertion(tenant.id, auth):
-        return fail(SSO_FAILED)
+        return await fail(SSO_FAILED, "replay", action="sso.replay")
 
     email = (auth.get_nameid() or "").strip()
     attrs = auth.get_attributes() or {}
@@ -238,10 +253,10 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
                 email = vals[0].strip()
                 break
     if "@" not in email:
-        return fail("SSO response did not include an email address.")
+        return await fail("SSO response did not include an email address.", "no_email")
 
     if is_guest:
-        return await _guest_acs(db, tenant, email)
+        return await _guest_acs(request, db, tenant, email)
 
     full_name = ""
     for key in ("displayName", "cn", "name",
@@ -254,11 +269,13 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     try:
         user = await _resolve_sso_user(db, tenant, cfg, email, full_name)
     except HTTPException as exc:
-        return _error_redirect(exc.detail)
+        return await fail(exc.detail, "not_allowed")
 
     await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="sso_login",
                            tenant_id=tenant.id, user_id=user.id)
     await db.commit()
+    await audit_event("security", "sso.success", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=tenant.id)
 
     token = security.issue_access_token(user, tenant.id)
     base = settings.PUBLIC_BASE_URL.rstrip("/")

@@ -13,6 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.api.v1.auth import _safe_domain
+from app.audit.events import audit_event
 from app.api.v1.mfa import LOGIN_EXPIRED, get_mfa_throttle, get_redis, spend_mfa_challenge, verify_totp
 from app.core import security, totp
 from app.core.config import settings
@@ -98,8 +100,29 @@ async def _audit_grants(db, email: str, action: str) -> None:
                                changes={"actor": f"guest:{email}"})
 
 
+async def _login_event(request: Request, amr: str, email: Optional[str] = None, *, tenant_id: Optional[int] = None,
+                       ok: bool = True) -> None:
+    """One `guest.login.<amr>` security event. Success names the guest; failure stores only the email's domain."""
+    if ok:
+        await audit_event("security", f"guest.login.{amr}", request=request, actor=f"guest:{email}",
+                          tenant_id=tenant_id)
+        return
+    dom = _safe_domain(email) if email else None
+    await audit_event("security", f"guest.login.{amr}", request=request, outcome="denied", tenant_id=tenant_id,
+                      changes={"email_domain": dom} if dom else None)
+
+
 @router.post("/link")
-async def link_login(body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
+async def link_login(request: Request, body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
+    known: dict = {}  # grant email / tenant once the link resolves to a grant
+    try:
+        return await _link_login(request, body, db, known)
+    except HTTPException:
+        await _login_event(request, "link", known.get("email"), tenant_id=known.get("tenant_id"), ok=False)
+        raise
+
+
+async def _link_login(request: Request, body: LinkIn, db: AsyncSession, known: dict) -> Any:
     try:
         grant_id = int(tokens.decode(body.token, tokens.LINK)["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
@@ -109,6 +132,7 @@ async def link_login(body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> A
     if row is None or not domain_allowed(row[1], row[0].email):
         raise HTTPException(status_code=401, detail=BAD_LINK)
     grant, tenant = row
+    known.update(email=grant.email, tenant_id=tenant.id)
     if tenant.guest_require_sso:
         raise HTTPException(status_code=403, detail={"code": "sso_required", "slug": tenant.slug})
     if await _account_by_email(db, grant.email):  # a link must not bypass the account's password/MFA
@@ -116,6 +140,7 @@ async def link_login(body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> A
     await create_audit_log(db=db, entity_type="case_guest", entity_id=grant.id, action="guest_link_login",
                            tenant_id=tenant.id, changes={"actor": f"guest:{grant.email}"})
     await db.commit()
+    await _login_event(request, "link", grant.email, tenant_id=tenant.id)
     return _token(tokens.issue_session(grant.email, "link", link_tenant_id=tenant.id))
 
 
@@ -135,7 +160,16 @@ async def register(request: Request, background_tasks: BackgroundTasks, db: Asyn
 
 
 @router.post("/register/confirm")
-async def register_confirm(body: ResetIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
+async def register_confirm(request: Request, body: ResetIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
+    known: dict = {}
+    try:
+        return await _register_confirm(request, body, db, known)
+    except HTTPException:
+        await _login_event(request, "register", known.get("email"), ok=False)
+        raise
+
+
+async def _register_confirm(request: Request, body: ResetIn, db: AsyncSession, known: dict) -> Any:
     bad = HTTPException(status_code=400, detail=BAD_LINK)
     try:
         email = normalize_email(tokens.decode(body.token, tokens.REGISTER)["sub"])
@@ -143,6 +177,7 @@ async def register_confirm(body: ResetIn, db: AsyncSession = Depends(deps.get_db
         raise bad
     if not _EMAIL_RE.match(email):
         raise bad
+    known["email"] = email
     _check_password(body.password)
     if await _account_by_email(db, email):  # the token is spent once the account exists
         raise bad
@@ -156,12 +191,21 @@ async def register_confirm(body: ResetIn, db: AsyncSession = Depends(deps.get_db
     await db.execute(update(CaseGuest).where(CaseGuest.email == email).values(guest_account_id=acct.id))
     await _audit_grants(db, email, "guest_account_created")
     await db.commit()
+    await _login_event(request, "register", email)
     return _token(tokens.issue_session(email, "password", gav=acct.token_version or 0))
 
 
 @router.post("/login")
 async def login(request: Request, body: LoginIn, db: AsyncSession = Depends(deps.get_db),
                 throttle: LoginThrottle = Depends(get_guest_throttle)) -> Any:
+    try:
+        return await _login(request, body, db, throttle)
+    except HTTPException:
+        await _login_event(request, "password", normalize_email(body.email), ok=False)
+        raise
+
+
+async def _login(request: Request, body: LoginIn, db: AsyncSession, throttle: LoginThrottle) -> Any:
     email, ip = normalize_email(body.email), client_ip(request)
     bad = HTTPException(status_code=401, detail=BAD_LOGIN)
     if len(email) > 320 or not _EMAIL_RE.match(email):
@@ -176,16 +220,27 @@ async def login(request: Request, body: LoginIn, db: AsyncSession = Depends(deps
         logger.warning("failed guest login ip=%s", ip)
         raise bad
     await throttle.reset(email, ip)
-    if acct.mfa_enabled_at is not None:
+    if acct.mfa_enabled_at is not None:  # the sign-in completes (and is recorded) at /login/mfa
         return {"mfa_required": True, "mfa_token": tokens.issue_mfa_challenge(acct)}
     await _audit_grants(db, email, "guest_password_login")
     await db.commit()
+    await _login_event(request, "password", email)
     return _token(tokens.issue_session(email, "password", gav=acct.token_version or 0))
 
 
 @router.post("/login/mfa")
 async def login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession = Depends(deps.get_db),
                     redis=Depends(get_redis), throttle: LoginThrottle = Depends(get_mfa_throttle)) -> Any:
+    known: dict = {}
+    try:
+        return await _login_mfa(request, body, db, redis, throttle, known)
+    except HTTPException:
+        await _login_event(request, "mfa", known.get("email"), ok=False)
+        raise
+
+
+async def _login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession, redis, throttle: LoginThrottle,
+                     known: dict) -> Any:
     expired = HTTPException(status_code=401, detail=LOGIN_EXPIRED)
     try:
         p = tokens.decode(body.mfa_token, tokens.MFA)
@@ -194,11 +249,13 @@ async def login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession = Depen
         raise expired
     if acct is None or acct.mfa_enabled_at is None or p.get("tv") != (acct.token_version or 0):
         raise expired
+    known["email"] = acct.email
     await verify_totp(redis, throttle, f"g{acct.id}", acct.mfa_secret_enc, body.code, client_ip(request))
     if not await spend_mfa_challenge(redis, p.get("jti")):
         raise expired
     await _audit_grants(db, acct.email, "guest_mfa_login")
     await db.commit()
+    await _login_event(request, "mfa", acct.email)
     return _token(tokens.issue_session(acct.email, "password", gav=acct.token_version or 0))
 
 

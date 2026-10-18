@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
+from app.audit.events import audit_event
 from app.core import security
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -323,6 +324,8 @@ async def change_password(
                                action="password_changed", tenant_id=audit_tenant,
                                user_id=current_user.id, changes=None)
     await db.commit()
+    await audit_event("security", "password.changed", request=request, user_id=current_user.id,
+                      user_email=current_user.email, tenant_id=active)
     return TokenOnly(access_token=security.issue_access_token(current_user, active))
 
 
