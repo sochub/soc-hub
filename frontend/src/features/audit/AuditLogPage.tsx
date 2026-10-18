@@ -35,6 +35,7 @@ export default function AuditLogPage() {
     const [platform, setPlatform] = useState(false);
     const [open, setOpen] = useState<number | null>(null);
     const [exportError, setExportError] = useState<string | null>(null);
+    const [exporting, setExporting] = useState(false);
 
     const params = useMemo(() => {
         const p: Record<string, string> = {};
@@ -64,6 +65,7 @@ export default function AuditLogPage() {
 
     const exportCsv = async () => {
         setExportError(null);
+        setExporting(true);
         try {
             const resp = await api.get('/audit-logs/export', { params: { ...params, format: 'csv' }, responseType: 'blob' });
             const name = /filename="([^"]+)"/.exec(resp.headers['content-disposition'] ?? '')?.[1] ?? 'audit.csv';
@@ -73,6 +75,8 @@ export default function AuditLogPage() {
             URL.revokeObjectURL(url);
         } catch {
             setExportError('Could not export the audit log.');
+        } finally {
+            setExporting(false);
         }
     };
 
@@ -124,7 +128,7 @@ export default function AuditLogPage() {
                         <input type="checkbox" checked={platform} onChange={(e) => setPlatform(e.target.checked)} /> Platform events
                     </label>
                 )}
-                <Button size="sm" variant="secondary" onClick={exportCsv}><Download size={13} /> Export CSV</Button>
+                <Button size="sm" variant="secondary" onClick={exportCsv} disabled={exporting}><Download size={13} /> Export CSV</Button>
             </div>
             {exportError && <p role="alert" className="text-sm text-severity-critical">{exportError}</p>}
             {log.isError && <p role="alert" className="text-sm text-severity-critical">Could not load the audit log.</p>}
@@ -140,7 +144,7 @@ export default function AuditLogPage() {
                     </thead>
                     <tbody>
                         {items.map((i) => (
-                            <AuditRow key={i.id} item={i} open={open === i.id} onToggle={() => setOpen(open === i.id ? null : i.id)} />
+                            <AuditRow key={i.id} item={i} platform={platform} open={open === i.id} onToggle={() => setOpen(open === i.id ? null : i.id)} />
                         ))}
                     </tbody>
                 </table>
@@ -153,17 +157,23 @@ export default function AuditLogPage() {
     );
 }
 
-function AuditRow({ item: i, open, onToggle }: { item: AuditItem; open: boolean; onToggle: () => void }) {
+function AuditRow({ item: i, open, platform, onToggle }: { item: AuditItem; open: boolean; platform: boolean; onToggle: () => void }) {
     const related = useQuery({
-        queryKey: ['audit-related', i.request_id],
+        queryKey: ['audit-related', platform, i.request_id],
         enabled: open && !!i.request_id,
-        queryFn: async () => (await api.get('/audit-logs', { params: { request_id: i.request_id } })).data as AuditPage,
+        queryFn: async () => (await api.get('/audit-logs', { params: { request_id: i.request_id, ...(platform ? { scope: 'platform' } : {}) } })).data as AuditPage,
     });
+    const others = related.data?.items.filter((r) => r.id !== i.id) ?? [];
     const outcomeVariant = i.outcome === 'denied' || i.outcome === 'error' ? 'critical' : 'default';
     return (
         <>
             <tr className="border-b border-line hover:bg-raised cursor-pointer" onClick={onToggle}>
-                <td className="pl-2 text-fg-3">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</td>
+                <td className="pl-2 text-fg-3">
+                    <button type="button" aria-expanded={open} aria-label="Show details"
+                        onClick={(e) => { e.stopPropagation(); onToggle(); }}>
+                        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </button>
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap" title={i.created_at}>{new Date(i.created_at).toLocaleString()}</td>
                 <td className="px-3 py-2">
                     {i.user || i.user_email ? actorLabel(i)
@@ -191,11 +201,11 @@ function AuditRow({ item: i, open, onToggle }: { item: AuditItem; open: boolean;
                         </div>
                         {i.user_agent && <div className="text-fg-3 break-all">{i.user_agent}</div>}
                         {i.changes && <pre className="bg-raised border border-line rounded p-2 overflow-x-auto text-fg-2">{JSON.stringify(i.changes, null, 2)}</pre>}
-                        {related.data && related.data.items.filter((r) => r.id !== i.id).length > 0 && (
+                        {others.length > 0 && (
                             <div>
                                 <div className="text-fg-3 mb-1">Related in the same request</div>
                                 <ul className="space-y-1">
-                                    {related.data.items.filter((r) => r.id !== i.id).map((r) => (
+                                    {others.map((r) => (
                                         <li key={r.id} className="font-mono text-fg-2">{r.category} · {r.action}</li>
                                     ))}
                                 </ul>
