@@ -4,7 +4,7 @@ import asyncio
 import secrets
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 
 from app.core import login_throttle, security
 from app.core.security import get_password_hash
@@ -66,6 +66,7 @@ async def _setup() -> World:
             "admin_b": security.issue_access_token(users["admin_b"], tb.id),
             "root": security.issue_access_token(users["root"], ta.id),
         }
+    w.ua = f"audit-test-{w.h}"  # every request this run sends carries it (see client())
     w.first_id = await _max_id()
     return w
 
@@ -81,9 +82,12 @@ def hdr(w: World, who: str) -> dict:
 
 
 async def rows(w: World, **where) -> list:
-    """Audit rows created since setup, filtered by column equality."""
+    """Audit rows created since setup by THIS run, filtered by column equality. A row is ours when it sits in
+    one of our throwaway tenants (incl. handler `change` rows, which carry no user agent) or carries our
+    run's user agent, so a concurrent dev-server request (real tenant or NULL tenant) can't mask a gap."""
     async with AsyncSessionLocal() as db:
-        q = select(AuditLog).where(AuditLog.id > w.first_id)
+        q = select(AuditLog).where(AuditLog.id > w.first_id,
+                                   or_(AuditLog.user_agent == w.ua, AuditLog.tenant_id.in_([w.ta, w.tb])))
         for k, v in where.items():
             q = q.where(getattr(AuditLog, k) == v)
         return list((await db.execute(q.order_by(AuditLog.id))).scalars().all())
@@ -92,6 +96,8 @@ async def rows(w: World, **where) -> list:
 async def _cleanup(w: World) -> None:
     async with AsyncSessionLocal() as db:
         uids = list(w.users.values())
+        # Anything this run's requests produced, whatever its tenant/user (e.g. unauthenticated http.denied).
+        await db.execute(delete(AuditLog).where(AuditLog.id > w.first_id, AuditLog.user_agent == w.ua))
         # Platform-level rows (tenant NULL) this test produced: delete only those from our users or our run.
         await db.execute(delete(AuditLog).where(AuditLog.id > w.first_id, AuditLog.tenant_id.is_(None),
                                                 AuditLog.user_id.in_(uids)))
@@ -114,8 +120,9 @@ async def _cleanup(w: World) -> None:
         await db.commit()
 
 
-def client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+def client(ua: str) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t",
+                             headers={"User-Agent": ua})
 
 
 def run(body) -> None:
@@ -125,7 +132,7 @@ def run(body) -> None:
         app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
         app.dependency_overrides[login_throttle.get_pwd_throttle] = lambda: _FakeThrottle()
         try:
-            async with client() as c:
+            async with client(w.ua) as c:
                 await body(c, w)
         finally:
             app.dependency_overrides.clear()

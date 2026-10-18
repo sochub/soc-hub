@@ -61,7 +61,9 @@ def _walk(routes, prefix=""):
 
 
 def _write_routes():
-    return set(_walk(app.routes))
+    routes = set(_walk(app.routes))
+    assert len(routes) > 50, len(routes)  # a broken walk must not make the coverage test vacuous
+    return routes
 
 
 def test_route_enumeration_matches_openapi():
@@ -79,11 +81,11 @@ def test_exclusion_allowlist_only_names_real_routes():
 
 
 def test_every_write_route_is_audited_unless_excluded():
-    """Hit every non-excluded write route unauthenticated with no body: each must yield an audit row for
-    THAT route template (http.denied for auth-protected routes, write for public ones). A route that yields
+    """Hit every non-excluded write route unauthenticated with no body: each must yield exactly one audit row,
+    for THAT route template (http.denied for auth-protected routes, write for public ones). A route that yields
     nothing means the middleware isn't seeing it."""
     async def body(c, w):
-        missing, unmatched = [], []
+        missing, wrong = [], []
         for key in sorted(_write_routes() - set(AUDIT_EXCLUDED_ROUTES)):
             method, path = key.split(" ", 1)
             url = re.sub(r"\{[^}]+\}", "999999999", path)  # every placeholder -> an id that doesn't exist
@@ -95,8 +97,22 @@ def test_every_write_route_is_audited_unless_excluded():
             new = [r for r in await rows(w) if r.id not in before]
             if not new:
                 missing.append(key)
-            elif not any(r.route == path for r in new):
-                unmatched.append((key, [(r.action, r.route) for r in new]))
+            elif len(new) != 1 or new[0].route != path:
+                wrong.append((key, [(r.category, r.action, r.route) for r in new]))
         assert not missing, missing
-        assert not unmatched, unmatched
+        assert not wrong, wrong
+    run(body)
+
+
+def test_authenticated_write_yields_one_write_row_plus_its_change_rows():
+    async def body(c, w):
+        r = await c.put(f"/api/v1/cases/{w.case}", headers=hdr(w, "admin"), json={"title": "spot-check"})
+        assert r.status_code == 200, r.text
+        new = await rows(w)
+        writes = [x for x in new if x.category == "write"]
+        assert len(writes) == 1 and writes[0].action == "PUT /api/v1/cases/{case_id}", [(x.category, x.action) for x in new]
+        rid = writes[0].request_id
+        changes = [x for x in new if x.category == "change"]
+        assert changes and all(x.request_id == rid for x in changes)
+        assert len(new) == 1 + len(changes), [(x.category, x.action) for x in new]  # no http.denied or anything else
     run(body)
