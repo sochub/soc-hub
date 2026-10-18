@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.api.v1.auth import _safe_domain
 from app.audit.events import audit_event
-from app.core import security
+from app.core import security, session_cookie
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
 from app.guests import tokens as guest_tokens
@@ -277,9 +277,10 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     await audit_event("security", "sso.success", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=tenant.id)
 
-    token = security.issue_access_token(user, tenant.id)
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    return RedirectResponse(f"{base}/login#sso_token={quote(token)}", status_code=303)
+    out = RedirectResponse(f"{base}/login#sso=ok", status_code=303)
+    session_cookie.set_session(out, security.issue_access_token(user, tenant.id))
+    return out
 
 
 def _config_out(slug: str, cfg: Optional[TenantSSOConfig]) -> SSOConfigOut:

@@ -55,8 +55,12 @@
 - `deps.get_effective_tenant_id()` resolves the active tenant from the token and
   validates membership; role checks resolve the role from the active membership.
 - Switching tenants (`POST /auth/switch-tenant`) re-issues the token.
-- SAML SSO posts to `/auth/saml/{slug}/acs`, then redirects to the SPA with the
-  JWT in the URL fragment.
+- Browser sessions: the JWT rides in the `sochub_session` cookie (HttpOnly, SameSite=Strict, Path=/api), so
+  page scripts never see it (`app/core/session_cookie.py`). The SPA sends `X-Requested-With` on every call;
+  cookie-authenticated writes without it get 403, and responses never put the token in the body for the SPA
+  or a cookie caller. API clients keep using `Authorization: Bearer` (the password login returns the token
+  when the request has no `X-Requested-With`).
+- SAML SSO posts to `/auth/saml/{slug}/acs`, which sets the session cookie and redirects to `/login#sso=ok`.
 
 Every data query filters by `tenant_id`; cross-tenant access returns `404`.
 
@@ -66,6 +70,6 @@ Every data query filters by `tenant_id`; cross-tenant access returns `404`.
   tenants, settings, admin, superadmin).
 - `components/layout/Layout.tsx` — app shell (collapsible sidebar, tenant switcher,
   global copilot widget).
-- TanStack Query for server state; axios client in `api/client.ts` attaches the JWT
-  and handles 401 → re-login.
+- TanStack Query for server state; axios client in `api/client.ts` sends `X-Requested-With` (the cookie
+  carries the session) and handles 401 → re-login. localStorage holds only a non-secret `signed_in` hint.
 - Theme: light "Telemetry Console" — see [features.md](features.md).

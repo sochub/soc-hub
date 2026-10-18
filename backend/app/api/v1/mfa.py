@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.audit.events import audit_event
 from app.api.v1.users import _audit_tenant
-from app.core import security, totp
+from app.core import security, session_cookie, totp
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -150,6 +150,7 @@ async def mfa_setup(
 async def mfa_enable(
     *,
     request: Request,
+    response: Response,
     body: EnableBody,
     db: AsyncSession = Depends(deps.get_db),
     caller: tuple = Depends(deps.get_user_for_mfa_setup),
@@ -181,13 +182,14 @@ async def mfa_enable(
     if via_challenge:  # MFA set up during sign-in: this issues the session's first access token
         await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                           tenant_id=active)
-    return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
+    return session_cookie.issue(request, response, security.issue_access_token(user, active))
 
 
 @router.post("/me/mfa/disable", response_model=Token, response_model_exclude_unset=True)
 async def mfa_disable(
     *,
     request: Request,
+    response: Response,
     body: DisableBody,
     db: AsyncSession = Depends(deps.get_db),
     user: User = Depends(deps.get_current_active_user),
@@ -214,7 +216,7 @@ async def mfa_disable(
     await db.commit()
     await audit_event("security", "mfa.disabled", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=active)
-    return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
+    return session_cookie.issue(request, response, security.issue_access_token(user, active))
 
 
 @router.post("/{user_id}/mfa/reset", status_code=204)
