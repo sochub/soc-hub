@@ -4,6 +4,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import app.db.base  # noqa: F401 — register all models
 from app.api.api import api_router
+from app.audit.middleware import AuditMiddleware
 from app.core.config import settings
 
 # Security headers applied to every response. These are cheap, defence-in-depth
@@ -46,6 +47,9 @@ if settings.cors_origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Outermost app middleware: sees the final status of every request. See docs/audit/README.md.
+app.add_middleware(AuditMiddleware)
 
 app.include_router(api_router, prefix="/api/v1")
 
