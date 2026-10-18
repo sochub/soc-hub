@@ -420,3 +420,8 @@ export interface GuestSettings {
   require_sso: boolean;
   sso_ready: boolean;
 }
+
+export interface CaseAsset {
+    id: number; case_id: number; name: string; asset_type: string; ip?: string | null; domain?: string | null;
+    description?: string | null; compromise_status: string; tags: string[]; created_at: string; updated_at?: string | null;
+}

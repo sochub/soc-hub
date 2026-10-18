@@ -12,6 +12,7 @@ import PageContainer from '../../components/layout/PageContainer';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import CaseTasks from './CaseTasks';
 import CaseTimeline from './CaseTimeline';
+import CaseAssets from './CaseAssets';
 import CaseEvidence from './CaseEvidence';
 import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
@@ -39,7 +40,7 @@ const ARTIFACT_ICONS: Record<string, any> = {
 
 const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigation', 'containment', 'remediation', 'other'];
 
-const CASE_TABS = ['activity', 'timeline', 'tasks', 'artifacts', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
+const CASE_TABS = ['activity', 'timeline', 'tasks', 'artifacts', 'assets', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
 type CaseTab = typeof CASE_TABS[number];
 
 export default function CaseDetail() {
@@ -368,6 +369,7 @@ export default function CaseDetail() {
                         >
                             {activeTab === 'activity' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
                             {activeTab === 'timeline' && id && <CaseTimeline caseId={parseInt(id)} />}
+                            {activeTab === 'assets' && id && <CaseAssets caseId={parseInt(id)} />}
                             {activeTab === 'activity' && (
                                 <div className="relative space-y-8 my-4">
                                     {/* Add Event Button */}
