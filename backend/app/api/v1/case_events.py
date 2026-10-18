@@ -1,4 +1,4 @@
-"""Investigation timeline: dated incident events per case (IRIS-style), distinct from the activity log."""
+"""Investigation timeline: dated incident events per case, distinct from the activity log."""
 from typing import Any, List
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException

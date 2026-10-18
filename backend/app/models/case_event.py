@@ -3,10 +3,10 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base_class import Base
 
-# IRIS-style investigation timeline (what happened in the incident, by event_date), as opposed to
+# Investigation timeline (what happened in the incident, by event_date), as opposed to
 # TimelineEvent, which is the analyst activity log (comments/status changes, by created_at).
 
-# Same list IRIS seeds: 3 generic + 12 ATT&CK tactics.
+# Categories: 3 generic + 12 ATT&CK tactics.
 EVENT_CATEGORIES = (
     "unspecified", "legitimate", "remediation",
     "initial_access", "execution", "persistence", "privilege_escalation", "defense_evasion",
