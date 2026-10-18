@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 from app.api import deps
 from app.audit.events import audit_event
 from app.audit.redact import email_domain
-from app.core import security
+from app.core import security, session_cookie
 from app.api.v1.mfa import LOGIN_EXPIRED, get_mfa_throttle, get_redis, spend_mfa_challenge, verify_user_code
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
 from app.models.membership import TenantMembership
@@ -56,6 +56,7 @@ _EMAIL_RE = re.compile(r"^[^@\s|]+@[^@\s|]+$")
 @router.post("/login/access-token", response_model=Token, response_model_exclude_unset=True)
 async def login_access_token(
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(deps.get_db),
     form_data: OAuth2PasswordRequestForm = Depends(),
     throttle: LoginThrottle = Depends(get_login_throttle),
@@ -121,10 +122,7 @@ async def login_access_token(
     active_tenant_id = await _default_active_tenant_id(db, user)
     await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=active_tenant_id)
-    return {
-        "access_token": security.issue_access_token(user, active_tenant_id),
-        "token_type": "bearer",
-    }
+    return session_cookie.issue(request, response, security.issue_access_token(user, active_tenant_id))
 
 
 class MfaLoginBody(BaseModel):
@@ -135,6 +133,7 @@ class MfaLoginBody(BaseModel):
 @router.post("/login/mfa", response_model=Token, response_model_exclude_unset=True)
 async def login_mfa(
     request: Request,
+    response: Response,
     body: MfaLoginBody,
     db: AsyncSession = Depends(deps.get_db),
     redis=Depends(get_redis),
@@ -167,10 +166,7 @@ async def login_mfa(
                       user_email=user.email, tenant_id=tid)
     await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=tid)
-    return {
-        "access_token": security.issue_access_token(user, tid),
-        "token_type": "bearer",
-    }
+    return session_cookie.issue(request, response, security.issue_access_token(user, tid))
 
 
 class SwitchTenantRequest(BaseModel):
@@ -181,6 +177,7 @@ class SwitchTenantRequest(BaseModel):
 async def switch_tenant(
     *,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(deps.get_db),
     body: SwitchTenantRequest,
     current_user: User = Depends(deps.get_current_active_user),
@@ -212,10 +209,7 @@ async def switch_tenant(
     await audit_event("security", "tenant.switch", request=request, user_id=current_user.id,
                       user_email=current_user.email, tenant_id=body.tenant_id,
                       changes={"from_tenant_id": getattr(current_user, "_active_tenant_id", None)})
-    return {
-        "access_token": security.issue_access_token(current_user, body.tenant_id),
-        "token_type": "bearer",
-    }
+    return session_cookie.issue(request, response, security.issue_access_token(current_user, body.tenant_id))
 
 
 @router.post("/logout", status_code=204)
@@ -224,7 +218,9 @@ async def logout(
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Response:
-    """Record the sign-out. JWTs are stateless: the client discards the token."""
+    """Record the sign-out and drop the browser session cookie. JWTs are stateless: API clients discard theirs."""
     await audit_event("security", "logout", request=request, user_id=current_user.id,
                       user_email=current_user.email, tenant_id=tenant_id)
-    return Response(status_code=204)
+    out = Response(status_code=204)
+    session_cookie.clear_session(out)
+    return out

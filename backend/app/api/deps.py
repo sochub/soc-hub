@@ -8,6 +8,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.audit.context import ctx_of
+from app.core import session_cookie
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.membership import TenantMembership
@@ -17,17 +18,21 @@ from app.models.webhook import Webhook, hash_webhook_key
 from app.schemas import user as user_schema
 from app.utils.roles import resolve_active_role
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/access-token")
+# auto_error=False: the browser session arrives as a cookie instead (app.core.session_cookie).
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/access-token", auto_error=False)
 
 
 async def get_current_user(
-    request: Request, db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
+    request: Request, db: AsyncSession = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme)
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = session_cookie.request_token(request, token)
+    if not token:
+        raise credentials_exception
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
@@ -227,7 +232,7 @@ async def default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int
 
 async def get_user_for_mfa_setup(
     request: Request,
-    db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
+    db: AsyncSession = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme)
 ) -> tuple[User, bool]:
     """Caller for MFA setup/enable: a normal access token, OR an MFA challenge
     token for a user who has not enabled MFA yet (forced enrolment at login).
@@ -239,12 +244,15 @@ async def get_user_for_mfa_setup(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    header_token, token = token, session_cookie.request_token(request, token)
+    if not token:
+        raise bad
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except PyJWTError:
         raise bad
     if not payload.get("purpose"):
-        return get_current_active_user(await get_current_user(request=request, db=db, token=token)), False
+        return get_current_active_user(await get_current_user(request=request, db=db, token=header_token)), False
     try:
         payload = decode_mfa_challenge(token)
     except PyJWTError:

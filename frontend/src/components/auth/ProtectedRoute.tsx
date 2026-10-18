@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Outlet, useNavigate } from 'react-router-dom';
-import { onAuthExpired } from '../../api/client';
+import { onAuthExpired, session } from '../../api/client';
 
 export default function ProtectedRoute() {
-    const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
+    const [isAuthenticated, setIsAuthenticated] = useState(() => session.active());
     const navigate = useNavigate();
 
     useEffect(() => {

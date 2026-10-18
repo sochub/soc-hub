@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 
 from app.api.v1 import sso as sso_mod
+from app.core import session_cookie
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
@@ -58,6 +59,12 @@ async def _cleanup(ids):
         await db.execute(delete(Tenant).where(Tenant.id.in_([ids["ta"], ids["tb"]])))
         await db.commit()
 
+
+
+def _signed_in(r) -> bool:
+    """SSO success: session cookie set on the redirect, and no token anywhere in the URL."""
+    loc = r.headers["location"]
+    return loc.endswith("/login#sso=ok") and r.headers.get("set-cookie", "").startswith(f"{session_cookie.COOKIE}=")
 
 def _run(body):
     async def go():
@@ -169,11 +176,11 @@ def test_acs_redirects_with_clear_message(monkeypatch):
                 r = await c.post(url, data={"SAMLResponse": "x"})
                 assert r.status_code == 303
                 loc = r.headers["location"]
-                assert "#sso_error=" in loc and "sso_token" not in loc
+                assert "#sso_error=" in loc and "set-cookie" not in r.headers
                 assert unquote(loc.split("#sso_error=", 1)[1]) == sso_mod.SSO_NOT_ALLOWED
             current["e"] = ids["emails"]["local"]
             r = await c.post(url, data={"SAMLResponse": "x"})
-            assert r.status_code == 303 and "#sso_token=" in r.headers["location"]
+            assert r.status_code == 303 and _signed_in(r)
         async with AsyncSessionLocal() as db:
             failed = (await db.execute(select(AuditLog).where(
                 AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.failed"))).scalars().all()
@@ -244,7 +251,7 @@ class _FixedAuth:
 
 def _sso_error(r):
     loc = r.headers["location"]
-    assert r.status_code == 303 and "#sso_error=" in loc and "sso_token" not in loc, loc
+    assert r.status_code == 303 and "#sso_error=" in loc and "set-cookie" not in r.headers, loc
     return unquote(loc.split("#sso_error=", 1)[1])
 
 
@@ -256,13 +263,13 @@ def test_acs_rejects_replayed_assertion(monkeypatch):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             url = f"/api/v1/auth/saml/{ids['slug']}/acs"
             r = await c.post(url, data={"SAMLResponse": "x"})
-            assert r.status_code == 303 and "#sso_token=" in r.headers["location"]
+            assert r.status_code == 303 and _signed_in(r)
             assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == sso_mod.SSO_FAILED
             cur["aid"] = None  # an assertion without an ID is refused too
             assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == sso_mod.SSO_FAILED
             cur["aid"], cur["na"] = "_fresh-2", int(__import__("time").time()) + 300
             r = await c.post(url, data={"SAMLResponse": "x"})
-            assert "#sso_token=" in r.headers["location"]
+            assert _signed_in(r)
         keys = sso_mod._saml_redis().keys
         assert keys[f"saml_aid:{ids['ta']}:_replay-1"] == 86400  # no NotOnOrAfter -> no library time bound -> max TTL
         assert 655 <= keys[f"saml_aid:{ids['ta']}:_fresh-2"] <= 660  # NotOnOrAfter - now + clock drift (300s) + 60s
