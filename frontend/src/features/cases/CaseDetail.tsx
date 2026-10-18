@@ -2,7 +2,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink } from 'lucide-react';
+import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useState, useEffect, useRef } from 'react';
@@ -18,6 +18,7 @@ import FollowButton from './FollowButton';
 import MentionTextarea from './MentionTextarea';
 import { stripMentions } from './mentionChips';
 import MentionText from './MentionText';
+import GuestsPanel from '../guests/GuestsPanel';
 import type { User } from '../../types';
 import { formatDateTime } from '../../utils/datetime';
 import SLAPanel from './SLAPanel';
@@ -37,7 +38,7 @@ const ARTIFACT_ICONS: Record<string, any> = {
 
 const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigation', 'containment', 'remediation', 'other'];
 
-const CASE_TABS = ['timeline', 'tasks', 'artifacts', 'evidence', 'report', 'network', 'audit', 'automation'] as const;
+const CASE_TABS = ['timeline', 'tasks', 'artifacts', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
 type CaseTab = typeof CASE_TABS[number];
 
 export default function CaseDetail() {
@@ -69,6 +70,7 @@ export default function CaseDetail() {
 
     // Timeline state
     const [showAddEvent, setShowAddEvent] = useState(false);
+    const [shareError, setShareError] = useState<string | null>(null);
     const [newEvent, setNewEvent] = useState({ event_type: 'comment', content: '' });
     const [editingEventId, setEditingEventId] = useState<number | null>(null);
     const [editEventData, setEditEventData] = useState({ event_type: '', content: '' });
@@ -85,6 +87,16 @@ export default function CaseDetail() {
         }
     });
 
+    const shareEvent = useMutation({
+        mutationFn: async ({ eventId, shared }: { eventId: number; shared: boolean }) =>
+            api.put(`/cases/${id}/timeline/${eventId}/share`, { shared }),
+        onSuccess: () => { setShareError(null); queryClient.invalidateQueries({ queryKey: ['case', id] }); },
+        onError: (err: unknown) => {
+            const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+            setShareError(typeof d === 'string' ? d : 'Could not change sharing.');
+        },
+    });
+
     const { data: caseData, isLoading } = useQuery({
         queryKey: ['case', id],
         queryFn: async () => {
@@ -99,6 +111,8 @@ export default function CaseDetail() {
         staleTime: 300_000,
     });
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
+    // Viewers can't list guests (the API returns 403), so they don't get the tab.
+    const canSeeGuests = isAdmin || me?.role === 'analyst';
     // Mirrors the backend rule for editing/deleting timeline entries: admin, or the analyst who wrote it.
     const canModify = (event: { user_id: number | null }) =>
         isAdmin || (!!me && me.role === 'analyst' && event.user_id === me.id);
@@ -228,7 +242,7 @@ export default function CaseDetail() {
         ...event,
         icon: event.event_type === 'artifact_added' ? Database :
             event.event_type === 'status_change' ? Shield :
-                event.event_type === 'comment' ? MessageSquare : Calendar
+                (event.event_type === 'comment' || event.event_type === 'guest_comment') ? MessageSquare : Calendar
     })) || [];
 
     const startEditing = (event: any) => {
@@ -298,7 +312,7 @@ export default function CaseDetail() {
                 {/* Tabs (sticky while the page scrolls inside <main>) */}
                 <div className="sticky top-0 z-10 bg-panel px-6 pt-3">
                     <div className="flex border-b border-line relative space-x-6">
-                        {CASE_TABS.map((tab) => (
+                        {CASE_TABS.filter((tab) => tab !== 'guests' || canSeeGuests).map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => selectTab(tab)}
@@ -338,6 +352,7 @@ export default function CaseDetail() {
                             exit={{ opacity: 0, y: -10 }}
                             transition={{ duration: 0.2 }}
                         >
+                            {activeTab === 'timeline' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
                             {activeTab === 'timeline' && (
                                 <div className="relative space-y-8 my-4">
                                     {/* Add Event Button */}
@@ -431,6 +446,20 @@ export default function CaseDetail() {
                                                         <span className="text-[10px] font-mono text-muted bg-raised px-1.5 py-0.5 rounded-sm">
                                                             {event.event_type?.replace('_', ' ')}
                                                         </span>
+                                                        {event.guest_email && (
+                                                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300"
+                                                                title="Written by an external guest — treat attachments as untrusted">Guest · {event.guest_email}</span>
+                                                        )}
+                                                        {event.event_type !== 'guest_invited' && (isAdmin || me?.role === 'analyst') && (
+                                                            <button type="button" onClick={() => shareEvent.mutate({ eventId: event.id, shared: !event.shared_with_guests })}
+                                                                aria-pressed={!!event.shared_with_guests}
+                                                                aria-label={event.shared_with_guests ? 'Stop sharing with guests' : 'Share with guests'}
+                                                                title={event.shared_with_guests ? 'Shared with guests — click to stop sharing' : 'Share with guests'}
+                                                                className={event.shared_with_guests ? 'text-accent' : 'text-muted hover:text-fg-2'}>
+                                                                {event.shared_with_guests ? <Eye size={13} /> : <EyeOff size={13} />}
+                                                            </button>
+                                                        )}
+                                                        {event.shared_with_guests && <span className="text-[10px] font-medium text-accent">Shared</span>}
                                                         {event.user && (
                                                             <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-muted">
                                                                 <Avatar userId={event.user.id} name={event.user.full_name || event.user.email}
@@ -530,6 +559,7 @@ export default function CaseDetail() {
                             )}
 
                             {activeTab === 'evidence' && id && <CaseEvidence caseId={parseInt(id)} />}
+                            {activeTab === 'guests' && id && canSeeGuests && <GuestsPanel caseId={parseInt(id)} guestSummary={caseData?.guest_summary} isAdmin={isAdmin} />}
 
                             {activeTab === 'report' && id && <CaseReport key={id} caseId={parseInt(id)} onDirtyChange={setReportDirty} />}
 

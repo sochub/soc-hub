@@ -1,6 +1,6 @@
 from typing import Optional, List, Any
 from datetime import datetime
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from app.services.avatars import avatar_version
 from app.models.case import CaseStatus, CaseSeverity
 
@@ -68,6 +68,9 @@ class TimelineEvent(TimelineEventBase):
     user_id: Optional[int] = None
     created_at: datetime
     user: Optional[TimelineEventUser] = None
+    shared_with_guests: bool = False
+    guest_id: Optional[int] = None
+    guest_email: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -93,6 +96,11 @@ class CaseLink(CaseLinkBase):
 # I'll Reference Artifact Schema from artifact.py in the response model if needed, but for now skipping explicit artifact list in Case detail unless requested.
 
 # Cases
+def _tags_or_empty(v):
+    """A NULL tags column (legacy rows, writers that pass None) must not 500 the whole case list."""
+    return [] if v is None else v
+
+
 class CaseBase(BaseModel):
     title: str
     description: Optional[str] = None
@@ -101,6 +109,8 @@ class CaseBase(BaseModel):
     owner_id: Optional[int] = None
     tags: List[str] = []
     source: str = "user-reported"
+
+    _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
 
 class CaseCreate(CaseBase):
     pass
@@ -113,6 +123,9 @@ class CaseUpdate(BaseModel):
     owner_id: Optional[int] = None
     tags: Optional[List[str]] = None
     source: Optional[str] = None
+    guest_summary: Optional[str] = Field(None, max_length=4000)
+
+    _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
 
 class Case(CaseBase):
     id: int
@@ -121,6 +134,7 @@ class Case(CaseBase):
     resolved_at: Optional[datetime] = None
     acknowledged_at: Optional[datetime] = None
     timeline_events: List[TimelineEvent] = []
+    guest_summary: Optional[str] = None
 
     # Computed, not stored — attached to the ORM object by the endpoint via
     # app.utils.sla.compute_sla_state before serialization.

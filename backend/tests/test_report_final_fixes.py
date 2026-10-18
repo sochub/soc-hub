@@ -198,6 +198,7 @@ async def _scenario():
             assert "hxxp://intranet[.]example/x" in html and "S3cret" not in html
 
         app.dependency_overrides[deps.get_current_active_user] = lambda: u
+        app.dependency_overrides[deps.require_analyst_or_above] = lambda: u
         app.dependency_overrides[deps.get_effective_tenant_id] = lambda: t.id
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
             r = await client.post("/api/v1/iocs/", json={"ioc_type": "ip_address", "value": "10.2.2.2",

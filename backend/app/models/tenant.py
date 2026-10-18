@@ -14,3 +14,5 @@ class Tenant(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     workflow_http_allowlist = Column(JSON, nullable=False, default=list, server_default="[]")
     require_mfa = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    guest_domain_allowlist = Column(JSON, nullable=False, default=list, server_default="[]")
+    guest_require_sso = Column(Boolean, nullable=False, default=False, server_default=sa_false())

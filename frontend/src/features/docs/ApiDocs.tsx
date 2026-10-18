@@ -1,6 +1,8 @@
 import { ApiReferenceReact } from '@scalar/api-reference-react';
 import '@scalar/api-reference-react/style.css';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { api } from '../../api/client';
 import PageContainer from '../../components/layout/PageContainer';
 
 const ingestUrl = `${window.location.origin}/api/v1/alerts/webhook`;
@@ -10,6 +12,8 @@ const curlSample = `curl -X POST ${ingestUrl} \\
   -d '{"external_id":"siem-123","title":"Suspicious login","payload":{"ip":"1.2.3.4"}}'`;
 
 export default function ApiDocs() {
+    // The schema needs a signed-in session, so fetch it through the API client rather than letting Scalar load the URL.
+    const schema = useQuery({ queryKey: ['openapi'], queryFn: () => api.get('/openapi.json').then(r => r.data), staleTime: Infinity });
     return (
         <PageContainer>
             <div>
@@ -45,7 +49,9 @@ export default function ApiDocs() {
             </div>
 
             <div className="glass-panel rounded-xl border border-line overflow-hidden">
-                <ApiReferenceReact configuration={{ url: '/api/v1/openapi.json', theme: 'purple', forceDarkModeState: 'dark', hideDarkModeToggle: true }} />
+                {schema.data
+                    ? <ApiReferenceReact configuration={{ content: schema.data, theme: 'purple', forceDarkModeState: 'dark', hideDarkModeToggle: true }} />
+                    : <p className="p-5 text-sm text-fg-3">{schema.isError ? 'Could not load the API reference.' : 'Loading API reference…'}</p>}
             </div>
         </PageContainer>
     );

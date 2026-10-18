@@ -9,10 +9,13 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import RequireRole from './components/auth/RequireRole';
 import Login from './features/auth/Login';
 import AcceptInvitation from './features/auth/AcceptInvitation';
+import { GuestForgotPage, GuestLinkPage, GuestLoginPage, GuestRegisterPage, GuestResetPage, GuestSsoPage } from './features/guest-portal/GuestAuthPages';
+import { GuestCasePage, GuestHomePage } from './features/guest-portal/GuestCasePages';
 import SettingsHub from './features/settings/SettingsHub';
 
 // Route-level code splitting: heavy pages (charts, React Flow, Scalar) load on first visit.
 const Dashboard = lazy(() => import('./features/cases/Dashboard'));
+const AuditLogPage = lazy(() => import('./features/audit/AuditLogPage'));
 const MyQueue = lazy(() => import('./features/queue/MyQueue'));
 const CasesList = lazy(() => import('./features/cases/CasesList'));
 const CaseDetail = lazy(() => import('./features/cases/CaseDetail'));
@@ -58,6 +61,16 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/invite/:token" element={<AcceptInvitation />} />
+            <Route path="/guest/link" element={<GuestLinkPage />} />
+            <Route path="/guest/link/:token" element={<GuestLinkPage />} />
+            <Route path="/guest/login" element={<GuestLoginPage />} />
+            <Route path="/guest/sso" element={<GuestSsoPage />} />
+            <Route path="/guest/forgot" element={<GuestForgotPage />} />
+            <Route path="/guest/reset" element={<GuestResetPage />} />
+            <Route path="/guest/reset/:token" element={<GuestResetPage />} />
+            <Route path="/guest/register" element={<GuestRegisterPage />} />
+            <Route path="/guest" element={<GuestHomePage />} />
+            <Route path="/guest/cases/:id" element={<GuestCasePage />} />
             <Route element={<ProtectedRoute />}>
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
@@ -84,6 +97,7 @@ function App() {
                   <Route path="integrations" element={<Integrations />} />
                   <Route element={<RequireRole roles={['admin', 'super_admin']} />}>
                     <Route path="users" element={<UserManagement />} />
+                    <Route path="audit" element={<AuditLogPage />} />
                   </Route>
                   <Route element={<RequireRole roles={['super_admin']} />}>
                     <Route path="tenants" element={<TenantManagement />} />

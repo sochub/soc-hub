@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.audit.context import audit_read
 from app.api import deps
 from app.models.case import Case, TimelineEvent
 from app.models.user import User
@@ -80,7 +81,7 @@ async def create_case(
     *,
     db: AsyncSession = Depends(deps.get_db),
     case_in: case_schema.CaseCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create new case."""
@@ -150,7 +151,7 @@ async def delete_follow(
     return Response(status_code=204)
 
 
-@router.get("/{case_id}", response_model=case_schema.Case)
+@router.get("/{case_id}", response_model=case_schema.Case, dependencies=[audit_read("case.view")])
 async def read_case(
     *,
     db: AsyncSession = Depends(deps.get_db),
@@ -176,7 +177,7 @@ async def update_case(
     db: AsyncSession = Depends(deps.get_db),
     case_id: int,
     case_in: case_schema.CaseUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update a case (tenant-scoped)."""
@@ -187,8 +188,15 @@ async def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
+    update_data = case_in.model_dump(exclude_unset=True)
+    if "guest_summary" in update_data:
+        role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
+                                   current_user.memberships)
+        if role not in ("super_admin", "admin", "analyst"):
+            raise HTTPException(status_code=403, detail="Only analysts can edit the guest summary")
+
     changes = await apply_case_update(
-        db, case=case, update_data=case_in.model_dump(exclude_unset=True), user_id=current_user.id,
+        db, case=case, update_data=update_data, user_id=current_user.id,
     )
 
     await db.commit()
@@ -216,7 +224,7 @@ async def create_timeline_event(
     db: AsyncSession = Depends(deps.get_db),
     case_id: int,
     event_in: case_schema.TimelineEventCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Add a timeline event to a case."""
@@ -250,7 +258,7 @@ async def update_timeline_event(
     case_id: int,
     event_id: int,
     event_in: case_schema.TimelineEventUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update a timeline event."""
@@ -296,7 +304,7 @@ async def delete_timeline_event(
     db: AsyncSession = Depends(deps.get_db),
     case_id: int,
     event_id: int,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Delete a timeline event."""

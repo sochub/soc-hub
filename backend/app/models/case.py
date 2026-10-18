@@ -37,6 +37,7 @@ class Case(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
     playbook_template_id = Column(Integer, ForeignKey("playbook_templates.id", ondelete="SET NULL"), nullable=True)
+    guest_summary = Column(Text, nullable=True)  # analyst-written; the only description guests see
     owner = relationship("User")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -85,6 +86,13 @@ class TimelineEvent(Base):
     event_type = Column(String)  # comment, status_change, artifact_added, etc.
     content = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    shared_with_guests = Column(Boolean, nullable=False, default=False, server_default="false")
+    guest_id = Column(Integer, ForeignKey("case_guests.id", ondelete="SET NULL"), nullable=True)
+    guest = relationship("CaseGuest", lazy="joined")
+
+    @property
+    def guest_email(self):
+        return self.guest.email if self.guest is not None else None
 
     case = relationship("Case", back_populates="timeline_events")
     user = relationship("User")

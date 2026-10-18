@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.context import audit_read
 from app.api import deps
 from app.api.v1.workflows import _get_workflow, _secret_names, save_workflow
 from app.models.tenant import Tenant
@@ -110,7 +111,7 @@ async def _insert(db: AsyncSession, tenant_id: int, user_id: int, name: str, val
     return row
 
 
-@router.get("/", response_model=List[SecretOut])
+@router.get("/", response_model=List[SecretOut], dependencies=[audit_read("secret.list")])
 async def list_secrets(db: AsyncSession = Depends(deps.get_db), current_user: User = Depends(deps.require_admin),
                        tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     rows = (await db.execute(select(TenantSecret).where(TenantSecret.tenant_id == tenant_id)
@@ -120,7 +121,7 @@ async def list_secrets(db: AsyncSession = Depends(deps.get_db), current_user: Us
     return [_out(r, emails, await _in_use_by(db, tenant_id, r.name)) for r in rows]
 
 
-@router.get("/names", response_model=List[SecretNameOut])
+@router.get("/names", response_model=List[SecretNameOut], dependencies=[audit_read("secret.names")])
 async def secret_names(db: AsyncSession = Depends(deps.get_db),
                        current_user: User = Depends(deps.require_analyst_or_above),
                        tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
@@ -208,7 +209,7 @@ async def _allowlist(db: AsyncSession, tenant_id: int) -> List[str]:
     return (tenant.workflow_http_allowlist if tenant else None) or []
 
 
-@router.get("/scan")
+@router.get("/scan", dependencies=[audit_read("secret.scan")])
 async def scan_workflows(db: AsyncSession = Depends(deps.get_db), current_user: User = Depends(deps.require_admin),
                          tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     allow = await _allowlist(db, tenant_id)
