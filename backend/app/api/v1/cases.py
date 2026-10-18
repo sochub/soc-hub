@@ -188,8 +188,15 @@ async def update_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
+    update_data = case_in.model_dump(exclude_unset=True)
+    if "guest_summary" in update_data:
+        role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
+                                   current_user.memberships)
+        if role not in ("super_admin", "admin", "analyst"):
+            raise HTTPException(status_code=403, detail="Only analysts can edit the guest summary")
+
     changes = await apply_case_update(
-        db, case=case, update_data=case_in.model_dump(exclude_unset=True), user_id=current_user.id,
+        db, case=case, update_data=update_data, user_id=current_user.id,
     )
 
     await db.commit()

@@ -17,6 +17,7 @@ class AttachmentOut(BaseModel):
     description: Optional[str] = None
     uploaded_by: Optional[int] = None
     uploaded_by_email: Optional[str] = None
+    uploaded_by_guest_email: Optional[str] = None
     created_at: datetime
     deleted_at: Optional[datetime] = None
     deleted_by: Optional[int] = None

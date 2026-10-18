@@ -1,13 +1,13 @@
 """platform audit log: categories, request metadata, nullable tenant/entity, FK delete rules
 
 Revision ID: e7a1b2c3d4f5
-Revises: a7c1d2e3f4b5
+Revises: c3d4e5f6a7b8
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "e7a1b2c3d4f5"
-down_revision = "a7c1d2e3f4b5"
+down_revision = "c3d4e5f6a7b8"
 branch_labels = None
 depends_on = None
 

@@ -2,6 +2,7 @@
 belong to that tenant alone; auto-provision only creates NEW users."""
 import asyncio
 import secrets
+import uuid
 from urllib.parse import unquote
 
 import httpx
@@ -135,6 +136,7 @@ def test_acs_redirects_with_clear_message(monkeypatch):
     class FakeAuth:
         def __init__(self, email):
             self.email = email
+            self.aid = f"_{uuid.uuid4().hex}"
 
         def process_response(self):
             pass
@@ -150,6 +152,12 @@ def test_acs_redirects_with_clear_message(monkeypatch):
 
         def get_attributes(self):
             return {}
+
+        def get_last_assertion_id(self):
+            return self.aid
+
+        def get_last_assertion_not_on_or_after(self):
+            return None
 
     async def body(ids):
         current = {}
@@ -204,4 +212,95 @@ def test_saml_invalid_stores_fixed_code_not_idp_text(monkeypatch):
         failed = [r for r in rows if r.action == "sso.failed"]
         assert len(failed) == 1 and failed[0].changes == {"reason": "saml_invalid"}
         assert "leak.example" not in repr([vars(r) for r in rows])
+    _run(body)
+
+
+class _FixedAuth:
+    """An assertion with a chosen ID / NotOnOrAfter, for replay checks."""
+    def __init__(self, email, aid, not_after=None):
+        self.email, self.aid, self.not_after = email, aid, not_after
+
+    def process_response(self):
+        pass
+
+    def get_errors(self):
+        return []
+
+    def is_authenticated(self):
+        return True
+
+    def get_nameid(self):
+        return self.email
+
+    def get_attributes(self):
+        return {}
+
+    def get_last_assertion_id(self):
+        return self.aid
+
+    def get_last_assertion_not_on_or_after(self):
+        return self.not_after
+
+
+def _sso_error(r):
+    loc = r.headers["location"]
+    assert r.status_code == 303 and "#sso_error=" in loc and "sso_token" not in loc, loc
+    return unquote(loc.split("#sso_error=", 1)[1])
+
+
+def test_acs_rejects_replayed_assertion(monkeypatch):
+    async def body(ids):
+        cur = {"aid": "_replay-1", "na": None}
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth",
+                            lambda slug, cfg, req: _FixedAuth(ids["emails"]["local"], cur["aid"], cur["na"]))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            url = f"/api/v1/auth/saml/{ids['slug']}/acs"
+            r = await c.post(url, data={"SAMLResponse": "x"})
+            assert r.status_code == 303 and "#sso_token=" in r.headers["location"]
+            assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == sso_mod.SSO_FAILED
+            cur["aid"] = None  # an assertion without an ID is refused too
+            assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == sso_mod.SSO_FAILED
+            cur["aid"], cur["na"] = "_fresh-2", int(__import__("time").time()) + 300
+            r = await c.post(url, data={"SAMLResponse": "x"})
+            assert "#sso_token=" in r.headers["location"]
+        keys = sso_mod._saml_redis().keys
+        assert keys[f"saml_aid:{ids['ta']}:_replay-1"] == 86400  # no NotOnOrAfter -> no library time bound -> max TTL
+        assert 655 <= keys[f"saml_aid:{ids['ta']}:_fresh-2"] <= 660  # NotOnOrAfter - now + clock drift (300s) + 60s
+    _run(body)
+
+
+def test_assertion_ttl_clamped():
+    import time
+
+    class _R:
+        async def set(self, k, v, nx=False, ex=None):
+            self.ex = ex
+            return True
+
+    async def go():
+        r = _R()
+        orig = sso_mod._saml_redis
+        sso_mod._saml_redis = lambda: r
+        try:
+            assert await sso_mod._claim_assertion(1, _FixedAuth("a@b", "_a", int(time.time()) - 3600))
+            assert r.ex == 360
+            assert await sso_mod._claim_assertion(1, _FixedAuth("a@b", "_b", int(time.time()) + 10 * 86400))
+            assert r.ex == 86400
+        finally:
+            sso_mod._saml_redis = orig
+    asyncio.run(go())
+
+
+def test_acs_fails_closed_without_redis(monkeypatch):
+    class _Down:
+        async def set(self, *a, **k):
+            raise ConnectionError("redis down")
+
+    async def body(ids):
+        monkeypatch.setattr(sso_mod, "_saml_redis", lambda: _Down())
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth",
+                            lambda slug, cfg, req: _FixedAuth(ids["emails"]["local"], "_down-1"))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.post(f"/api/v1/auth/saml/{ids['slug']}/acs", data={"SAMLResponse": "x"})
+            assert _sso_error(r) == sso_mod.SSO_FAILED
     _run(body)

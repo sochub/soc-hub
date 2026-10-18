@@ -64,23 +64,27 @@ def get_redis():
     return get_login_throttle().redis
 
 
-async def verify_user_code(db: AsyncSession, redis, throttle: LoginThrottle, user: User,
-                           code: str, ip: str) -> None:
-    """Check a TOTP code for `user` (throttled, replay-protected). Raises HTTPException."""
-    key = str(user.id)  # the throttle namespaces it (mfa:attempts:...)
+async def verify_totp(redis, throttle: LoginThrottle, key: str, secret_enc: str, code: str, ip: str) -> None:
+    """Check a TOTP code for a subject `key` (throttled, replay-protected). Raises HTTPException."""
     retry_after = await throttle.reserve(key, ip)
     if retry_after:
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
                             headers={"Retry-After": str(retry_after)})
     try:
-        secret = decrypt(user.mfa_secret_enc or "")
+        secret = decrypt(secret_enc or "")
     except (InvalidToken, ValueError, TypeError):
-        logger.warning("mfa secret undecryptable user_id=%s", user.id)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- logs user id only
+        logger.warning("mfa secret undecryptable subject=%s", key)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- logs subject id only
         raise HTTPException(status_code=409, detail="MFA unavailable — contact your admin")
     step = totp.matching_step(secret, code)
-    if step is None or not await totp.consume_step(redis, user.id, step):
+    if step is None or not await totp.consume_step(redis, key, step):
         raise HTTPException(status_code=400, detail=INVALID_CODE)
     await throttle.reset(key, ip)
+
+
+async def verify_user_code(db: AsyncSession, redis, throttle: LoginThrottle, user: User,
+                           code: str, ip: str) -> None:
+    """Check a TOTP code for `user` (throttled, replay-protected). Raises HTTPException."""
+    await verify_totp(redis, throttle, str(user.id), user.mfa_secret_enc, code, ip)
 
 
 class EnableBody(BaseModel):
