@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.audit.context import audit_read
 from app.api import deps
-from app.models.case import Case, TimelineEvent
+from app.models.case import Case, CaseStatus, TimelineEvent
 from app.models.user import User
 from app.schemas import case as case_schema
 from app.services.case_service import (
@@ -189,6 +189,9 @@ async def update_case(
         raise HTTPException(status_code=404, detail="Case not found")
 
     update_data = case_in.model_dump(exclude_unset=True)
+    # ponytail: analysts must record an outcome to close; Slack/workflow/copilot paths can't supply one, so only here.
+    if update_data.get("status") == CaseStatus.CLOSED and update_data.get("outcome", case.outcome) is None:
+        raise HTTPException(status_code=422, detail="outcome is required to close a case")
     if "guest_summary" in update_data:
         role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
                                    current_user.memberships)

@@ -13,6 +13,8 @@ class CaseStatus(str, enum.Enum):
     RESOLVED = "resolved"
     CLOSED = "closed"
 
+CASE_OUTCOMES = ("unknown", "false_positive", "true_positive_with_impact", "true_positive_without_impact", "legitimate")
+
 class CaseSeverity(str, enum.Enum):
     CRITICAL = "critical"
     HIGH = "high"
@@ -37,6 +39,8 @@ class Case(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
     playbook_template_id = Column(Integer, ForeignKey("playbook_templates.id", ondelete="SET NULL"), nullable=True)
+    outcome = Column(String, nullable=True)
+    closing_note = Column(Text, nullable=True)
     guest_summary = Column(Text, nullable=True)  # analyst-written; the only description guests see
     owner = relationship("User")
 
@@ -70,6 +74,8 @@ class Alert(Base):
     payload = Column(JSON)  # Raw alert data
     status = Column(String, default="pending")  # pending, promoted, dismissed
     dismiss_reason = Column(Text, nullable=True)
+    severity = Column(String, nullable=False, default="medium", server_default="medium", index=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)

@@ -1,8 +1,8 @@
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.services.avatars import avatar_version
-from app.models.case import CaseStatus, CaseSeverity
+from app.models.case import CaseStatus, CaseSeverity, CASE_OUTCOMES
 
 
 class TimelineEventUser(BaseModel):
@@ -25,12 +25,22 @@ class TimelineEventUser(BaseModel):
         from_attributes = True
 
 # Alerts
+ALERT_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+def _check_alert_severity(v):
+    if v is not None and v not in ALERT_SEVERITIES:
+        raise ValueError(f"severity must be one of {', '.join(ALERT_SEVERITIES)}")
+    return v
+
+
 class AlertBase(BaseModel):
     source: str
     external_id: str
     title: str
     payload: Any
     status: str = "pending"
+    severity: str = "medium"
 
 class AlertCreate(AlertBase):
     pass
@@ -39,9 +49,24 @@ class AlertWebhookCreate(BaseModel):
     external_id: str
     title: str
     payload: Any = None
+    severity: Optional[str] = None
+
+    _sev = field_validator("severity")(_check_alert_severity)
+
+class AlertUpdate(BaseModel):
+    severity: Optional[str] = None
+    owner_id: Optional[int] = None
+
+    _sev = field_validator("severity")(_check_alert_severity)
+
+class AlertBulk(BaseModel):
+    ids: List[int] = Field(..., min_length=1, max_length=500)
+    action: Literal["dismiss", "promote"]
+    case_id: Optional[int] = None
 
 class Alert(AlertBase):
     id: int
+    owner_id: Optional[int] = None
     case_id: Optional[int] = None
     dismiss_reason: Optional[str] = None
     created_at: datetime
@@ -124,8 +149,17 @@ class CaseUpdate(BaseModel):
     tags: Optional[List[str]] = None
     source: Optional[str] = None
     guest_summary: Optional[str] = Field(None, max_length=4000)
+    outcome: Optional[str] = None
+    closing_note: Optional[str] = Field(None, max_length=8000)
 
     _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
+
+    @field_validator("outcome")
+    @classmethod
+    def _outcome(cls, v):
+        if v is not None and v not in CASE_OUTCOMES:
+            raise ValueError(f"outcome must be one of {', '.join(CASE_OUTCOMES)}")
+        return v
 
 class Case(CaseBase):
     id: int
@@ -135,6 +169,8 @@ class Case(CaseBase):
     acknowledged_at: Optional[datetime] = None
     timeline_events: List[TimelineEvent] = []
     guest_summary: Optional[str] = None
+    outcome: Optional[str] = None
+    closing_note: Optional[str] = None
 
     # Computed, not stored — attached to the ORM object by the endpoint via
     # app.utils.sla.compute_sla_state before serialization.
