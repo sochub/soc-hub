@@ -70,6 +70,8 @@ class Alert(Base):
     payload = Column(JSON)  # Raw alert data
     status = Column(String, default="pending")  # pending, promoted, dismissed
     dismiss_reason = Column(Text, nullable=True)
+    severity = Column(String, nullable=False, default="medium", server_default="medium", index=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
