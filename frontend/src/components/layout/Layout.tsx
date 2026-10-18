@@ -56,8 +56,11 @@ export default function Layout() {
     });
 
     const handleLogout = () => {
-        localStorage.removeItem('token');
-        navigate('/login', { replace: true });
+        // Record the sign-out (best effort, never blocks): POST /auth/logout, 2s timeout.
+        api.post('/auth/logout', null, { timeout: 2000 }).catch(() => undefined).finally(() => {
+            localStorage.removeItem('token');
+            navigate('/login', { replace: true });
+        });
     };
 
     const displayName = currentUser?.full_name || currentUser?.email || 'User';

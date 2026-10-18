@@ -365,3 +365,14 @@ export interface AppNotification {
   read_at: string | null;
   created_at: string;
 }
+
+export interface AuditUser { id: number; email: string; full_name?: string | null }
+export interface AuditItem {
+    id: number; created_at: string; category: 'change' | 'write' | 'security' | 'read'; action: string;
+    outcome?: 'success' | 'denied' | 'error' | null; status_code?: number | null; method?: string | null;
+    route?: string | null; entity_type?: string | null; entity_id?: number | null; user?: AuditUser | null;
+    user_email?: string | null; actor?: string | null; ip?: string | null; user_agent?: string | null;
+    request_id?: string | null; duration_ms?: number | null; changes?: Record<string, unknown> | null;
+}
+export interface AuditPage { items: AuditItem[]; next_before: number | null }
+export interface AuditFacets { categories: string[]; actions: string[]; users: AuditUser[]; entity_types: string[] }
