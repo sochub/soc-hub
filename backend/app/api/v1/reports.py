@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit.context import audit_read
 from app.ai import llm
 from app.ai.errors import AIError
 from app.api import deps
@@ -80,7 +81,7 @@ def _same(a, b) -> bool:
     return a == b
 
 
-@router.get("/{case_id}/report")
+@router.get("/{case_id}/report", dependencies=[audit_read("report.view")])
 async def get_report(
     *,
     db: AsyncSession = Depends(deps.get_db),
@@ -254,7 +255,7 @@ def _json_bytes(report: dict) -> bytes:
     return json.dumps(out, ensure_ascii=False, indent=2).encode()
 
 
-@router.get("/{case_id}/report/export")
+@router.get("/{case_id}/report/export", dependencies=[audit_read("report.export")])
 async def export_report(
     *,
     db: AsyncSession = Depends(deps.get_db),

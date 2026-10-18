@@ -94,7 +94,7 @@ class PasswordChange(BaseModel):
 
 
 class TokenOnly(BaseModel):
-    access_token: str
+    access_token: Optional[str] = None  # absent for the browser app: its session is an HttpOnly cookie
     token_type: str = "bearer"
 
 

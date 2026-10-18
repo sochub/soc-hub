@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import func
 
+from app.audit.context import audit_read
 from app.api import deps
 from app.core.config import settings
 from app.models.case import Case, TimelineEvent
 from app.models.case_attachment import CaseAttachment
+from app.models.case_guest import CaseGuest
 from app.models.user import User
 from app.schemas.attachment import AttachmentList, AttachmentOut
 from app.services.attachments import CHUNK, EmptyFile, TooLarge, store_upload
@@ -75,13 +77,15 @@ async def _upload_chunks(f: UploadFile):
 async def _out(db: AsyncSession, *where) -> list[AttachmentOut]:
     up, dl = aliased(User), aliased(User)
     res = await db.execute(
-        select(CaseAttachment, up.email, dl.email)
+        select(CaseAttachment, up.email, dl.email, CaseGuest.email)
         .outerjoin(up, up.id == CaseAttachment.uploaded_by)
         .outerjoin(dl, dl.id == CaseAttachment.deleted_by)
+        .outerjoin(CaseGuest, CaseGuest.id == CaseAttachment.uploaded_by_guest_id)
         .where(*where)
         .order_by(CaseAttachment.created_at.desc(), CaseAttachment.id.desc()))
-    return [AttachmentOut.model_validate(a).model_copy(update={"uploaded_by_email": ue, "deleted_by_email": de})
-            for a, ue, de in res.all()]
+    return [AttachmentOut.model_validate(a).model_copy(update={"uploaded_by_email": ue, "deleted_by_email": de,
+                                                               "uploaded_by_guest_email": ge})
+            for a, ue, de, ge in res.all()]
 
 
 @router.post("/{case_id}/attachments", response_model=AttachmentOut, status_code=201)
@@ -134,7 +138,7 @@ async def list_attachments(
     return AttachmentList(max_upload_mb=settings.MAX_UPLOAD_MB, items=await _out(db, *where))
 
 
-@router.get("/{case_id}/attachments/{att_id}/download")
+@router.get("/{case_id}/attachments/{att_id}/download", dependencies=[audit_read("attachment.download")])
 async def download_attachment(
     *,
     db: AsyncSession = Depends(deps.get_db),

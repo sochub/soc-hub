@@ -303,7 +303,15 @@ def test_client_ip_prefers_x_real_ip_and_ignores_xff():
     assert login_throttle.client_ip(req({})) == "172.18.0.5"
 
 
-def test_redis_down_fails_open():
+def test_redis_down_falls_back_to_memory():
+    """With Redis down, logins still work and the in-process counters still enforce the limits."""
+    keys = [f"t-{secrets.token_hex(3)}:{n}" for n in ("email_ip", "email", "ip")]
+    assert login_throttle._local_reserve(keys, [2, 9, 9], 60) is None
+    assert login_throttle._local_reserve(keys, [2, 9, 9], 60) is None
+    assert 0 < login_throttle._local_reserve(keys, [2, 9, 9], 60) <= 60  # third attempt blocked
+    login_throttle._local_refund(keys[2], (keys[0], keys[1]))  # successful login clears the email counters
+    assert login_throttle._local_reserve(keys, [2, 9, 9], 60) is None
+
     async def scenario(c, email):
         assert (await _login(c, email, "wrong-pass")).status_code == 401
         r = await _login(c, email, PASSWORD)

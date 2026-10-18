@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
 import { api } from '../../api/client';
-import { setSessionToken } from '../../api/queryClient';
+import { refreshSession } from '../../api/queryClient';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { btnDanger, btnPrimary, btnSecondary, modalInput, modalLabel } from '../../components/layout/Modal';
 import Avatar from '../../components/Avatar';
@@ -136,9 +136,9 @@ function PasswordCard({ me }: { me: User }) {
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
     const change = useMutation({
-        mutationFn: async () => (await api.post('/users/me/password', { current_password: cur, new_password: next })).data as { access_token: string },
-        onSuccess: (d) => {
-            setSessionToken(d.access_token);
+        mutationFn: async () => api.post('/users/me/password', { current_password: cur, new_password: next }),
+        onSuccess: () => {
+            refreshSession();
             setCur(''); setNext(''); setAgain('');
             setMsg({ ok: true, text: 'Password changed. Other sessions were signed out.' });
         },
@@ -188,8 +188,8 @@ function DisableMfaModal({ open, onClose }: { open: boolean; onClose: () => void
     const [error, setError] = useState<string | null>(null);
 
     const disable = useMutation({
-        mutationFn: async () => (await api.post('/users/me/mfa/disable', { current_password: pw, code })).data as { access_token: string },
-        onSuccess: (d) => { setSessionToken(d.access_token); void qc.invalidateQueries({ queryKey: ['currentUser'] }); onClose(); },
+        mutationFn: async () => api.post('/users/me/mfa/disable', { current_password: pw, code }),
+        onSuccess: () => { refreshSession(); void qc.invalidateQueries({ queryKey: ['currentUser'] }); onClose(); },
         onError: (e) => setError(mfaErrorMessage(e)),
     });
 

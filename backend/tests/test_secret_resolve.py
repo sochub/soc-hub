@@ -68,6 +68,7 @@ def test_header_query_path_body_and_last_used():
         assert bd == {"a": [f"t={TOK_V}", 1], "b": {"c": TOK_V}}
         assert used == {"TOK": TOK_V}
         await db.commit()
+        db.expire_all()  # expire_on_commit=False: reload, don't trust the identity map's pre-UPDATE copy
         r = (await db.execute(select(TenantSecret).where(TenantSecret.id == rows["TOK"]))).scalar_one()
         assert r.last_used_at is not None
         k = (await db.execute(select(TenantSecret).where(TenantSecret.id == rows["KEY"]))).scalar_one()

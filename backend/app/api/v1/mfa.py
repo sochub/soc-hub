@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
+from app.audit.events import audit_event
 from app.api.v1.users import _audit_tenant
-from app.core import security, totp
+from app.core import security, session_cookie, totp
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -63,23 +64,27 @@ def get_redis():
     return get_login_throttle().redis
 
 
-async def verify_user_code(db: AsyncSession, redis, throttle: LoginThrottle, user: User,
-                           code: str, ip: str) -> None:
-    """Check a TOTP code for `user` (throttled, replay-protected). Raises HTTPException."""
-    key = str(user.id)  # the throttle namespaces it (mfa:attempts:...)
+async def verify_totp(redis, throttle: LoginThrottle, key: str, secret_enc: str, code: str, ip: str) -> None:
+    """Check a TOTP code for a subject `key` (throttled, replay-protected). Raises HTTPException."""
     retry_after = await throttle.reserve(key, ip)
     if retry_after:
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.",
                             headers={"Retry-After": str(retry_after)})
     try:
-        secret = decrypt(user.mfa_secret_enc or "")
+        secret = decrypt(secret_enc or "")
     except (InvalidToken, ValueError, TypeError):
-        logger.warning("mfa secret undecryptable user_id=%s", user.id)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- logs user id only
+        logger.warning("mfa secret undecryptable subject=%s", key)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- logs subject id only
         raise HTTPException(status_code=409, detail="MFA unavailable — contact your admin")
     step = totp.matching_step(secret, code)
-    if step is None or not await totp.consume_step(redis, user.id, step):
+    if step is None or not await totp.consume_step(redis, key, step):
         raise HTTPException(status_code=400, detail=INVALID_CODE)
     await throttle.reset(key, ip)
+
+
+async def verify_user_code(db: AsyncSession, redis, throttle: LoginThrottle, user: User,
+                           code: str, ip: str) -> None:
+    """Check a TOTP code for `user` (throttled, replay-protected). Raises HTTPException."""
+    await verify_totp(redis, throttle, str(user.id), user.mfa_secret_enc, code, ip)
 
 
 class EnableBody(BaseModel):
@@ -145,6 +150,7 @@ async def mfa_setup(
 async def mfa_enable(
     *,
     request: Request,
+    response: Response,
     body: EnableBody,
     db: AsyncSession = Depends(deps.get_db),
     caller: tuple = Depends(deps.get_user_for_mfa_setup),
@@ -171,13 +177,19 @@ async def mfa_enable(
     security.bump_token_version(user)
     await _audit(db, user, "mfa_enabled")
     await db.commit()
-    return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
+    await audit_event("security", "mfa.enabled", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=active)
+    if via_challenge:  # MFA set up during sign-in: this issues the session's first access token
+        await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
+                          tenant_id=active)
+    return session_cookie.issue(request, response, security.issue_access_token(user, active))
 
 
 @router.post("/me/mfa/disable", response_model=Token, response_model_exclude_unset=True)
 async def mfa_disable(
     *,
     request: Request,
+    response: Response,
     body: DisableBody,
     db: AsyncSession = Depends(deps.get_db),
     user: User = Depends(deps.get_current_active_user),
@@ -202,12 +214,15 @@ async def mfa_disable(
     security.bump_token_version(user)
     await _audit(db, user, "mfa_disabled")
     await db.commit()
-    return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
+    await audit_event("security", "mfa.disabled", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=active)
+    return session_cookie.issue(request, response, security.issue_access_token(user, active))
 
 
 @router.post("/{user_id}/mfa/reset", status_code=204)
 async def mfa_reset(
     user_id: int,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db),
     actor: User = Depends(deps.get_current_active_user),
 ) -> Response:
@@ -237,6 +252,8 @@ async def mfa_reset(
     security.bump_token_version(target)
     await _audit(db, actor, "mfa_reset", entity_id=target.id, tenant_id=audit_tid, actor_id=actor.id)
     await db.commit()
+    await audit_event("security", "mfa.reset", request=request, user_id=actor.id, user_email=actor.email,
+                      tenant_id=active, entity_type="user", entity_id=user_id)
     return Response(status_code=204)
 
 

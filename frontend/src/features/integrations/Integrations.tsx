@@ -10,12 +10,15 @@ import ThreatIntelCard from './ThreatIntelCard';
 import SecretsCard from './SecretsCard';
 import PageContainer from '../../components/layout/PageContainer';
 
-interface Webhook { id: number; name: string; api_key: string; created_at: string; }
+interface Webhook { id: number; name: string; key_prefix: string; created_at: string; }
+// Only the create response carries the full key; the server keeps just its hash.
+interface NewWebhook extends Webhook { api_key: string; }
 
 export default function Integrations() {
     const qc = useQueryClient();
     const [name, setName] = useState('');
-    const [copied, setCopied] = useState<number | null>(null);
+    const [copied, setCopied] = useState(false);
+    const [created, setCreated] = useState<NewWebhook | null>(null);
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User });
     const isAdmin = me?.role === 'admin' || me?.is_super_admin;
@@ -27,19 +30,18 @@ export default function Integrations() {
     });
 
     const create = useMutation({
-        mutationFn: async (n: string) => (await api.post('/integrations/webhooks', { name: n })).data,
-        onSuccess: () => { setName(''); qc.invalidateQueries({ queryKey: ['webhooks'] }); },
+        mutationFn: async (n: string) => (await api.post('/integrations/webhooks', { name: n })).data as NewWebhook,
+        onSuccess: (wh) => { setName(''); setCopied(false); setCreated(wh); qc.invalidateQueries({ queryKey: ['webhooks'] }); },
     });
     const revoke = useMutation({
         mutationFn: async (id: number) => api.delete(`/integrations/webhooks/${id}`),
         onSuccess: () => qc.invalidateQueries({ queryKey: ['webhooks'] }),
     });
 
-    const copy = async (wh: Webhook) => {
+    const copy = async (key: string) => {
         try {
-            await navigator.clipboard.writeText(wh.api_key);
-            setCopied(wh.id);
-            setTimeout(() => setCopied(null), 1500);
+            await navigator.clipboard.writeText(key);
+            setCopied(true);
         } catch {
             // clipboard unavailable (e.g. non-secure context) — don't show a false "copied"
         }
@@ -65,6 +67,18 @@ export default function Integrations() {
                             <button disabled={!name.trim() || create.isPending} onClick={() => create.mutate(name.trim())}
                                 className="px-3 py-2 rounded-lg bg-accent text-on-accent text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 flex items-center gap-1.5"><Plus size={16} />Create</button>
                         </div>
+                        {created && (
+                            <div className="mt-3 p-3 rounded-lg border border-accent/40 bg-surface space-y-2">
+                                <p className="text-xs text-fg-2">Key for <span className="font-medium text-fg">{created.name}</span>. Copy it now: it won't be shown again.</p>
+                                <div className="flex items-center gap-2">
+                                    <code className="flex-1 font-mono text-xs text-fg break-all">{created.api_key}</code>
+                                    <button onClick={() => copy(created.api_key)} className="text-fg-2 hover:text-accent" aria-label="Copy key">
+                                        {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                                    </button>
+                                    <button onClick={() => setCreated(null)} className="text-xs text-fg-3 hover:text-fg">Done</button>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="glass-panel rounded-xl border border-line overflow-hidden">
@@ -79,10 +93,7 @@ export default function Integrations() {
                                     <tr key={wh.id} className="hover:bg-raised">
                                         <td className="px-4 py-2.5 font-medium text-fg">{wh.name}</td>
                                         <td className="px-4 py-2.5">
-                                            <button onClick={() => copy(wh)} className="font-mono text-xs text-fg-2 hover:text-accent flex items-center gap-1.5">
-                                                <span className="truncate max-w-[16rem]">{wh.api_key}</span>
-                                                {copied === wh.id ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                                            </button>
+                                            <span className="font-mono text-xs text-fg-2">{wh.key_prefix}…</span>
                                         </td>
                                         <td className="px-4 py-2.5 text-fg-3 text-xs">{new Date(wh.created_at).toLocaleDateString()}</td>
                                         <td className="px-4 py-2.5">

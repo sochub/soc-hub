@@ -18,6 +18,7 @@ class CaseAttachment(Base):
     storage_key = Column(String, nullable=False, unique=True)
     description = Column(String(1000), nullable=True)
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    uploaded_by_guest_id = Column(Integer, ForeignKey("case_guests.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     deleted_by = Column(Integer, ForeignKey("users.id"), nullable=True)

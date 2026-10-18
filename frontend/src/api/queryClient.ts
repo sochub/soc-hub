@@ -13,8 +13,7 @@ export const queryClient = new QueryClient({
   },
 });
 
-/** Store a new session token and refetch everything under it. */
-export function setSessionToken(token: string) {
-    localStorage.setItem('token', token);
+/** The API just re-issued the session cookie (password or MFA change): refetch everything under it. */
+export function refreshSession() {
     void queryClient.invalidateQueries();
 }
