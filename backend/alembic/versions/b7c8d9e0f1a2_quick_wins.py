@@ -1,4 +1,4 @@
-"""IRIS quick wins: alert severity/owner, case outcome/closing note, scheduled workflows, case assets
+"""Alert severity/owner, case outcome/closing note, scheduled workflows, case assets
 
 Revision ID: b7c8d9e0f1a2
 Revises: a9c1e2d3f4b5

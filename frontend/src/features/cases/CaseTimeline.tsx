@@ -7,7 +7,7 @@ import { formatDateTime } from '../../utils/datetime';
 import type { CaseEvent, User } from '../../types';
 import TimelineSuggest from './TimelineSuggest';
 
-// Same list IRIS seeds: 3 generic + 12 ATT&CK tactics. Colour is deterministic per category.
+// Categories: 3 generic + 12 ATT&CK tactics. Colour is deterministic per category.
 const EVENT_CATEGORIES: [string, string, string][] = [
     ['unspecified', 'Unspecified', '#71717a'],
     ['legitimate', 'Legitimate', '#22c55e'],
@@ -47,7 +47,7 @@ const toPayload = (d: Draft) => ({
     content: d.content || null, raw: d.raw || null, source: d.source || null,
 });
 
-// IRIS-style query: free words match everything; `key:value` tokens narrow (category, tag, source, artifact, flag).
+// Query syntax: free words match everything; `key:value` tokens narrow (category, tag, source, artifact, flag).
 function matches(e: CaseEvent, q: string): boolean {
     return q.toLowerCase().split(/\s+/).filter(Boolean).every((tok) => {
         const [k, ...rest] = tok.split(':');
