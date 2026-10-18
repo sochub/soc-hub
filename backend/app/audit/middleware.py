@@ -2,6 +2,7 @@
 
 Never reads request bodies or query strings; stores the matched route template only. See docs/audit/README.md.
 """
+import ipaddress
 import logging
 import time
 import uuid
@@ -9,7 +10,7 @@ from typing import Optional, Tuple
 
 from starlette.requests import Request
 
-from app.audit.context import AuditContext, request_id_var
+from app.audit.context import AuditContext, effective_tenant, request_id_var
 from app.core.login_throttle import client_ip
 from app.db.session import AsyncSessionLocal
 from app.models.audit_log import AuditLog
@@ -65,6 +66,17 @@ async def insert_row(**fields) -> Optional[int]:
         return None
 
 
+_route_fallback_warned = False
+
+
+def _warn_route_fallback() -> None:
+    global _route_fallback_warned
+    if not _route_fallback_warned:
+        _route_fallback_warned = True
+        logger.warning("audit: cannot resolve the include prefix of route templates (FastAPI internals changed?); "
+                       "recording relative route paths")
+
+
 def _route_template(scope) -> Optional[str]:
     """Full matched route template. FastAPI 0.142 resolves included routers lazily, so scope["route"].path
     is relative to its router; the accumulated include prefix lives in FastAPI's scope state (pinned version)."""
@@ -74,8 +86,21 @@ def _route_template(scope) -> Optional[str]:
     try:
         inc = scope.get("fastapi", {}).get("included_router")
         return inc.include_context.prefix + path if inc is not None else path
-    except Exception:  # pragma: no cover - private API drift
+    except Exception:  # private API drift
+        _warn_route_fallback()
         return path
+
+
+def _valid_ip(value: Optional[str]) -> Optional[str]:
+    try:
+        return str(ipaddress.ip_address((value or "").strip()))
+    except ValueError:
+        return None
+
+
+def audit_ip(request: Request) -> Optional[str]:
+    """Client IP for an audit row: X-Real-IP/peer (client_ip) if it parses as an IP, else the socket peer, else None."""
+    return _valid_ip(client_ip(request)) or _valid_ip(request.client.host if request.client else None)
 
 
 def _outcome(code: int) -> str:
@@ -116,8 +141,12 @@ class AuditMiddleware:
         if ctx.events:  # explicit events are the record of this request; written after the handler released its DB session
             for ev in ctx.events:
                 ev = dict(ev)
+                if ev.pop("_tenant_from_ctx", False):
+                    ev["tenant_id"] = effective_tenant(ctx)
                 ev["status_code"] = code
                 ev["duration_ms"] = ms
+                if code >= 500:
+                    ev["outcome"] = "error"
                 if not ev.get("request_id"):
                     ev["request_id"] = rid
                 await insert_row(**ev)
@@ -138,7 +167,7 @@ class AuditMiddleware:
         request = Request(scope)
         await insert_row(
             category=category, action=action, outcome=_outcome(code), status_code=code, method=method,
-            route=route, entity_type=entity_type, entity_id=entity_id, tenant_id=ctx.tenant_id,
-            user_id=ctx.user_id, user_email=ctx.user_email, actor=ctx.actor, ip=client_ip(request)[:45],
+            route=route, entity_type=entity_type, entity_id=entity_id, tenant_id=effective_tenant(ctx),
+            user_id=ctx.user_id, user_email=ctx.user_email, actor=ctx.actor, ip=audit_ip(request),
             user_agent=(request.headers.get("user-agent") or "")[:200] or None, request_id=rid, duration_ms=ms,
         )

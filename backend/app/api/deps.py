@@ -88,8 +88,11 @@ def require_analyst_or_above(current_user: User = Depends(get_current_active_use
     )
 
 
-def require_super_admin(current_user: User = Depends(get_current_active_user)) -> User:
-    """Strict super-admin-only check."""
+def require_super_admin(request: Request, current_user: User = Depends(get_current_active_user)) -> User:
+    """Strict super-admin-only check. Marks the request platform-level for the audit log."""
+    ctx = ctx_of(request)
+    if ctx is not None:
+        ctx.platform = True
     if not current_user.is_super_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Super admin access required"
@@ -117,7 +120,7 @@ async def tenant_requires_mfa(db: AsyncSession, user: User, tenant_id: Optional[
 def _set_tenant(request: Request, tenant_id: int) -> None:
     ctx = ctx_of(request)
     if ctx is not None:
-        ctx.tenant_id = tenant_id
+        ctx.tenant_id, ctx.tenant_explicit = tenant_id, True
 
 
 async def get_effective_tenant_id(

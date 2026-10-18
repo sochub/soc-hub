@@ -13,9 +13,21 @@ class AuditContext:
     user_id: Optional[int] = None
     user_email: Optional[str] = None
     tenant_id: Optional[int] = None
+    tenant_explicit: bool = False  # set by get_effective_tenant_id: the route really operates in tenant_id
+    platform: bool = False  # set by require_super_admin: a platform-level route (no tenant unless explicit)
     actor: Optional[str] = None
     read_action: Optional[str] = None
     events: List[Dict[str, Any]] = field(default_factory=list)  # explicit audit_event rows, written by the middleware
+
+
+def effective_tenant(ctx: AuditContext) -> Optional[int]:
+    """Tenant a row/event of this request belongs to. Order-independent: an explicitly resolved tenant wins,
+    a platform route without one is tenant-less, otherwise the provisional tenant from the token."""
+    if ctx.tenant_explicit:
+        return ctx.tenant_id
+    if ctx.platform:
+        return None
+    return ctx.tenant_id
 
 
 def ctx_of(request: Optional[Request]) -> Optional[AuditContext]:
