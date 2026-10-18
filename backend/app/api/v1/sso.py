@@ -81,9 +81,13 @@ def _safe_slug_for_redirect(slug: str) -> str:
     return value if _SLUG_RE.fullmatch(value) else ""
 
 
-def _guest_error_redirect(slug: str, message: str) -> RedirectResponse:
+def _guest_error_redirect(tenant: Optional[Tenant], message: str) -> RedirectResponse:
+    """Back to the guest login with the error. `?t=` (which shows the "Sign in with SSO" retry button) is built
+    from the tenant row loaded from the DB, never from the request, and only when that tenant's SSO is usable."""
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    return RedirectResponse(f"{base}/guest/login#sso_error={quote(message)}", status_code=303)
+    slug = _safe_slug_for_redirect(tenant.slug) if tenant is not None else ""
+    retry = f"?t={quote(slug, safe='')}" if slug else ""
+    return RedirectResponse(f"{base}/guest/login{retry}#sso_error={quote(message)}", status_code=303)
 
 
 async def _guest_acs(db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
@@ -93,7 +97,7 @@ async def _guest_acs(db: AsyncSession, tenant: Tenant, email: str) -> RedirectRe
     grants = (await db.execute(select(CaseGuest).join(Tenant, Tenant.id == CaseGuest.tenant_id).where(
         CaseGuest.tenant_id == tenant.id, CaseGuest.email == email, *GUEST_ACTIVE()))).scalars().all()
     if not grants or not domain_allowed(tenant, email):
-        return _guest_error_redirect(tenant.slug, GUEST_SSO_DENIED)
+        return _guest_error_redirect(tenant, GUEST_SSO_DENIED)
     for g in grants:
         await create_audit_log(db=db, entity_type="case_guest", entity_id=g.id, action="guest_sso_login",
                                tenant_id=tenant.id, changes={"actor": f"guest:{email}"})
@@ -190,7 +194,7 @@ async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str, gues
     """SP-initiated login: redirect the browser to the tenant's IdP. Public. `guest=1` starts a guest sign-in."""
     tenant, cfg = await _tenant_and_config(db, slug)
     if not tenant or not _sso_ready(cfg):
-        return _guest_error_redirect(slug, "SSO is not enabled for this organization.") if guest else \
+        return _guest_error_redirect(None, "SSO is not enabled for this organization.") if guest else \
             _error_redirect("SSO is not enabled for this tenant.")
     req = saml_service.build_request_dict({}, {}, f"/api/v1/auth/saml/{slug}/login")
     auth = saml_service.make_auth(slug, cfg, req)
@@ -204,11 +208,13 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     form = await request.form()
     is_guest = form.get("RelayState") == GUEST_RELAY
 
-    def fail(msg: str) -> RedirectResponse:
-        return _guest_error_redirect(slug, msg) if is_guest else _error_redirect(msg)
-
     tenant, cfg = await _tenant_and_config(db, slug)
-    if not tenant or not _sso_ready(cfg):
+    ready = tenant is not None and _sso_ready(cfg)
+
+    def fail(msg: str) -> RedirectResponse:
+        return _guest_error_redirect(tenant if ready else None, msg) if is_guest else _error_redirect(msg)
+
+    if not ready:
         return fail("SSO is not enabled for this tenant.")
 
     req = saml_service.build_request_dict(
