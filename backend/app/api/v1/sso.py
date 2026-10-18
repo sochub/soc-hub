@@ -126,9 +126,9 @@ async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str) -> A
     return RedirectResponse(auth.login(), status_code=303)
 
 
-async def _acs_fail(request: Request, tenant, message: str) -> RedirectResponse:
+async def _acs_fail(request: Request, tenant, message: str, code: str) -> RedirectResponse:
     await audit_event("security", "sso.failed", request=request, outcome="denied",
-                      tenant_id=tenant.id if tenant else None, changes={"reason": str(message)[:200]})
+                      tenant_id=tenant.id if tenant else None, changes={"reason": code})
     return _error_redirect(message)
 
 
@@ -138,7 +138,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     and bounce back to the frontend with the JWT in the URL fragment. Public."""
     tenant, cfg = await _tenant_and_config(db, slug)
     if not tenant or not _sso_ready(cfg):
-        return await _acs_fail(request, tenant, "SSO is not enabled for this tenant.")
+        return await _acs_fail(request, tenant, "SSO is not enabled for this tenant.", "not_enabled")
 
     form = await request.form()
     req = saml_service.build_request_dict(
@@ -148,7 +148,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     auth.process_response()
     if auth.get_errors() or not auth.is_authenticated():
         reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
-        return await _acs_fail(request, tenant, f"SSO sign-in failed: {reason}")
+        return await _acs_fail(request, tenant, f"SSO sign-in failed: {reason}", "saml_invalid")
 
     email = (auth.get_nameid() or "").strip()
     attrs = auth.get_attributes() or {}
@@ -160,7 +160,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
                 email = vals[0].strip()
                 break
     if "@" not in email:
-        return await _acs_fail(request, tenant, "SSO response did not include an email address.")
+        return await _acs_fail(request, tenant, "SSO response did not include an email address.", "no_email")
 
     full_name = ""
     for key in ("displayName", "cn", "name",
@@ -173,7 +173,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     try:
         user = await _resolve_sso_user(db, tenant, cfg, email, full_name)
     except HTTPException as exc:
-        return await _acs_fail(request, tenant, exc.detail)
+        return await _acs_fail(request, tenant, exc.detail, "not_allowed")
 
     await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="sso_login",
                            tenant_id=tenant.id, user_id=user.id)

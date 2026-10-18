@@ -172,6 +172,36 @@ def test_acs_redirects_with_clear_message(monkeypatch):
             ok = (await db.execute(select(AuditLog).where(
                 AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.success"))).scalars().all()
         assert len(failed) == 3 and all(r.category == "security" and r.outcome == "denied" for r in failed)
-        assert {r.changes["reason"] for r in failed} == {sso_mod.SSO_NOT_ALLOWED}
+        assert {r.changes["reason"] for r in failed} == {"not_allowed"}
+        assert sso_mod.SSO_NOT_ALLOWED not in repr([vars(r) for r in failed + ok])
         assert len(ok) == 1 and ok[0].user_id == ids["local"]
+    _run(body)
+
+
+def test_saml_invalid_stores_fixed_code_not_idp_text(monkeypatch):
+    secret_msg = "StatusMessage for victim@leak.example"
+
+    class BadAuth:
+        def process_response(self):
+            pass
+
+        def get_errors(self):
+            return ["invalid_response"]
+
+        def is_authenticated(self):
+            return False
+
+        def get_last_error_reason(self):
+            return secret_msg
+
+    async def body(ids):
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: BadAuth())
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            r = await c.post(f"/api/v1/auth/saml/{ids['slug']}/acs", data={"SAMLResponse": "x"})
+        assert r.status_code == 303
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(AuditLog).where(AuditLog.tenant_id == ids["ta"]))).scalars().all()
+        failed = [r for r in rows if r.action == "sso.failed"]
+        assert len(failed) == 1 and failed[0].changes == {"reason": "saml_invalid"}
+        assert "leak.example" not in repr([vars(r) for r in rows])
     _run(body)

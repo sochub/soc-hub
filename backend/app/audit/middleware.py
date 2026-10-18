@@ -113,7 +113,14 @@ class AuditMiddleware:
             await self._record(scope, ctx, rid, status["code"], int((time.monotonic() - started) * 1000))
 
     async def _record(self, scope, ctx: AuditContext, rid: str, code: int, ms: int) -> None:
-        if ctx.skip:
+        if ctx.events:  # explicit events are the record of this request; written after the handler released its DB session
+            for ev in ctx.events:
+                ev = dict(ev)
+                ev["status_code"] = code
+                ev["duration_ms"] = ms
+                if not ev.get("request_id"):
+                    ev["request_id"] = rid
+                await insert_row(**ev)
             return
         method = scope["method"]
         route = _route_template(scope)

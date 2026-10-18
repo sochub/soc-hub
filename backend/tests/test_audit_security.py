@@ -10,7 +10,7 @@ def test_login_success_and_failures():
         assert (await _login(c, w.emails["admin"], PW)).status_code == 200
         ok = await rows(w, action="login.success")
         assert len(ok) == 1 and ok[0].tenant_id == w.ta and ok[0].user_id == w.users["admin"]
-        assert ok[0].category == "security" and ok[0].outcome == "success"
+        assert ok[0].category == "security" and ok[0].outcome == "success" and ok[0].status_code == 200
 
         assert (await _login(c, w.emails["admin"], "wrong-password!!")).status_code == 401
         bad = await rows(w, action="login.failed", tenant_id=w.ta)
@@ -48,4 +48,24 @@ def test_password_change_event():
         assert len(ev) == 1 and ev[0].user_id == w.users["analyst"]
         for row in await rows(w):
             assert "Brand-New-Passw0rd" not in repr(vars(row)) and PW not in repr(vars(row))
+    run(body)
+
+
+def test_locked_login_row_has_429():
+    from app.core import login_throttle
+    from app.main import app
+
+    class Locked:
+        async def reserve(self, key, ip):
+            return 60
+
+        async def reset(self, key, ip):
+            return None
+
+    async def body(c, w):
+        app.dependency_overrides[login_throttle.get_login_throttle] = lambda: Locked()
+        assert (await _login(c, w.emails["admin"], PW)).status_code == 429
+        lk = await rows(w, action="login.locked")
+        assert len(lk) == 1 and lk[0].status_code == 429 and lk[0].outcome == "denied"
+        assert lk[0].tenant_id == w.ta and lk[0].changes == {"email_domain": "example.com"}
     run(body)

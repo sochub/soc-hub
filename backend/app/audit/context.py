@@ -1,7 +1,7 @@
 """Per-request audit context, filled by auth dependencies and read by AuditMiddleware."""
 from contextvars import ContextVar
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, Request
 
@@ -15,7 +15,7 @@ class AuditContext:
     tenant_id: Optional[int] = None
     actor: Optional[str] = None
     read_action: Optional[str] = None
-    skip: bool = False  # an explicit audit_event already covers this request
+    events: List[Dict[str, Any]] = field(default_factory=list)  # explicit audit_event rows, written by the middleware
 
 
 def ctx_of(request: Optional[Request]) -> Optional[AuditContext]:

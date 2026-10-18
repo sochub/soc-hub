@@ -32,12 +32,20 @@ _DUMMY_HASH = security.get_password_hash(secrets.token_urlsafe(32))
 _default_active_tenant_id = deps.default_active_tenant_id
 
 
-async def _login_tenant(db: AsyncSession, user) -> Optional[int]:
-    """Attribute a failed login to a tenant only when the user has exactly one membership (spec 2.5)."""
-    if user is None:
-        return None
-    rows = (await db.execute(select(TenantMembership.tenant_id).where(
-        TenantMembership.user_id == user.id))).scalars().all()
+_DOMAIN_RE = re.compile(r"^[a-z0-9.-]{1,253}$")
+
+
+def _safe_domain(email: str) -> Optional[str]:
+    d = email_domain(email)
+    return d if d and _DOMAIN_RE.match(d) else None
+
+
+async def _login_tenant(db: AsyncSession, email: str) -> Optional[int]:
+    """Attribute a failed login to a tenant only when the email has exactly one membership (spec 2.5).
+    One query keyed on the email whether or not the user exists, so timing doesn't reveal it."""
+    rows = (await db.execute(
+        select(TenantMembership.tenant_id).join(User, User.id == TenantMembership.user_id)
+        .where(func.lower(User.email) == email))).scalars().all()
     return rows[0] if len(rows) == 1 else None
 
 # Syntactic sanity check for the login username. Anything else is refused before
@@ -57,7 +65,7 @@ async def login_access_token(
     ip = client_ip(request)
     if len(email) > 320 or not _EMAIL_RE.match(email):
         await audit_event("security", "login.failed", request=request, outcome="denied",
-                          changes={"email_domain": email_domain(email)})
+                          changes={"email_domain": _safe_domain(email)})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -69,11 +77,8 @@ async def login_access_token(
     retry_after = await throttle.reserve(email, ip)
     if retry_after:
         logger.warning("login throttled email=%r ip=%s retry_after=%ss", email[:64], ip, retry_after)
-        known = (await db.execute(select(User).where(func.lower(User.email) == email))).scalars().first()
-        locked_tenant = await _login_tenant(db, known)
-        await db.rollback()  # release the pooled connection before the audit insert needs its own (burst-safe)
         await audit_event("security", "login.locked", request=request, outcome="denied",
-                          tenant_id=locked_tenant, changes={"email_domain": email_domain(email)})
+                          tenant_id=await _login_tenant(db, email), changes={"email_domain": email_domain(email)})
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts. Try again later.",
@@ -96,10 +101,8 @@ async def login_access_token(
         reason = "inactive user"
     if reason:
         logger.warning("failed login email=%r ip=%s reason=%s", email[:64], ip, reason)
-        failed_tenant = await _login_tenant(db, user)
-        await db.rollback()  # release the pooled connection before the audit insert needs its own (burst-safe)
         await audit_event("security", "login.failed", request=request, outcome="denied",
-                          tenant_id=failed_tenant, changes={"email_domain": email_domain(email)})
+                          tenant_id=await _login_tenant(db, email), changes={"email_domain": email_domain(email)})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
