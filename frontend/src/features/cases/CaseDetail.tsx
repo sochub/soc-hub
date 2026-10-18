@@ -11,6 +11,7 @@ import EditCaseModal from './EditCaseModal';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import CaseTasks from './CaseTasks';
+import CaseTimeline from './CaseTimeline';
 import CaseEvidence from './CaseEvidence';
 import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
@@ -38,13 +39,13 @@ const ARTIFACT_ICONS: Record<string, any> = {
 
 const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigation', 'containment', 'remediation', 'other'];
 
-const CASE_TABS = ['timeline', 'tasks', 'artifacts', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
+const CASE_TABS = ['activity', 'timeline', 'tasks', 'artifacts', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
 type CaseTab = typeof CASE_TABS[number];
 
 export default function CaseDetail() {
     const { id } = useParams();
     const queryClient = useQueryClient();
-    const [activeTab, setActiveTab] = useState<CaseTab>('timeline');
+    const [activeTab, setActiveTab] = useState<CaseTab>('activity');
     // The Report tab reports unsaved edits; switching away asks first.
     const [reportDirty, setReportDirty] = useState(false);
     const [pendingTab, setPendingTab] = useState<CaseTab | null>(null);
@@ -124,8 +125,8 @@ export default function CaseDetail() {
     const eventsReady = !!caseData;
     useEffect(() => {
         if (!eventsReady || !/^#event-\d+$/.test(hash) || handledHash.current === hash) return;
-        if (activeTab !== 'timeline') {
-            if (switchedFor.current !== hash) { switchedFor.current = hash; selectTab('timeline'); } // once, so the user can leave again
+        if (activeTab !== 'activity') {
+            if (switchedFor.current !== hash) { switchedFor.current = hash; selectTab('activity'); } // once, so the user can leave again
             return;
         }
         const el = document.getElementById(hash.slice(1));
@@ -352,8 +353,9 @@ export default function CaseDetail() {
                             exit={{ opacity: 0, y: -10 }}
                             transition={{ duration: 0.2 }}
                         >
-                            {activeTab === 'timeline' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
-                            {activeTab === 'timeline' && (
+                            {activeTab === 'activity' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
+                            {activeTab === 'timeline' && id && <CaseTimeline caseId={parseInt(id)} />}
+                            {activeTab === 'activity' && (
                                 <div className="relative space-y-8 my-4">
                                     {/* Add Event Button */}
                                     <div className="flex justify-end mb-2">

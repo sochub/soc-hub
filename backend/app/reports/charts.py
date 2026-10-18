@@ -5,8 +5,9 @@ from xml.sax.saxutils import escape, quoteattr
 
 from app.reports.milestones import fmt_duration
 
-LANES = ("detection", "analyst", "indicators", "evidence")
-LANE_LABELS = {"detection": "Detection", "analyst": "Analyst", "indicators": "Indicators", "evidence": "Evidence"}
+LANES = ("detection", "investigation", "analyst", "indicators", "evidence")
+LANE_LABELS = {"detection": "Detection", "investigation": "Investigation", "analyst": "Analyst",
+               "indicators": "Indicators", "evidence": "Evidence"}
 
 _ILLEGAL = re.compile("[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
@@ -90,7 +91,7 @@ def _aware(dt):
 
 
 def timeline_svg(events: list) -> str:
-    W, H = 760, 60 + 44 * 4
+    W, H = 760, 60 + 44 * len(LANES)
     X0, X1, R = 100, 760 - 40, 9  # ~40px right padding keeps the last tick label and markers inside
     PW = X1 - X0
     head = f'<svg {_NS} viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img">'
@@ -112,7 +113,7 @@ def timeline_svg(events: list) -> str:
         y = top + 44 * i + 22
         parts.append(f'<line x1="{X0}" y1="{y}" x2="{X1}" y2="{y}" stroke="#e4e4e7"/>')
         parts.append(_t(8, y + 4, LANE_LABELS[lane], 11, "start", "#3f3f46", "bold"))
-    axis_y = top + 44 * 4 + 8
+    axis_y = top + 44 * len(LANES) + 8
     parts.append(f'<line x1="{X0}" y1="{axis_y}" x2="{X1}" y2="{axis_y}" stroke="#71717a"/>')
     tick_fmt = "%H:%M:%S" if span < 600 else "%m-%d %H:%M"
     for k in range(5):

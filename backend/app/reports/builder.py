@@ -11,6 +11,7 @@ from app.enrichment.indicators import normalise
 from app.models.artifact import Artifact
 from app.models.audit_log import AuditLog
 from app.models.case import Alert, TimelineEvent
+from app.models.case_event import CaseEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.case_attachment import CaseAttachment
 from app.models.case_report import CaseReport
@@ -89,6 +90,9 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
                               .order_by(CaseTask.order, CaseTask.id))).scalars().all()
     events = (await db.execute(select(TimelineEvent).where(TimelineEvent.case_id == cid)
                                .order_by(TimelineEvent.id))).scalars().all()
+    inv = (await db.execute(select(CaseEvent).where(CaseEvent.case_id == cid, CaseEvent.tenant_id == tid,
+                                                    CaseEvent.in_summary.is_(True))
+                            .order_by(CaseEvent.event_date, CaseEvent.id))).scalars().all()
     attachments = (await db.execute(select(CaseAttachment).where(CaseAttachment.case_id == cid,
                                                                  CaseAttachment.tenant_id == tid)
                                     .order_by(CaseAttachment.id))).scalars().all()
@@ -146,6 +150,9 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
             continue
         tl.append({"at": aware(e.created_at), "lane": _LANES.get(e.event_type, "analyst"), "kind": e.event_type,
                    "text": (e.content or "")[:TEXT_MAX], "actor": emails.get(e.user_id)})
+    for e in inv:
+        tl.append({"at": aware(e.event_date), "lane": "investigation", "kind": f"investigation:{e.category}",
+                   "text": e.title + (f" — {e.content}" if e.content else ""), "actor": e.source})
     done = [t for t in tasks if t.status == "done"]
     for t in done:
         if t.completed_at is not None:

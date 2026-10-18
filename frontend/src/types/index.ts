@@ -86,6 +86,24 @@ export interface CaseTask {
   created_at: string;
 }
 
+export interface CaseEvent {
+  id: number;
+  case_id: number;
+  user_id: number | null;
+  event_date: string;
+  title: string;
+  content: string | null;
+  raw: string | null;
+  source: string | null;
+  category: string;
+  tags: string[];
+  flagged: boolean;
+  in_summary: boolean;
+  artifacts: { id: number; value: string; type_key: string }[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface SSOConfig {
   enabled: boolean;
   idp_entity_id: string | null;
