@@ -1,18 +1,19 @@
 """Tenant audit log: list / facets / export (admins), plus the per-entity change history (any member)."""
+import contextlib
 import csv
 import io
 import json
 from datetime import datetime, timezone
 from typing import Any, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
-from app.audit.context import audit_read
+from app.audit.context import audit_read, ctx_of
 from app.db.session import AsyncSessionLocal
 from app.models.audit_log import AuditLog
 from app.models.tenant import Tenant
@@ -21,7 +22,6 @@ from app.schemas import audit_log as schema
 
 router = APIRouter()
 EXPORT_CAP = 50_000
-_CATEGORIES = ("change", "write", "security", "read")
 
 
 class _Filters:
@@ -42,6 +42,14 @@ class _Filters:
     ):
         self.__dict__.update(locals())
         del self.__dict__["self"]
+        for k in ("date_from", "date_to"):
+            v = getattr(self, k)
+            if isinstance(v, datetime) and v.tzinfo is None:
+                setattr(self, k, v.replace(tzinfo=timezone.utc))
+
+
+def _like_prefix(v: str) -> str:
+    return v.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_") + "%"
 
 
 async def _scope_clause(f: _Filters, admin: User, tenant_id: int):
@@ -57,11 +65,11 @@ async def _query(f: _Filters, admin: User, tenant_id: int):
     if f.category:
         q = q.where(AuditLog.category == f.category)
     if f.action:
-        q = q.where(AuditLog.action.ilike(f.action.replace("%", r"\%").replace("_", r"\_") + "%"))
+        q = q.where(AuditLog.action.ilike(_like_prefix(f.action), escape="\\"))
     if f.user_id is not None:
         q = q.where(AuditLog.user_id == f.user_id)
     if f.actor:
-        q = q.where(AuditLog.actor.ilike(f.actor.replace("%", r"\%").replace("_", r"\_") + "%"))
+        q = q.where(AuditLog.actor.ilike(_like_prefix(f.actor), escape="\\"))
     if f.entity_type:
         q = q.where(AuditLog.entity_type == f.entity_type)
     if f.entity_id is not None:
@@ -79,6 +87,20 @@ async def _query(f: _Filters, admin: User, tenant_id: int):
     return q
 
 
+def _platform_read(request: Request, f: _Filters) -> None:
+    """A platform-scope view is a platform event: record it with tenant NULL, not under ?tenant_id."""
+    if f.scope == "platform":
+        ctx = ctx_of(request)
+        if ctx is not None:
+            ctx.tenant_id = None
+
+
+def _csv_safe(v: Any) -> Any:
+    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + v
+    return v
+
+
 def _item(row: AuditLog) -> schema.AuditItem:
     item = schema.AuditItem.model_validate(row, from_attributes=True)
     item.user = (schema.AuditUser(id=row.user.id, email=row.user.email, full_name=row.user.full_name)
@@ -88,6 +110,7 @@ def _item(row: AuditLog) -> schema.AuditItem:
 
 @router.get("", response_model=schema.AuditPage, dependencies=[audit_read("audit.view")])
 async def list_audit_logs(
+    request: Request,
     f: _Filters = Depends(),
     before: Optional[int] = None,
     limit: int = Query(50, ge=1, le=200),
@@ -96,6 +119,7 @@ async def list_audit_logs(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     q = await _query(f, admin, tenant_id)
+    _platform_read(request, f)
     if before is not None:
         q = q.where(AuditLog.id < before)
     q = q.options(selectinload(AuditLog.user)).order_by(AuditLog.id.desc()).limit(limit + 1)
@@ -132,6 +156,7 @@ _CSV_FIELDS = ["id", "created_at", "category", "action", "outcome", "status_code
 
 @router.get("/export", dependencies=[audit_read("audit.export")])
 async def export_audit_logs(
+    request: Request,
     f: _Filters = Depends(),
     format: Literal["csv", "json"] = "csv",
     db: AsyncSession = Depends(deps.get_db),
@@ -139,6 +164,7 @@ async def export_audit_logs(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     base = await _query(f, admin, tenant_id)  # raises 403 for a non-super-admin platform export up front
+    _platform_read(request, f)
     slug = (await db.execute(select(Tenant.slug).where(Tenant.id == tenant_id))).scalar_one_or_none() or "tenant"
     if f.scope == "platform":
         slug = "platform"
@@ -169,20 +195,22 @@ async def export_audit_logs(
         buf = io.StringIO()
         w = csv.DictWriter(buf, fieldnames=_CSV_FIELDS)
         w.writeheader()
-        async for r in rows():
-            w.writerow(as_dict(r))
-            if buf.tell() > 64_000:
-                yield buf.getvalue()
-                buf.seek(0)
-                buf.truncate()
+        async with contextlib.aclosing(rows()) as it:
+            async for r in it:
+                w.writerow({k: _csv_safe(v) for k, v in as_dict(r).items()})
+                if buf.tell() > 64_000:
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate()
         yield buf.getvalue()
 
     async def body_json():
         yield "["
         first = True
-        async for r in rows():
-            yield ("" if first else ",") + json.dumps(as_dict(r))
-            first = False
+        async with contextlib.aclosing(rows()) as it:
+            async for r in it:
+                yield ("" if first else ",") + json.dumps(as_dict(r))
+                first = False
         yield "]"
 
     media = "text/csv" if format == "csv" else "application/json"

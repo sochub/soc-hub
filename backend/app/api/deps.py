@@ -142,6 +142,10 @@ async def get_effective_tenant_id(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Super admin must select a tenant.",
             )
+        if tenant_id is not None and tenant_id != active:
+            from app.models.tenant import Tenant
+            if (await db.execute(select(Tenant.id).where(Tenant.id == tenant_id))).first() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
         if (tenant_id is not None and tenant_id != active and current_user.mfa_enabled_at is None
                 and await tenant_requires_mfa(db, current_user, tenant_id)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="mfa_setup_required")
