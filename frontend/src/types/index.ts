@@ -234,6 +234,8 @@ export interface Case {
   acknowledged_at: string | null;
   timeline_events: TimelineEvent[];
   guest_summary?: string | null;
+  outcome?: string | null;
+  closing_note?: string | null;
 
   sla_response_target_minutes?: number | null;
   sla_response_status?: SLAStatus | null;

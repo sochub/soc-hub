@@ -12,8 +12,10 @@ interface EditCaseModalProps {
         status: string;
         source: string;
         tags: string[];
+        outcome?: string | null;
+        closing_note?: string | null;
     };
-    onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string }) => void;
+    onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; outcome: string | null; closing_note: string | null }) => void;
     isSubmitting: boolean;
 }
 
@@ -24,7 +26,9 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
         severity: '',
         status: '',
         source: '',
-        tags: ''
+        tags: '',
+        outcome: '',
+        closing_note: ''
     });
 
     useEffect(() => {
@@ -35,7 +39,9 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                 severity: caseData.severity,
                 status: caseData.status,
                 source: caseData.source || 'user-reported',
-                tags: caseData.tags ? caseData.tags.join(', ') : ''
+                tags: caseData.tags ? caseData.tags.join(', ') : '',
+                outcome: caseData.outcome || '',
+                closing_note: caseData.closing_note || ''
             });
         }
     }, [caseData, show]);
@@ -44,6 +50,8 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
         const tagsArray = formData.tags.split(',').map(t => t.trim()).filter(t => t);
         onSubmit({
             ...formData,
+            outcome: formData.outcome || null,
+            closing_note: formData.closing_note || null,
             tags: tagsArray
         });
         onClose();
@@ -140,6 +148,32 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                             placeholder="Comma separated tags"
                         />
                     </div>
+                </div>
+
+                <div>
+                    <label className={modalLabel}>Outcome <span className="text-muted font-normal">(required to close)</span></label>
+                    <select
+                        value={formData.outcome}
+                        onChange={(e) => setFormData({ ...formData, outcome: e.target.value })}
+                        className={modalInput}
+                    >
+                        <option value="">Not set</option>
+                        <option value="unknown">Unknown</option>
+                        <option value="false_positive">False Positive</option>
+                        <option value="true_positive_with_impact">True Positive With Impact</option>
+                        <option value="true_positive_without_impact">True Positive Without Impact</option>
+                        <option value="legitimate">Legitimate</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label className={modalLabel}>Closing note <span className="text-muted font-normal">(required to close)</span></label>
+                    <textarea
+                        value={formData.closing_note}
+                        onChange={(e) => setFormData({ ...formData, closing_note: e.target.value })}
+                        className={`${modalInput} min-h-[80px]`}
+                        maxLength={8000}
+                    />
                 </div>
             </div>
         </Modal>

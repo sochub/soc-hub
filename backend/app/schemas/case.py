@@ -2,7 +2,7 @@ from typing import Optional, List, Any, Literal
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.services.avatars import avatar_version
-from app.models.case import CaseStatus, CaseSeverity
+from app.models.case import CaseStatus, CaseSeverity, CASE_OUTCOMES
 
 
 class TimelineEventUser(BaseModel):
@@ -149,8 +149,17 @@ class CaseUpdate(BaseModel):
     tags: Optional[List[str]] = None
     source: Optional[str] = None
     guest_summary: Optional[str] = Field(None, max_length=4000)
+    outcome: Optional[str] = None
+    closing_note: Optional[str] = Field(None, max_length=8000)
 
     _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
+
+    @field_validator("outcome")
+    @classmethod
+    def _outcome(cls, v):
+        if v is not None and v not in CASE_OUTCOMES:
+            raise ValueError(f"outcome must be one of {', '.join(CASE_OUTCOMES)}")
+        return v
 
 class Case(CaseBase):
     id: int
@@ -160,6 +169,8 @@ class Case(CaseBase):
     acknowledged_at: Optional[datetime] = None
     timeline_events: List[TimelineEvent] = []
     guest_summary: Optional[str] = None
+    outcome: Optional[str] = None
+    closing_note: Optional[str] = None
 
     # Computed, not stored — attached to the ORM object by the endpoint via
     # app.utils.sla.compute_sla_state before serialization.

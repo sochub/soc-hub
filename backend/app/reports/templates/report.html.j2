@@ -78,6 +78,8 @@ tr { page-break-inside: avoid; }
   <dl class="facts">
     <dt>Severity</dt><dd>{{ c.severity }}</dd>
     <dt>Status</dt><dd>{{ c.status }}</dd>
+    {% if c.get("outcome") %}<dt>Outcome</dt><dd>{{ c.outcome | replace("_", " ") | title }}</dd>
+    {% if c.get("closing_note") %}<dt>Closing note</dt><dd>{{ c.closing_note }}</dd>{% endif %}{% endif %}
     <dt>Owner</dt><dd>{{ c.owner or "—" }}</dd>
     <dt>Opened</dt><dd>{{ c.created_at | dt }}</dd>
     <dt>Resolved</dt><dd>{{ c.resolved_at | dt }}</dd>
