@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.audit.context import audit_read
 from app.api import deps
 from app.models.case import Case, TimelineEvent
 from app.models.user import User
@@ -150,7 +151,7 @@ async def delete_follow(
     return Response(status_code=204)
 
 
-@router.get("/{case_id}", response_model=case_schema.Case)
+@router.get("/{case_id}", response_model=case_schema.Case, dependencies=[audit_read("case.view")])
 async def read_case(
     *,
     db: AsyncSession = Depends(deps.get_db),

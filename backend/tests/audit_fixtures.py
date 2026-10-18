@@ -11,7 +11,10 @@ from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.audit_log import AuditLog
-from app.models.case import Case
+from app.models.case import Case, TimelineEvent
+from app.models.artifact import Artifact
+from app.models.case_artifact import CaseArtifact
+from app.models.case_attachment import CaseAttachment
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -92,6 +95,13 @@ async def _cleanup(w: World) -> None:
                                                 AuditLog.user_id.in_(uids)))
         await db.execute(delete(AuditLog).where(AuditLog.id > w.first_id, AuditLog.tenant_id.is_(None),
                                                 AuditLog.changes["email_domain"].as_string() == f"{w.h}.invalid"))
+        # Rows an upload leaves behind for OUR case only (id-scoped), before the case delete.
+        await db.execute(delete(CaseAttachment).where(CaseAttachment.case_id == w.case))
+        aids = list((await db.execute(select(CaseArtifact.artifact_id).where(CaseArtifact.case_id == w.case))).scalars())
+        await db.execute(delete(CaseArtifact).where(CaseArtifact.case_id == w.case))
+        if aids:
+            await db.execute(delete(Artifact).where(Artifact.id.in_(aids)))
+        await db.execute(delete(TimelineEvent).where(TimelineEvent.case_id == w.case))
         await db.execute(delete(Case).where(Case.id == w.case))
         await db.execute(delete(TenantMembership).where(TenantMembership.user_id.in_(uids)))
         await db.execute(delete(User).where(User.id.in_(uids)))
