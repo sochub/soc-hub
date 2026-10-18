@@ -15,6 +15,8 @@ Code: `backend/app/audit/` (`middleware.py`, `events.py`, `redact.py`, `context.
 
 A write usually produces a `write` row and (when fields change) linked `change` rows, shown under **Related**. Rows hold the matched route template only, never request bodies or query strings.
 
+`change` rows do carry before/after **field values** (for example a case description or an IOC value): that is what the case **Audit** tab shows. Only keys matching the confidentiality regex below are masked. Workflow-run rows are the exception: they store only the workflow name, trigger event, `case_id`/`alert_id` and the trigger's key names; the full trigger payload stays in `workflow_runs.trigger_payload`.
+
 ## Security events
 
 `login.success`, `login.failed`, `login.locked`, `login.mfa_required`, `mfa.challenge_passed`, `mfa.challenge_failed`, `mfa.enabled`, `mfa.disabled`, `mfa.reset`, `password.changed`, `tenant.switch`, `logout`, `sso.success`, `sso.failed`, `http.denied`.
@@ -23,11 +25,19 @@ A write usually produces a `write` row and (when fields change) linked `change` 
 - Failed logins store only `{"email_domain": ...}`. Tenant attribution runs one uniform email-keyed query and counts only if the user has exactly one membership. The malformed-username branch stores the domain only if it matches `^[a-z0-9.-]{1,253}$`.
 - SSO failures store a fixed reason code: `not_enabled`, `saml_invalid`, `no_email`, `not_allowed`.
 - The provisional tenant from the token applies only when the user is a member.
+- Tenant resolution (`context.effective_tenant`): a tenant resolved by `get_effective_tenant_id` wins; otherwise a `require_super_admin` route is platform-level (tenant NULL), even when the super admin is a member of the active tenant; otherwise the provisional tenant. Events that pass `tenant_id` explicitly (login and similar) keep it.
+- A queued event on a request that ends in a 5xx is written with `outcome = "error"`.
+- MFA sign-ins record `login.success` alongside `mfa.challenge_passed`, and setting up MFA during sign-in records it alongside `mfa.enabled`.
+- `ip` is the `X-Real-IP`/peer address only if it parses as an IP address, else the socket peer, else NULL.
+- Anonymous 401s are recorded per request (one `http.denied` row each). In production put an nginx `limit_req` zone in front of the API so a flood of unauthenticated requests can't flood the table.
+- Slack signed interactions (`POST /api/v1/slack/interactions`) are recorded as platform-level `write` rows (tenant NULL).
 - Guest sign-in events and guest actor context are a follow-up once the case-guests PR (#59) merges.
 
 ## Sensitive reads
 
 `case.view`, `attachment.download`, `report.view`, `report.export`, `secret.list`, `secret.names`, `secret.scan`, `audit.view`, `audit.export`.
+
+`audit.view` is recorded only for the first page of a plain list: "Load more" (`before=`) and Related (`request_id=`) lookups are not.
 
 ## Confidentiality rules
 
@@ -37,7 +47,7 @@ A write usually produces a `write` row and (when fields change) linked `change` 
 password|passwd|secret|token|api[_-]?key|key_enc|value_enc|mfa_secret|otp|totp|authorization|cookie|private|credential
 ```
 
-Sole exemption: a key ending in `_updated`, `_fields` or `_names` whose value is a list of identifier strings matching `^[a-z0-9_]{1,64}$` (field-name lists such as `secrets_updated: ["api_key"]`, never values). Anything else under a sensitive key is masked. Canary tests assert no secret value reaches a row.
+Sole exemption: a key ending in `_updated`, `_fields` or `_names` whose value is a list of identifier strings fully matching `[a-z0-9_]{1,64}` (field-name lists such as `secrets_updated: ["api_key"]`, never values). Anything else under a sensitive key is masked. Canary tests assert no secret value reaches a row.
 
 ## Who can see what
 
@@ -50,6 +60,8 @@ Sole exemption: a key ending in `_updated`, `_fields` or `_names` whose value is
 
 `GET /audit-logs/export` honours the list filters. Cells starting with `=`, `+`, `-`, `@`, tab or CR are prefixed with `'` to neutralise spreadsheet formulas. JSON output is raw.
 
+The export releases the request's DB session before streaming and fetches each 1000-row batch in its own short-lived session, so no pooled connection is held while a slow client reads.
+
 ## Extending
 
 - **New write route**: audited automatically, nothing to do.
@@ -58,6 +70,10 @@ Sole exemption: a key ending in `_updated`, `_fields` or `_names` whose value is
 - **New security event**: `await audit_event("security", "thing.happened", request=request, ...)`.
 - Route templates come from `middleware._route_template(scope)`, which relies on a private FastAPI attribute (FastAPI 0.142.2). The guarantees test cross-checks it against OpenAPI, so an upgrade that breaks it fails loudly.
 - Tests: a conftest autouse fixture deletes every audit row a test inserts.
+
+## Deploying the migration
+
+Migration `e7a1b2c3d4f5` alters `audit_logs` (exclusive lock) and backfills `user_email` from `users`, so on a large table run it in a maintenance window. Its downgrade **deletes** platform-level and entity-less rows (they can't satisfy the old NOT NULL columns).
 
 ## Failure mode
 
