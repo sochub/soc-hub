@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
+from app.core import login_throttle
 from app.audit.context import audit_read, ctx_of
 from app.db.session import AsyncSessionLocal
 from app.models.audit_log import AuditLog
@@ -168,7 +169,12 @@ async def export_audit_logs(
     db: AsyncSession = Depends(deps.get_db),
     admin: User = Depends(deps.require_admin),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
+    throttle: login_throttle.LoginThrottle = Depends(login_throttle.get_export_throttle),
 ) -> Any:
+    retry_after = await throttle.reserve(f"user:{admin.id}", login_throttle.client_ip(request))
+    if retry_after is not None:
+        raise HTTPException(status_code=429, detail="Too many exports, try again later.",
+                            headers={"Retry-After": str(retry_after)})
     base = await _query(f, admin, tenant_id)  # raises 403 for a non-super-admin platform export up front
     _platform_read(request, f)
     slug = (await db.execute(select(Tenant.slug).where(Tenant.id == tenant_id))).scalar_one_or_none() or "tenant"

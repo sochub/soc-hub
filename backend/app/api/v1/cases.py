@@ -81,7 +81,7 @@ async def create_case(
     *,
     db: AsyncSession = Depends(deps.get_db),
     case_in: case_schema.CaseCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create new case."""
@@ -177,7 +177,7 @@ async def update_case(
     db: AsyncSession = Depends(deps.get_db),
     case_id: int,
     case_in: case_schema.CaseUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update a case (tenant-scoped)."""
@@ -224,7 +224,7 @@ async def create_timeline_event(
     db: AsyncSession = Depends(deps.get_db),
     case_id: int,
     event_in: case_schema.TimelineEventCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Add a timeline event to a case."""
@@ -258,7 +258,7 @@ async def update_timeline_event(
     case_id: int,
     event_id: int,
     event_in: case_schema.TimelineEventUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update a timeline event."""
@@ -304,7 +304,7 @@ async def delete_timeline_event(
     db: AsyncSession = Depends(deps.get_db),
     case_id: int,
     event_id: int,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Delete a timeline event."""

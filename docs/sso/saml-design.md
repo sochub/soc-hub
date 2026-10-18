@@ -9,6 +9,7 @@
 | Provisioning | **JIT, configurable per tenant**: `auto_provision` toggle + `default_role` (analyst/viewer, never admin). Off → unknown users rejected |
 | Enforcement | **Optional in v1** — password login keeps working; "require SSO" toggle deferred |
 | Library | **python3-saml** (OneLogin) — full signature/assertion validation; needs xmlsec1 native deps in the backend image |
+| IdP requirement | The **assertion must be signed** (`wantAssertionsSigned`); a signed Response alone is rejected. Okta and Entra ID sign assertions by default; in Keycloak enable *Sign assertions* on the client |
 | Test IdP | mocksaml.com for verification; docs for Okta/Entra |
 
 ## Data model — `tenant_sso_configs` (1:1 tenant, migration `b3c4d5e6f7a8`)

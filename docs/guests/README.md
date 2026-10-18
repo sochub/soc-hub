@@ -68,7 +68,7 @@ There are three ways in, and they all produce the same guest session:
 
 | Token (`purpose` claim) | Lifetime |
 |---|---|
-| `guest-link` (magic link) | 7 days |
+| `guest-link` (magic link) | 72 hours (`GUEST_LINK_EXPIRE_HOURS`); the link is a bearer credential |
 | `guest` (session) | 12 hours |
 | `guest-reset` | 30 minutes, single use (bumps `token_version`) |
 | `guest-register` (confirm email, create account) | 30 minutes, single use (refused once the account exists) |

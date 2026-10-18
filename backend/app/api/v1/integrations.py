@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.api import deps
 from app.models.case import Case
 from app.models.user import User
-from app.models.webhook import Webhook
+from app.models.webhook import Webhook, hash_webhook_key
 from app.tasks.jira import create_jira_ticket_task
 from app.api.v1.tenants import generate_webhook_key
 
@@ -48,7 +48,8 @@ class WebhookCreate(BaseModel):
 class WebhookOut(BaseModel):
     id: int
     name: str
-    api_key: str
+    key_prefix: str
+    api_key: Optional[str] = None  # only in the create response; never stored
     created_at: datetime
     class Config:
         from_attributes = True
@@ -76,11 +77,14 @@ async def create_webhook(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create a named webhook for the active tenant. Admin only."""
-    webhook = Webhook(tenant_id=tenant_id, name=webhook_in.name, api_key=generate_webhook_key())
+    key = generate_webhook_key()
+    webhook = Webhook(tenant_id=tenant_id, name=webhook_in.name, key_hash=hash_webhook_key(key), key_prefix=key[:8])
     db.add(webhook)
     await db.commit()
     await db.refresh(webhook)
-    return webhook
+    out = WebhookOut.model_validate(webhook)
+    out.api_key = key
+    return out
 
 
 @router.delete("/webhooks/{webhook_id}", status_code=204)
