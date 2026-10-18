@@ -133,4 +133,5 @@ export const TRIGGER_LABEL: Record<TriggerType, string> = {
     'case.updated': 'Case updated',
     'alert.ingested': 'Alert ingested',
     manual: 'Manual',
+    schedule: 'Schedule (cron, UTC)',
 };

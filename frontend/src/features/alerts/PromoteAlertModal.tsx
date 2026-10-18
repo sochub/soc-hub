@@ -4,12 +4,13 @@ import { api } from '../../api/client';
 import Modal, { modalInput, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 
 interface Props {
-    alert: { id: number; title: string; source: string; payload: any };
+    alert: { id: number; title: string; source: string; payload: unknown };
+    ids?: number[]; // bulk: promote all these via POST /alerts/bulk (alert seeds a new case)
     onClose: () => void;
 }
 interface CaseLite { id: number; title: string; }
 
-export default function PromoteAlertModal({ alert, onClose }: Props) {
+export default function PromoteAlertModal({ alert, ids, onClose }: Props) {
     const qc = useQueryClient();
     const [mode, setMode] = useState<'existing' | 'new'>('existing');
     const [caseId, setCaseId] = useState<string>('');
@@ -33,7 +34,8 @@ export default function PromoteAlertModal({ alert, onClose }: Props) {
                 });
                 targetId = String(res.data.id);
             }
-            await api.post(`/alerts/${alert.id}/promote/${targetId}`);
+            if (ids) await api.post('/alerts/bulk', { ids, action: 'promote', case_id: Number(targetId) });
+            else await api.post(`/alerts/${alert.id}/promote/${targetId}`);
         },
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['alerts'] });
@@ -48,7 +50,7 @@ export default function PromoteAlertModal({ alert, onClose }: Props) {
         <Modal
             open
             onClose={onClose}
-            title="Promote alert"
+            title={ids ? `Promote ${ids.length} alerts` : 'Promote alert'}
             size="lg"
             footer={<>
                 <button onClick={onClose} className={btnSecondary}>Cancel</button>

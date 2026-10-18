@@ -1,6 +1,6 @@
 """Registry of workflow node types. Later phases add for_each and slack_* entries."""
 
-TRIGGER_TYPES = ("case.created", "case.updated", "alert.ingested", "manual")
+TRIGGER_TYPES = ("case.created", "case.updated", "alert.ingested", "manual", "schedule")
 
 NODE_TYPES = {
     "trigger":             {"required": [], "raw": [], "alert_only": False},

@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
 from app.secrets.refs import NAME_RE as SECRET_NAME_RE
 from app.services.slack_service import parse_button_labels
+from app.workflows.cron import cron_errors
 from app.workflows.loops import MAX_CONCURRENCY, MAX_ITEMS_CAP
 from app.workflows.node_types import NODE_TYPES, TRIGGER_TYPES, MAX_NODES
 from jinja2 import nodes as jnodes
@@ -418,4 +419,11 @@ def validate_trigger_filter(expr: Optional[str]) -> List[dict]:
 
 def workflow_errors(graph: Any, trigger_type: str, trigger_filter: Optional[str],
                     secret_names: Optional[Set[str]] = None) -> List[dict]:
-    return validate_trigger_filter(trigger_filter) + validate_graph(graph, trigger_type, secret_names)
+    if trigger_type == "schedule":  # trigger_filter holds the cron expression, not a Jinja filter
+        if not (trigger_filter or "").strip():
+            head = [{"node_id": None, "message": "schedule trigger requires a cron expression"}]
+        else:
+            head = [{"node_id": None, "message": f"cron: {m}"} for m in cron_errors(trigger_filter)]
+    else:
+        head = validate_trigger_filter(trigger_filter)
+    return head + validate_graph(graph, trigger_type, secret_names)

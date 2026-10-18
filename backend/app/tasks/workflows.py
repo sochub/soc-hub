@@ -59,3 +59,10 @@ def expire_waits_task():
 def withdraw_messages_task(targets):
     from app.workflows.runtime import withdraw_messages
     _run_async(withdraw_messages(targets))
+
+
+@celery_app.task(acks_late=True)
+def run_schedules_task():
+    from datetime import datetime, timezone
+    from app.workflows.runtime import run_due_schedules
+    _run_async(run_due_schedules(datetime.now(timezone.utc)))

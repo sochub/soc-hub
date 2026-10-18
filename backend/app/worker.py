@@ -33,6 +33,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.workflows.expire_waits_task",
         "schedule": 60.0,
     },
+    "run-workflow-schedules": {
+        "task": "app.tasks.workflows.run_schedules_task",
+        "schedule": 60.0,
+    },
     "prune-notifications": {
         "task": "app.tasks.notifications.prune_notifications_task",
         "schedule": 86400.0,

@@ -3,7 +3,7 @@ import copy
 import logging
 import secrets as _stdlib_secrets
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import select
 
@@ -12,6 +12,7 @@ from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.secrets.refs import SecretsNamespace
 from app.utils.audit import create_audit_log
 from app.workflows.context import build_context
+from app.workflows.cron import cron_matches
 from app.workflows.dryrun import dry_run_behaviour, simulated_output
 from app.workflows.events import trigger_matches
 from app.workflows.graph import ready_nodes, run_outcome
@@ -116,6 +117,34 @@ async def dispatch_event(tenant_id, event_type, case_id, alert_id, changes, dept
         await db.commit()
     for rid in run_ids:
         advance_run_task.delay(rid)
+
+
+async def run_due_schedules(now: datetime) -> List[int]:
+    """Beat sweep (every 60s): fire each enabled schedule workflow whose cron matches `now` (UTC, minute precision).
+    `last_fired_at` in the same minute means a drifted/duplicate tick already fired it."""
+    from app.tasks.workflows import advance_run_task
+    now = now.astimezone(timezone.utc)
+    minute = now.replace(second=0, microsecond=0)
+    run_ids: List[int] = []
+    async with AsyncSessionLocal() as db:
+        # ponytail: one global scan, no per-tenant batching; FOR UPDATE SKIP LOCKED guards overlapping sweeps.
+        workflows = (await db.execute(select(Workflow).where(
+            Workflow.enabled == True, Workflow.trigger_type == "schedule",  # noqa: E712
+        ).with_for_update(skip_locked=True))).scalars().all()
+        for wf in workflows:
+            last = wf.last_fired_at
+            if last is not None and last.astimezone(timezone.utc).replace(second=0, microsecond=0) == minute:
+                continue
+            if not cron_matches(wf.trigger_filter or "", minute):
+                continue
+            payload = {"event": "schedule", "fired_at": now.isoformat(), "case_id": None, "alert_id": None, "changes": {}}
+            run = await create_run(db, wf, trigger_payload=payload, case_id=None, alert_id=None, depth=0)
+            wf.last_fired_at = now
+            run_ids.append(run.id)
+        await db.commit()
+    for rid in run_ids:
+        advance_run_task.delay(rid)
+    return run_ids
 
 
 async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] = None) -> None:

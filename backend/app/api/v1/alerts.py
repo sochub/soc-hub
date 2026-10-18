@@ -1,16 +1,21 @@
-from typing import Any, List
+import json
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import case as sql_case
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
 from app.models.case import Alert, Case
+from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
 from app.services.case_service import add_alert_artifacts
+from app.utils.audit import create_audit_log
+from app.utils.copilot_heuristics import detect_indicators
 from app.workflows.events import emit_event
 
 router = APIRouter()
@@ -41,6 +46,7 @@ async def ingest_alert(
             title=alert_in.title,
             payload=alert_in.payload,
             status="pending",
+            severity=alert_in.severity or "medium",
             tenant_id=webhook.tenant_id,
         )
         .on_conflict_do_nothing(constraint="uq_alerts_tenant_source_external")
@@ -60,22 +66,122 @@ async def ingest_alert(
         )
     )).scalars().one()
 
+_SEVERITY_RANK = sql_case(
+    {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}, value=Alert.severity, else_=0)
+_SORTS = {"-created_at": Alert.created_at.desc(), "created_at": Alert.created_at.asc(),
+          "severity": _SEVERITY_RANK.desc(), "-severity": _SEVERITY_RANK.asc()}
+
+
 @router.get("/", response_model=List[case_schema.Alert])
 async def read_alerts(
     db: AsyncSession = Depends(deps.get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    source: Optional[str] = None,
+    sort: str = Query("-created_at", pattern="^(-?created_at|-?severity)$"),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """Retrieve alerts scoped to tenant."""
-    result = await db.execute(
-        select(Alert)
-        .where(Alert.tenant_id == tenant_id)
-        .offset(skip).limit(limit)
-        .order_by(Alert.created_at.desc())
-    )
+    """Retrieve alerts scoped to tenant, optionally filtered and sorted."""
+    q = select(Alert).where(Alert.tenant_id == tenant_id)
+    for col, val in ((Alert.status, status), (Alert.severity, severity), (Alert.source, source)):
+        if val:
+            q = q.where(col == val)
+    result = await db.execute(q.order_by(_SORTS[sort], Alert.id.desc()).offset(skip).limit(limit))
     return result.scalars().all()
+
+
+async def _get_alert(db: AsyncSession, alert_id: int, tenant_id: int) -> Alert:
+    alert = (await db.execute(
+        select(Alert).where(Alert.id == alert_id, Alert.tenant_id == tenant_id))).scalars().first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+
+def _indicators(alert: Alert) -> set:
+    return {i["value"] for i in detect_indicators(json.dumps(alert.payload or {}, default=str), limit=20)}
+
+
+@router.patch("/{alert_id}", response_model=case_schema.Alert)
+async def update_alert(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    alert_id: int,
+    body: case_schema.AlertUpdate,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Set an alert's severity and/or owner (owner must be a member of the tenant)."""
+    alert = await _get_alert(db, alert_id, tenant_id)
+    changes = body.model_dump(exclude_unset=True)
+    if changes.get("severity") is None:
+        changes.pop("severity", None)  # severity is NOT NULL; null means "leave as is"
+    if changes.get("owner_id") is not None and not (await db.execute(select(TenantMembership.id).where(
+            TenantMembership.user_id == changes["owner_id"], TenantMembership.tenant_id == tenant_id))).first():
+        raise HTTPException(status_code=400, detail="Owner is not a member of this tenant")
+    for k, v in changes.items():
+        setattr(alert, k, v)
+    await create_audit_log(db=db, entity_type="alert", entity_id=alert.id, action="alert_updated",
+                           tenant_id=tenant_id, user_id=current_user.id, changes=changes)
+    await db.commit()
+    await db.refresh(alert)
+    return alert
+
+
+@router.get("/{alert_id}/similar", response_model=List[case_schema.Alert])
+async def similar_alerts(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    alert_id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Other tenant alerts sharing at least one indicator (ip/domain/hash/...) with this one."""
+    alert = await _get_alert(db, alert_id, tenant_id)
+    mine = _indicators(alert)
+    if not mine:
+        return []
+    # ponytail: in-memory compare over the newest 500 alerts; add an alert_indicators table if tenants exceed that.
+    others = (await db.execute(select(Alert).where(Alert.tenant_id == tenant_id, Alert.id != alert.id)
+                               .order_by(Alert.created_at.desc()).limit(500))).scalars().all()
+    return [a for a in others if mine & _indicators(a)][:10]
+
+
+@router.post("/bulk")
+async def bulk_alerts(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    body: case_schema.AlertBulk,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Dismiss or promote many alerts at once. Ids outside the tenant are skipped, never touched."""
+    case = None
+    if body.action == "promote":
+        case = (await db.execute(select(Case).where(
+            Case.id == body.case_id, Case.tenant_id == tenant_id))).scalars().first() if body.case_id else None
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+    alerts = (await db.execute(select(Alert).where(
+        Alert.id.in_(body.ids), Alert.tenant_id == tenant_id))).scalars().all()
+    for alert in alerts:
+        if case:
+            alert.case_id = case.id
+            alert.status = "promoted"
+            await add_alert_artifacts(db, case=case, alert=alert, user_id=current_user.id)
+        else:
+            alert.status = "dismissed"
+        await create_audit_log(db=db, entity_type="alert", entity_id=alert.id, action=f"alert_bulk_{body.action}",
+                               tenant_id=tenant_id, user_id=current_user.id,
+                               changes={"case_id": case.id} if case else {})
+    await db.commit()
+    found = {a.id for a in alerts}
+    ids = list(dict.fromkeys(body.ids))
+    return {"updated": [i for i in ids if i in found], "skipped": [i for i in ids if i not in found]}
+
 
 @router.post("/{alert_id}/promote/{case_id}", response_model=case_schema.Alert)
 async def promote_alert_to_case(

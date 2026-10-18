@@ -2,7 +2,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff } from 'lucide-react';
+import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff, ShieldAlert } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useState, useEffect, useRef } from 'react';
@@ -11,6 +11,8 @@ import EditCaseModal from './EditCaseModal';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import CaseTasks from './CaseTasks';
+import CaseTimeline from './CaseTimeline';
+import CaseAssets from './CaseAssets';
 import CaseEvidence from './CaseEvidence';
 import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
@@ -38,13 +40,13 @@ const ARTIFACT_ICONS: Record<string, any> = {
 
 const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigation', 'containment', 'remediation', 'other'];
 
-const CASE_TABS = ['timeline', 'tasks', 'artifacts', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
+const CASE_TABS = ['activity', 'timeline', 'tasks', 'artifacts', 'assets', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
 type CaseTab = typeof CASE_TABS[number];
 
 export default function CaseDetail() {
     const { id } = useParams();
     const queryClient = useQueryClient();
-    const [activeTab, setActiveTab] = useState<CaseTab>('timeline');
+    const [activeTab, setActiveTab] = useState<CaseTab>('activity');
     // The Report tab reports unsaved edits; switching away asks first.
     const [reportDirty, setReportDirty] = useState(false);
     const [pendingTab, setPendingTab] = useState<CaseTab | null>(null);
@@ -76,7 +78,7 @@ export default function CaseDetail() {
     const [editEventData, setEditEventData] = useState({ event_type: '', content: '' });
 
     const updateCaseMutation = useMutation({
-        mutationFn: async (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string }) => {
+        mutationFn: async (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; outcome: string | null; closing_note: string | null }) => {
             if (!id) return;
             const response = await api.put(`/cases/${id}`, data);
             return response.data;
@@ -124,8 +126,8 @@ export default function CaseDetail() {
     const eventsReady = !!caseData;
     useEffect(() => {
         if (!eventsReady || !/^#event-\d+$/.test(hash) || handledHash.current === hash) return;
-        if (activeTab !== 'timeline') {
-            if (switchedFor.current !== hash) { switchedFor.current = hash; selectTab('timeline'); } // once, so the user can leave again
+        if (activeTab !== 'activity') {
+            if (switchedFor.current !== hash) { switchedFor.current = hash; selectTab('activity'); } // once, so the user can leave again
             return;
         }
         const el = document.getElementById(hash.slice(1));
@@ -163,6 +165,14 @@ export default function CaseDetail() {
             setShowArtifactModal(false);
             setNewArtifact({ type: 'file_hash', value: '' });
         }
+    });
+
+    const promoteArtifactMutation = useMutation({
+        mutationFn: async (artifactId: number) => (await api.post(`/artifacts/${artifactId}/promote`, { case_id: Number(id) })).data,
+        onSuccess: (d) => {
+            queryClient.invalidateQueries({ queryKey: ['iocs'] });
+            if (!d.created) alert('Already an IOC');
+        },
     });
 
     const removeArtifactMutation = useMutation({
@@ -271,6 +281,11 @@ export default function CaseDetail() {
                                 )}>
                                     {caseData.severity}
                                 </span>
+                                {caseData.outcome && (
+                                    <span className="px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border border-line text-fg-2 tracking-wider">
+                                        {caseData.outcome.replace(/_/g, ' ')}
+                                    </span>
+                                )}
                             </div>
                             <div className="flex items-center gap-4 text-xs font-mono text-muted">
                                 <span className="flex items-center gap-1.5">
@@ -352,8 +367,10 @@ export default function CaseDetail() {
                             exit={{ opacity: 0, y: -10 }}
                             transition={{ duration: 0.2 }}
                         >
-                            {activeTab === 'timeline' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
-                            {activeTab === 'timeline' && (
+                            {activeTab === 'activity' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
+                            {activeTab === 'timeline' && id && <CaseTimeline caseId={parseInt(id)} />}
+                            {activeTab === 'assets' && id && <CaseAssets caseId={parseInt(id)} />}
+                            {activeTab === 'activity' && (
                                 <div className="relative space-y-8 my-4">
                                     {/* Add Event Button */}
                                     <div className="flex justify-end mb-2">
@@ -612,6 +629,13 @@ export default function CaseDetail() {
                                                                 aria-expanded={intelOpen === artifact.id} className="mt-2 text-xs text-accent hover:underline">Intel</button>
                                                             {intelOpen === artifact.id && <div className="mt-2"><EnrichmentPanel kind="artifact" id={artifact.id} canRun={canRunIntel} /></div>}
                                                         </div>
+                                                        <button
+                                                            onClick={() => promoteArtifactMutation.mutate(artifact.id)}
+                                                            className="p-1.5 text-muted hover:text-accent hover:bg-raised rounded-sm transition-colors opacity-0 group-hover/artifact:opacity-100"
+                                                            title="Promote to IOC"
+                                                        >
+                                                            <ShieldAlert size={14} />
+                                                        </button>
                                                         <button
                                                             onClick={() => {
                                                                 if (confirm('Remove this artifact from the case?')) {
