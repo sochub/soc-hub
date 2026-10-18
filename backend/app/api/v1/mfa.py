@@ -174,6 +174,9 @@ async def mfa_enable(
     await db.commit()
     await audit_event("security", "mfa.enabled", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=active)
+    if via_challenge:  # MFA set up during sign-in: this issues the session's first access token
+        await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
+                          tenant_id=active)
     return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
 
 

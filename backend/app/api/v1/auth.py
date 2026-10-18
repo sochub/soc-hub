@@ -78,7 +78,7 @@ async def login_access_token(
     if retry_after:
         logger.warning("login throttled email=%r ip=%s retry_after=%ss", email[:64], ip, retry_after)
         await audit_event("security", "login.locked", request=request, outcome="denied",
-                          tenant_id=await _login_tenant(db, email), changes={"email_domain": email_domain(email)})
+                          tenant_id=await _login_tenant(db, email), changes={"email_domain": _safe_domain(email)})
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts. Try again later.",
@@ -102,7 +102,7 @@ async def login_access_token(
     if reason:
         logger.warning("failed login email=%r ip=%s reason=%s", email[:64], ip, reason)
         await audit_event("security", "login.failed", request=request, outcome="denied",
-                          tenant_id=await _login_tenant(db, email), changes={"email_domain": email_domain(email)})
+                          tenant_id=await _login_tenant(db, email), changes={"email_domain": _safe_domain(email)})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -165,6 +165,8 @@ async def login_mfa(
     tid = await _default_active_tenant_id(db, user)
     await audit_event("security", "mfa.challenge_passed", request=request, user_id=user.id,
                       user_email=user.email, tenant_id=tid)
+    await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=tid)
     return {
         "access_token": security.issue_access_token(user, tid),
         "token_type": "bearer",

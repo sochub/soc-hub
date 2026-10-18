@@ -9,7 +9,7 @@ _SENSITIVE = re.compile(
 MASK = "***"
 
 
-_IDENT = re.compile(r"^[a-z0-9_]{1,64}$")
+_IDENT = re.compile(r"[a-z0-9_]{1,64}")
 
 
 def _is_name_list(key: str, value: Any) -> bool:
@@ -18,7 +18,7 @@ def _is_name_list(key: str, value: Any) -> bool:
     return (
         key.lower().endswith(("_updated", "_fields", "_names"))
         and isinstance(value, list)
-        and all(isinstance(v, str) and _IDENT.match(v) for v in value)
+        and all(isinstance(v, str) and _IDENT.fullmatch(v) for v in value)
     )
 
 

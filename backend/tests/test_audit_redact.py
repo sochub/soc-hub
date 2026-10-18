@@ -31,3 +31,14 @@ def test_scrub_keeps_name_lists_under_sensitive_metadata_keys():
     assert scrub(names) == names
     assert scrub({"secrets_updated": ["sk-Live-ABC"]}) == {"secrets_updated": "***"}
     assert scrub({"api_key_fields": "x"}) == {"api_key_fields": "***"}
+
+
+def test_name_list_identifier_check_is_a_fullmatch():
+    assert scrub({"secrets_updated": ["api_key\n"]}) == {"secrets_updated": "***"}
+
+
+def test_name_list_exemption_only_for_flat_string_lists():
+    assert scrub({"secrets_updated": ("api_key",)}) == {"secrets_updated": "***"}  # tuple
+    assert scrub({"secrets_updated": ["api_key", None]}) == {"secrets_updated": "***"}  # list with None
+    assert scrub({"secrets_updated": [["api_key"]]}) == {"secrets_updated": "***"}  # nested list
+    assert scrub({"secrets_updated": []}) == {"secrets_updated": []}  # a valid, empty name list

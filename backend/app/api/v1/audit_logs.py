@@ -22,6 +22,7 @@ from app.schemas import audit_log as schema
 
 router = APIRouter()
 EXPORT_CAP = 50_000
+EXPORT_BATCH = 1000
 
 
 class _Filters:
@@ -120,6 +121,11 @@ async def list_audit_logs(
 ) -> Any:
     q = await _query(f, admin, tenant_id)
     _platform_read(request, f)
+    if before is not None or f.request_id:
+        # Only the first page of a plain list is a view: "Load more" and Related lookups don't record reads.
+        ctx = ctx_of(request)
+        if ctx is not None:
+            ctx.read_action = None
     if before is not None:
         q = q.where(AuditLog.id < before)
     q = q.options(selectinload(AuditLog.user)).order_by(AuditLog.id.desc()).limit(limit + 1)
@@ -170,20 +176,25 @@ async def export_audit_logs(
         slug = "platform"
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    # FastAPI runs yield-dependency teardown only after the response is sent, so release the request's
+    # connection now rather than holding it for the whole stream.
+    await db.close()
+
     async def rows():
         sent, before = 0, None
-        async with AsyncSessionLocal() as s:  # own session: the request's session closes before streaming ends
-            while sent < EXPORT_CAP:
-                q = base.order_by(AuditLog.id.desc()).limit(min(1000, EXPORT_CAP - sent))
-                if before is not None:
-                    q = q.where(AuditLog.id < before)
+        while sent < EXPORT_CAP:
+            q = base.order_by(AuditLog.id.desc()).limit(min(EXPORT_BATCH, EXPORT_CAP - sent))
+            if before is not None:
+                q = q.where(AuditLog.id < before)
+            # One short-lived session per batch: no pooled connection is held while the client applies back-pressure.
+            async with AsyncSessionLocal() as s:
                 batch = list((await s.execute(q)).scalars().all())
-                if not batch:
-                    return
-                for r in batch:
-                    yield r
-                sent += len(batch)
-                before = batch[-1].id
+            if not batch:
+                return
+            for r in batch:
+                yield r
+            sent += len(batch)
+            before = batch[-1].id
 
     def as_dict(r: AuditLog) -> dict:
         d = {k: getattr(r, k) for k in _CSV_FIELDS if k != "changes"}

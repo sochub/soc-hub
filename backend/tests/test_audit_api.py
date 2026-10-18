@@ -117,3 +117,57 @@ def test_other_tenant_cannot_see_facets_or_export_rows():
         items = (await c.get("/api/v1/audit-logs?limit=200", headers=hdr(w, "admin_b"))).json()["items"]
         assert all(i["user_email"] != w.emails["admin"] and i["entity_id"] != w.case for i in items)
     run(body)
+
+
+def test_only_first_page_of_plain_list_is_a_view():
+    async def body(c, w):
+        await _seed(c, w, n=3)
+        first = (await c.get("/api/v1/audit-logs?category=write&limit=1", headers=hdr(w, "admin"))).json()
+        assert first["next_before"]
+        await c.get(f"/api/v1/audit-logs?category=write&limit=1&before={first['next_before']}", headers=hdr(w, "admin"))
+        rid = first["items"][0]["request_id"]
+        await c.get(f"/api/v1/audit-logs?request_id={rid}", headers=hdr(w, "admin"))
+        assert len(await rows(w, action="audit.view")) == 1
+    run(body)
+
+
+def test_export_holds_at_most_one_connection_while_streaming(monkeypatch):
+    import contextlib as cl
+
+    from app.db.session import engine
+
+    real = al.AsyncSessionLocal
+    stats = {"open": 0, "max": 0, "pool_at_open": [], "pool_while_yielding": []}
+
+    @cl.asynccontextmanager
+    async def counting():
+        stats["pool_at_open"].append(engine.pool.checkedout())
+        stats["open"] += 1
+        stats["max"] = max(stats["max"], stats["open"])
+        try:
+            async with real() as s:
+                yield s
+        finally:
+            stats["open"] -= 1
+
+    real_safe = al._csv_safe
+
+    def spy(v):
+        stats["pool_while_yielding"].append(engine.pool.checkedout())
+        return real_safe(v)
+
+    monkeypatch.setattr(al, "AsyncSessionLocal", counting)
+    monkeypatch.setattr(al, "EXPORT_BATCH", 2)
+    monkeypatch.setattr(al, "_csv_safe", spy)
+
+    async def body(c, w):
+        await _seed(c, w, n=5)
+        before = engine.pool.checkedout()
+        r = await c.get("/api/v1/audit-logs/export?category=write&format=csv", headers=hdr(w, "admin"))
+        assert r.status_code == 200 and len(list(csv.DictReader(io.StringIO(r.text)))) == 5
+        assert len(stats["pool_at_open"]) >= 3  # several batches, each its own short-lived session
+        assert stats["max"] <= 1
+        # the request's own session was released before streaming, and no batch session outlives its fetch
+        assert max(stats["pool_at_open"]) <= before
+        assert stats["pool_while_yielding"] and max(stats["pool_while_yielding"]) <= before
+    run(body)

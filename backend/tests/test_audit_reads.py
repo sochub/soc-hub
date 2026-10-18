@@ -44,3 +44,29 @@ def test_download_streams_and_records_read(tmp_path, monkeypatch):
         got = await rows(w, action="attachment.download")
         assert len(got) == 1 and (got[0].entity_type, got[0].entity_id) == ("attachment", att_id)
     run(body)
+
+
+def test_secret_names_and_scan_are_reads():
+    async def body(c, w):
+        assert (await c.get("/api/v1/secrets/names", headers=hdr(w, "analyst"))).status_code == 200
+        names = await rows(w, action="secret.names")
+        assert len(names) == 1 and names[0].category == "read" and names[0].user_id == w.users["analyst"]
+        assert names[0].tenant_id == w.ta
+        assert (await c.get("/api/v1/secrets/scan", headers=hdr(w, "admin"))).status_code == 200
+        scan = await rows(w, action="secret.scan")
+        assert len(scan) == 1 and scan[0].category == "read" and scan[0].tenant_id == w.ta
+    run(body)
+
+
+def test_report_view_and_export_are_reads():
+    async def body(c, w):
+        base = f"/api/v1/cases/{w.case}/report"
+        assert (await c.get(base, headers=hdr(w, "analyst"))).status_code == 200
+        view = await rows(w, action="report.view")
+        assert len(view) == 1 and view[0].category == "read" and view[0].tenant_id == w.ta
+        assert (view[0].entity_type, view[0].entity_id) == ("case", w.case)
+        r = await c.get(base + "/export", params={"format": "json"}, headers=hdr(w, "analyst"))
+        assert r.status_code == 200, r.text
+        exp = await rows(w, action="report.export")
+        assert len(exp) == 1 and exp[0].category == "read" and (exp[0].entity_type, exp[0].entity_id) == ("case", w.case)
+    run(body)
