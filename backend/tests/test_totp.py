@@ -173,7 +173,7 @@ class TestConsumeStep:
     async def test_consume_step_first_use(self):
         """First use of a step returns True."""
         redis = FakeRedis()
-        result = await consume_step(redis, user_id=42, step=1000)
+        result = await consume_step(redis, subject=42, step=1000)
         assert result is True
 
     @pytest.mark.asyncio
@@ -181,18 +181,18 @@ class TestConsumeStep:
         """Replaying a used step returns False."""
         redis = FakeRedis()
         # First use
-        result1 = await consume_step(redis, user_id=42, step=1000)
+        result1 = await consume_step(redis, subject=42, step=1000)
         assert result1 is True
         # Replay
-        result2 = await consume_step(redis, user_id=42, step=1000)
+        result2 = await consume_step(redis, subject=42, step=1000)
         assert result2 is False
 
     @pytest.mark.asyncio
     async def test_consume_step_different_users(self):
         """Different users can use the same step."""
         redis = FakeRedis()
-        result1 = await consume_step(redis, user_id=42, step=1000)
-        result2 = await consume_step(redis, user_id=43, step=1000)
+        result1 = await consume_step(redis, subject=42, step=1000)
+        result2 = await consume_step(redis, subject=43, step=1000)
         assert result1 is True
         assert result2 is True
 
@@ -200,7 +200,7 @@ class TestConsumeStep:
     async def test_consume_step_different_steps(self):
         """Same user can use different steps."""
         redis = FakeRedis()
-        result1 = await consume_step(redis, user_id=42, step=1000)
-        result2 = await consume_step(redis, user_id=42, step=1001)
+        result1 = await consume_step(redis, subject=42, step=1000)
+        result2 = await consume_step(redis, subject=42, step=1001)
         assert result1 is True
         assert result2 is True

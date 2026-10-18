@@ -10,6 +10,7 @@ from typing import Any, Optional, Tuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.guests import notify as guest_notify
 from app.models.artifact import Artifact, ArtifactType
 from app.models.artifact_type_definition import ArtifactTypeDefinition
 from app.models.case import Case, CaseStatus, TimelineEvent
@@ -66,6 +67,8 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
     if "status" in changes:
         db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="status_change",
                              content=f"Status changed from {changes['status']['from']} to {changes['status']['to']}"))
+        await guest_notify.enqueue(db, case, "status_change",
+                                   f"Status changed to {str(changes['status']['to']).replace('_', ' ').title()}")
         new_status = update_data["status"]
         if new_status in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
             if case.resolved_at is None:

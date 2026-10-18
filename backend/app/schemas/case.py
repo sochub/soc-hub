@@ -1,6 +1,6 @@
 from typing import Optional, List, Any
 from datetime import datetime
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from app.services.avatars import avatar_version
 from app.models.case import CaseStatus, CaseSeverity
 
@@ -68,6 +68,9 @@ class TimelineEvent(TimelineEventBase):
     user_id: Optional[int] = None
     created_at: datetime
     user: Optional[TimelineEventUser] = None
+    shared_with_guests: bool = False
+    guest_id: Optional[int] = None
+    guest_email: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -113,6 +116,7 @@ class CaseUpdate(BaseModel):
     owner_id: Optional[int] = None
     tags: Optional[List[str]] = None
     source: Optional[str] = None
+    guest_summary: Optional[str] = Field(None, max_length=4000)
 
 class Case(CaseBase):
     id: int
@@ -121,6 +125,7 @@ class Case(CaseBase):
     resolved_at: Optional[datetime] = None
     acknowledged_at: Optional[datetime] = None
     timeline_events: List[TimelineEvent] = []
+    guest_summary: Optional[str] = None
 
     # Computed, not stored — attached to the ORM object by the endpoint via
     # app.utils.sla.compute_sla_state before serialization.
