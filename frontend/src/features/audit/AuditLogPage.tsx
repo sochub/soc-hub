@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { api } from '../../api/client';
+import PageContainer from '../../components/layout/PageContainer';
 import { Badge, Button, Input, Label } from '../../components/ui';
 import type { AuditFacets, AuditItem, AuditPage, User } from '../../types';
 
@@ -12,9 +13,18 @@ const CATEGORIES = [
 ] as const;
 const PRESETS = [{ key: '1', label: '24h' }, { key: '7', label: '7d' }, { key: '30', label: '30d' }] as const;
 
+const SEARCH_DEBOUNCE_MS = 300;
+
 function sinceDays(days: string): string | undefined {
-    if (!days) return undefined;
+    if (!days || days === 'custom') return undefined;
     return new Date(Date.now() - Number(days) * 86_400_000).toISOString();
+}
+
+/** A `<input type="date">` value (YYYY-MM-DD) as an ISO instant: start or end of that day in local time. */
+function localDayIso(day: string, end: boolean): string | undefined {
+    if (!day) return undefined;
+    const d = new Date(`${day}T${end ? '23:59:59.999' : '00:00:00'}`);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
 function actorLabel(i: AuditItem): string {
@@ -29,9 +39,19 @@ export default function AuditLogPage() {
     });
     const [category, setCategory] = useState('');
     const [userId, setUserId] = useState('');
-    const [action, setAction] = useState('');
+    const [actionInput, setActionInput] = useState('');
+    const [action, setAction] = useState('');  // debounced copy of actionInput, used in the query
+    const actionTimer = useRef<number | undefined>(undefined);
+    useEffect(() => () => window.clearTimeout(actionTimer.current), []);
+    const onActionChange = (v: string) => {
+        setActionInput(v);
+        window.clearTimeout(actionTimer.current);
+        actionTimer.current = window.setTimeout(() => setAction(v), SEARCH_DEBOUNCE_MS);
+    };
     const [outcome, setOutcome] = useState('');
     const [days, setDays] = useState('7');
+    const [customFrom, setCustomFrom] = useState('');
+    const [customTo, setCustomTo] = useState('');
     const [platform, setPlatform] = useState(false);
     const [open, setOpen] = useState<number | null>(null);
     const [exportError, setExportError] = useState<string | null>(null);
@@ -43,15 +63,18 @@ export default function AuditLogPage() {
         if (userId) p.user_id = userId;
         if (action.trim()) p.action = action.trim();
         if (outcome) p.outcome = outcome;
-        const from = sinceDays(days);
+        const from = days === 'custom' ? localDayIso(customFrom, false) : sinceDays(days);
         if (from) p.from = from;
+        const to = days === 'custom' ? localDayIso(customTo, true) : undefined;
+        if (to) p.to = to;
         if (platform) p.scope = 'platform';
         return p;
-    }, [category, userId, action, outcome, days, platform]);
+    }, [category, userId, action, outcome, days, customFrom, customTo, platform]);
 
     const facets = useQuery({
         queryKey: ['audit-facets', platform],
         queryFn: async () => (await api.get('/audit-logs/facets', { params: platform ? { scope: 'platform' } : {} })).data as AuditFacets,
+        refetchOnWindowFocus: false,
     });
     const log = useInfiniteQuery({
         queryKey: ['audit-log', params],
@@ -60,6 +83,7 @@ export default function AuditLogPage() {
             params: { ...params, ...(pageParam ? { before: pageParam } : {}) },
         })).data as AuditPage,
         getNextPageParam: (last) => last.next_before ?? undefined,
+        refetchOnWindowFocus: false,
     });
     const items = log.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -81,7 +105,7 @@ export default function AuditLogPage() {
     };
 
     return (
-        <div className="space-y-4">
+        <PageContainer width="wide" className="space-y-4">
             <div className="flex flex-wrap items-end gap-3">
                 <div className="flex gap-1" role="group" aria-label="Category">
                     {CATEGORIES.map((c) => (
@@ -101,7 +125,7 @@ export default function AuditLogPage() {
                 </div>
                 <div className="min-w-[14rem] flex-1">
                     <Label htmlFor="audit-action">Action</Label>
-                    <Input id="audit-action" list="audit-actions" value={action} onChange={(e) => setAction(e.target.value)}
+                    <Input id="audit-action" list="audit-actions" value={actionInput} onChange={(e) => onActionChange(e.target.value)}
                         placeholder="e.g. login., PUT /api/v1/cases" />
                     <datalist id="audit-actions">{facets.data?.actions.map((a) => <option key={a} value={a} />)}</datalist>
                 </div>
@@ -122,7 +146,25 @@ export default function AuditLogPage() {
                     ))}
                     <button type="button" onClick={() => setDays('')} aria-pressed={days === ''}
                         className={`px-2 h-8 rounded-md text-xs border ${days === '' ? 'border-accent text-accent' : 'border-line text-fg-2'}`}>All</button>
+                    <button type="button" onClick={() => setDays('custom')} aria-pressed={days === 'custom'}
+                        className={`px-2 h-8 rounded-md text-xs border ${days === 'custom' ? 'border-accent text-accent' : 'border-line text-fg-2'}`}>Custom</button>
                 </div>
+                {days === 'custom' && (
+                    <div className="flex items-end gap-2">
+                        <div>
+                            <Label htmlFor="audit-from">From</Label>
+                            <input id="audit-from" type="date" value={customFrom} max={customTo || undefined}
+                                onChange={(e) => setCustomFrom(e.target.value)}
+                                className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg" />
+                        </div>
+                        <div>
+                            <Label htmlFor="audit-to">To</Label>
+                            <input id="audit-to" type="date" value={customTo} min={customFrom || undefined}
+                                onChange={(e) => setCustomTo(e.target.value)}
+                                className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg" />
+                        </div>
+                    </div>
+                )}
                 {me?.is_super_admin && (
                     <label className="flex items-center gap-2 text-xs text-fg-2">
                         <input type="checkbox" checked={platform} onChange={(e) => setPlatform(e.target.checked)} /> Platform events
@@ -153,7 +195,7 @@ export default function AuditLogPage() {
             {log.hasNextPage && (
                 <Button size="sm" variant="ghost" onClick={() => log.fetchNextPage()} disabled={log.isFetchingNextPage}>Load more</Button>
             )}
-        </div>
+        </PageContainer>
     );
 }
 
@@ -161,6 +203,7 @@ function AuditRow({ item: i, open, platform, onToggle }: { item: AuditItem; open
     const related = useQuery({
         queryKey: ['audit-related', platform, i.request_id],
         enabled: open && !!i.request_id,
+        refetchOnWindowFocus: false,
         queryFn: async () => (await api.get('/audit-logs', { params: { request_id: i.request_id, ...(platform ? { scope: 'platform' } : {}) } })).data as AuditPage,
     });
     const others = related.data?.items.filter((r) => r.id !== i.id) ?? [];
