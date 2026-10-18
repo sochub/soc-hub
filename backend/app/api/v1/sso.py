@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.api.v1.auth import _safe_domain
 from app.audit.events import audit_event
 from app.core import security
 from app.core.config import settings
@@ -91,18 +92,22 @@ def _guest_error_redirect(tenant: Optional[Tenant], message: str) -> RedirectRes
     return RedirectResponse(f"{base}/guest/login{retry}#sso_error={quote(message)}", status_code=303)
 
 
-async def _guest_acs(db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
+async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
     """The assertion proves `email`; issue a guest session only if it has an active grant in THIS tenant.
     Never touches users/memberships (no provisioning)."""
     email = email.strip().lower()
     grants = (await db.execute(select(CaseGuest).join(Tenant, Tenant.id == CaseGuest.tenant_id).where(
         CaseGuest.tenant_id == tenant.id, CaseGuest.email == email, *GUEST_ACTIVE()))).scalars().all()
     if not grants or not domain_allowed(tenant, email):
+        dom = _safe_domain(email)
+        await audit_event("security", "guest.login.sso", request=request, outcome="denied", tenant_id=tenant.id,
+                          changes={"email_domain": dom} if dom else None)
         return _guest_error_redirect(tenant, GUEST_SSO_DENIED)
     for g in grants:
         await create_audit_log(db=db, entity_type="case_guest", entity_id=g.id, action="guest_sso_login",
                                tenant_id=tenant.id, changes={"actor": f"guest:{email}"})
     await db.commit()
+    await audit_event("security", "guest.login.sso", request=request, actor=f"guest:{email}", tenant_id=tenant.id)
     token = guest_tokens.issue_session(email, "sso", sso_tenant_id=tenant.id)
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     return RedirectResponse(f"{base}/guest/sso#token={quote(token)}", status_code=303)
@@ -251,7 +256,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
         return await fail("SSO response did not include an email address.", "no_email")
 
     if is_guest:
-        return await _guest_acs(db, tenant, email)
+        return await _guest_acs(request, db, tenant, email)
 
     full_name = ""
     for key in ("displayName", "cn", "name",

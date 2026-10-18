@@ -12,7 +12,7 @@ from app.db.session import AsyncSessionLocal
 from tests.audit_fixtures import PW, hdr, rows, run
 
 CANARIES = ["CANARY-PW-7f3a", "CANARY-SECRET-91bd", "CANARY-COMMENT-c0de", "CANARY-QS-5e5e",
-            "CANARY-HDR-a11a", "CANARY-NESTED-beef", "CANARY-422-dead"]
+            "CANARY-HDR-a11a", "CANARY-NESTED-beef", "CANARY-422-dead", "CANARY-GPW-3b3b", "CANARY-GLINK-8d8d"]
 
 
 def _dump(rs):
@@ -37,6 +37,12 @@ def test_no_confidential_value_reaches_any_audit_row():
         assert r.status_code == 200, r.text
         r = await c.post("/api/v1/secrets/", headers=hdr(w, "admin"), json={"value": CANARIES[6]})  # 422: no name
         assert r.status_code == 422, r.text
+        # guest sign-in: a password and a link token in the body (the /guest/link/<tok> path is an SPA route and
+        # never reaches the backend, so it has no backend row to leak into)
+        r = await c.post("/api/v1/guest/auth/login", json={"email": f"g@{w.h}.invalid", "password": CANARIES[7]})
+        assert r.status_code == 401, r.text
+        r = await c.post("/api/v1/guest/auth/link", json={"token": CANARIES[8]})
+        assert r.status_code == 401, r.text
         async with AsyncSessionLocal() as db:
             await create_audit_log(db, "case", w.case, "update", w.ta,
                                    changes={"config": {"api_key": CANARIES[5]}, "title": "ok"})

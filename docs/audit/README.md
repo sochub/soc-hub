@@ -19,7 +19,9 @@ A write usually produces a `write` row and (when fields change) linked `change` 
 
 ## Security events
 
-`login.success`, `login.failed`, `login.locked`, `login.mfa_required`, `mfa.challenge_passed`, `mfa.challenge_failed`, `mfa.enabled`, `mfa.disabled`, `mfa.reset`, `password.changed`, `tenant.switch`, `logout`, `sso.success`, `sso.failed`, `http.denied`.
+`login.success`, `login.failed`, `login.locked`, `login.mfa_required`, `mfa.challenge_passed`, `mfa.challenge_failed`, `mfa.enabled`, `mfa.disabled`, `mfa.reset`, `password.changed`, `tenant.switch`, `logout`, `sso.success`, `sso.failed`, `sso.replay`, `guest.login.link`, `guest.login.password`, `guest.login.mfa`, `guest.login.sso`, `guest.login.register`, `http.denied`.
+
+Guest sign-ins are `security` events with `actor = guest:<email>`. Link and SSO sign-ins are attributed to the grant's tenant; password, MFA and register sign-ins are platform-level (a password session spans tenants). A failed attempt has `outcome = denied`, no actor, and `changes = {"email_domain": ...}` only (never the full email). Guest requests on a case carry `actor = guest:<email>` and the grant's tenant.
 
 - Events are queued on `ctx.events` and written by `AuditMiddleware` after the handler finishes, so `status_code` and `duration_ms` are filled in.
 - Failed logins store only `{"email_domain": ...}`. Tenant attribution runs one uniform email-keyed query and counts only if the user has exactly one membership. The malformed-username branch stores the domain only if it matches `^[a-z0-9.-]{1,253}$`.
@@ -31,7 +33,6 @@ A write usually produces a `write` row and (when fields change) linked `change` 
 - `ip` is the `X-Real-IP`/peer address only if it parses as an IP address, else the socket peer, else NULL.
 - Anonymous 401s are recorded per request (one `http.denied` row each). In production put an nginx `limit_req` zone in front of the API so a flood of unauthenticated requests can't flood the table.
 - Slack signed interactions (`POST /api/v1/slack/interactions`) are recorded as platform-level `write` rows (tenant NULL).
-- Guest sign-in events and guest actor context are a follow-up once the case-guests PR (#59) merges.
 
 ## Sensitive reads
 
@@ -86,4 +87,4 @@ Fail-open. If an insert fails the request still succeeds and the error is logged
 
 ## Out of scope
 
-Retention/pruning, hash chaining or tamper evidence, alerting on events, guest actor context (follow-up to #59).
+Retention/pruning, hash chaining or tamper evidence, alerting on events.
