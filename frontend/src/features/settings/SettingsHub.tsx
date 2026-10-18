@@ -16,6 +16,7 @@ export default function SettingsHub() {
             { label: 'Profile', to: '/settings/profile' },
             { label: 'Integrations', to: '/settings/integrations' },
             { label: 'Users', to: '/settings/users', show: isAdmin },
+            { label: 'Audit log', to: '/settings/audit', show: isAdmin },
             { label: 'Tenants', to: '/settings/tenants', show: !!me?.is_super_admin },
         ]} />
     );

@@ -19,6 +19,7 @@ import app.tasks.sla  # noqa: E402,F401
 import app.tasks.workflows  # noqa: E402,F401
 import app.tasks.enrichment  # noqa: E402,F401
 import app.tasks.notifications  # noqa: E402,F401
+import app.tasks.guest_digest  # noqa: E402,F401
 
 # Beat is embedded in the worker process via the `-B` flag on the
 # docker-compose `worker` service — there's only ever one worker replica, so

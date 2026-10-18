@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import Depends, HTTPException, Query, Security, status
+from fastapi import Depends, Request, HTTPException, Query, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 import jwt
 from jwt import PyJWTError
@@ -7,26 +7,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.audit.context import ctx_of
+from app.core import session_cookie
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.models.webhook import Webhook
+from app.models.webhook import Webhook, hash_webhook_key
 from app.schemas import user as user_schema
 from app.utils.roles import resolve_active_role
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/access-token")
+# auto_error=False: the browser session arrives as a cookie instead (app.core.session_cookie).
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/access-token", auto_error=False)
 
 
 async def get_current_user(
-    db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
+    request: Request, db: AsyncSession = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme)
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = session_cookie.request_token(request, token)
+    if not token:
+        raise credentials_exception
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
@@ -46,6 +52,13 @@ async def get_current_user(
         raise credentials_exception
     # Transient, request-scoped: the active tenant chosen for this token.
     user._active_tenant_id = token_data.active_tenant_id
+    ctx = ctx_of(request)
+    if ctx is not None:
+        ctx.user_id, ctx.user_email = user.id, user.email
+        # Provisional, and only for a real membership: platform-level routes and stale-membership denials
+        # stay tenant-less (NULL) so tenant admins never see them. get_effective_tenant_id refines it.
+        if any(m.tenant_id == token_data.active_tenant_id for m in user.memberships):
+            ctx.tenant_id = token_data.active_tenant_id
     return user
 
 
@@ -80,8 +93,11 @@ def require_analyst_or_above(current_user: User = Depends(get_current_active_use
     )
 
 
-def require_super_admin(current_user: User = Depends(get_current_active_user)) -> User:
-    """Strict super-admin-only check."""
+def require_super_admin(request: Request, current_user: User = Depends(get_current_active_user)) -> User:
+    """Strict super-admin-only check. Marks the request platform-level for the audit log."""
+    ctx = ctx_of(request)
+    if ctx is not None:
+        ctx.platform = True
     if not current_user.is_super_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Super admin access required"
@@ -106,7 +122,14 @@ async def tenant_requires_mfa(db: AsyncSession, user: User, tenant_id: Optional[
     return (await db.execute(q.limit(1))).first() is not None
 
 
+def _set_tenant(request: Request, tenant_id: int) -> None:
+    ctx = ctx_of(request)
+    if ctx is not None:
+        ctx.tenant_id, ctx.tenant_explicit = tenant_id, True
+
+
 async def get_effective_tenant_id(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     tenant_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -127,9 +150,14 @@ async def get_effective_tenant_id(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Super admin must select a tenant.",
             )
+        if tenant_id is not None and tenant_id != active:
+            from app.models.tenant import Tenant
+            if (await db.execute(select(Tenant.id).where(Tenant.id == tenant_id))).first() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
         if (tenant_id is not None and tenant_id != active and current_user.mfa_enabled_at is None
                 and await tenant_requires_mfa(db, current_user, tenant_id)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="mfa_setup_required")
+        _set_tenant(request, chosen)
         return chosen
 
     if active is None:
@@ -142,6 +170,7 @@ async def get_effective_tenant_id(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not a member of the active tenant.",
         )
+    _set_tenant(request, active)
     return active
 
 
@@ -152,6 +181,7 @@ webhook_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False, scheme
 
 
 async def get_webhook_from_key(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     x_api_key: str | None = Security(webhook_api_key_scheme),
 ) -> Webhook:
@@ -170,7 +200,7 @@ async def get_webhook_from_key(
         select(Webhook)
         .join(Tenant, Tenant.id == Webhook.tenant_id)
         .where(
-            Webhook.api_key == x_api_key,
+            Webhook.key_hash == hash_webhook_key(x_api_key),
             Tenant.is_active == True,  # noqa: E712
         )
     )
@@ -180,6 +210,9 @@ async def get_webhook_from_key(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
         )
+    ctx = ctx_of(request)
+    if ctx is not None:
+        ctx.tenant_id, ctx.actor = webhook.tenant_id, f"webhook:{webhook.id}"
     return webhook
 
 
@@ -198,7 +231,8 @@ async def default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int
 
 
 async def get_user_for_mfa_setup(
-    db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
+    request: Request,
+    db: AsyncSession = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme)
 ) -> tuple[User, bool]:
     """Caller for MFA setup/enable: a normal access token, OR an MFA challenge
     token for a user who has not enabled MFA yet (forced enrolment at login).
@@ -210,12 +244,15 @@ async def get_user_for_mfa_setup(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    header_token, token = token, session_cookie.request_token(request, token)
+    if not token:
+        raise bad
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except PyJWTError:
         raise bad
     if not payload.get("purpose"):
-        return get_current_active_user(await get_current_user(db=db, token=token)), False
+        return get_current_active_user(await get_current_user(request=request, db=db, token=header_token)), False
     try:
         payload = decode_mfa_challenge(token)
     except PyJWTError:

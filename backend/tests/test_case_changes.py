@@ -18,6 +18,15 @@ class _DB:
     async def flush(self):
         pass
 
+    async def execute(self, *a, **k):  # guest digest lookup: no guests on the stub case
+        class _R:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return []
+        return _R()
+
 
 def _update(case, data):
     db = _DB()

@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
-from app.core import security
+from app.audit.events import audit_event
+from app.core import security, session_cookie
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
@@ -292,10 +293,11 @@ async def get_avatar(
         "Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"})
 
 
-@router.post("/me/password", response_model=TokenOnly)
+@router.post("/me/password", response_model=TokenOnly, response_model_exclude_none=True)
 async def change_password(
     *,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(deps.get_db),
     body: PasswordChange,
     current_user: User = Depends(deps.get_current_active_user),
@@ -323,7 +325,9 @@ async def change_password(
                                action="password_changed", tenant_id=audit_tenant,
                                user_id=current_user.id, changes=None)
     await db.commit()
-    return TokenOnly(access_token=security.issue_access_token(current_user, active))
+    await audit_event("security", "password.changed", request=request, user_id=current_user.id,
+                      user_email=current_user.email, tenant_id=active)
+    return session_cookie.issue(request, response, security.issue_access_token(current_user, active))
 
 
 async def _membership_in_tenant(db: AsyncSession, user_id: int, tenant_id: int) -> TenantMembership:

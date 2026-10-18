@@ -105,6 +105,7 @@ class Settings(BaseSettings):
 
     # Invitation settings
     INVITATION_EXPIRE_HOURS: int = 48  # 2 days
+    GUEST_LINK_EXPIRE_HOURS: int = 72  # guest magic link; the link is a bearer credential
 
     # Frontend URL for invitation links
     FRONTEND_URL: str = "http://localhost:80"

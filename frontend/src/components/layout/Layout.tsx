@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../api/client';
+import { api, session } from '../../api/client';
 import type { User } from '../../types';
 import CopilotWidget from '../../features/copilot/CopilotWidget';
 import NotificationBell from '../../features/notifications/NotificationBell';
@@ -56,8 +56,11 @@ export default function Layout() {
     });
 
     const handleLogout = () => {
-        localStorage.removeItem('token');
-        navigate('/login', { replace: true });
+        // Record the sign-out (best effort, never blocks): POST /auth/logout, 2s timeout.
+        api.post('/auth/logout', null, { timeout: 2000 }).catch(() => undefined).finally(() => {
+            session.clear();
+            navigate('/login', { replace: true });
+        });
     };
 
     const displayName = currentUser?.full_name || currentUser?.email || 'User';

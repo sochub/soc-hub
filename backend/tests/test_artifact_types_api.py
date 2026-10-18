@@ -39,6 +39,7 @@ async def test_artifact_types_crud_and_private_filtering():
     state["tenant"] = tid
     app.dependency_overrides[deps.get_effective_tenant_id] = lambda: state["tenant"]
     app.dependency_overrides[deps.get_current_active_user] = lambda: user
+    app.dependency_overrides[deps.require_analyst_or_above] = lambda: user
     app.dependency_overrides[deps.require_admin] = lambda: user if state["role"] == "admin" else _deny()
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
@@ -90,7 +91,7 @@ async def test_artifact_types_crud_and_private_filtering():
             # promote needs analyst+ (it now writes artifacts)
             app.dependency_overrides[deps.require_analyst_or_above] = _deny
             assert (await c.post(f"/api/v1/alerts/999999/promote/{cid}")).status_code == 403
-            del app.dependency_overrides[deps.require_analyst_or_above]
+            app.dependency_overrides[deps.require_analyst_or_above] = lambda: user
 
             # delete in use -> 409; cross-tenant -> 404
             assert (await c.delete(f"{u}{uname['id']}")).status_code == 409

@@ -57,6 +57,22 @@ def render_config(node: dict, ctx: dict) -> dict:
             for k, v in (node.get("config") or {}).items()}
 
 
+def _run_audit_changes(workflow: Workflow, payload, case_id: Optional[int], alert_id: Optional[int]) -> dict:
+    """Audit summary of a run's trigger. The payload itself can carry content or a request body (spec 2), so the
+    audit row keeps only its event, ids and key names; the full payload stays in workflow_runs.trigger_payload."""
+    p = payload if isinstance(payload, dict) else {}
+    out: dict = {"workflow": workflow.name}
+    if isinstance(p.get("event"), str):
+        out["event"] = p["event"][:64]
+    for key, fallback in (("case_id", case_id), ("alert_id", alert_id)):
+        value = fallback if fallback is not None else p.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            out[key] = value
+    if isinstance(payload, dict):
+        out["trigger_keys"] = sorted(str(k)[:64] for k in payload)[:20]
+    return out
+
+
 async def create_run(db, workflow: Workflow, *, trigger_payload: dict, case_id: Optional[int] = None,
                      alert_id: Optional[int] = None, depth: int = 0, is_dry_run: bool = False,
                      dry_run_mocks: Optional[dict] = None, user_id: Optional[int] = None) -> WorkflowRun:
@@ -71,7 +87,7 @@ async def create_run(db, workflow: Workflow, *, trigger_payload: dict, case_id: 
                            started_at=_now(), finished_at=_now()))
     await create_audit_log(db=db, entity_type="workflow_run", entity_id=run.id,
                            action="dry_run" if is_dry_run else "start", tenant_id=workflow.tenant_id,
-                           user_id=user_id, changes={"workflow": workflow.name, "trigger": trigger_payload})
+                           user_id=user_id, changes=_run_audit_changes(workflow, trigger_payload, case_id, alert_id))
     await db.flush()
     return run
 

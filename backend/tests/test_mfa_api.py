@@ -378,3 +378,36 @@ def test_enable_sso_only_needs_no_password_and_disable_shape():
                          json={"current_password": PW, "code": totp.totp_at(secret2, time.time() + 30)})
         assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
     _scenario(body)
+
+
+def test_security_audit_events_for_mfa():
+    async def body(c, ids):
+        async def sec(action):
+            async with AsyncSessionLocal() as db:
+                return (await db.execute(select(AuditLog).where(
+                    AuditLog.category == "security", AuditLog.action == action,
+                    AuditLog.tenant_id.in_([ids["ta"], ids["tb"]])))).scalars().all()
+
+        _, secret, code, _, r2 = await _enable(c, ids)
+        en = await sec("mfa.enabled")
+        assert len(en) == 1 and en[0].user_id == ids["member"] and en[0].tenant_id == ids["ta"]
+        new = {"Authorization": f"Bearer {r2.json()['access_token']}"}
+        fresh = totp.totp_at(secret, time.time() + 30)
+        r = await c.post("/api/v1/users/me/mfa/disable", headers=new, json={"current_password": PW, "code": fresh})
+        assert r.status_code == 200, r.text
+        assert len(await sec("mfa.disabled")) == 1
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(User).where(User.id == ids["member"]).values(
+                mfa_secret_enc=encrypt("JBSWY3DPEHPK3PXP"), mfa_enabled_at=datetime.now(timezone.utc)))
+            await db.commit()
+        url = f"/api/v1/users/{ids['member']}/mfa/reset"
+        assert (await c.post(url, headers=await _hdr(ids["admin"], ids["ta"]))).status_code == 204
+        rs = await sec("mfa.reset")
+        assert len(rs) == 1 and rs[0].user_id == ids["admin"] and rs[0].entity_id == ids["member"]
+        async with AsyncSessionLocal() as db:
+            allrows = (await db.execute(select(AuditLog).where(
+                AuditLog.tenant_id.in_([ids["ta"], ids["tb"]])))).scalars().all()
+        for row in allrows:
+            blob = repr(vars(row))
+            assert secret not in blob and code not in blob and "JBSWY3DPEHPK3PXP" not in blob
+    _scenario(body)
