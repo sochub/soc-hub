@@ -38,7 +38,7 @@ async def create_artifact(
     *,
     db: AsyncSession = Depends(deps.get_db),
     artifact_in: artifact_schema.ArtifactCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Add an artifact to a case (tenant-scoped).
@@ -156,7 +156,7 @@ async def update_artifact(
     db: AsyncSession = Depends(deps.get_db),
     artifact_id: int,
     artifact_in: artifact_schema.ArtifactUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update an artifact (tenant-scoped)."""
@@ -226,7 +226,7 @@ async def delete_artifact(
     *,
     db: AsyncSession = Depends(deps.get_db),
     artifact_id: int,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Permanently delete an artifact and all its case links (tenant-scoped)."""
@@ -267,7 +267,7 @@ async def remove_artifact_from_case(
     db: AsyncSession = Depends(deps.get_db),
     artifact_id: int,
     case_id: int,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Unlink an artifact from a case.

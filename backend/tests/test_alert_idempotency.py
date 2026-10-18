@@ -10,7 +10,7 @@ from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.case import Alert
 from app.models.tenant import Tenant
-from app.models.webhook import Webhook
+from app.models.webhook import Webhook, hash_webhook_key
 
 URL = "/api/v1/alerts/webhook"
 
@@ -21,10 +21,11 @@ async def _scenario(emitted, concurrent):
         t = Tenant(name="idem-test", slug=f"idem-test-{h}")
         db.add(t)
         await db.flush()
-        wh = Webhook(tenant_id=t.id, name="Splunk", api_key=f"idem-{secrets.token_hex(16)}")
+        key = f"idem-{secrets.token_hex(16)}"
+        wh = Webhook(tenant_id=t.id, name="Splunk", key_hash=hash_webhook_key(key), key_prefix=key[:8])
         db.add(wh)
         await db.commit()
-        tid, wid, key = t.id, wh.id, wh.api_key
+        tid, wid = t.id, wh.id
     try:
         body = {"external_id": f"ext-{h}", "title": "dup test", "payload": {"n": 1}}
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:

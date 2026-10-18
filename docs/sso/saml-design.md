@@ -9,6 +9,7 @@
 | Provisioning | **JIT, configurable per tenant**: `auto_provision` toggle + `default_role` (analyst/viewer, never admin). Off → unknown users rejected |
 | Enforcement | **Optional in v1** — password login keeps working; "require SSO" toggle deferred |
 | Library | **python3-saml** (OneLogin) — full signature/assertion validation; needs xmlsec1 native deps in the backend image |
+| IdP requirement | The **assertion must be signed** (`wantAssertionsSigned`); a signed Response alone is rejected. Okta and Entra ID sign assertions by default; in Keycloak enable *Sign assertions* on the client |
 | Test IdP | mocksaml.com for verification; docs for Okta/Entra |
 
 ## Data model — `tenant_sso_configs` (1:1 tenant, migration `b3c4d5e6f7a8`)
@@ -20,7 +21,7 @@ Separate table so tenant **admins** can edit without touching super_admin tenant
 ## Endpoints
 - `GET /api/v1/auth/saml/{slug}/metadata` — SP metadata XML (public)
 - `GET /api/v1/auth/saml/{slug}/login` — build AuthnRequest, 307 → IdP (public)
-- `POST /api/v1/auth/saml/{slug}/acs` — validate response (strict; signature vs stored cert, audience, conditions) → email from NameID → find-or-provision → JWT (`active_tenant_id`=tenant) → redirect `PUBLIC_BASE_URL/login#sso_token=…` (fragment: avoids server logs). Errors → `#sso_error=…`
+- `POST /api/v1/auth/saml/{slug}/acs` — validate response (strict; signature vs stored cert, audience, conditions) → email from NameID → find-or-provision → session cookie with the JWT (`active_tenant_id`=tenant) → redirect `PUBLIC_BASE_URL/login#sso=ok` (no token in the URL). Errors → `#sso_error=…`
 - `GET/PUT /api/v1/tenants/sso-config` — active-tenant scoped, `require_admin`. GET also returns the SP values to paste into the IdP (ACS URL, entity ID, metadata URL). Registered BEFORE `/tenants/{tenant_id}` to avoid path collision.
 
 ## Find-or-provision rules (`_resolve_sso_user`)
@@ -42,7 +43,7 @@ accounts that belong to **this tenant alone**:
 
 ## Frontend
 - **Settings** page: "Single Sign-On (SAML)" panel (admin-only): enable toggle, IdP entity ID / SSO URL / x509 cert textarea, auto-provision + default role; read-only SP info box with copy buttons.
-- **Login**: "Sign in with SSO" → slug input → `window.location = /api/v1/auth/saml/{slug}/login`; on mount, parse `#sso_token` (store, enter app) / `#sso_error` (show).
+- **Login**: "Sign in with SSO" → slug input → `window.location = /api/v1/auth/saml/{slug}/login`; on mount, `#sso=ok` → enter app / `#sso_error` (show).
 
 ## Out of scope v1
 Require-SSO enforcement, SLO, IdP-initiated flow, SCIM, multiple IdPs/tenant.

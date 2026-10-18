@@ -27,7 +27,7 @@ from app.reports.pdf import RenderTimeout
 
 LOGGER = "app.api.v1.reports"
 LOG_RX = re.compile(r"^report (get|put|draft|chart|export) tenant=\d+ case=\d+ format=\S+ full=\S+ outcome=[a-z_]+$")
-FILENAME_RX = re.compile(r'^attachment; filename="(case-\d{4}-report-TLP-RED-\d{8}\.pdf)"$')
+FILENAME_RX = re.compile(r'^attachment; filename="(case-\d{4,}-report-TLP-RED-\d{8}\.pdf)"$')
 SECRET_SUMMARY = "SUMMARY-MARKER-the-ceo-laptop-was-compromised"
 SECRET_IMPACT = "IMPACT-MARKER-payroll-exposed"
 SECRET_LESSONS = "LESSONS-MARKER-patch-faster"
@@ -222,7 +222,7 @@ async def _scenario(monkeypatch, caplog):
                 assert r.status_code == 200, f"i {r.status_code} {r.text}"
                 assert r.headers["content-type"] == "application/json", f"i ct {r.headers}"
                 assert r.headers["x-content-sha256"] == hashlib.sha256(r.content).hexdigest(), "i sha"
-                assert re.match(r'^attachment; filename="case-\d{4}-report-TLP-RED-\d{8}\.json"$',
+                assert re.match(r'^attachment; filename="case-\d{4,}-report-TLP-RED-\d{8}\.json"$',
                                 r.headers["content-disposition"]), f"i filename {r.headers['content-disposition']}"
                 js = json.loads(r.content)
                 assert js["meta"]["schema"] == "sochub.incident-report/1", f"i schema {js['meta']}"

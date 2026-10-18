@@ -195,26 +195,21 @@ async def validate_invitation(
     db: AsyncSession = Depends(deps.get_db),
     token: str,
 ) -> Any:
-    """Validate an invitation token. Public endpoint, no auth required."""
+    """Validate an invitation token. Public endpoint, no auth required.
+
+    Missing, used and expired tokens get the same empty answer, so a stale or leaked link reveals nothing;
+    the invitee's email, tenant and role are shown only for a live invitation (the acceptance screen)."""
     result = await db.execute(select(Invitation).where(Invitation.token == token))
     invitation = result.scalars().first()
+    invalid = invitation_schema.InvitationValidation(email="", tenant_name="", role="", valid=False)
 
-    if not invitation:
-        return invitation_schema.InvitationValidation(
-            email="", tenant_name="", role="", valid=False
-        )
-
-    if invitation.status != InvitationStatus.PENDING:
-        return invitation_schema.InvitationValidation(
-            email=invitation.email, tenant_name="", role=invitation.role, valid=False
-        )
+    if not invitation or invitation.status != InvitationStatus.PENDING:
+        return invalid
 
     if invitation.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         invitation.status = InvitationStatus.EXPIRED
         await db.commit()
-        return invitation_schema.InvitationValidation(
-            email=invitation.email, tenant_name="", role=invitation.role, valid=False
-        )
+        return invalid
 
     # Get tenant name
     result = await db.execute(select(Tenant).where(Tenant.id == invitation.tenant_id))

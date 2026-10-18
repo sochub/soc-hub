@@ -3,13 +3,14 @@ import QRCode from 'qrcode';
 import { Check, Copy, Loader2 } from 'lucide-react';
 import { api } from '../../api/client';
 import Modal, { btnPrimary, btnSecondary, modalInput, modalLabel } from '../../components/layout/Modal';
-import { setSessionToken } from '../../api/queryClient';
+import { refreshSession } from '../../api/queryClient';
 import { mfaErrorMessage } from './mfaErrors';
 
 interface Props {
     open: boolean;
     onClose: () => void;
-    onEnabled: (token: string) => void;
+    /** The API has set the new session cookie by now. */
+    onEnabled: () => void;
     /** Forced setup during login: sent as the Bearer token instead of the stored one. */
     authToken?: string;
     /** Ask for the current password (enabling from a normal session on a password account). */
@@ -75,10 +76,9 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken, re
         setError(null);
         try {
             const body = requirePassword ? { code, current_password: pw } : { code };
-            const { data } = await api.post('/users/me/mfa/enable', body, { headers });
-            const token = data.access_token as string;
-            if (!authToken) setSessionToken(token);
-            onEnabled(token);
+            await api.post('/users/me/mfa/enable', body, { headers });
+            if (!authToken) refreshSession();
+            onEnabled();
         } catch (err) {
             if (authToken && isUnauthorized(err) && onExpired) { onExpired(); return; }
             setError(mfaErrorMessage(err));

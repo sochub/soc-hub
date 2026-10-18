@@ -46,7 +46,8 @@ def build_saml_settings(slug: str, cfg: TenantSSOConfig) -> Dict[str, Any]:
         },
         "security": {
             "requestedAuthnContext": False,
-            "wantAssertionsSigned": False,  # response signature still required by strict mode
+            # The assertion itself must be signed; a signed Response alone is not accepted.
+            "wantAssertionsSigned": True,
             "wantMessagesSigned": False,
         },
     }

@@ -97,7 +97,8 @@ async def is_following(db, case_id: int, user_id: int) -> bool:
         CaseFollower.case_id == case_id, CaseFollower.user_id == user_id))).first() is not None
 
 
-async def on_comment(db, case: Case, event, actor_id: Optional[int], previous_content: Optional[str] = None) -> None:
+async def on_comment(db, case: Case, event, actor_id: Optional[int], previous_content: Optional[str] = None,
+                     actor_label: Optional[str] = None) -> None:
     async def body():
         mentioned = set()
         if actor_id is not None and event.event_type == "comment":
@@ -110,7 +111,7 @@ async def on_comment(db, case: Case, event, actor_id: Optional[int], previous_co
             others = set()
         else:
             others = await _members(db, case.tenant_id, await _followers(db, case)) - mentioned - {actor_id}
-        name = await _actor_name(db, actor_id)
+        name = (actor_label or "")[:60] or await _actor_name(db, actor_id)
         out = [_add(db, case, u, "mention", f"{name} mentioned you on case #{case.id}", actor_id, event.id) for u in mentioned]
         out += [_add(db, case, u, "comment", f"{name} commented on case #{case.id}", actor_id, event.id) for u in others]
         return out

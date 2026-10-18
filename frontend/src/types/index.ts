@@ -196,6 +196,9 @@ export interface TimelineEvent {
   content: string;
   created_at: string;
   user: TimelineEventUser | null;
+  shared_with_guests?: boolean;
+  guest_id?: number | null;
+  guest_email?: string | null;
 }
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';
@@ -212,6 +215,7 @@ export interface Case {
   resolved_at: string | null;
   acknowledged_at: string | null;
   timeline_events: TimelineEvent[];
+  guest_summary?: string | null;
 
   sla_response_target_minutes?: number | null;
   sla_response_status?: SLAStatus | null;
@@ -272,6 +276,7 @@ export interface Attachment {
   description: string | null;
   uploaded_by: number | null;
   uploaded_by_email: string | null;
+  uploaded_by_guest_email?: string | null;
   created_at: string;
   deleted_at: string | null;
   deleted_by: number | null;
@@ -364,4 +369,34 @@ export interface AppNotification {
   timeline_event_id: number | null;
   read_at: string | null;
   created_at: string;
+}
+
+export interface AuditUser { id: number; email: string; full_name?: string | null }
+export interface AuditItem {
+    id: number; created_at: string; category: 'change' | 'write' | 'security' | 'read'; action: string;
+    outcome?: 'success' | 'denied' | 'error' | null; status_code?: number | null; method?: string | null;
+    route?: string | null; entity_type?: string | null; entity_id?: number | null; user?: AuditUser | null;
+    user_email?: string | null; actor?: string | null; ip?: string | null; user_agent?: string | null;
+    request_id?: string | null; duration_ms?: number | null; changes?: Record<string, unknown> | null;
+}
+export interface AuditPage { items: AuditItem[]; next_before: number | null }
+export interface AuditFacets { categories: string[]; actions: string[]; users: AuditUser[]; entity_types: string[] }
+
+export interface CaseGuest {
+  id: number;
+  case_id: number;
+  email: string;
+  permission: 'viewer' | 'contributor';
+  expires_at: string;
+  revoked_at: string | null;
+  last_seen_at: string | null;
+  created_at: string | null;
+  has_account: boolean;
+  active: boolean;
+}
+
+export interface GuestSettings {
+  domain_allowlist: string[];
+  require_sso: boolean;
+  sso_ready: boolean;
 }

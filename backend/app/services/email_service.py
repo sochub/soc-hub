@@ -105,3 +105,75 @@ async def send_sla_breach_email(to_email: str, case, breach_type: str) -> bool:
     </html>
     """
     return _send_email(to_email, subject, html_body)
+
+
+def send_guest_invite_email(to_email: str, *, tenant_name: str, case_id: int, case_title: str,
+                            permission: str, link: str, sso: bool) -> bool:
+    """Invite a guest to one case. No case content beyond the title."""
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest invite email")
+        return False
+    t, title, l = html.escape(tenant_name), html.escape(case_title), html.escape(link)
+    action = "Sign in with your company SSO" if sso else "Open the case"
+    verb = "contribute evidence and comments to" if permission == "contributor" else "follow updates on"
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>You've been invited to a case</h2>
+      <p><strong>{t}</strong> invited you to {verb} case #{case_id}: <strong>{title}</strong>.</p>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">{action}</a></p>
+      <p style="color:#666;font-size:12px;">If you weren't expecting this, you can ignore this email.</p>
+    </body></html>"""
+    return _send_email(to_email, f"{tenant_name}: you've been invited to case #{case_id}", body, log_recipient=False)
+
+
+def send_guest_reset_email(to_email: str, link: str) -> bool:
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest reset email")
+        return False
+    l = html.escape(link)
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>Reset your guest password</h2>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">Choose a new password</a></p>
+      <p style="color:#666;font-size:12px;">This link expires in 30 minutes. If you didn't ask for it, ignore this email.</p>
+    </body></html>"""
+    return _send_email(to_email, "Reset your SOC Hub guest password", body, log_recipient=False)
+
+
+def send_guest_register_email(to_email: str, link: str) -> bool:
+    """Confirms the address before a guest account is created. No case content."""
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest register email")
+        return False
+    l = html.escape(link)
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>Confirm your guest account</h2>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">Choose a password</a></p>
+      <p style="color:#666;font-size:12px;">This link expires in 30 minutes. If you didn't ask for it, ignore this email.</p>
+    </body></html>"""
+    return _send_email(to_email, "Confirm your SOC Hub guest account", body, log_recipient=False)
+
+
+def send_guest_digest_email(to_email: str, *, tenant_name: str, case_id: int, case_title: str,
+                            summaries: list, link: str) -> bool:
+    """One email per guest per digest window: summaries only, never shared content."""
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping guest digest email")
+        return False
+    items = "".join(f"<li>{html.escape(s)}</li>" for s in summaries)
+    l, title = html.escape(link), html.escape(case_title)
+    n = len(summaries)
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>{n} update{'s' if n != 1 else ''} on case #{case_id}</h2>
+      <p><strong>{title}</strong> ({html.escape(tenant_name)})</p>
+      <ul>{items}</ul>
+      <p><a href="{l}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">View the case</a></p>
+    </body></html>"""
+    return _send_email(to_email, f"{tenant_name}: {n} update{'s' if n != 1 else ''} on case #{case_id}", body,
+                       log_recipient=False)

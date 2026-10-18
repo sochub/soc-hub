@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, ArrowLeft } from 'lucide-react';
-import { api } from '../../api/client';
+import { api, session } from '../../api/client';
 import { Button, Input, Label } from '../../components/ui';
 import MfaSetupDialog from '../profile/MfaSetupDialog';
 import { mfaErrorMessage } from '../profile/mfaErrors';
@@ -25,14 +25,12 @@ export default function Login() {
         setError(msg);
     };
 
-    // SAML ACS bounces back here with the JWT (or an error) in the URL fragment
-    // — fragments stay out of server logs.
+    // SAML ACS bounces back here after setting the session cookie (#sso=ok), or with an error in the fragment.
     useEffect(() => {
         const hash = window.location.hash;
-        if (hash.startsWith('#sso_token=')) {
-            const token = decodeURIComponent(hash.slice('#sso_token='.length));
+        if (hash === '#sso=ok') {
             window.history.replaceState(null, '', window.location.pathname);
-            localStorage.setItem('token', token);
+            session.mark();
             navigate('/');
         } else if (hash.startsWith('#sso_error=')) {
             setError(decodeURIComponent(hash.slice('#sso_error='.length)));
@@ -63,8 +61,7 @@ export default function Login() {
                 setPassword(''); // not needed past this step; don't keep it in memory
                 return;
             }
-            const { access_token } = response.data;
-            localStorage.setItem('token', access_token);
+            session.mark();
             navigate('/');
         } catch (err: any) {
             if (err.response?.status === 401) {
@@ -87,8 +84,8 @@ export default function Login() {
         setError('');
         setIsLoading(true);
         try {
-            const response = await api.post('/auth/login/mfa', { mfa_token: challenge.token, code });
-            localStorage.setItem('token', response.data.access_token);
+            await api.post('/auth/login/mfa', { mfa_token: challenge.token, code });
+            session.mark();
             navigate('/');
         } catch (err) {
             if ((err as { response?: { status?: number } }).response?.status === 401) {
@@ -160,8 +157,8 @@ export default function Login() {
                                 authToken={challenge.token}
                                 onClose={() => resetChallenge()}
                                 onExpired={() => resetChallenge('Your sign-in expired — please sign in again')}
-                                onEnabled={(token) => {
-                                    localStorage.setItem('token', token);
+                                onEnabled={() => {
+                                    session.mark();
                                     setChallenge(null);
                                     navigate('/');
                                 }}

@@ -19,10 +19,12 @@ the limits. Counters (LOGIN_WINDOW_SECONDS window):
 A successful login deletes the two email counters and refunds (DECRs, never
 below 0) its IP slot.
 
-Fails OPEN: if Redis is unreachable we log a warning and allow the attempt, so
-a Redis outage degrades protection rather than locking everyone out.
+If Redis is unreachable we log a warning and fall back to the same counters
+kept in this process's memory (_LOCAL), so an outage weakens protection (each
+worker counts on its own) rather than removing it or locking everyone out.
 """
 import logging
+import time
 from typing import Optional
 
 from fastapi import Request
@@ -70,6 +72,38 @@ local value = redis.call('DECR', KEYS[1])
 if value <= 0 then redis.call('DEL', KEYS[1]) end
 return value
 """
+
+
+# Fallback counters used only while Redis is down: key -> (count, expires_at monotonic).
+# ponytail: per-process dict; limits multiply by the worker count during an outage.
+_LOCAL: dict[str, tuple[int, float]] = {}
+_LOCAL_MAX_KEYS = 10_000
+
+
+def _local_reserve(keys: list[str], limits: list[int], window: int) -> Optional[int]:
+    """In-memory twin of RESERVE_LUA."""
+    now = time.monotonic()
+    if len(_LOCAL) > _LOCAL_MAX_KEYS:
+        for k in [k for k, (_, exp) in _LOCAL.items() if exp <= now]:
+            del _LOCAL[k]
+    live = {k: v for k in keys if (v := _LOCAL.get(k)) and v[1] > now}
+    blocked = [live[k][1] for k, lim in zip(keys, limits) if k in live and live[k][0] >= lim]
+    if blocked:
+        return max(1, int(max(blocked) - now))
+    for k in keys:
+        count, exp = live.get(k, (0, now + window))
+        _LOCAL[k] = (count + 1, exp)
+    return None
+
+
+def _local_refund(ip_key: str, email_keys: tuple[str, str]) -> None:
+    for k in email_keys:
+        _LOCAL.pop(k, None)
+    count, exp = _LOCAL.get(ip_key, (0, 0.0))
+    if count <= 1:
+        _LOCAL.pop(ip_key, None)
+    else:
+        _LOCAL[ip_key] = (count - 1, exp)
 
 
 def client_ip(request: Request) -> str:
@@ -149,9 +183,9 @@ class LoginThrottle:
             if self._reserve_script is None:
                 self._reserve_script = self.redis.register_script(RESERVE_LUA)
             allowed, ttl = await self._reserve_script(keys=keys, args=args)
-        except Exception as exc:  # fail open
-            logger.warning("login throttle unavailable (reserve): %s", exc)
-            return None
+        except Exception as exc:
+            logger.warning("login throttle unavailable (reserve), using in-memory fallback: %s", exc)
+            return _local_reserve(keys, args[1:], self.window)
         return None if int(allowed) == 1 else int(ttl)
 
     async def reset(self, email: str, ip: str) -> None:
@@ -169,6 +203,7 @@ class LoginThrottle:
             await self._refund_script(keys=[ip_key])  # atomic DECR, DEL if <= 0
         except Exception as exc:
             logger.warning("login throttle unavailable (reset): %s", exc)
+            _local_refund(ip_key, self._email_keys(email, ip))
 
 
 _throttle = LoginThrottle()
@@ -177,6 +212,9 @@ _throttle = LoginThrottle()
 # Current-password checks (change password, turn MFA on/off): same limits as login,
 # separate namespace so a login "username" can never touch these counters.
 _pwd_throttle = _throttle.namespaced("pwd")
+
+# Audit-log exports: a quota per user (each export scans up to 50k rows), not a lock.
+_export_throttle = _throttle.namespaced("audit_export", window=600, max_email_ip=5, max_email=5, max_ip=20)
 
 
 def get_login_throttle() -> LoginThrottle:
@@ -187,3 +225,8 @@ def get_login_throttle() -> LoginThrottle:
 def get_pwd_throttle() -> LoginThrottle:
     """Throttle for current-password checks (keys pwd:attempts:...); tests override it."""
     return _pwd_throttle
+
+
+def get_export_throttle() -> LoginThrottle:
+    """Quota for audit-log exports (keyed on the user id); tests override it."""
+    return _export_throttle
