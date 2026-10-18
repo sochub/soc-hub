@@ -131,6 +131,7 @@ def run(body) -> None:
         w = await _setup()
         app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
         app.dependency_overrides[login_throttle.get_pwd_throttle] = lambda: _FakeThrottle()
+        app.dependency_overrides[login_throttle.get_export_throttle] = lambda: _FakeThrottle()
         try:
             async with client(w.ua) as c:
                 await body(c, w)

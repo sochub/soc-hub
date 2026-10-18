@@ -71,7 +71,7 @@ async def create_ioc(
     *,
     db: AsyncSession = Depends(deps.get_db),
     ioc_in: ioc_schema.IOCCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create a new IOC."""
@@ -119,7 +119,7 @@ async def update_ioc(
     db: AsyncSession = Depends(deps.get_db),
     ioc_id: int,
     ioc_in: ioc_schema.IOCUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update an IOC (tenant-scoped)."""
@@ -163,7 +163,7 @@ async def delete_ioc(
     *,
     db: AsyncSession = Depends(deps.get_db),
     ioc_id: int,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Delete an IOC (tenant-scoped)."""

@@ -276,6 +276,7 @@ export default function Settings() {
                                         onChange={e => setForm(f => ({ ...f, idp_x509_cert: e.target.value }))}
                                         rows={6} placeholder="-----BEGIN CERTIFICATE-----"
                                         className="w-full bg-panel border border-line-strong px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent" />
+                                    <p className="text-[11px] text-fg-3 mt-1">The IdP must sign the assertion (in Keycloak, enable “Sign assertions”).</p>
                                 </div>
                                 <div className="flex items-center gap-4 flex-wrap">
                                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">

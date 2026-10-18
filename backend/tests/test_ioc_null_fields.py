@@ -13,6 +13,7 @@ from app.main import app
 ])
 async def test_update_rejects_null_on_required_fields(body, bad):
     app.dependency_overrides[deps.get_current_active_user] = lambda: object()
+    app.dependency_overrides[deps.require_analyst_or_above] = lambda: object()
     app.dependency_overrides[deps.get_effective_tenant_id] = lambda: 1
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:

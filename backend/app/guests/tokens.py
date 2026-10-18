@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.security import create_access_token
 
 LINK, SESSION, RESET, MFA, REGISTER = "guest-link", "guest", "guest-reset", "guest-mfa", "guest-register"
-LINK_TTL = timedelta(days=7)
+LINK_TTL = timedelta(hours=settings.GUEST_LINK_EXPIRE_HOURS)
 SESSION_TTL = timedelta(hours=12)
 RESET_TTL = timedelta(minutes=30)
 MFA_TTL = timedelta(minutes=5)

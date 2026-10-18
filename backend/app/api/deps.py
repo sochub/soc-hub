@@ -13,7 +13,7 @@ from app.db.session import get_db
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.models.webhook import Webhook
+from app.models.webhook import Webhook, hash_webhook_key
 from app.schemas import user as user_schema
 from app.utils.roles import resolve_active_role
 
@@ -195,7 +195,7 @@ async def get_webhook_from_key(
         select(Webhook)
         .join(Tenant, Tenant.id == Webhook.tenant_id)
         .where(
-            Webhook.api_key == x_api_key,
+            Webhook.key_hash == hash_webhook_key(x_api_key),
             Tenant.is_active == True,  # noqa: E712
         )
     )

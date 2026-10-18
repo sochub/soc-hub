@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import app.db.base  # noqa: F401 — register all models
+from app.api import deps
 from app.api.api import api_router
 from app.audit.middleware import AuditMiddleware
 from app.core.config import settings
@@ -32,7 +33,10 @@ app = FastAPI(
     title="SICMS API",
     description="Security Incident Case Management System API",
     version="0.1.0",
-    openapi_url="/api/v1/openapi.json",
+    # No anonymous /docs, /redoc or schema: the frontend API Docs page fetches it signed in (below).
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -52,6 +56,11 @@ if settings.cors_origins:
 app.add_middleware(AuditMiddleware)
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.get("/api/v1/openapi.json", include_in_schema=False, dependencies=[Depends(deps.get_current_active_user)])
+async def openapi_schema():
+    return app.openapi()
 
 
 @app.get("/health")
