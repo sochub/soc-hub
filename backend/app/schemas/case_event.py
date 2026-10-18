@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from app.models.case_event import EVENT_CATEGORIES
 
@@ -68,3 +69,34 @@ class CaseEventOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class EventSuggestRequest(BaseModel):
+    text: Optional[str] = Field(None, max_length=50000)  # pasted logs or notes
+    use_ai: bool = True
+    naive_tz: str = Field("UTC", max_length=64)  # IANA zone for pasted timestamps that carry no offset
+
+    @field_validator("naive_tz")
+    @classmethod
+    def _tz(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("naive_tz must be an IANA time zone such as UTC or Europe/Madrid")
+        return v
+
+
+class SuggestedEvent(BaseModel):
+    event_date: datetime
+    title: str
+    content: Optional[str] = None
+    raw: Optional[str] = None
+    source: Optional[str] = None
+    category: str
+    origin: Literal["ai", "alert", "log"]
+    artifact_ids: List[int] = []
+
+
+class EventSuggestResponse(BaseModel):
+    events: List[SuggestedEvent]
+    ai: Literal["used", "unavailable", "off"]

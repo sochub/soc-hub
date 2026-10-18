@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Flag, FileText, FileX, Pencil, Trash2, Download, X } from 'lucide-react';
+import { Plus, Flag, FileText, FileX, Pencil, Trash2, Download, X, Sparkles } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { formatDateTime } from '../../utils/datetime';
 import type { CaseEvent, User } from '../../types';
+import TimelineSuggest from './TimelineSuggest';
 
 // Same list IRIS seeds: 3 generic + 12 ATT&CK tactics. Colour is deterministic per category.
 const EVENT_CATEGORIES: [string, string, string][] = [
@@ -81,6 +82,7 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
     const [flaggedOnly, setFlaggedOnly] = useState(false);
     const [editing, setEditing] = useState<number | 'new' | null>(null);
     const [draft, setDraft] = useState<Draft>(blank);
+    const [suggesting, setSuggesting] = useState(false);
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const canEdit = me?.role === 'admin' || me?.role === 'analyst' || me?.is_super_admin;
@@ -176,16 +178,23 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
                     <Download size={12} /> CSV
                 </button>
                 {canEdit && (
+                    <button onClick={() => setSuggesting((v) => !v)} aria-pressed={suggesting}
+                        className="text-xs bg-raised hover:bg-raised-2 text-fg-2 px-3 py-1.5 rounded-sm flex items-center gap-1.5">
+                        <Sparkles size={12} /> Suggest
+                    </button>
+                )}
+                {canEdit && (
                     <button onClick={() => { setDraft(blank()); setEditing('new'); }} className="text-xs bg-accent text-on-accent hover:bg-accent-hover px-3 py-1.5 rounded-sm flex items-center gap-1.5 font-medium">
                         <Plus size={12} /> Add event
                     </button>
                 )}
             </div>
             <p className="text-[11px] font-mono text-muted">{shown.length} of {events.length} events</p>
+            {suggesting && <TimelineSuggest caseId={caseId} categories={EVENT_CATEGORIES} timezone={me?.timezone} onClose={() => setSuggesting(false)} />}
             {editing === 'new' && form}
 
-            {!events.length && editing !== 'new' && (
-                <div className="text-center py-12 text-muted text-sm">No investigation events yet. Add what happened, when, and where it was seen.</div>
+            {!events.length && editing !== 'new' && !suggesting && (
+                <div className="text-center py-12 text-muted text-sm">No investigation events yet. Add what happened, when, and where it was seen, or use Suggest to pull them from alerts, notes and pasted logs.</div>
             )}
 
             <div className="relative space-y-6">

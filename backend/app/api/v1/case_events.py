@@ -1,16 +1,19 @@
 """Investigation timeline: dated incident events per case (IRIS-style), distinct from the activity log."""
 from typing import Any, List
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.models.artifact import Artifact
-from app.models.case import Case
+from app.models.case import Alert, Case, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.case_event import CaseEvent
 from app.models.user import User
-from app.schemas.case_event import CaseEventCreate, CaseEventOut, CaseEventUpdate
+from app.schemas.case_event import (CaseEventCreate, CaseEventOut, CaseEventUpdate, EventSuggestRequest,
+                                   EventSuggestResponse)
+from app.services import timeline_suggest
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
@@ -123,3 +126,36 @@ async def delete_event(
     await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="event_deleted",
                            tenant_id=tenant_id, user_id=current_user.id, changes={"id": event_id, "title": ev.title})
     await db.commit()
+
+
+@router.post("/{case_id}/events/suggest", response_model=EventSuggestResponse)
+async def suggest_events(
+    case_id: int,
+    body: EventSuggestRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Propose timeline events from linked alerts, analyst notes and pasted text. Saves nothing."""
+    case = await _get_case(db, case_id, tenant_id)
+    alerts = (await db.execute(select(Alert).where(Alert.case_id == case_id, Alert.tenant_id == tenant_id)
+                               .order_by(Alert.created_at.desc()).limit(50))).scalars().all()
+    comments = (await db.execute(select(TimelineEvent).where(
+        TimelineEvent.case_id == case_id, TimelineEvent.event_type == "comment")
+        .order_by(TimelineEvent.created_at.desc()).limit(50))).scalars().all()
+    existing = (await db.execute(select(CaseEvent).where(
+        CaseEvent.case_id == case_id, CaseEvent.tenant_id == tenant_id))).scalars().all()
+    artifacts = (await db.execute(select(Artifact).join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id).where(
+        CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id))).scalars().all()
+
+    parsed = timeline_suggest.from_alerts(alerts) + timeline_suggest.from_log_text(body.text or "", ZoneInfo(body.naive_tz))
+    ai, ai_state = None, "off"
+    if body.use_ai:
+        ai = await timeline_suggest.from_ai(
+            timeline_suggest.build_material(case, alerts, comments, body.text), tenant_id)
+        ai_state = "used" if ai is not None else "unavailable"
+    events = timeline_suggest.merge(ai, parsed, existing)
+    for ev in events:  # link artifacts already on the case whose value the event mentions
+        hay = " ".join(filter(None, (ev["title"], ev["content"], ev["raw"]))).lower()
+        ev["artifact_ids"] = [a.id for a in artifacts if a.value and a.value.lower() in hay]
+    return {"events": events, "ai": ai_state}
