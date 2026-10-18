@@ -17,6 +17,7 @@ from app.models.case_artifact import CaseArtifact
 from app.models.case_attachment import CaseAttachment
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
+from app.models.tenant_secret import TenantSecret
 from app.models.user import User
 
 PW = "Audit-Passw0rd!x"
@@ -37,6 +38,7 @@ class World:
 async def _setup() -> World:
     w = World()
     w.h = secrets.token_hex(3)
+    w.secret_names = []  # secrets a test creates in tenant A; deleted by (tenant, name) at cleanup
     async with AsyncSessionLocal() as db:
         ta = Tenant(name="wf-test", slug=f"wf-test-{w.h}-aa")
         tb = Tenant(name="wf-test", slug=f"wf-test-{w.h}-ab")
@@ -102,6 +104,9 @@ async def _cleanup(w: World) -> None:
         if aids:
             await db.execute(delete(Artifact).where(Artifact.id.in_(aids)))
         await db.execute(delete(TimelineEvent).where(TimelineEvent.case_id == w.case))
+        if w.secret_names:
+            await db.execute(delete(TenantSecret).where(TenantSecret.tenant_id == w.ta,
+                                                        TenantSecret.name.in_(w.secret_names)))
         await db.execute(delete(Case).where(Case.id == w.case))
         await db.execute(delete(TenantMembership).where(TenantMembership.user_id.in_(uids)))
         await db.execute(delete(User).where(User.id.in_(uids)))
