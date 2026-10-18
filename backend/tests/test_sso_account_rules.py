@@ -166,4 +166,12 @@ def test_acs_redirects_with_clear_message(monkeypatch):
             current["e"] = ids["emails"]["local"]
             r = await c.post(url, data={"SAMLResponse": "x"})
             assert r.status_code == 303 and "#sso_token=" in r.headers["location"]
+        async with AsyncSessionLocal() as db:
+            failed = (await db.execute(select(AuditLog).where(
+                AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.failed"))).scalars().all()
+            ok = (await db.execute(select(AuditLog).where(
+                AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.success"))).scalars().all()
+        assert len(failed) == 3 and all(r.category == "security" and r.outcome == "denied" for r in failed)
+        assert {r.changes["reason"] for r in failed} == {sso_mod.SSO_NOT_ALLOWED}
+        assert len(ok) == 1 and ok[0].user_id == ids["local"]
     _run(body)

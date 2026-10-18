@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.audit.events import audit_event
 from app.core import security
 from app.core.config import settings
 from app.models.membership import TenantMembership
@@ -125,13 +126,19 @@ async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str) -> A
     return RedirectResponse(auth.login(), status_code=303)
 
 
+async def _acs_fail(request: Request, tenant, message: str) -> RedirectResponse:
+    await audit_event("security", "sso.failed", request=request, outcome="denied",
+                      tenant_id=tenant.id if tenant else None, changes={"reason": str(message)[:200]})
+    return _error_redirect(message)
+
+
 @saml_router.post("/saml/{slug}/acs")
 async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db), slug: str) -> Any:
     """Assertion Consumer Service: validate the IdP response, sign the user in,
     and bounce back to the frontend with the JWT in the URL fragment. Public."""
     tenant, cfg = await _tenant_and_config(db, slug)
     if not tenant or not _sso_ready(cfg):
-        return _error_redirect("SSO is not enabled for this tenant.")
+        return await _acs_fail(request, tenant, "SSO is not enabled for this tenant.")
 
     form = await request.form()
     req = saml_service.build_request_dict(
@@ -141,7 +148,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     auth.process_response()
     if auth.get_errors() or not auth.is_authenticated():
         reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
-        return _error_redirect(f"SSO sign-in failed: {reason}")
+        return await _acs_fail(request, tenant, f"SSO sign-in failed: {reason}")
 
     email = (auth.get_nameid() or "").strip()
     attrs = auth.get_attributes() or {}
@@ -153,7 +160,7 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
                 email = vals[0].strip()
                 break
     if "@" not in email:
-        return _error_redirect("SSO response did not include an email address.")
+        return await _acs_fail(request, tenant, "SSO response did not include an email address.")
 
     full_name = ""
     for key in ("displayName", "cn", "name",
@@ -166,11 +173,13 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     try:
         user = await _resolve_sso_user(db, tenant, cfg, email, full_name)
     except HTTPException as exc:
-        return _error_redirect(exc.detail)
+        return await _acs_fail(request, tenant, exc.detail)
 
     await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="sso_login",
                            tenant_id=tenant.id, user_id=user.id)
     await db.commit()
+    await audit_event("security", "sso.success", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=tenant.id)
 
     token = security.issue_access_token(user, tenant.id)
     base = settings.PUBLIC_BASE_URL.rstrip("/")

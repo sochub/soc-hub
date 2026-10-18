@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
+from app.audit.events import audit_event
 from app.api.v1.users import _audit_tenant
 from app.core import security, totp
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
@@ -171,6 +172,8 @@ async def mfa_enable(
     security.bump_token_version(user)
     await _audit(db, user, "mfa_enabled")
     await db.commit()
+    await audit_event("security", "mfa.enabled", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=active)
     return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
 
 
@@ -202,12 +205,15 @@ async def mfa_disable(
     security.bump_token_version(user)
     await _audit(db, user, "mfa_disabled")
     await db.commit()
+    await audit_event("security", "mfa.disabled", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=active)
     return {"access_token": security.issue_access_token(user, active), "token_type": "bearer"}
 
 
 @router.post("/{user_id}/mfa/reset", status_code=204)
 async def mfa_reset(
     user_id: int,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db),
     actor: User = Depends(deps.get_current_active_user),
 ) -> Response:
@@ -237,6 +243,8 @@ async def mfa_reset(
     security.bump_token_version(target)
     await _audit(db, actor, "mfa_reset", entity_id=target.id, tenant_id=audit_tid, actor_id=actor.id)
     await db.commit()
+    await audit_event("security", "mfa.reset", request=request, user_id=actor.id, user_email=actor.email,
+                      tenant_id=active, entity_type="user", entity_id=user_id)
     return Response(status_code=204)
 
 
