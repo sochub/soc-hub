@@ -48,18 +48,21 @@ def derive_entity(route_path: Optional[str], path_params: dict) -> Tuple[Optiona
     return None, None
 
 
-async def _insert(**fields) -> None:
+async def _insert(**fields) -> Optional[int]:
     async with AsyncSessionLocal() as db:
-        db.add(AuditLog(**fields))
+        row = AuditLog(**fields)
+        db.add(row)
         await db.commit()
+        return row.id
 
 
-async def insert_row(**fields) -> None:
-    """Write one audit row in its own session. Never raises."""
+async def insert_row(**fields) -> Optional[int]:
+    """Write one audit row in its own session. Never raises; returns the new id (None on failure)."""
     try:
-        await _insert(**fields)
+        return await _insert(**fields)
     except Exception as exc:
         logger.error("audit insert failed request_id=%s err=%s", fields.get("request_id"), type(exc).__name__)
+        return None
 
 
 def _route_template(scope) -> Optional[str]:

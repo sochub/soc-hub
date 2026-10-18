@@ -50,7 +50,10 @@ async def get_current_user(
     ctx = ctx_of(request)
     if ctx is not None:
         ctx.user_id, ctx.user_email = user.id, user.email
-        ctx.tenant_id = token_data.active_tenant_id  # provisional; get_effective_tenant_id refines it
+        # Provisional, and only for a real membership: platform-level routes and stale-membership denials
+        # stay tenant-less (NULL) so tenant admins never see them. get_effective_tenant_id refines it.
+        if any(m.tenant_id == token_data.active_tenant_id for m in user.memberships):
+            ctx.tenant_id = token_data.active_tenant_id
     return user
 
 

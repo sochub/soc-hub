@@ -109,3 +109,12 @@ def test_server_error_still_recorded(monkeypatch):
         got = await rows(w, category="write")
         assert len(got) == 1 and got[0].outcome == "error" and got[0].status_code == 500
     run(body)
+
+
+def test_platform_route_is_tenantless():
+    async def body(c, w):
+        r = await c.put(f"/api/v1/tenants/{w.tb}", json={"name": "wf-test"}, headers=hdr(w, "root"))
+        assert r.status_code == 200
+        got = await rows(w, category="write", user_id=w.users["root"])
+        assert len(got) == 1 and got[0].tenant_id is None
+    run(body)
