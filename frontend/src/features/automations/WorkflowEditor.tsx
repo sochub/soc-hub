@@ -207,8 +207,9 @@ function Editor() {
                                 onChange={(e) => setMeta({ ...meta, trigger_type: e.target.value as TriggerType })}>
                                 {Object.entries(TRIGGER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                             </select>
+                            {meta.trigger_type === 'schedule' && <p className="label-mono">Cron expression (UTC)</p>}
                             <textarea rows={2} className="w-full border border-line-strong px-2 py-1.5 font-mono text-xs" disabled={readOnly}
-                                placeholder="filter, e.g. 'x' in case.tags" value={meta.trigger_filter}
+                                placeholder={meta.trigger_type === 'schedule' ? '*/15 * * * *' : "filter, e.g. 'x' in case.tags"} value={meta.trigger_filter}
                                 onChange={(e) => setMeta({ ...meta, trigger_filter: e.target.value })} />
                         </div>
                         {!readOnly && (['Logic', 'Cases', 'Alerts', 'HTTP', 'Slack'] as const).map((cat) => {
