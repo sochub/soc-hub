@@ -92,3 +92,16 @@ def test_guest_sso_replayed_assertion_refused(monkeypatch):
             assert r.status_code == 303 and "/guest/login?t=" in loc and "#sso_error=" in loc
             assert unquote(loc.split("#sso_error=", 1)[1]) == sso_mod.SSO_FAILED
     run(body)
+
+
+def test_unknown_tenant_error_has_no_request_supplied_slug():
+    """The retry slug comes only from a real tenant with SSO ready; the request path is never echoed back."""
+    async def body(ids):
+        async with client() as c:
+            for path in ("/api/v1/auth/saml/no-such-tenant/login?guest=1", "/api/v1/auth/saml/Evil.Slug/login?guest=1"):
+                r = await c.get(path)
+                loc = r.headers["location"]
+                assert r.status_code == 303 and "/guest/login#sso_error=" in loc and "?t=" not in loc
+            r = await c.post("/api/v1/auth/saml/no-such-tenant/acs", data={"SAMLResponse": "x", "RelayState": "guest"})
+            assert r.status_code == 303 and "?t=" not in r.headers["location"]
+    run(body)
