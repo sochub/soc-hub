@@ -16,6 +16,7 @@ class AuditLog(Base):
     __table_args__ = (
         Index("ix_audit_logs_tenant_id_desc", "tenant_id", text("id DESC")),
         Index("ix_audit_logs_tenant_category_id", "tenant_id", "category", text("id DESC")),
+        Index("ix_audit_logs_tenant_created", "tenant_id", "created_at"),
     )
 
     id = Column(Integer, primary_key=True, index=True)

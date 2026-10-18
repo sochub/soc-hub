@@ -30,9 +30,11 @@ def upgrade():
     op.create_index("ix_audit_logs_tenant_id_desc", "audit_logs", ["tenant_id", sa.text("id DESC")])
     op.create_index("ix_audit_logs_tenant_category_id", "audit_logs", ["tenant_id", "category", sa.text("id DESC")])
     op.create_index("ix_audit_logs_request_id", "audit_logs", ["request_id"])
+    op.create_index("ix_audit_logs_tenant_created", "audit_logs", ["tenant_id", "created_at"])
 
 
 def downgrade():
+    op.drop_index("ix_audit_logs_tenant_created", table_name="audit_logs")
     op.drop_index("ix_audit_logs_request_id", table_name="audit_logs")
     op.drop_index("ix_audit_logs_tenant_category_id", table_name="audit_logs")
     op.drop_index("ix_audit_logs_tenant_id_desc", table_name="audit_logs")

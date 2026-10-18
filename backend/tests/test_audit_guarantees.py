@@ -116,3 +116,47 @@ def test_authenticated_write_yields_one_write_row_plus_its_change_rows():
         assert changes and all(x.request_id == rid for x in changes)
         assert len(new) == 1 + len(changes), [(x.category, x.action) for x in new]  # no http.denied or anything else
     run(body)
+
+
+def test_workflow_run_audit_row_has_no_trigger_payload(monkeypatch):
+    from app.tasks.workflows import advance_run_task
+
+    monkeypatch.setattr(advance_run_task, "delay", lambda rid: None)
+    graph = {"nodes": [{"id": "start", "type": "trigger", "config": {}},
+                       {"id": "note", "type": "case_add_note", "config": {"content": "hi"}}],
+             "edges": [{"id": "e1", "source": "start", "target": "note", "source_handle": None}]}
+
+    async def body(c, w):
+        r = await c.post("/api/v1/workflows/", headers=hdr(w, "admin"),
+                         json={"name": "wf-canary", "trigger_type": "case.created", "graph": graph})
+        assert r.status_code == 201, r.text
+        d = await c.post(f"/api/v1/workflows/{r.json()['id']}/dry-run", headers=hdr(w, "admin"),
+                         json={"case_id": w.case, "payload": {"event": "case.created", "raw": "CANARY-WF-123"}})
+        assert d.status_code == 200, d.text
+        all_rows = await rows(w)
+        assert all_rows and not any("CANARY-WF-123" in repr(vars(x)) for x in all_rows)
+        run_rows = await rows(w, entity_type="workflow_run", action="dry_run")
+        assert len(run_rows) == 1
+        assert run_rows[0].changes == {"workflow": "wf-canary", "event": "case.created", "case_id": w.case,
+                                       "trigger_keys": ["event", "raw"]}
+    run(body)
+
+
+def test_tenant_created_index_exists():
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.db.session import engine
+    from app.models.audit_log import AuditLog
+
+    assert "ix_audit_logs_tenant_created" in {i.name for i in AuditLog.__table__.indexes}
+
+    async def go():
+        await engine.dispose()
+        async with engine.connect() as conn:
+            d = (await conn.execute(text(
+                "SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_audit_logs_tenant_created'"))).scalar()
+        await engine.dispose()
+        return d
+    assert "(tenant_id, created_at)" in (asyncio.run(go()) or "")
