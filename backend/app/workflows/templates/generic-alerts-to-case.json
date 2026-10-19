@@ -1,0 +1,49 @@
+{
+  "key": "generic-alerts-to-case",
+  "name": "High and critical alerts to case (any source)",
+  "vendor": "Generic",
+  "kind": "triage",
+  "description": "For every ingested alert with severity critical or high: promote it into a case grouped by source and title (one open case per source and title within 24 h), tagged with the source.",
+  "trigger_type": "alert.ingested",
+  "trigger_filter": "alert.severity in ['critical', 'high']",
+  "params": [],
+  "secrets": [],
+  "setup": "Works with any source: the cloud and SaaS pulls (`aws-guardduty`, `aws-securityhub`, `ms-sentinel`, `wiz`, `proofpoint-tap`, `github`), webhooks and the other vendor templates.\n\n## Rules\n- Trigger filter `alert.severity in ['critical', 'high']`: medium, low and info alerts stay pending in the Alerts queue.\n- `alert_promote` mode `group`, key `source:<source>:<title>` (title cut to 200 characters), window 24 h: repeats of the same finding or rule land in one open case; a different title or source opens a new case. The case gets the alert's severity and title and the tag `<source>`.\n\n## Narrowing\nEdit the workflow's trigger filter, for example:\n- only some sources: `alert.severity in ['critical', 'high'] and alert.source in ['aws-guardduty', 'wiz']`\n- leave sources that have their own triage template alone: `alert.severity in ['critical', 'high'] and alert.source not in ['crowdstrike', 'sentinelone', 'okta', 'm365-defender', 'entra-id']`\n- critical only: `alert.severity == 'critical'`\n\nTwo triage workflows matching the same alert race: the second promote finds the alert no longer pending and that run fails. Keep the filters disjoint.\n\nTo group per entity instead (for example per AWS account), change `group_key`, e.g. `source:{{ alert.source }}:{{ alert.payload.get('accountId') or alert.payload.get('AwsAccountId') or alert.title }}`.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "promote",
+        "type": "alert_promote",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "mode": "group",
+          "title": "{{ alert.title }}",
+          "severity": "{{ alert.severity }}",
+          "tags": "{{ alert.source }}",
+          "group_key": "source:{{ alert.source }}:{{ alert.title[:200] }}",
+          "window_hours": 24
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_promote",
+        "source": "start",
+        "target": "promote",
+        "source_handle": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "key": "identity-alerts-to-case",
+  "name": "Identity alerts: group by user into a case",
+  "vendor": "Identity",
+  "kind": "triage",
+  "description": "When an Okta, Entra ID Protection or Microsoft 365 Defender alert that names a user is ingested, groups it with that user's other alerts from the last 24 hours into one case, adds the user as an artifact and applies your Compromised Identity playbook to new cases.",
+  "trigger_type": "alert.ingested",
+  "trigger_filter": "(alert.source == 'okta' and ((alert.payload.get('actor') or {}).get('alternateId') or '') != '') or (alert.source == 'entra-id' and (alert.payload.get('userPrincipalName') or '') != '') or (alert.source == 'm365-defender' and (alert.payload.get('evidence') or []) | selectattr('userAccount', 'defined') | map(attribute='userAccount') | select | selectattr('userPrincipalName', 'defined') | map(attribute='userPrincipalName') | select | list | length > 0)",
+  "params": [
+    {
+      "key": "PLAYBOOK_ID",
+      "label": "Playbook ID",
+      "placeholder": "42",
+      "help": "ID of your installed \"Compromised Identity (T1078)\" playbook (Playbooks > My playbooks)."
+    }
+  ],
+  "secrets": [],
+  "setup": "Works with alerts created by `okta-system-log-pull`, `entra-risk-detections-pull` and `m365-defender-alerts-pull` (sources `okta`, `entra-id`, `m365-defender`). No vendor credentials needed.\n\n1. Playbooks > Marketplace: import **Compromised Identity (T1078)**, then copy its ID from My playbooks.\n2. Install with `PLAYBOOK_ID` = that ID, then enable.\n\nThe user principal is `actor.alternateId` (Okta), `userPrincipalName` (Entra) or the first `evidence[].userAccount.userPrincipalName` (Defender; alerts without user evidence, such as pure device alerts, are ignored). Alerts for the same principal within 24 hours land in the same open case (group key `user:<principal>`); a new case is critical/high when the first alert is, otherwise medium (a grouped case keeps the severity it was created with). The principal is added as an `email` artifact (or `other` when it has no `@`); the playbook is applied only when the case is new. Edit the promote step to change the severity rule or window.",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "promote",
+        "type": "alert_promote",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "mode": "group",
+          "title": "Identity: {{ alert.title }}",
+          "severity": "{{ alert.severity if alert.severity in ['critical', 'high'] else 'medium' }}",
+          "tags": "identity, {{ alert.source }}",
+          "group_key": "user:{{ ((alert.payload.get('actor') or {}).get('alternateId') if alert.source == 'okta' else (alert.payload.get('userPrincipalName') if alert.source == 'entra-id' else ((alert.payload.get('evidence') or []) | selectattr('userAccount', 'defined') | map(attribute='userAccount') | select | selectattr('userPrincipalName', 'defined') | map(attribute='userPrincipalName') | select | first | default('')))) or '' }}",
+          "window_hours": 24
+        }
+      },
+      {
+        "id": "user",
+        "type": "case_add_artifact",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "artifact_type": "{{ 'email' if '@' in (((alert.payload.get('actor') or {}).get('alternateId') if alert.source == 'okta' else (alert.payload.get('userPrincipalName') if alert.source == 'entra-id' else ((alert.payload.get('evidence') or []) | selectattr('userAccount', 'defined') | map(attribute='userAccount') | select | selectattr('userPrincipalName', 'defined') | map(attribute='userPrincipalName') | select | first | default('')))) or '') else 'other' }}",
+          "value": "{{ ((alert.payload.get('actor') or {}).get('alternateId') if alert.source == 'okta' else (alert.payload.get('userPrincipalName') if alert.source == 'entra-id' else ((alert.payload.get('evidence') or []) | selectattr('userAccount', 'defined') | map(attribute='userAccount') | select | selectattr('userPrincipalName', 'defined') | map(attribute='userPrincipalName') | select | first | default('')))) or '' }}",
+          "description": "User principal from {{ alert.source }} alert {{ alert.external_id }}"
+        }
+      },
+      {
+        "id": "is_new",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "expression": "steps.promote.output.created"
+        }
+      },
+      {
+        "id": "playbook",
+        "type": "case_apply_playbook",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "template_id": "%%PLAYBOOK_ID%%"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_promote",
+        "source": "start",
+        "target": "promote",
+        "source_handle": null
+      },
+      {
+        "id": "e_promote_user",
+        "source": "promote",
+        "target": "user",
+        "source_handle": null
+      },
+      {
+        "id": "e_user_is_new",
+        "source": "user",
+        "target": "is_new",
+        "source_handle": null
+      },
+      {
+        "id": "e_is_new_playbook",
+        "source": "is_new",
+        "target": "playbook",
+        "source_handle": "true"
+      }
+    ]
+  }
+}

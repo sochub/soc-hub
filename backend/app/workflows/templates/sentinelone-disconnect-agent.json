@@ -1,0 +1,179 @@
+{
+  "key": "sentinelone-disconnect-agent",
+  "name": "SentinelOne: disconnect agent from network",
+  "vendor": "SentinelOne",
+  "kind": "response",
+  "description": "Run from a case: find the SentinelOne agent whose computer name is the case's host and send 'disconnect from network' to that agent only, then record both HTTP statuses in a case note.",
+  "trigger_type": "manual",
+  "trigger_filter": null,
+  "params": [
+    {
+      "key": "S1_CONSOLE",
+      "label": "SentinelOne console host",
+      "placeholder": "usea1-acme.sentinelone.net",
+      "help": "Your management console host name, as in the browser address bar. Host only, no https://."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "S1_API_TOKEN",
+      "description": "API token of a SentinelOne service user.",
+      "hosts": [
+        "%%S1_CONSOLE%%"
+      ]
+    }
+  ],
+  "setup": "## SentinelOne side\n1. Service user (**Settings > Users > Service Users**) whose role may run *Disconnect from network* (e.g. **IR Team** or **SOC**; **Viewer** cannot), scoped to the Account/Site holding the endpoints.\n2. Its API token in the secret `S1_API_TOKEN`, allowed for your console host.\n\n## Case side\nThe target is the case's `hostname` attribute (custom artifact type `hostname`; the *EDR alerts to case* template adds it). Without it, the newest SentinelOne alert promoted into the case is used (`agentRealtimeInfo.agentComputerName`).\n\n## How it works\n- `find`: `GET /web/api/v2.1/agents?computerName__like=<host>&limit=50`.\n- `disconnect`: only when exactly one returned agent has that exact computer name (case-insensitive), `POST /web/api/v2.1/agents/actions/disconnect` with `{\"filter\": {\"ids\": [<agent id>]}}`. The action is sent by agent id, never by a name filter, so a typo or an ignored filter cannot disconnect other agents.\n- A note records the lookup and disconnect statuses and `data.affected`. Reconnect from the console (or `agents/actions/connect`).\n\nTo double-check in your console's API doc: the `computerName__like` filter on `GET /agents`.\n\nDocs relied on: the Management API reference is behind the console login (`https://<console>/api-doc/overview`, API v2.1). Public sources used: public open-source SentinelOne API clients (`/web/api/v2.1/` base, `Authorization: ApiToken <token>`, `threats?createdAt__gt=`, `agents/actions/disconnect` with `{\"filter\": {...}}`) and the PS-SentinelOne module (https://powershellgallery.com/packages/PS-SentinelOne). Double-check against your console's API doc before enabling.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "has_host",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "expression": "(case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | length > 0 and (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | length < 256 and \"'\" not in (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) and '\\\\' not in (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else ''))"
+        }
+      },
+      {
+        "id": "no_host",
+        "type": "case_add_note",
+        "position": {
+          "x": 520,
+          "y": 280
+        },
+        "config": {
+          "content": "SentinelOne disconnect not sent: this case has no hostname. Add a `hostname` artifact and run the workflow again."
+        }
+      },
+      {
+        "id": "find",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://%%S1_CONSOLE%%/web/api/v2.1/agents?computerName__like={{ (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | urlencode }}&limit=50",
+          "headers": {
+            "Authorization": "ApiToken {{ secrets.S1_API_TOKEN }}",
+            "Accept": "application/json"
+          }
+        }
+      },
+      {
+        "id": "one_agent",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "expression": "steps.find.output.status == 200 and steps.find.output.body is mapping and ((steps.find.output.body.get('data') or []) | map(attribute='computerName', default='') | map('lower') | select('equalto', (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | lower) | list | length) == 1"
+        }
+      },
+      {
+        "id": "disconnect",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://%%S1_CONSOLE%%/web/api/v2.1/agents/actions/disconnect",
+          "headers": {
+            "Authorization": "ApiToken {{ secrets.S1_API_TOKEN }}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "filter": {
+              "ids": [
+                "{% for a in steps.find.output.body.data if (a.get('computerName') or '') | lower == (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | lower %}{{ a.id }}{% endfor %}"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": "not_found",
+        "type": "case_add_note",
+        "position": {
+          "x": 520,
+          "y": 520
+        },
+        "config": {
+          "content": "SentinelOne disconnect not sent for {{ (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) }}: agent lookup HTTP {{ steps.find.output.status }}, {{ ((steps.find.output.body.get('data') or []) | map(attribute='computerName', default='') | map('lower') | select('equalto', (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | lower) | list | length) if steps.find.output.body is mapping else 0 }} agents with that exact computer name (exactly one is required)."
+        }
+      },
+      {
+        "id": "done",
+        "type": "case_add_note",
+        "position": {
+          "x": 250,
+          "y": 640
+        },
+        "config": {
+          "content": "SentinelOne network disconnect requested for {{ (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) }} (agent {% for a in steps.find.output.body.data if (a.get('computerName') or '') | lower == (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | lower %}{{ a.id }}{% endfor %}): agent lookup HTTP {{ steps.find.output.status }}, disconnect HTTP {{ steps.disconnect.output.status }}, agents affected {{ ((steps.disconnect.output.body.get('data') or {}).get('affected', 'unknown')) if steps.disconnect.output.body is mapping else 'unknown' }}."
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_has_host",
+        "source": "start",
+        "target": "has_host",
+        "source_handle": null
+      },
+      {
+        "id": "e_has_host_find",
+        "source": "has_host",
+        "target": "find",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_has_host_no_host",
+        "source": "has_host",
+        "target": "no_host",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_find_one_agent",
+        "source": "find",
+        "target": "one_agent",
+        "source_handle": null
+      },
+      {
+        "id": "e_one_agent_disconnect",
+        "source": "one_agent",
+        "target": "disconnect",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_one_agent_not_found",
+        "source": "one_agent",
+        "target": "not_found",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_disconnect_done",
+        "source": "disconnect",
+        "target": "done",
+        "source_handle": null
+      }
+    ]
+  }
+}

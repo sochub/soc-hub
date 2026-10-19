@@ -2,6 +2,8 @@
 
 Automations run a small graph of steps in response to an event: a case is created or updated, an alert is ingested, or an analyst clicks "Run workflow". Graphs are built in the Automations page (admins) and executed by the Celery worker.
 
+Ready-made workflows for Okta, Microsoft 365, Entra ID, CrowdStrike, SentinelOne, AWS, Google Workspace, Cloudflare and more are listed in [Integration templates](integrations/README.md) and installable from **Workflows › Templates**.
+
 ## Concepts
 
 - **Trigger**: exactly one per workflow: `case.created`, `case.updated` (context includes `changes` for status, severity, tags, assignee), `alert.ingested`, or `manual`.

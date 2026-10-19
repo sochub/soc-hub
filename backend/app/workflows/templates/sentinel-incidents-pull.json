@@ -1,0 +1,170 @@
+{
+  "key": "sentinel-incidents-pull",
+  "name": "Microsoft Sentinel: pull incidents",
+  "vendor": "Microsoft",
+  "kind": "ingest",
+  "description": "Every 5 minutes, lists Microsoft Sentinel incidents created since the previous run in one workspace (Azure Resource Manager, app-only OAuth2) and creates one pending alert per incident (source ms-sentinel, deduplicated on the incident name/GUID).",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [
+    {
+      "key": "AZURE_TENANT_ID",
+      "label": "Entra tenant id",
+      "placeholder": "00000000-0000-0000-0000-000000000000",
+      "help": "Directory (tenant) id of the app registration."
+    },
+    {
+      "key": "AZURE_SUBSCRIPTION_ID",
+      "label": "Subscription id",
+      "placeholder": "00000000-0000-0000-0000-000000000000",
+      "help": "Subscription that holds the Sentinel workspace."
+    },
+    {
+      "key": "RESOURCE_GROUP",
+      "label": "Resource group",
+      "placeholder": "rg-security",
+      "help": "Resource group of the Log Analytics workspace."
+    },
+    {
+      "key": "WORKSPACE_NAME",
+      "label": "Workspace name",
+      "placeholder": "law-sentinel",
+      "help": "Name of the Log Analytics workspace Sentinel is enabled on."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "SENTINEL_CLIENT_ID",
+      "description": "Application (client) id of the Entra app registration.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "management.azure.com"
+      ]
+    },
+    {
+      "name": "SENTINEL_CLIENT_SECRET",
+      "description": "Client secret of that app registration.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "management.azure.com"
+      ]
+    }
+  ],
+  "setup": "## Azure side\n1. Entra ID > App registrations > New registration (single tenant). Create a client secret.\n2. On the Sentinel workspace (or its resource group): Access control (IAM) > Add role assignment > **Microsoft Sentinel Reader** > the app's service principal. No API permission or admin consent is needed: Azure Resource Manager authorises by RBAC role.\n3. Store the app id and secret as `SENTINEL_CLIENT_ID` and `SENTINEL_CLIENT_SECRET`, each allowed for `login.microsoftonline.com` and `management.azure.com` (the token host and the API host).\n\n## How it works\n- Token: `POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`, client credentials, scope `https://management.azure.com/.default`.\n- `GET https://management.azure.com/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.OperationalInsights/workspaces/<ws>/providers/Microsoft.SecurityInsights/incidents?api-version=2025-09-01&$filter=properties/createdTimeUtc ge <since>&$orderby=properties/createdTimeUtc asc&$top=100`.\n- One alert per incident: external id = incident `name` (GUID), title = `#<incidentNumber> <title>`, severity High high, Medium medium, Low low, Informational info. Payload = the incident resource (includes `incidentUrl`).\n- Incidents are pulled on creation only; later status or severity changes in Sentinel are not synced. Re-reading an incident returns the existing alert.\n\n## Limits\n- ponytail: one page per run: at most **100 incidents per window**, oldest first; `nextLink` is not followed.\n- A non-200 answer fails the run with `Sentinel incidents pull failed: HTTP <status>`; 403 usually means the role assignment is missing or still propagating.\n\nDocs: [Incidents - List](https://learn.microsoft.com/en-us/rest/api/securityinsights/incidents/list?view=rest-securityinsights-2025-09-01), [Client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow), [Sentinel roles](https://learn.microsoft.com/en-us/azure/sentinel/roles).\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://management.azure.com/subscriptions/%%AZURE_SUBSCRIPTION_ID%%/resourceGroups/%%RESOURCE_GROUP%%/providers/Microsoft.OperationalInsights/workspaces/%%WORKSPACE_NAME%%/providers/Microsoft.SecurityInsights/incidents?api-version=2025-09-01&$filter={{ ('properties/createdTimeUtc ge ' ~ trigger.since) | urlencode }}&$orderby={{ 'properties/createdTimeUtc asc' | urlencode }}&$top=100",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_client_credentials",
+            "token_url": "https://login.microsoftonline.com/%%AZURE_TENANT_ID%%/oauth2/v2.0/token",
+            "client_id": "{{ secrets.SENTINEL_CLIENT_ID }}",
+            "client_secret": "{{ secrets.SENTINEL_CLIENT_SECRET }}",
+            "scope": "https://management.azure.com/.default"
+          }
+        }
+      },
+      {
+        "id": "ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200 and steps.pull.output.body is mapping"
+        }
+      },
+      {
+        "id": "failed",
+        "type": "fail",
+        "position": {
+          "x": 560,
+          "y": 280
+        },
+        "config": {
+          "message": "Sentinel incidents pull failed: HTTP {{ steps.pull.output.status }}"
+        }
+      },
+      {
+        "id": "loop",
+        "type": "for_each",
+        "position": {
+          "x": 120,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.pull.output.body.get('value') or []",
+          "concurrency": 5,
+          "max_items": 100
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "ms-sentinel",
+          "external_id": "{{ loop.item.name }}",
+          "title": "#{{ (loop.item.get('properties') or {}).get('incidentNumber') or '?' }} {{ (loop.item.get('properties') or {}).get('title') or 'Sentinel incident' }}",
+          "severity": "{{ {'High': 'high', 'Medium': 'medium', 'Low': 'low', 'Informational': 'info'}.get((loop.item.get('properties') or {}).get('severity'), 'medium') }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "loop"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok",
+        "source": "pull",
+        "target": "ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ok_loop",
+        "source": "ok",
+        "target": "loop",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_failed",
+        "source": "ok",
+        "target": "failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}
