@@ -43,7 +43,8 @@ def alert_to_dict(alert: Optional[Alert]) -> Optional[dict]:
     if alert is None:
         return None
     return {"id": alert.id, "source": alert.source, "external_id": alert.external_id,
-            "title": alert.title, "payload": alert.payload, "status": alert.status, "case_id": alert.case_id}
+            "title": alert.title, "payload": alert.payload, "status": alert.status, "case_id": alert.case_id,
+            "severity": alert.severity}
 
 
 async def _step_outputs(db, run_id: int) -> dict:

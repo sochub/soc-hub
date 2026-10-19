@@ -15,7 +15,9 @@ NODE_TYPES = {
     "for_each":            {"required": ["items"], "raw": ["items"], "alert_only": False},
     "slack_ask_user":      {"required": ["email", "message"], "raw": [], "alert_only": False},
     "slack_post_message":  {"required": ["text"], "raw": [], "alert_only": False},
+    "fail":                {"required": ["message"], "raw": [], "alert_only": False},
     "alert_dismiss":       {"required": [], "raw": [], "alert_only": True},
+    "alert_create":        {"required": ["source", "external_id", "title"], "raw": ["payload"], "alert_only": False},
 }
 
 MAX_NODES = 50

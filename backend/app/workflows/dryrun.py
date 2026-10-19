@@ -1,10 +1,11 @@
 """Pure dry-run decisions: which nodes really execute and what simulated ones return."""
 
-_READ_ONLY = {"trigger", "condition", "for_each", "case_search"}
+_READ_ONLY = {"trigger", "condition", "for_each", "case_search", "fail"}
 
 _STUBS = {
     "http_request": {"status": 200, "headers": {}, "body": {}},
     "alert_promote": {"case_id": None, "created": True},
+    "alert_create": {"alert_id": None, "created": True},
     "slack_post_message": {"channel": "", "ts": ""},
 }
 

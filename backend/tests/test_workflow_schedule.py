@@ -1,7 +1,7 @@
 """Cron-scheduled workflows: the matcher, save-time validation and the idempotent sweep."""
 import asyncio
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 
@@ -75,12 +75,36 @@ async def _sweep(monkeypatch):
             assert len(mine) == 1 and mine[0].workflow_id == ids["w"][0]
             assert mine[0].id in first and mine[0].id in advanced
             assert mine[0].trigger_payload["event"] == "schedule" and mine[0].case_id is None
+            assert mine[0].trigger_payload["since"] == (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # beat drift: a second tick in the same minute must not fire again
             second = await run_due_schedules(now.replace(second=55))
             assert mine[0].id not in second
             assert (await db.execute(select(WorkflowRun.id).where(
                 WorkflowRun.workflow_id.in_(ids["w"])))).scalars().all() == [mine[0].id]
+
+            def fmt(d):
+                return d.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            async def fire(at):
+                ids_ = await run_due_schedules(at)
+                return (await db.execute(select(WorkflowRun).where(
+                    WorkflowRun.id.in_(ids_), WorkflowRun.workflow_id == ids["w"][0]))).scalars().one()
+
+            # next minute, first run not succeeded yet (still running / failed): re-read the same window
+            nxt = await fire(now + timedelta(minutes=1))
+            assert nxt.trigger_payload["since"] == fmt(now + timedelta(minutes=1) - timedelta(hours=1))
+            # once a run succeeded, the window starts at that run's fire time
+            mine[0].status = "succeeded"
+            await db.commit()
+            nxt = await fire(now + timedelta(minutes=2))
+            assert nxt.trigger_payload["since"] == fmt(now)
+            # never more than 24 h back
+            nxt.status = "succeeded"
+            nxt.trigger_payload = {**nxt.trigger_payload, "fired_at": (now - timedelta(days=3)).isoformat()}
+            await db.commit()
+            last = await fire(now + timedelta(minutes=3))
+            assert last.trigger_payload["since"] == fmt(now + timedelta(minutes=3) - timedelta(hours=24))
         finally:
             await db.rollback()
             run_ids = (await db.execute(select(WorkflowRun.id).where(WorkflowRun.workflow_id.in_(ids["w"])))).scalars().all()
