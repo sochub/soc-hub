@@ -1,7 +1,7 @@
 #!/bin/sh
 # Start Ollama, then pull the configured model once the server is ready.
 # The model is cached in the ollama_data volume, so subsequent starts are a
-# fast no-op. OLLAMA_MODEL defaults to llama3.
+# fast no-op. OLLAMA_MODEL defaults to llama3.2:3b.
 set -e
 
 ollama serve &
@@ -14,7 +14,7 @@ until ollama list >/dev/null 2>&1; do
   sleep 1
 done
 
-MODEL="${OLLAMA_MODEL:-llama3}"
+MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
 echo "[entrypoint] ensuring model present: $MODEL"
 # Pull in the foreground so logs show progress; tolerate transient failures so
 # the server stays up either way (it will retry on next container start).
