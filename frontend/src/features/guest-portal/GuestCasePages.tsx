@@ -6,6 +6,7 @@ import { Badge, Button, Label } from '../../components/ui';
 import { GuestShell } from './GuestAuthPages';
 import { guestApi, guestError, guestToken } from './guestApi';
 import GuestSecurityPanel from './GuestSecurityPanel';
+import { Markdown, MarkdownField } from '../../components/Markdown';
 
 interface GuestCaseItem { id: number; title: string; tenant_name: string; permission: string }
 interface GuestCase { id: number; title: string; status: string; severity: string; guest_summary: string | null; permission: string }
@@ -121,8 +122,8 @@ export function GuestCasePage() {
                     </label>
                     <form onSubmit={(e) => { e.preventDefault(); if (comment.trim()) post.mutate(); }} className="space-y-2">
                         <Label htmlFor="g-comment">Add a comment for the SOC team</Label>
-                        <textarea id="g-comment" rows={3} maxLength={10000} value={comment} onChange={(e) => setComment(e.target.value)}
-                            className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg" />
+                        <MarkdownField value={comment}><textarea id="g-comment" rows={3} maxLength={10000} value={comment} onChange={(e) => setComment(e.target.value)}
+                            className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg" /></MarkdownField>
                         <Button type="submit" size="sm" disabled={post.isPending || !comment.trim()}>Post comment</Button>
                     </form>
                 </section>
@@ -142,7 +143,7 @@ export function GuestCasePage() {
                     <ol className="space-y-3">{timeline.data.map((e) => (
                         <li key={e.id} className="bg-panel border border-line rounded-lg p-3 text-sm">
                             <div className="text-xs text-fg-3 mb-1">{e.author} · {new Date(e.created_at).toLocaleString()}</div>
-                            <p className="whitespace-pre-wrap">{e.content}</p>
+                            <Markdown content={e.content} />
                         </li>))}</ol>
                 )}
             </section>

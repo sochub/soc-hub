@@ -19,7 +19,8 @@ import TriagePanel from './TriagePanel';
 import FollowButton from './FollowButton';
 import MentionTextarea from './MentionTextarea';
 import { stripMentions } from './mentionChips';
-import MentionText from './MentionText';
+import { Markdown, MarkdownField } from '../../components/Markdown';
+import IncidentOverview from './IncidentOverview';
 import GuestsPanel from '../guests/GuestsPanel';
 import type { User } from '../../types';
 import { formatDateTime } from '../../utils/datetime';
@@ -370,6 +371,7 @@ export default function CaseDetail() {
                             {activeTab === 'activity' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
                             {activeTab === 'timeline' && id && <CaseTimeline caseId={parseInt(id)} />}
                             {activeTab === 'assets' && id && <CaseAssets caseId={parseInt(id)} />}
+                            {activeTab === 'activity' && <IncidentOverview caseData={caseData} tz={me?.timezone} />}
                             {activeTab === 'activity' && (
                                 <div className="relative space-y-8 my-4">
                                     {/* Add Event Button */}
@@ -410,7 +412,8 @@ export default function CaseDetail() {
                                                             <option key={t} value={t}>{t.replace('_', ' ')}</option>
                                                         ))}
                                                     </select>
-                                                    {newEvent.event_type === 'comment' ? (
+                                                    <MarkdownField value={newEvent.content}>
+{newEvent.event_type === 'comment' ? (
                                                         <MentionTextarea
                                                             value={newEvent.content}
                                                             onChange={(content) => setNewEvent((n) => ({ ...n, content }))}
@@ -425,6 +428,7 @@ export default function CaseDetail() {
                                                         className="w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
                                                     />
                                                     )}
+</MarkdownField>
                                                     <div className="flex justify-end gap-2">
                                                         <button
                                                             onClick={() => setShowAddEvent(false)}
@@ -500,7 +504,8 @@ export default function CaseDetail() {
                                                                     <option key={t} value={t}>{t.replace('_', ' ')}</option>
                                                                 ))}
                                                             </select>
-                                                            {editEventData.event_type === 'comment' ? (
+                                                            <MarkdownField value={editEventData.content}>
+{editEventData.event_type === 'comment' ? (
                                                                 <MentionTextarea
                                                                     value={editEventData.content}
                                                                     onChange={(content) => setEditEventData((d) => ({ ...d, content }))}
@@ -513,6 +518,7 @@ export default function CaseDetail() {
                                                                 className="w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50 resize-none"
                                                             />
                                                             )}
+</MarkdownField>
                                                             <div className="flex justify-end gap-2">
                                                                 <button
                                                                     onClick={() => setEditingEventId(null)}
@@ -531,9 +537,7 @@ export default function CaseDetail() {
                                                         </div>
                                                     ) : (
                                                         <div className="glass-panel p-4 rounded-xl border border-line bg-panel group-hover:bg-panel transition-colors relative">
-                                                            <p className="text-fg-2 text-sm leading-relaxed pr-16 whitespace-pre-wrap">
-                                                                {event.event_type === 'comment' ? <MentionText content={event.content} /> : event.content}
-                                                            </p>
+                                                            <Markdown content={event.content} className="text-fg-2 text-sm pr-16" />
                                                             {/* Edit/Delete buttons - visible on hover */}
                                                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                                 {canModify(event) && (
