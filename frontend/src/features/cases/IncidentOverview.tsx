@@ -11,6 +11,7 @@ const STATUS_COLOR: Record<string, string> = {
 const TYPE_COLOR: Record<string, string> = {
     status_change: 'var(--color-accent)', containment: 'var(--color-severity-high)', remediation: 'var(--color-lime)',
     investigation: 'var(--color-magenta)', artifact_added: 'var(--color-severity-low)',
+    task: 'var(--color-severity-medium)', severity_change: 'var(--color-severity-critical)',
 };
 const STATUS_RE = /Status changed from (\w+) to (\w+)/;
 const ROWS = 4; // flag heights, staggered like a plan chart

@@ -2,7 +2,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff, ShieldAlert } from 'lucide-react';
+import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff, ShieldAlert, CheckSquare } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useState, useEffect, useRef } from 'react';
@@ -39,7 +39,8 @@ const ARTIFACT_ICONS: Record<string, any> = {
     email: Mail,
 };
 
-const EVENT_TYPES = ['comment', 'status_change', 'artifact_added', 'investigation', 'containment', 'remediation', 'other'];
+// status_change/severity_change/task are written by the system when the case or a task actually changes.
+const EVENT_TYPES = ['comment', 'investigation', 'containment', 'remediation', 'other'];
 
 const CASE_TABS = ['activity', 'timeline', 'tasks', 'artifacts', 'assets', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
 type CaseTab = typeof CASE_TABS[number];
@@ -86,9 +87,15 @@ export default function CaseDetail() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['case', id] });
+            queryClient.invalidateQueries({ queryKey: ['audit-logs', 'case', id] });
             setShowEditModal(false);
-        }
+        },
     });
+    const editError = (() => {
+        const d = (updateCaseMutation.error as { response?: { data?: { detail?: unknown } } } | null)?.response?.data?.detail;
+        if (!updateCaseMutation.isError) return null;
+        return typeof d === 'string' ? d : 'Could not save the case.';
+    })();
 
     const shareEvent = useMutation({
         mutationFn: async ({ eventId, shared }: { eventId: number; shared: boolean }) =>
@@ -253,6 +260,7 @@ export default function CaseDetail() {
         ...event,
         icon: event.event_type === 'artifact_added' ? Database :
             event.event_type === 'status_change' ? Shield :
+                event.event_type === 'task' ? CheckSquare :
                 (event.event_type === 'comment' || event.event_type === 'guest_comment') ? MessageSquare : Calendar
     })) || [];
 
@@ -687,30 +695,33 @@ export default function CaseDetail() {
                                                         <span className="text-xs font-mono text-muted">{formatDateTime(log.created_at, me?.timezone)}</span>
                                                         <span className={cn(
                                                             "text-xs font-bold px-2 py-0.5 rounded-sm uppercase",
-                                                            log.action === 'create' ? "bg-green-500/10 text-green-300 border border-green-500/30" :
-                                                                log.action === 'update' ? "bg-accent/10 text-accent border border-accent/40" :
-                                                                    "bg-red-500/10 text-red-300 border border-red-500/30"
+                                                            log.action === 'create' || log.action.endsWith('_added') || log.action === 'task_completed' ? "bg-green-500/10 text-green-300 border border-green-500/30" :
+                                                                log.action.includes('remove') || log.action.includes('delete') ? "bg-red-500/10 text-red-300 border border-red-500/30" :
+                                                                    "bg-accent/10 text-accent border border-accent/40"
                                                         )}>
-                                                            {log.action}
+                                                            {log.action.replace(/_/g, ' ')}
+                                                        </span>
+                                                        <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-muted">
+                                                            {log.user ? <>
+                                                                <Avatar userId={log.user.id} name={log.user.full_name || log.user.email} size={18} />
+                                                                by {log.user.full_name || log.user.email}
+                                                            </> : `by ${log.actor || log.user_email || 'system'}`}
                                                         </span>
                                                     </div>
-                                                    <div className="glass-panel p-4 rounded-xl border border-line bg-panel group-hover:bg-panel transition-colors">
-                                                        <p className="text-fg-2 text-sm leading-relaxed mb-2">
-                                                            {log.entity_type === 'case' ? 'Case' : 'Artifact'} {log.action}d
-                                                        </p>
-                                                        {log.changes && Object.keys(log.changes).length > 0 && (
-                                                            <div className="mt-2 space-y-1">
-                                                                {Object.entries(log.changes).map(([field, change]: [string, any]) => (
-                                                                    <div key={field} className="text-xs font-mono">
-                                                                        <span className="text-muted">{field}:</span>{' '}
-                                                                        <span className="text-red-300">{JSON.stringify(change.from)}</span>
+                                                    {log.changes && Object.keys(log.changes).length > 0 && (
+                                                        <div className="glass-panel p-4 rounded-xl border border-line bg-panel group-hover:bg-panel transition-colors space-y-1">
+                                                            {Object.entries(log.changes).map(([field, change]: [string, any]) => (
+                                                                <div key={field} className="text-xs font-mono break-words">
+                                                                    <span className="text-muted">{field.replace(/_/g, ' ')}:</span>{' '}
+                                                                    {change && typeof change === 'object' && 'to' in change ? <>
+                                                                        <span className="text-red-300 line-through decoration-red-300/50">{JSON.stringify(change.from)}</span>
                                                                         {' → '}
                                                                         <span className="text-green-300">{JSON.stringify(change.to)}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </div>
+                                                                    </> : <span className="text-fg-2">{typeof change === 'string' ? change : JSON.stringify(change)}</span>}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))
@@ -772,8 +783,9 @@ export default function CaseDetail() {
             {/* Edit Case Modal */}
             <EditCaseModal
                 show={showEditModal}
-                onClose={() => setShowEditModal(false)}
+                onClose={() => { setShowEditModal(false); updateCaseMutation.reset(); }}
                 caseData={caseData}
+                error={editError}
                 onSubmit={(data) => updateCaseMutation.mutate(data)}
                 isSubmitting={updateCaseMutation.isPending}
             />

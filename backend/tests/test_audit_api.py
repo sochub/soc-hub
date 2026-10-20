@@ -171,3 +171,18 @@ def test_export_holds_at_most_one_connection_while_streaming(monkeypatch):
         assert max(stats["pool_at_open"]) <= before
         assert stats["pool_while_yielding"] and max(stats["pool_while_yielding"]) <= before
     run(body)
+
+
+def test_task_completion_lands_in_activity_and_audit_shows_who_and_diff():
+    async def body(c, w):
+        h = hdr(w, "analyst")
+        t = (await c.post(f"/api/v1/cases/{w.case}/tasks", json={"phase": "containment", "title": "Block sender"},
+                          headers=h)).json()
+        assert (await c.put(f"/api/v1/cases/{w.case}/tasks/{t['id']}", json={"status": "done"}, headers=h)).status_code == 200
+        events = (await c.get(f"/api/v1/cases/{w.case}", headers=h)).json()["timeline_events"]
+        assert any(e["event_type"] == "task" and "Task completed: **Block sender**" in e["content"] for e in events)
+        done = next(i for i in (await c.get(f"/api/v1/audit-logs/case/{w.case}", headers=h)).json()
+                    if i["action"] == "task_completed")
+        assert done["changes"]["status"] == {"from": "todo", "to": "done"}
+        assert done["user"]["id"] == w.users["analyst"]
+    run(body)
