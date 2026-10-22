@@ -1,0 +1,234 @@
+{
+  "key": "github-security-alerts-pull",
+  "name": "GitHub: pull secret scanning and Dependabot alerts",
+  "vendor": "GitHub",
+  "kind": "ingest",
+  "description": "Every 15 minutes, reads the organization's open secret scanning alerts and open Dependabot alerts (newest 100 each) and creates one pending alert for each one created since the previous run (source github).",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/15 * * * *",
+  "params": [
+    {
+      "key": "GITHUB_ORG",
+      "label": "GitHub organization",
+      "placeholder": "acme-corp",
+      "help": "Organization login as in https://github.com/<org> (GitHub.com only)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "GITHUB_TOKEN",
+      "description": "Token of an org owner or security manager: fine-grained (read-only Secret scanning alerts + Dependabot alerts on all repositories) or classic with `security_events` (`repo` for private repos' secret scanning).",
+      "hosts": [
+        "api.github.com"
+      ]
+    }
+  ],
+  "setup": "## GitHub side\n1. The token's user must be an **organization owner or security manager**.\n2. Fine-grained personal access token (resource owner = the org, all repositories) with repository permissions **Secret scanning alerts: Read-only** and **Dependabot alerts: Read-only**; or a GitHub App installation token with the same permissions; or a classic token with `security_events` (plus `repo` for private repositories). Org policy may require approving fine-grained tokens.\n3. Store it as `GITHUB_TOKEN`, allowed host `api.github.com`.\n\n## How it works\n- `GET https://api.github.com/orgs/<org>/secret-scanning/alerts?state=open&sort=created&direction=desc&per_page=100`\n- `GET https://api.github.com/orgs/<org>/dependabot/alerts?state=open&sort=created&direction=desc&per_page=100`\n- Headers `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer`.\n- Neither endpoint takes a time filter, so each run keeps only alerts whose `created_at` is at or after the previous run (first run: the last hour). Older open alerts are never back-filled.\n- Secret scanning: external id `secret-scanning:<repo>:<number>`, title `<secret type> leaked in <repo>`, severity critical when GitHub reports the secret as still valid (`validity: active`), high otherwise.\n- Dependabot: external id `dependabot:<repo>:<number>`, title `<advisory summary> (<package>, <repo>)`, severity = the advisory severity (critical/high/medium/low).\n- Either call failing (non-200) fails the run with the HTTP status; the other branch's alerts are still created and the next run re-reads the window without duplicates.\n\n## Limits\n- ponytail: one page per endpoint: more than **100 new alerts of one kind in 15 minutes** (e.g. enabling secret scanning on many repos at once) are cut off; the `Link` header is not followed.\n- Code scanning alerts are not pulled; add a third branch with `GET /orgs/<org>/code-scanning/alerts` (same headers, `security_events`/Code scanning alerts read) if you need them.\n- GitHub.com only; for GitHub Enterprise Server change the host to `<ghes-host>/api/v3` and the secret's host.\n\nDocs: [Secret scanning org alerts](https://docs.github.com/en/rest/secret-scanning/secret-scanning?apiVersion=2022-11-28#list-secret-scanning-alerts-for-an-organization), [Dependabot org alerts](https://docs.github.com/en/rest/dependabot/alerts?apiVersion=2022-11-28#list-dependabot-alerts-for-an-organization), [API versions](https://docs.github.com/en/rest/about-the-rest-api/api-versions).\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "secrets_pull",
+        "type": "http_request",
+        "position": {
+          "x": 0,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://api.github.com/orgs/%%GITHUB_ORG%%/secret-scanning/alerts?state=open&sort=created&direction=desc&per_page=100",
+          "headers": {
+            "Authorization": "Bearer {{ secrets.GITHUB_TOKEN }}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"
+          }
+        }
+      },
+      {
+        "id": "secrets_ok",
+        "type": "condition",
+        "position": {
+          "x": 0,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.secrets_pull.output.status == 200 and steps.secrets_pull.output.body is sequence and steps.secrets_pull.output.body is not string"
+        }
+      },
+      {
+        "id": "secrets_failed",
+        "type": "fail",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "message": "GitHub secret scanning pull failed: HTTP {{ steps.secrets_pull.output.status }}"
+        }
+      },
+      {
+        "id": "secret_alerts",
+        "type": "for_each",
+        "position": {
+          "x": -100,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.secrets_pull.output.body | selectattr('created_at', 'ge', trigger.since) | list",
+          "concurrency": 5,
+          "max_items": 100
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create_secret",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "github",
+          "external_id": "secret-scanning:{{ (loop.item.get('repository') or {}).get('full_name') or '?' }}:{{ loop.item.number }}",
+          "title": "{{ loop.item.get('secret_type_display_name') or loop.item.get('secret_type') or 'Secret' }} leaked in {{ (loop.item.get('repository') or {}).get('full_name') or 'unknown repository' }}",
+          "severity": "{{ 'critical' if loop.item.get('validity') == 'active' else 'high' }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "secret_alerts"
+      },
+      {
+        "id": "dependabot_pull",
+        "type": "http_request",
+        "position": {
+          "x": 520,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://api.github.com/orgs/%%GITHUB_ORG%%/dependabot/alerts?state=open&sort=created&direction=desc&per_page=100",
+          "headers": {
+            "Authorization": "Bearer {{ secrets.GITHUB_TOKEN }}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"
+          }
+        }
+      },
+      {
+        "id": "dependabot_ok",
+        "type": "condition",
+        "position": {
+          "x": 520,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.dependabot_pull.output.status == 200 and steps.dependabot_pull.output.body is sequence and steps.dependabot_pull.output.body is not string"
+        }
+      },
+      {
+        "id": "dependabot_failed",
+        "type": "fail",
+        "position": {
+          "x": 770,
+          "y": 400
+        },
+        "config": {
+          "message": "GitHub Dependabot pull failed: HTTP {{ steps.dependabot_pull.output.status }}"
+        }
+      },
+      {
+        "id": "dependabot_alerts",
+        "type": "for_each",
+        "position": {
+          "x": 420,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.dependabot_pull.output.body | selectattr('created_at', 'ge', trigger.since) | list",
+          "concurrency": 5,
+          "max_items": 100
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create_dependabot",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "github",
+          "external_id": "dependabot:{{ (loop.item.get('repository') or {}).get('full_name') or '?' }}:{{ loop.item.number }}",
+          "title": "{{ (loop.item.get('security_advisory') or {}).get('summary') or 'Dependabot alert' }} ({{ ((loop.item.get('dependency') or {}).get('package') or {}).get('name') or '?' }}, {{ (loop.item.get('repository') or {}).get('full_name') or '?' }})",
+          "severity": "{{ {'critical': 'critical', 'high': 'high', 'medium': 'medium', 'low': 'low'}.get((loop.item.get('security_advisory') or {}).get('severity'), 'medium') }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "dependabot_alerts"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_secrets_pull",
+        "source": "start",
+        "target": "secrets_pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_secrets_pull_secrets_ok",
+        "source": "secrets_pull",
+        "target": "secrets_ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_secrets_ok_secret_alerts",
+        "source": "secrets_ok",
+        "target": "secret_alerts",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_secrets_ok_secrets_failed",
+        "source": "secrets_ok",
+        "target": "secrets_failed",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_start_dependabot_pull",
+        "source": "start",
+        "target": "dependabot_pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_dependabot_pull_dependabot_ok",
+        "source": "dependabot_pull",
+        "target": "dependabot_ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_dependabot_ok_dependabot_alerts",
+        "source": "dependabot_ok",
+        "target": "dependabot_alerts",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_dependabot_ok_dependabot_failed",
+        "source": "dependabot_ok",
+        "target": "dependabot_failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

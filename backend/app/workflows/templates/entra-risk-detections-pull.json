@@ -1,0 +1,153 @@
+{
+  "key": "entra-risk-detections-pull",
+  "name": "Entra ID Protection: pull risk detections",
+  "vendor": "Microsoft",
+  "kind": "ingest",
+  "description": "Every 15 minutes, reads new Entra ID Protection risk detections (impossible travel, leaked credentials, anonymous IP, password spray, token anomalies, ...) from Microsoft Graph and creates one pending alert per detection.",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/15 * * * *",
+  "params": [
+    {
+      "key": "AZURE_TENANT_ID",
+      "label": "Entra tenant ID",
+      "placeholder": "00000000-0000-0000-0000-000000000000",
+      "help": "Directory (tenant) ID from Entra admin center > Overview."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "MS_CLIENT_ID",
+      "description": "Application (client) ID of the Entra app registration used to read alerts.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "graph.microsoft.com"
+      ]
+    },
+    {
+      "name": "MS_CLIENT_SECRET",
+      "description": "Client secret value of that app registration used to read alerts.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "graph.microsoft.com"
+      ]
+    }
+  ],
+  "setup": "### Entra side\n1. Entra admin center > App registrations > **New registration** (single tenant, no redirect URI).\n2. API permissions > Add a permission > Microsoft Graph > **Application permissions**: `IdentityRiskEvent.Read.All`.\n3. Click **Grant admin consent for <tenant>** (application permissions do nothing until an admin consents).\n4. Certificates & secrets > **New client secret**; copy the secret *value* (not its ID). Note its expiry date.\n5. Licensing: the risk detection API needs Microsoft Entra ID P1 or P2. Without P2, most detections arrive with `riskEventType` = `generic` and `riskLevel` = `hidden`.\n6. If you also install `m365-defender-alerts-pull`, one app registration with both permissions can serve both (same `MS_CLIENT_ID` / `MS_CLIENT_SECRET`).\n\n### Here\n1. Settings > Secrets: add the client ID and client secret below. Each must allow **both** `login.microsoftonline.com` (token request) and `graph.microsoft.com` (API call): the OAuth token is bound to the same hosts as the secrets that obtained it.\n2. Install with `AZURE_TENANT_ID` = the Directory (tenant) ID.\n\nToken: `POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token` with `grant_type=client_credentials`, `scope=https://graph.microsoft.com/.default` ([client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow)). The token is cached per worker until shortly before it expires and never stored.\n\n### What it calls\n`GET https://graph.microsoft.com/v1.0/identityProtection/riskDetections?$filter=detectedDateTime ge <previous run>&$top=200`. Each detection becomes an alert with source `entra-id`, external id = the detection `id`, title = `Entra risk: riskEventType for userPrincipalName`, severity from `riskLevel`: high → high, medium → medium, low → low, hidden → medium, none → info.\n\n### Limits\nponytail: one page per run (`$top=200`, Graph allows up to 500); `@odata.nextLink` is not followed. Offline detections can be written with a `detectedDateTime` earlier than the previous run and are then missed; run a wider manual pull if that matters to you. Identity Protection allows one request per second per tenant for all apps and does not send `Retry-After` on 429. A non-200 answer creates nothing and fails the run with the HTTP status; the next run re-reads the window from the last successful run (at most 24 h back).\n\nDocs: [List riskDetections](https://learn.microsoft.com/en-us/graph/api/riskdetection-list?view=graph-rest-1.0), [riskDetection resource](https://learn.microsoft.com/en-us/graph/api/resources/riskdetection?view=graph-rest-1.0), [Throttling](https://learn.microsoft.com/en-us/graph/throttling-limits#identity-protection-and-conditional-access-service-limits).",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://graph.microsoft.com/v1.0/identityProtection/riskDetections?$filter={{ ('detectedDateTime ge ' ~ trigger.since) | urlencode }}&$top=200",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_client_credentials",
+            "token_url": "https://login.microsoftonline.com/%%AZURE_TENANT_ID%%/oauth2/v2.0/token",
+            "client_id": "{{ secrets.MS_CLIENT_ID }}",
+            "client_secret": "{{ secrets.MS_CLIENT_SECRET }}",
+            "scope": "https://graph.microsoft.com/.default"
+          }
+        },
+        "retries": 2
+      },
+      {
+        "id": "ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200"
+        }
+      },
+      {
+        "id": "each",
+        "type": "for_each",
+        "position": {
+          "x": 140,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.pull.output.body.value",
+          "concurrency": 5,
+          "max_items": 200
+        },
+        "size": {
+          "width": 420,
+          "height": 200
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 110,
+          "y": 80
+        },
+        "config": {
+          "source": "entra-id",
+          "external_id": "{{ loop.item.id }}",
+          "title": "Entra risk: {{ loop.item.riskEventType }} for {{ loop.item.userPrincipalName }}",
+          "severity": "{{ {'high': 'high', 'medium': 'medium', 'low': 'low', 'hidden': 'medium', 'none': 'info'}.get(loop.item.riskLevel, 'medium') }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "each"
+      },
+      {
+        "id": "failed",
+        "type": "fail",
+        "position": {
+          "x": 560,
+          "y": 400
+        },
+        "config": {
+          "message": "Entra ID Protection pull failed: HTTP {{ steps.pull.output.status }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok",
+        "source": "pull",
+        "target": "ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ok_each",
+        "source": "ok",
+        "target": "each",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_failed",
+        "source": "ok",
+        "target": "failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

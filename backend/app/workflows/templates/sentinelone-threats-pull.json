@@ -1,0 +1,137 @@
+{
+  "key": "sentinelone-threats-pull",
+  "name": "SentinelOne: pull threats",
+  "vendor": "SentinelOne",
+  "kind": "ingest",
+  "description": "Every 5 minutes, fetch SentinelOne threats created since the previous run (Management API v2.1) and ingest each one as a pending alert (source sentinelone, deduplicated on the threat id).",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [
+    {
+      "key": "S1_CONSOLE",
+      "label": "SentinelOne console host",
+      "placeholder": "usea1-acme.sentinelone.net",
+      "help": "Your management console host name, as in the browser address bar. Host only, no https://."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "S1_API_TOKEN",
+      "description": "API token of a SentinelOne service user.",
+      "hosts": [
+        "%%S1_CONSOLE%%"
+      ]
+    }
+  ],
+  "setup": "## SentinelOne side\n1. **Settings > Users > Service Users > Create New Service User**, scope **Account** (or the Site you want to pull), role **Viewer** for pulling only; use a role that can disconnect agents (e.g. **IR Team** or **SOC**) if the same token will also run *SentinelOne: disconnect agent*.\n2. Set an expiry date and copy the API token into the secret `S1_API_TOKEN`, allowed for your console host. Renew it before it expires (runs fail with HTTP 401 until you do; the missed window is re-read, up to 24 h back).\n3. Set `S1_CONSOLE` to the console host.\n\n## How it works\n- `pull`: `GET /web/api/v2.1/threats?createdAt__gt=<since>&limit=100` with header `Authorization: ApiToken <token>`. `<since>` is the fire time of the last successful run.\n- A non-200 answer (401 expired token, 403, 429 throttled) ends the run as failed (`SentinelOne pull failed: ... HTTP <status>`); the next run re-reads the window.\n- One alert per item of `data`: external id = threat `id`; title = `threatInfo.threatName` + `agentRealtimeInfo.agentComputerName`; severity from `threatInfo.confidenceLevel`: malicious + classification Ransomware = critical, malicious = high, suspicious = medium, anything else = low. Payload = the full threat.\n- Overlapping windows are safe: a threat already ingested is not created twice.\n\n## Limits\n- One page per run: at most **100 threats per window**; the `pagination.nextCursor` of a full page is not followed, and the next successful run starts at this run's fire time. Raise `limit` (API max 1000) and `max_items` on `loop` (max 500) together if needed.\n- After failed runs the window is re-read from the last successful run, at most 24 h back.\n- Threats only; SentinelOne *alerts* (STAR / custom detection rules, `/web/api/v2.1/cloud-detection/alerts`) are not pulled.\n\nTo double-check in your console's API doc: the `createdAt__gt` filter and `limit` on `GET /threats`, and the `threatInfo` field names.\n\nDocs relied on: the Management API reference is behind the console login (`https://<console>/api-doc/overview`, API v2.1). Public sources used: public open-source SentinelOne API clients (`/web/api/v2.1/` base, `Authorization: ApiToken <token>`, `threats?createdAt__gt=`, `agents/actions/disconnect` with `{\"filter\": {...}}`) and the PS-SentinelOne module (https://powershellgallery.com/packages/PS-SentinelOne). Double-check against your console's API doc before enabling.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://%%S1_CONSOLE%%/web/api/v2.1/threats?createdAt__gt={{ trigger.since | urlencode }}&limit=100",
+          "headers": {
+            "Authorization": "ApiToken {{ secrets.S1_API_TOKEN }}",
+            "Accept": "application/json"
+          }
+        }
+      },
+      {
+        "id": "pull_ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200 and steps.pull.output.body is mapping"
+        }
+      },
+      {
+        "id": "pull_failed",
+        "type": "fail",
+        "position": {
+          "x": 520,
+          "y": 400
+        },
+        "config": {
+          "message": "SentinelOne pull failed: threats query returned HTTP {{ steps.pull.output.status }}"
+        }
+      },
+      {
+        "id": "loop",
+        "type": "for_each",
+        "position": {
+          "x": 120,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.pull.output.body.get('data') or []",
+          "concurrency": 5,
+          "max_items": 100
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "sentinelone",
+          "external_id": "{{ loop.item.id }}",
+          "title": "{{ (loop.item.get('threatInfo') or {}).get('threatName') or 'SentinelOne threat' }} on {{ (loop.item.get('agentRealtimeInfo') or {}).get('agentComputerName') or 'unknown host' }}",
+          "severity": "{% set ti = loop.item.get('threatInfo') or {} %}{{ 'critical' if ti.get('confidenceLevel') == 'malicious' and ti.get('classification') == 'Ransomware' else 'high' if ti.get('confidenceLevel') == 'malicious' else 'medium' if ti.get('confidenceLevel') == 'suspicious' else 'low' }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "loop"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_pull_ok",
+        "source": "pull",
+        "target": "pull_ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok_loop",
+        "source": "pull_ok",
+        "target": "loop",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_pull_ok_pull_failed",
+        "source": "pull_ok",
+        "target": "pull_failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

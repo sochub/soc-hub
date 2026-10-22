@@ -235,7 +235,7 @@ async def export_audit_logs(
         "Content-Disposition": f'attachment; filename="audit-{slug}-{stamp}.{format}"'})
 
 
-@router.get("/{entity_type}/{entity_id}", response_model=List[schema.AuditLog])
+@router.get("/{entity_type}/{entity_id}", response_model=List[schema.AuditItem])
 async def read_audit_logs(
     *,
     db: AsyncSession = Depends(deps.get_db),
@@ -249,6 +249,7 @@ async def read_audit_logs(
         select(AuditLog)
         .where(AuditLog.entity_type == entity_type, AuditLog.entity_id == entity_id,
                AuditLog.tenant_id == tenant_id, AuditLog.category == "change")
+        .options(selectinload(AuditLog.user))
         .order_by(AuditLog.created_at.desc())
     )
-    return result.scalars().all()
+    return [_item(r) for r in result.scalars().all()]

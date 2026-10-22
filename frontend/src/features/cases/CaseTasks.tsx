@@ -31,7 +31,12 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
         enabled: canEdit,
     });
 
-    const invalidate = () => qc.invalidateQueries({ queryKey: key });
+    const invalidate = () => {
+        qc.invalidateQueries({ queryKey: key });
+        // task changes write Activity entries + audit rows
+        qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
+        qc.invalidateQueries({ queryKey: ['audit-logs', 'case', String(caseId)] });
+    };
     const toggle = useMutation({
         mutationFn: async (t: CaseTask) => api.put(`/cases/${caseId}/tasks/${t.id}`, { status: t.status === 'done' ? 'todo' : 'done' }),
         onSuccess: invalidate,

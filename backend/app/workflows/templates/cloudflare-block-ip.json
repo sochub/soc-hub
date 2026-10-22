@@ -1,0 +1,124 @@
+{
+  "key": "cloudflare-block-ip",
+  "name": "Cloudflare: block IP for the account",
+  "vendor": "Cloudflare",
+  "kind": "response",
+  "description": "Run from a case: create an account-level IP Access rule (mode block, applies to every zone in the account) for the case's first IP artifact, and record the HTTP status in a case note. A case without an IP artifact gets a note instead.",
+  "trigger_type": "manual",
+  "trigger_filter": null,
+  "params": [
+    {
+      "key": "ACCOUNT_ID",
+      "label": "Cloudflare account ID",
+      "placeholder": "023e105f4ecef8ad9ca31a8372d0c353",
+      "help": "32-character account ID (dashboard: Account home > the account's menu > Copy account ID, or any zone's Overview page, API section)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "CLOUDFLARE_API_TOKEN",
+      "description": "Cloudflare API token (sent as `Authorization: Bearer <token>`) with **Account > Account Firewall Access Rules > Edit** (API name *Account Firewall Access Rules Write*) on this account.",
+      "hosts": [
+        "api.cloudflare.com"
+      ]
+    }
+  ],
+  "setup": "## Cloudflare side\n1. API token with **Account > Account Firewall Access Rules > Edit** for this account. Store it as `CLOUDFLARE_API_TOKEN`, allowed host `api.cloudflare.com`.\n\n## How it works\n- The IP is the case's first `ip` artifact. An IPv4/IPv6 address or a range (IPv4 /16 or /24, IPv6 /32, /48 or /64) is accepted; Cloudflare rejects anything else.\n- `POST https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/firewall/access_rules/rules` with `{\"mode\": \"block\", \"configuration\": {\"target\": \"ip\" | \"ip6\" | \"ip_range\", \"value\": <ip>}, \"notes\": \"Blocked from case #<id>: <title>\"}`. The rule applies to all zones in the account.\n- A note records the HTTP status and the new rule id. HTTP 400 usually means the IP is already in a rule or the value is not a valid IP; see the run history.\n- Unblock from Security > WAF > Tools (IP Access rules) or `DELETE /accounts/<id>/firewall/access_rules/rules/<rule id>`.\n\n## Why IP Access rules\nIP Access rules are not deprecated and work on every plan with one call. Cloudflare recommends WAF custom rules with an IP list for new blocking setups; if you already block through a list referenced by a custom rule, replace the request with `POST /accounts/<id>/rules/lists/<list id>/items` (`[{\"ip\": <ip>, \"comment\": ...}]`, permission *Account Filter Lists Edit*).\n\nDocs: [IP Access rules](https://developers.cloudflare.com/waf/tools/ip-access-rules/), [Create an account IP Access rule](https://developers.cloudflare.com/api/resources/firewall/subresources/access_rules/methods/create/), [Token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "has_ip",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "expression": "((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) != '' and ((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) | length < 64"
+        }
+      },
+      {
+        "id": "no_ip",
+        "type": "case_add_note",
+        "position": {
+          "x": 520,
+          "y": 280
+        },
+        "config": {
+          "content": "Cloudflare block not sent: this case has no IP artifact. Add one and run the workflow again."
+        }
+      },
+      {
+        "id": "block",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://api.cloudflare.com/client/v4/accounts/%%ACCOUNT_ID%%/firewall/access_rules/rules",
+          "headers": {
+            "Authorization": "Bearer {{ secrets.CLOUDFLARE_API_TOKEN }}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "mode": "block",
+            "configuration": {
+              "target": "{{ 'ip_range' if '/' in ((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) else ('ip6' if ':' in ((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) else 'ip') }}",
+              "value": "{{ ((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) }}"
+            },
+            "notes": "Blocked from case #{{ case.id }}: {{ case.title | truncate(150, True) }}"
+          }
+        }
+      },
+      {
+        "id": "done",
+        "type": "case_add_note",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "content": "Cloudflare account IP Access rule (block, all zones) for {{ ((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) }}: HTTP {{ steps.block.output.status }}{{ (' (created, rule ' ~ ((steps.block.output.body.get('result') or {}).get('id') or '?') ~ ')') if steps.block.output.status == 200 and steps.block.output.body is mapping and steps.block.output.body.get('success') else ' (not created: check the token permission, whether the IP is already blocked, and the response in the run history)' }}."
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_has_ip",
+        "source": "start",
+        "target": "has_ip",
+        "source_handle": null
+      },
+      {
+        "id": "e_has_ip_block",
+        "source": "has_ip",
+        "target": "block",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_has_ip_no_ip",
+        "source": "has_ip",
+        "target": "no_ip",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_block_done",
+        "source": "block",
+        "target": "done",
+        "source_handle": null
+      }
+    ]
+  }
+}

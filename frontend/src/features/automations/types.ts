@@ -75,3 +75,21 @@ export interface RunDetail extends RunSummary {
     steps: RunStep[];
     children: ChildRun[];
 }
+
+export interface WorkflowTemplate {
+    key: string;
+    name: string;
+    vendor: string;
+    kind: 'ingest' | 'triage' | 'response';
+    description: string;
+    trigger_type: TriggerType;
+    params: { key: string; label: string; placeholder?: string; help?: string }[];
+    secrets: { name: string; description?: string; hosts: string[] }[];
+    setup?: string;
+}
+
+export interface TemplateInstallResult {
+    workflow: { id: number };
+    missing_secrets: string[];
+    secret_hosts: Record<string, string[]>;
+}

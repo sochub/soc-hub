@@ -12,9 +12,10 @@ from app.models.tenant_secret import TenantSecret
 from app.models.user import User
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.schemas.workflow import (AllowlistIn, DryRunIn, ManualRunIn, RunDetail, RunSummary,
-                                  WorkflowIn, WorkflowOut, WorkflowSummary)
+                                  TemplateInstallIn, WorkflowIn, WorkflowOut, WorkflowSummary)
 from app.utils.audit import create_audit_log
 from app.workflows.runtime import cancel_run, create_run, flush_withdrawals
+from app.workflows import templates as wf_templates
 from app.workflows.validation import workflow_errors
 
 router = APIRouter()
@@ -92,6 +93,36 @@ async def put_allowlist(body: AllowlistIn, db: AsyncSession = Depends(deps.get_d
                            tenant_id=tenant_id, user_id=current_user.id, changes={"hosts": hosts})
     await db.commit()
     return {"hosts": hosts}
+
+
+@router.get("/templates")
+async def list_templates(current_user: User = Depends(deps.require_admin)) -> Any:
+    keys = ("key", "name", "vendor", "kind", "description", "trigger_type", "params", "secrets", "setup")
+    return [{k: t.get(k) for k in keys} for t in wf_templates.load_templates()]
+
+
+@router.post("/templates/{key}/install", status_code=201)
+async def install_template(key: str, body: TemplateInstallIn, db: AsyncSession = Depends(deps.get_db),
+                           current_user: User = Depends(deps.require_admin),
+                           tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    try:
+        t = wf_templates.apply_params(wf_templates.get_template(key), body.params)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Template not found")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    wf = Workflow(tenant_id=tenant_id, name=body.name or t["name"], description=t.get("description"),
+                  trigger_type=t["trigger_type"], trigger_filter=t.get("trigger_filter"), graph=t["graph"],
+                  enabled=False, version=1, created_by=current_user.id)
+    db.add(wf)
+    await db.flush()
+    await create_audit_log(db=db, entity_type="workflow", entity_id=wf.id, action="installed_template", tenant_id=tenant_id,
+                           user_id=current_user.id, changes={"template": key})
+    await db.commit()
+    names = await _secret_names(db, tenant_id)
+    return {"workflow": _out(wf, {}, names),
+            "missing_secrets": [s["name"] for s in t.get("secrets", []) if s["name"] not in names],
+            "secret_hosts": {s["name"]: s.get("hosts", []) for s in t.get("secrets", [])}}
 
 
 @router.get("/", response_model=List[WorkflowSummary])

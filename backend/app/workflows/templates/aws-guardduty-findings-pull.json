@@ -1,0 +1,241 @@
+{
+  "key": "aws-guardduty-findings-pull",
+  "name": "AWS GuardDuty: pull findings",
+  "vendor": "AWS",
+  "kind": "ingest",
+  "description": "Every 5 minutes, lists non-archived GuardDuty findings updated since the previous run in one region (ListFindings + GetFindings, SigV4) and creates one pending alert per finding (source aws-guardduty, deduplicated on the finding id, severity from the 1-10 score).",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [
+    {
+      "key": "AWS_REGION",
+      "label": "AWS region",
+      "placeholder": "us-east-1",
+      "help": "Region code, lower case (us-east-1, eu-west-1, ...). One region per installed workflow."
+    },
+    {
+      "key": "DETECTOR_ID",
+      "label": "Detector id",
+      "placeholder": "12abc34d567e8fa901bc2d34e56789f0",
+      "help": "GuardDuty detector id in that region (GuardDuty console > Settings, or `aws guardduty list-detectors`)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "AWS_ACCESS_KEY_ID",
+      "description": "Access key id of a dedicated IAM user (read-only policy below).",
+      "hosts": [
+        "guardduty.%%AWS_REGION%%.amazonaws.com"
+      ]
+    },
+    {
+      "name": "AWS_SECRET_ACCESS_KEY",
+      "description": "Secret access key of the same IAM user.",
+      "hosts": [
+        "guardduty.%%AWS_REGION%%.amazonaws.com"
+      ]
+    }
+  ],
+  "setup": "## AWS side\n1. Create an IAM user for this integration (no console access) with an inline policy allowing only `guardduty:ListFindings` and `guardduty:GetFindings` on `arn:aws:guardduty:<region>:<account>:detector/<detector-id>` (or attach the managed policy `AmazonGuardDutyReadOnlyAccess`).\n2. Create an access key for it and store the two values as the secrets `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, allowed host `guardduty.<region>.amazonaws.com`.\n3. Find the detector id (GuardDuty > Settings > Detector ID). In a delegated-administrator account the detector also returns member accounts' findings.\n\n## How it works\n- `list`: `POST https://guardduty.<region>.amazonaws.com/detector/<id>/findings` (ListFindings) with criterion `updatedAt` `greaterThanOrEqual` = previous run time in epoch milliseconds and `service.archived` `equals` `[\"false\"]`, sorted by `updatedAt` DESC, `maxResults` 50 (the API maximum).\n- `details`: when ids came back, `POST .../findings/get` (GetFindings) with those `findingIds` (max 50).\n- One alert per finding: external id = finding `id`, title = `title (account/region)`, severity: 9.0-10 critical, 7.0-8.9 high, 4.0-6.9 medium, 1.0-3.9 low.\n- **Updates do not re-alert.** GuardDuty updates a finding in place when the activity repeats (`service.count`, `updatedAt`); `createdAt` cannot be filtered on, so the pull filters on `updatedAt` and the external id is the finding id only. A repeated finding is re-read but returns the existing alert (no new alert, no second `alert.ingested`). To get a new alert per update, change the external id to `{{ loop.item.id }}:{{ loop.item.updatedAt }}`.\n- A non-200 answer fails the run with `GuardDuty ListFindings/GetFindings failed: HTTP <status>`; the next run re-reads the window.\n\n## Limits\n- ponytail: one page per run: at most **50 findings per 5-minute window** (newest first); `nextToken` is not followed.\n- One region per workflow: install the template again per region.\n- Static access keys only (no assume-role). To use temporary credentials add `session_token` to both `auth` blocks.\n\nDocs: [ListFindings](https://docs.aws.amazon.com/guardduty/latest/APIReference/API_ListFindings.html), [GetFindings](https://docs.aws.amazon.com/guardduty/latest/APIReference/API_GetFindings.html), [Condition](https://docs.aws.amazon.com/guardduty/latest/APIReference/API_Condition.html), [Severity levels](https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_findings-severity.html), [IAM actions](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonguardduty.html).\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "list",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://guardduty.%%AWS_REGION%%.amazonaws.com/detector/%%DETECTOR_ID%%/findings",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": "{%- macro ep(s) -%}{%- set mo = s[5:7]|int -%}{%- set y = (s[0:4]|int) - (1 if mo <= 2 else 0) -%}{%- set era = y // 400 -%}{%- set yoe = y - era * 400 -%}{%- set doe = yoe * 365 + yoe // 4 - yoe // 100 + (153 * (mo + (-3 if mo > 2 else 9)) + 2) // 5 + (s[8:10]|int) - 1 -%}{{ ((era * 146097 + doe - 719468) * 86400 + (s[11:13]|int) * 3600 + (s[14:16]|int) * 60 + (s[17:19]|int)) }}{%- endmacro -%}{\"findingCriteria\": {\"criterion\": {\"updatedAt\": {\"greaterThanOrEqual\": {{ ep(trigger.since)|int * 1000 }}}, \"service.archived\": {\"equals\": [\"false\"]}}}, \"sortCriteria\": {\"attributeName\": \"updatedAt\", \"orderBy\": \"DESC\"}, \"maxResults\": 50}",
+          "auth": {
+            "type": "aws_sigv4",
+            "access_key_id": "{{ secrets.AWS_ACCESS_KEY_ID }}",
+            "secret_access_key": "{{ secrets.AWS_SECRET_ACCESS_KEY }}",
+            "region": "%%AWS_REGION%%",
+            "service": "guardduty"
+          }
+        }
+      },
+      {
+        "id": "list_ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.list.output.status == 200 and steps.list.output.body is mapping"
+        }
+      },
+      {
+        "id": "list_failed",
+        "type": "fail",
+        "position": {
+          "x": 560,
+          "y": 280
+        },
+        "config": {
+          "message": "GuardDuty ListFindings failed: HTTP {{ steps.list.output.status }}"
+        }
+      },
+      {
+        "id": "has_ids",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "expression": "(steps.list.output.body.get('findingIds') or []) | length > 0"
+        }
+      },
+      {
+        "id": "details",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://guardduty.%%AWS_REGION%%.amazonaws.com/detector/%%DETECTOR_ID%%/findings/get",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "findingIds": "{{ steps.list.output.body.findingIds }}"
+          },
+          "auth": {
+            "type": "aws_sigv4",
+            "access_key_id": "{{ secrets.AWS_ACCESS_KEY_ID }}",
+            "secret_access_key": "{{ secrets.AWS_SECRET_ACCESS_KEY }}",
+            "region": "%%AWS_REGION%%",
+            "service": "guardduty"
+          }
+        }
+      },
+      {
+        "id": "details_ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 640
+        },
+        "config": {
+          "expression": "steps.details.output.status == 200 and steps.details.output.body is mapping"
+        }
+      },
+      {
+        "id": "details_failed",
+        "type": "fail",
+        "position": {
+          "x": 560,
+          "y": 640
+        },
+        "config": {
+          "message": "GuardDuty GetFindings failed: HTTP {{ steps.details.output.status }}"
+        }
+      },
+      {
+        "id": "loop",
+        "type": "for_each",
+        "position": {
+          "x": 120,
+          "y": 760
+        },
+        "config": {
+          "items": "steps.details.output.body.get('findings') or []",
+          "concurrency": 5,
+          "max_items": 50
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "aws-guardduty",
+          "external_id": "{{ loop.item.id }}",
+          "title": "{{ loop.item.get('title') or loop.item.get('type') or 'GuardDuty finding' }} ({{ loop.item.get('accountId') or '?' }}/{{ loop.item.get('region') or '?' }})",
+          "severity": "{% set s = loop.item.get('severity') or 0 %}{{ 'critical' if s >= 9 else 'high' if s >= 7 else 'medium' if s >= 4 else 'low' if s >= 1 else 'info' }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "loop"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_list",
+        "source": "start",
+        "target": "list",
+        "source_handle": null
+      },
+      {
+        "id": "e_list_list_ok",
+        "source": "list",
+        "target": "list_ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_list_ok_has_ids",
+        "source": "list_ok",
+        "target": "has_ids",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_list_ok_list_failed",
+        "source": "list_ok",
+        "target": "list_failed",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_has_ids_details",
+        "source": "has_ids",
+        "target": "details",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_details_details_ok",
+        "source": "details",
+        "target": "details_ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_details_ok_loop",
+        "source": "details_ok",
+        "target": "loop",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_details_ok_details_failed",
+        "source": "details_ok",
+        "target": "details_failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

@@ -17,7 +17,14 @@ _ID_RE = re.compile(r"^[a-z0-9_]+$")
 
 _SECRETS_ONLY_HTTP = "Secrets are only allowed in HTTP request URL, headers and body"
 _SECRETS_NO_TRANSFORM = "secrets can only be inserted, not transformed"
-_HTTP_SECRET_KEYS = ("url", "headers", "body")
+_HTTP_SECRET_KEYS = ("url", "headers", "body", "auth")
+# auth.type -> (required keys, key that must be a {{ secrets.NAME }} reference)
+_AUTH_TYPES = {
+    "oauth2_client_credentials": (("token_url", "client_id", "client_secret"), "client_secret"),
+    "basic": (("username", "password"), "password"),
+    "aws_sigv4": (("access_key_id", "secret_access_key", "region", "service"), "secret_access_key"),
+    "google_service_account": (("service_account_key", "scopes"), "service_account_key"),
+}
 
 
 def _err(errors: List[dict], node_id: Optional[str], message: str) -> None:
@@ -284,6 +291,26 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             _err(errors, nid, "missing required field 'group_key'")
     if node["type"] == "http_request" and cfg.get("headers") is not None and not isinstance(cfg["headers"], dict):
         _err(errors, nid, "Headers must be a JSON object")
+    if node["type"] == "http_request" and cfg.get("auth") not in (None, "") and not isinstance(cfg["auth"], dict):
+        _err(errors, nid, "auth must be a JSON object")
+    if node["type"] == "http_request" and isinstance(cfg.get("auth"), dict):
+        auth = cfg["auth"]
+        auth_spec = _AUTH_TYPES.get(auth.get("type"))
+        if auth_spec is None:
+            _err(errors, nid, "auth.type must be oauth2_client_credentials, basic, aws_sigv4 or google_service_account")
+        else:
+            required, secret_key = auth_spec
+            for k in required:
+                if not auth.get(k):
+                    _err(errors, nid, f"missing required field 'auth.{k}'")
+            sec = auth.get(secret_key)
+            # A literal secret would be stored in the graph and in every run's step input.
+            if not isinstance(sec, str) or not re.fullmatch(r"\s*\{\{\s*secrets\.[A-Z][A-Z0-9_]{1,63}\s*\}\}\s*", sec):
+                _err(errors, nid, f"auth.{secret_key} must be a secret reference like {{{{ secrets.NAME }}}}")
+            for k in ("region", "service") if auth.get("type") == "aws_sigv4" else ():
+                v = auth.get(k)
+                if isinstance(v, str) and "{{" not in v and not re.fullmatch(r"[a-z0-9-]{2,32}", v):
+                    _err(errors, nid, f"auth.{k} must match [a-z0-9-]{{2,32}}")
     if node["type"] == "slack_ask_user":
         try:
             if len(parse_button_labels(cfg.get("buttons"))) > 5:

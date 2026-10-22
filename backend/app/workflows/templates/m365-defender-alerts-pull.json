@@ -1,0 +1,153 @@
+{
+  "key": "m365-defender-alerts-pull",
+  "name": "Microsoft 365 Defender: pull alerts",
+  "vendor": "Microsoft",
+  "kind": "ingest",
+  "description": "Every 5 minutes, reads new Microsoft Defender XDR alerts (Defender for Endpoint, Office 365, Identity, Cloud Apps, Entra ID Protection, Sentinel when onboarded) from Microsoft Graph `security/alerts_v2` and creates one pending alert per Defender alert.",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [
+    {
+      "key": "AZURE_TENANT_ID",
+      "label": "Entra tenant ID",
+      "placeholder": "00000000-0000-0000-0000-000000000000",
+      "help": "Directory (tenant) ID from Entra admin center > Overview."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "MS_CLIENT_ID",
+      "description": "Application (client) ID of the Entra app registration used to read alerts.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "graph.microsoft.com"
+      ]
+    },
+    {
+      "name": "MS_CLIENT_SECRET",
+      "description": "Client secret value of that app registration used to read alerts.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "graph.microsoft.com"
+      ]
+    }
+  ],
+  "setup": "### Entra side\n1. Entra admin center > App registrations > **New registration** (single tenant, no redirect URI).\n2. API permissions > Add a permission > Microsoft Graph > **Application permissions**: `SecurityAlert.Read.All`.\n3. Click **Grant admin consent for <tenant>** (application permissions do nothing until an admin consents).\n4. Certificates & secrets > **New client secret**; copy the secret *value* (not its ID). Note its expiry date.\n\n### Here\n1. Settings > Secrets: add the client ID and client secret below. Each must allow **both** `login.microsoftonline.com` (token request) and `graph.microsoft.com` (API call): the OAuth token is bound to the same hosts as the secrets that obtained it.\n2. Install with `AZURE_TENANT_ID` = the Directory (tenant) ID.\n\nToken: `POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token` with `grant_type=client_credentials`, `scope=https://graph.microsoft.com/.default` ([client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow)). The token is cached per worker until shortly before it expires and never stored.\n\n### What it calls\n`GET https://graph.microsoft.com/v1.0/security/alerts_v2?$filter=createdDateTime ge <previous run>&$top=100`. Each alert becomes an alert with source `m365-defender`, external id = the Graph alert `id`, title = `title (serviceSource)`, severity: high → high, medium → medium, low → low, informational → info, unknown → medium. The full Graph alert (including `evidence`) is the payload, so the identity triage template can find the user principal in `userAccount` evidence.\n\n### Limits\nponytail: one page per run (`$top=100`); `@odata.nextLink` is not followed, so more than 100 new alerts in 5 minutes are cut off. The window is on `createdDateTime`, so an alert that Graph exposes later than its creation time can fall between two runs. Graph allows 150 requests per minute per app per tenant on security alerts. A non-200 answer (bad credentials, missing consent, 429) creates nothing and fails the run with the HTTP status; the next run re-reads the window from the last successful run (at most 24 h back).\n\nDocs: [List alerts_v2](https://learn.microsoft.com/en-us/graph/api/security-list-alerts_v2?view=graph-rest-1.0), [alert resource](https://learn.microsoft.com/en-us/graph/api/resources/security-alert?view=graph-rest-1.0), [Throttling](https://learn.microsoft.com/en-us/graph/throttling-limits#security-detections-and-incidents-service-limits).",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://graph.microsoft.com/v1.0/security/alerts_v2?$filter={{ ('createdDateTime ge ' ~ trigger.since) | urlencode }}&$top=100",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_client_credentials",
+            "token_url": "https://login.microsoftonline.com/%%AZURE_TENANT_ID%%/oauth2/v2.0/token",
+            "client_id": "{{ secrets.MS_CLIENT_ID }}",
+            "client_secret": "{{ secrets.MS_CLIENT_SECRET }}",
+            "scope": "https://graph.microsoft.com/.default"
+          }
+        },
+        "retries": 2
+      },
+      {
+        "id": "ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200"
+        }
+      },
+      {
+        "id": "each",
+        "type": "for_each",
+        "position": {
+          "x": 140,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.pull.output.body.value",
+          "concurrency": 5,
+          "max_items": 100
+        },
+        "size": {
+          "width": 420,
+          "height": 200
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 110,
+          "y": 80
+        },
+        "config": {
+          "source": "m365-defender",
+          "external_id": "{{ loop.item.id }}",
+          "title": "{{ loop.item.title }} ({{ loop.item.serviceSource }})",
+          "severity": "{{ {'high': 'high', 'medium': 'medium', 'low': 'low', 'informational': 'info', 'unknown': 'medium'}.get(loop.item.severity, 'medium') }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "each"
+      },
+      {
+        "id": "failed",
+        "type": "fail",
+        "position": {
+          "x": 560,
+          "y": 400
+        },
+        "config": {
+          "message": "Microsoft 365 Defender pull failed: HTTP {{ steps.pull.output.status }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok",
+        "source": "pull",
+        "target": "ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ok_each",
+        "source": "ok",
+        "target": "each",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_failed",
+        "source": "ok",
+        "target": "failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

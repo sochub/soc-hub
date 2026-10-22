@@ -10,6 +10,7 @@ import Modal, { btnPrimary, btnSecondary, modalInput } from '../../components/la
 import { NAME_RE, errText } from '../integrations/secretsUtil';
 import type { WorkflowSummary } from './types';
 import { TRIGGER_LABEL } from './nodeCatalog';
+import TemplateGallery from './TemplateGallery';
 import RunsTable, { StatusBadge } from './RunsTable';
 import PageContainer from '../../components/layout/PageContainer';
 
@@ -88,7 +89,7 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
 export default function AutomationsList() {
     const qc = useQueryClient();
     const navigate = useNavigate();
-    const [tab, setTab] = useState<'workflows' | 'runs'>('workflows');
+    const [tab, setTab] = useState<'workflows' | 'templates' | 'runs'>('workflows');
     const [toggleError, setToggleError] = useState<string | null>(null);
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
@@ -143,7 +144,7 @@ export default function AutomationsList() {
             </div>
 
             <div className="flex gap-4 border-b border-line mb-4">
-                {(['workflows', 'runs'] as const).map((t) => (
+                {((isAdmin ? ['workflows', 'templates', 'runs'] : ['workflows', 'runs']) as ('workflows' | 'templates' | 'runs')[]).map((t) => (
                     <button key={t} onClick={() => setTab(t)}
                         className={cn('pb-2 text-sm capitalize', tab === t ? 'text-accent border-b-2 border-accent' : 'text-fg-3 hover:text-fg')}>{t}</button>
                 ))}
@@ -162,7 +163,7 @@ export default function AutomationsList() {
 
             {toggleError && <div role="alert" className="mb-3 px-3 py-2 text-sm border border-red-500/30 bg-red-500/10 text-red-300">{toggleError}</div>}
 
-            {tab === 'runs' ? <RunsTable /> : (
+            {tab === 'runs' ? <RunsTable /> : tab === 'templates' && isAdmin ? <TemplateGallery /> : (
                 <div className="bg-panel border border-line">
                     <table className="w-full text-sm">
                         <thead className="bg-surface text-left label-mono">

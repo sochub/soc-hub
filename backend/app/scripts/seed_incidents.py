@@ -4,7 +4,7 @@
 Every seeded case is tagged "seed" so it can be found and removed later.
 
 Usage (inside the backend container):
-    python -m app.scripts.seed_incidents --tenant-id 2 --count 40 --days 30
+    python -m app.scripts.seed_incidents --tenant-id 2 --count 40 --days 30 --alerts 8
     python -m app.scripts.seed_incidents --tenant-id 2 --purge      # remove seeded data
 
 Cases are backdated (created_at / resolved_at set to past timestamps) so the
@@ -20,12 +20,13 @@ from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
-from app.models.case import Case, CaseStatus, CaseSeverity, TimelineEvent
+from app.models.case import Alert, Case, CaseStatus, CaseSeverity, TimelineEvent
 from app.models.artifact import Artifact, ArtifactType
 from app.models.case_artifact import CaseArtifact
 from app.models.ioc import IOC
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
+from app.models.user import User
 
 SEED_TAG = "seed"
 
@@ -44,12 +45,13 @@ SOURCES = ["EDR", "SIEM", "Firewall", "Email Gateway", "Threat Intel", "Manual",
 HOSTS = ["WS-FIN-014", "WS-HR-007", "SRV-DC01", "SRV-WEB02", "LT-DEV-221", "WS-MKT-033", "SRV-DB03"]
 DEPTS = ["Finance", "HR", "Engineering", "Marketing", "Legal", "Operations"]
 
-# Small shared pools so values repeat across cases (drives correlation & top-indicators)
-IPS = ["185.220.101.45", "45.137.21.9", "103.224.182.250", "91.219.236.18", "194.165.16.77", "5.188.206.130"]
-DOMAINS = ["secure-update-portal.com", "drive-share-files.net", "cdn-analytics-track.io", "login-verify-account.co", "pay-invoice-now.org"]
-HASHES = ["d41d8cd98f00b204e9800998ecf8427e", "5f4dcc3b5aa765d61d8327deb882cf99", "098f6bcd4621d373cade4e832627b4f6", "e99a18c428cb38d5f260853678922e03"]
-EMAILS = ["billing@secure-update-portal.com", "it-support@login-verify-account.co", "no-reply@pay-invoice-now.org"]
-URLS = ["http://secure-update-portal.com/auth/reset", "http://drive-share-files.net/d/invoice.zip"]
+# Small shared pools so values repeat across cases (drives correlation & top-indicators).
+# Synthetic only: RFC 5737 documentation IPs, RFC 2606 reserved domains, made-up hashes.
+IPS = ["192.0.2.45", "192.0.2.118", "198.51.100.23", "198.51.100.77", "203.0.113.9", "203.0.113.200"]
+DOMAINS = ["update-portal.example", "file-share.example", "cdn-track.example.net", "login-verify.test", "pay-invoice.example.org"]
+HASHES = ["0a1b2c3d4e5f60718293a4b5c6d7e8f9", "f0e1d2c3b4a5968778695a4b3c2d1e0f", "1111aaaa2222bbbb3333cccc4444dddd", "abcdef0123456789abcdef0123456789"]
+EMAILS = ["billing@update-portal.example", "it-support@login-verify.test", "no-reply@pay-invoice.example.org"]
+URLS = ["http://update-portal.example/auth/reset", "http://file-share.example/d/invoice.zip"]
 
 TEMPLATES = [
     ("Phishing email targeting {dept}", "email", "url"),
@@ -73,6 +75,29 @@ ARTIFACT_TYPE_MAP = {
     "email": (ArtifactType.EMAIL, EMAILS, "email"),
     "url": (ArtifactType.URL, URLS, "url"),
 }
+
+
+# Lifecycle order; a case walks this path up to its final status, one status_change per hop.
+PATH = [CaseStatus.NEW, CaseStatus.OPEN, CaseStatus.IN_PROGRESS, CaseStatus.PENDING, CaseStatus.RESOLVED, CaseStatus.CLOSED]
+# Notes logged while the case sits in a status (event_type, markdown content).
+STAGE_NOTES = {
+    CaseStatus.OPEN: [("comment", "Picked up. Reviewing the **{source}** signal and pulling related logs.")],
+    CaseStatus.IN_PROGRESS: [
+        ("investigation", "Scoping:\n- Checked auth logs for the last 24h\n- Pivoted on `{value}` across the fleet\n- No other hosts matched so far"),
+        ("containment", "Contained: blocked `{value}` at the perimeter and isolated the affected endpoint."),
+    ],
+    CaseStatus.PENDING: [("comment", "Waiting on the asset owner to confirm the activity was not expected.")],
+    CaseStatus.RESOLVED: [("remediation", "Remediated: credentials rotated, persistence removed, host re-imaged.\n\n> Verified clean by EDR rescan.")],
+}
+OUTCOMES = ["true_positive_with_impact", "true_positive_without_impact", "false_positive", "legitimate"]
+ALERT_TITLES = [
+    ("EDR", "Suspicious PowerShell spawned by Office on {host}"),
+    ("SIEM", "Impossible travel sign-in for a {dept} user"),
+    ("Email Gateway", "Credential-phishing link clicked from {dept}"),
+    ("Firewall", "Outbound connection to known C2 {ip}"),
+    ("IDS", "Port scan from {ip} against the DMZ"),
+    ("Threat Intel", "Indicator match: {domain}"),
+]
 
 
 def _rand_dt(now: datetime, days: int) -> datetime:
@@ -100,8 +125,10 @@ async def purge(db, tenant_id: int) -> None:
     # Only purge ones tagged seed
     seed_rows = await db.execute(select(Case.id, Case.tags).where(Case.tenant_id == tenant_id))
     seed_ids = [cid for cid, tags in seed_rows.all() if tags and SEED_TAG in tags]
+    alerts = await db.execute(delete(Alert).where(Alert.tenant_id == tenant_id, Alert.external_id.like("seed-%")))
     if not seed_ids:
-        print("No seeded cases to purge.")
+        await db.commit()
+        print(f"No seeded cases to purge; removed {alerts.rowcount} seeded alert(s).")
         return
     await db.execute(delete(TimelineEvent).where(TimelineEvent.case_id.in_(seed_ids)))
     await db.execute(delete(CaseArtifact).where(CaseArtifact.case_id.in_(seed_ids)))
@@ -111,13 +138,22 @@ async def purge(db, tenant_id: int) -> None:
     print(f"Purged {len(seed_ids)} seeded case(s) from tenant {tenant_id}.")
 
 
-async def seed(db, tenant_id: int, count: int, days: int) -> None:
+async def seed(db, tenant_id: int, count: int, days: int, alerts: int = 0) -> None:
     now = datetime.now(timezone.utc)
 
     # Pick a member of the tenant to own the cases (or None).
     owner = (await db.execute(
         select(TenantMembership.user_id).where(TenantMembership.tenant_id == tenant_id).limit(1)
     )).scalars().first()
+    if owner is None:  # empty tenant: attribute activity to a super admin so the timeline shows an actor
+        owner = (await db.execute(select(User.id).where(User.is_super_admin.is_(True)).order_by(User.id).limit(1))).scalars().first()
+
+    # Even status mix: repeat the weighted list to `count` and shuffle (random.choice can skew small runs).
+    statuses = (STATUSES * (count // len(STATUSES) + 1))[:count]
+    random.shuffle(statuses)
+    severities = (SEVERITIES * (count // len(SEVERITIES) + 1))[:count]
+    random.shuffle(severities)
+    seeded = []
 
     # cache of (value,type) -> artifact id for reuse across cases
     artifact_cache: dict = {}
@@ -143,16 +179,18 @@ async def seed(db, tenant_id: int, count: int, days: int) -> None:
         return existing
 
     created = 0
-    for _ in range(count):
+    for status, severity in zip(statuses, severities):
         tmpl, t1, t2 = random.choice(TEMPLATES)
         title = tmpl.format(host=random.choice(HOSTS), dept=random.choice(DEPTS),
                             ip=random.choice(IPS), domain=random.choice(DOMAINS))
-        severity = random.choice(SEVERITIES)
-        status = random.choice(STATUSES)
         created_at = _rand_dt(now, days)
-        resolved_at = None
-        if status in CLOSED:
-            resolved_at = min(now, created_at + timedelta(hours=random.randint(2, 240)))
+        # Hops up to the final status, spread between creation and resolution (or now).
+        hops = PATH[:PATH.index(status) + 1]
+        if status in CLOSED and random.random() < 0.5:
+            hops = [h for h in hops if h != CaseStatus.PENDING]
+        span = (min(now, created_at + timedelta(hours=random.randint(2, 120))) if status in CLOSED else now) - created_at
+        times = sorted(created_at + span * random.uniform(0.02, 1) for _ in hops[1:])
+        resolved_at = next((t for h, t in zip(hops[1:], times) if h in CLOSED), None)
 
         case = Case(
             title=title,
@@ -165,14 +203,19 @@ async def seed(db, tenant_id: int, count: int, days: int) -> None:
             owner_id=owner,
             created_at=created_at,
             resolved_at=resolved_at,
+            acknowledged_at=times[0] if times else None,
+            outcome=random.choice(OUTCOMES) if status in CLOSED else None,
+            closing_note="Root cause identified and remediated; monitoring for recurrence." if status == CaseStatus.CLOSED else None,
         )
         db.add(case)
         await db.flush()
 
         # attach 1-2 artifacts (shared pool → correlation/top-indicators populate)
         kinds = [k for k in (t1, t2) if k]
+        linked = []
         for kind in kinds:
             art = await get_artifact(kind)
+            linked.append(art)
             dup = (await db.execute(
                 select(CaseArtifact).where(
                     CaseArtifact.case_id == case.id, CaseArtifact.artifact_id == art.id)
@@ -193,18 +236,41 @@ async def seed(db, tenant_id: int, count: int, days: int) -> None:
                 created_by=owner,
             ))
 
-        # 1-3 timeline events between creation and now
-        for _ in range(random.randint(1, 3)):
-            etype = random.choice(["comment", "investigation", "status_change", "containment"])
-            ev_at = created_at + timedelta(seconds=random.randint(0, max(1, int((now - created_at).total_seconds()))))
-            db.add(TimelineEvent(
-                case_id=case.id, user_id=owner, event_type=etype,
-                content=f"{etype.replace('_', ' ').title()} step recorded by analyst.",
-                created_at=min(ev_at, now),
-            ))
+        # Lifecycle: a status_change per hop (same text the API writes) plus notes while in each status.
+        value = linked[0].value if linked else random.choice(IPS)
+        ends = times[1:] + [min(now, (times[-1] if times else now) + timedelta(hours=4))]
+        for prev, hop, at, until in zip(hops, hops[1:], times, ends):
+            content = f"Status changed from {prev.value} to {hop.value}"
+            if hop == CaseStatus.CLOSED and case.outcome:
+                content += f"\n\n**Outcome:** {case.outcome.replace('_', ' ')}\n\n**Closing note:** {case.closing_note}"
+            db.add(TimelineEvent(case_id=case.id, user_id=owner, event_type="status_change", content=content, created_at=at))
+            for i, (etype, text) in enumerate(STAGE_NOTES.get(hop, [])):
+                note_at = at + (until - at) * (i + 1) / (len(STAGE_NOTES[hop]) + 1)
+                db.add(TimelineEvent(case_id=case.id, user_id=owner, event_type=etype, created_at=note_at,
+                                     content=text.format(source=case.source, value=value)))
+        seeded.append(case)
         created += 1
 
+    for i in range(alerts):
+        source, tmpl = ALERT_TITLES[i % len(ALERT_TITLES)]
+        title = tmpl.format(host=random.choice(HOSTS), dept=random.choice(DEPTS),
+                            ip=random.choice(IPS), domain=random.choice(DOMAINS))
+        # mostly untriaged so the Alerts queue has work; a couple promoted / dismissed for history
+        state = "pending" if i < max(1, alerts - 3) else ("promoted" if i % 2 else "dismissed")
+        case = random.choice(seeded) if state == "promoted" and seeded else None
+        if state == "promoted" and case is None:
+            state = "pending"
+        db.add(Alert(
+            tenant_id=tenant_id, source=source, external_id=f"seed-{tenant_id}-{i}", title=title,
+            severity=random.choice(SEVERITIES).value, status=state,
+            case_id=case.id if case else None,
+            dismiss_reason="Benign: scheduled vulnerability scan." if state == "dismissed" else None,
+            payload={"seed": True, "source": source, "title": title, "observed_at": _rand_dt(now, 2).isoformat()},
+            created_at=_rand_dt(now, 3),
+        ))
+
     await db.commit()
+    print(f"Seeded {alerts} alert(s).")
     print(f"Seeded {created} incident(s) into tenant {tenant_id} over the last {days} days.")
     print(f"All tagged '{SEED_TAG}'. Remove with: --purge")
 
@@ -215,7 +281,7 @@ async def main_async(args) -> None:
         if args.purge:
             await purge(db, tenant_id)
         else:
-            await seed(db, tenant_id, args.count, args.days)
+            await seed(db, tenant_id, args.count, args.days, args.alerts)
 
 
 def main():
@@ -226,6 +292,7 @@ def main():
     parser.add_argument("--tenant-id", type=int, default=None, help="Tenant to seed (default: lowest id)")
     parser.add_argument("--count", type=int, default=40, help="Number of incidents (default 40)")
     parser.add_argument("--days", type=int, default=30, help="Spread across the last N days (default 30)")
+    parser.add_argument("--alerts", type=int, default=0, help="Number of alerts to seed (default 0)")
     parser.add_argument("--purge", action="store_true", help="Remove previously seeded incidents instead")
     args = parser.parse_args()
     asyncio.run(main_async(args))

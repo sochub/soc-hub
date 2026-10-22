@@ -21,7 +21,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_MODEL=llama3
+      - OLLAMA_MODEL=llama3.2:3b
       - LITELLM_LOCAL_MODEL_COST_MAP=True
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - STORAGE_LOCAL_PATH=/data/attachments
@@ -97,7 +97,7 @@ services:
       - /tmp
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
-      - OLLAMA_MODEL=llama3
+      - OLLAMA_MODEL=llama3.2:3b
     volumes:
       - ollama_data:/root/.ollama
       - ./ollama-entrypoint.sh:/entrypoint.sh:ro
@@ -135,7 +135,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_MODEL=llama3
+      - OLLAMA_MODEL=llama3.2:3b
       - LITELLM_LOCAL_MODEL_COST_MAP=True
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - STORAGE_LOCAL_PATH=/data/attachments
