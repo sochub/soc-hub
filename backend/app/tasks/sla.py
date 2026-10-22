@@ -46,6 +46,7 @@ async def _check_tenant(db, tenant_id: int) -> None:
         )
     ).scalars().all()
 
+    breaches = []
     for case in cases:
         state = compute_sla_state(case, policy_overrides)
         now = datetime.now(timezone.utc)
@@ -54,13 +55,19 @@ async def _check_tenant(db, tenant_id: int) -> None:
             await _notify_recipients(db, case, "response")
             await notify.on_sla_breach(db, case, "response")
             case.sla_response_breach_notified_at = now
+            breaches.append((case.id, "Response SLA"))
 
         if state["resolution_status"] == "breached" and case.sla_resolution_breach_notified_at is None:
             await _notify_recipients(db, case, "resolution")
             await notify.on_sla_breach(db, case, "resolution")
             case.sla_resolution_breach_notified_at = now
+            breaches.append((case.id, "Resolution SLA"))
 
     await db.commit()
+    if breaches:
+        from app.tasks.slack import slack_case_event_task  # Slack responder alerts (after commit)
+        for case_id, label in breaches:
+            slack_case_event_task.delay(tenant_id, "sla_breach", case_id, {"label": label})
 
 
 async def _run() -> None:

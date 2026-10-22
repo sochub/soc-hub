@@ -1,21 +1,51 @@
+# Slack app manifest for sochub. In Slack: Create New App > From an app manifest, paste this,
+# replace YOUR-SOCHUB-HOST (3 places), install to your workspace, then paste the bot token and
+# signing secret in sochub > Settings > Integrations > Slack. Existing apps: App Manifest > paste > Save,
+# then reinstall the app so the new scopes apply.
 display_information:
-  name: SOC Hub
-  description: Case notifications and end-user confirmations from SOC Hub
+  name: sochub
+  description: Incident response from Slack. Create cases, get paged and run war rooms with sochub
+  background_color: "#111113"
 features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: true
   bot_user:
-    display_name: SOC Hub
+    display_name: sochub
     always_online: true
+  slash_commands:
+    - command: /sochub
+      url: https://YOUR-SOCHUB-HOST/api/v1/slack/commands
+      description: Create, find and work sochub cases
+      usage_hint: "new [title] | case <id> | mine | help"
+      should_escape: false
+  shortcuts:
+    - name: Create sochub case
+      type: message
+      callback_id: create_case_from_message
+      description: Turn this message into a sochub case
+    - name: New sochub case
+      type: global
+      callback_id: create_case
+      description: Open the new-case form
 oauth_config:
   scopes:
     bot:
-      - chat:write
-      - im:write
-      - users:read
-      - users:read.email
+      - chat:write          # cards, alerts, DMs
+      - im:write            # open DMs with responders
+      - users:read          # resolve who clicked
+      - users:read.email    # link Slack users to sochub users by email
+      - commands            # /sochub
+      - channels:manage     # create war-room channels and invite responders
 settings:
+  event_subscriptions:
+    request_url: https://YOUR-SOCHUB-HOST/api/v1/slack/events
+    bot_events:
+      - app_home_opened
   interactivity:
     is_enabled: true
-    request_url: https://YOUR-SOC-HUB-HOST/api/v1/slack/interactions
+    request_url: https://YOUR-SOCHUB-HOST/api/v1/slack/interactions
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

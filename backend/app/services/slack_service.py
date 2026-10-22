@@ -15,7 +15,7 @@ from app.models.slack_integration import SlackIntegration
 from app.utils.crypto import decrypt
 
 SLACK_API = "https://slack.com/api/"
-_CASE_ACTIONS = {"ack", "assign", "close"}
+_CASE_ACTIONS = {"ack", "assign", "close", "warroom"}  # note/severity open modals inline (slack_bot)
 _WF_RE = re.compile(r"wf:([A-Za-z0-9_\-]{1,64}):([0-9]{1,2})")
 _CASE_RE = re.compile(r"case:([0-9]{1,10}):([0-9]{1,10}):([a-z]{1,10})")
 
@@ -84,7 +84,9 @@ def case_buttons_block(tenant_id: int, case_id: int) -> dict:
         if style:
             b["style"] = style
         return b
-    return {"type": "actions", "elements": [btn("Acknowledge", "ack", "primary"), btn("Assign to me", "assign"), btn("Close", "close", "danger")]}
+    return {"type": "actions", "elements": [btn("Acknowledge", "ack", "primary"), btn("Assign to me", "assign"),
+                                            btn("Add note", "note"), btn("War room", "warroom"),
+                                            btn("Close", "close", "danger")]}
 
 
 def ask_blocks(message: str, buttons: List[str], wait_token: str) -> List[dict]:

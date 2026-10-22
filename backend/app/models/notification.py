@@ -4,7 +4,7 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 NOTIFICATION_TYPES = ("mention", "assigned", "comment", "status_change", "severity_change", "sla_breach")
-EXTERNAL_TYPES = ("mention", "assigned")
+EXTERNAL_TYPES = ("mention", "assigned", "sla_breach")
 
 
 class Notification(Base):

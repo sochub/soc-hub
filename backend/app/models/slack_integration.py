@@ -14,5 +14,9 @@ class SlackIntegration(Base):
     bot_token_enc = Column(Text, nullable=False)
     signing_secret_enc = Column(Text, nullable=False)
     default_channel = Column(String, nullable=True)
+    # Responder alerts: cases at or above this severity are posted to alert_channel (or default_channel).
+    # NULL severity = alerts off.
+    alert_channel = Column(String, nullable=True)
+    alert_min_severity = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

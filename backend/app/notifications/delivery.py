@@ -1,4 +1,4 @@
-"""External delivery (Slack DM, then email) for mention/assigned notifications."""
+"""External delivery (Slack DM as a case card, then email) for mention/assigned/SLA-breach notifications."""
 import html
 import logging
 
@@ -11,6 +11,7 @@ from app.models.notification import EXTERNAL_TYPES, Notification
 from app.models.membership import TenantMembership
 from app.models.user import User
 from app.services.email_service import _send_email, _smtp_configured
+from app.services.slack_blocks import case_card
 from app.services.slack_service import SlackError, load_integration, slack_call
 from app.workflows.templating import slack_escape
 
@@ -96,7 +97,9 @@ async def _deliver(db, n) -> str:
             uid = (await slack_call(token, "users.lookupByEmail", email=user.email))["user"]["id"]
             channel = (await slack_call(token, "conversations.open", users=uid))["channel"]["id"]
             text = f"{slack_escape(n.summary)}: {slack_escape(title)}" + (f"\n<{link}|Open case>" if link else "")
-            await slack_call(token, "chat.postMessage", channel=channel, text=text)
+            owner = (await db.get(User, case.owner_id)) if case.owner_id else None
+            blocks = case_card(case, (owner.full_name or owner.email) if owner else None, note=n.summary)
+            await slack_call(token, "chat.postMessage", channel=channel, text=text, blocks=blocks)
             return "slack"
         except SlackError as e:
             if _is_transient(e):

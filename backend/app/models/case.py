@@ -41,6 +41,10 @@ class Case(Base):
     playbook_template_id = Column(Integer, ForeignKey("playbook_templates.id", ondelete="SET NULL"), nullable=True)
     outcome = Column(String, nullable=True)
     closing_note = Column(Text, nullable=True)
+    # Slack: the case's war-room channel and the live alert card (updated in place on changes).
+    slack_channel_id = Column(String, nullable=True)
+    slack_card_channel = Column(String, nullable=True)
+    slack_card_ts = Column(String, nullable=True)
     guest_summary = Column(Text, nullable=True)  # analyst-written; the only description guests see
     owner = relationship("User")
 

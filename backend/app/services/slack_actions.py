@@ -11,6 +11,7 @@ from app.models.membership import TenantMembership
 from app.models.user import User
 from app.models.workflow import WorkflowRun, WorkflowRunStep
 from app.services.case_service import apply_case_update
+from app.services.slack_blocks import card_text, case_card
 from app.services.slack_service import SlackError, load_integration, parse_action_value, respond, slack_call
 from app.workflows.events import emit_event
 from app.workflows.templating import slack_escape
@@ -67,15 +68,23 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
         if action == "ack" and case.status in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
             await _ephemeral(payload, f"Case #{case_id} is already {case.status.value}.")
             return  # a stale/replayed Acknowledge must not reopen a finished case
+        if action == "warroom":
+            from app.services.slack_bot import open_war_room
+            channel = await open_war_room(db, tenant_id, case, user, clicker)
+            await _ephemeral(payload, f"War room for case #{case_id}: <#{channel}>")
+            return
         label, build = _CASE_UPDATES[action]
         changes = await apply_case_update(db, case=case, update_data=build(user), user_id=user.id)
         await db.commit()
+        owner = (await db.get(User, case.owner_id)) if case.owner_id else None
+        card = case_card(case, (owner.full_name or owner.email) if owner else None,
+                         note=f"{label} by {slack_escape(payload['user'].get('name') or 'a responder')}")
     if not changes:
         return  # nothing changed (e.g. already in that state): don't announce it
     emit_event(tenant_id, "case.updated", case_id=case_id, changes=changes)
     if payload.get("response_url"):
-        await respond(payload["response_url"], {"response_type": "in_channel", "replace_original": False,
-                                                "text": f"{label} case #{case_id} — <@{clicker}>"})
+        # Redraw the clicked card in place (works for channel, DM and ephemeral messages alike).
+        await respond(payload["response_url"], {"replace_original": True, "text": card_text(case), "blocks": card})
 
 
 def authorize_answer(step_status: str, target_slack_id: Optional[str], clicker_id: str) -> Optional[str]:
