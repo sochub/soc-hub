@@ -68,7 +68,8 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
             });
             return response.data;
         },
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionKey }),
+        // On error too: a gateway timeout can still leave a saved reply on the server.
+        onSettled: () => queryClient.invalidateQueries({ queryKey: sessionKey }),
     });
 
     const restartMutation = useMutation({
@@ -193,6 +194,11 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                             </div>
                         </motion.div>
                     </>
+                )}
+                {chatMutation.isError && (
+                    <p role="alert" className="text-xs text-severity-critical bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                        The copilot didn't answer in time. If a reply arrives it will show up here; otherwise try again.
+                    </p>
                 )}
                 <div ref={messagesEndRef} />
             </div>
