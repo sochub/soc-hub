@@ -9,6 +9,7 @@ import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import { mfaErrorMessage } from '../profile/mfaErrors';
 import GuestSettingsSection from '../guests/GuestSettingsSection';
 import ArtifactTypesSection from './ArtifactTypesSection';
+import ReportBrandingSection from './ReportBrandingSection';
 
 const SEVERITY_LABEL: Record<string, string> = {
     critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info',
@@ -336,6 +337,7 @@ export default function Settings() {
             {isAdmin && <GuestSettingsSection />}
             {isAdmin && <SLAPoliciesSection />}
             {isAdmin && <ArtifactTypesSection />}
+            {isAdmin && <ReportBrandingSection />}
         </PageContainer>
     );
 }

@@ -13,13 +13,15 @@ from app.models.audit_log import AuditLog
 from app.models.case import Alert, TimelineEvent
 from app.models.case_event import CaseEvent
 from app.models.case_artifact import CaseArtifact
+from app.models.case_asset import CaseAsset
 from app.models.case_attachment import CaseAttachment
 from app.models.case_report import CaseReport
 from app.models.case_task import CaseTask
 from app.models.enrichment_result import EnrichmentResult
 from app.models.ioc import IOC
+from app.models.tenant import Tenant
 from app.models.user import User
-from app.reports import milestones, tlp
+from app.reports import branding, milestones, tlp
 from app.reports.defang import scrub_userinfo
 from app.utils.sla import compute_sla_state, load_policy_overrides
 
@@ -33,6 +35,13 @@ _THREAT_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _LANES = {"comment": "analyst", "status_change": "analyst", "severity_change": "analyst",
           "artifact_added": "indicators", "artifact_removed": "indicators",
           "attachment_added": "evidence", "attachment_deleted": "evidence"}
+# MITRE ATT&CK enterprise tactics in kill-chain order, keyed by investigation-timeline category.
+TACTICS = {"initial_access": ("TA0001", "Initial Access"), "execution": ("TA0002", "Execution"),
+           "persistence": ("TA0003", "Persistence"), "privilege_escalation": ("TA0004", "Privilege Escalation"),
+           "defense_evasion": ("TA0005", "Defense Evasion"), "credential_access": ("TA0006", "Credential Access"),
+           "discovery": ("TA0007", "Discovery"), "lateral_movement": ("TA0008", "Lateral Movement"),
+           "collection": ("TA0009", "Collection"), "command_and_control": ("TA0011", "Command and Control"),
+           "exfiltration": ("TA0010", "Exfiltration"), "impact": ("TA0040", "Impact")}
 _FULL_ONLY = {"artifact_removed"}  # R5: attachment_deleted stays in key mode (chain of custody)
 
 aware = milestones.aware
@@ -93,6 +102,9 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
     inv = (await db.execute(select(CaseEvent).where(CaseEvent.case_id == cid, CaseEvent.tenant_id == tid,
                                                     CaseEvent.in_summary.is_(True))
                             .order_by(CaseEvent.event_date, CaseEvent.id))).scalars().all()
+    assets = (await db.execute(select(CaseAsset).where(CaseAsset.case_id == cid, CaseAsset.tenant_id == tid)
+                               .order_by(CaseAsset.id))).scalars().all()
+    tenant = await db.get(Tenant, tid)
     attachments = (await db.execute(select(CaseAttachment).where(CaseAttachment.case_id == cid,
                                                                  CaseAttachment.tenant_id == tid)
                                     .order_by(CaseAttachment.id))).scalars().all()
@@ -198,6 +210,18 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
                                 key=lambda a: (aware(a.created_at) or datetime.min.replace(tzinfo=timezone.utc), a.id),
                                 reverse=True)]
 
+    # --- ATT&CK: investigation events grouped by tactic, in kill-chain order ---
+    attack = []
+    for key, (tid_, name) in TACTICS.items():
+        rows = [e for e in inv if e.category == key]
+        if rows:
+            attack.append({"tactic_id": tid_, "tactic": name, "count": len(rows),
+                           "first_at": aware(rows[0].event_date), "events": [e.title for e in rows][:10]})
+    phases = [{"phase": p, "done": sum(1 for t in tasks if t.phase == p and t.status == "done"),
+               "total": sum(1 for t in tasks if t.phase == p)} for p in PHASES]
+    scope = [{"name": a.name, "type": a.asset_type, "ip": a.ip, "domain": a.domain,
+              "status": a.compromise_status} for a in assets]
+
     sla = compute_sla_state(case, await load_policy_overrides(db, tid))
     report = {
         "meta": {"schema": SCHEMA, "generated_at": datetime.now(timezone.utc),
@@ -220,6 +244,11 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
         "actions": actions,
         "outstanding": outstanding,
         "evidence": evidence,
+        "assets": scope,
+        "attack": attack,
+        "phases": phases,
+        # JSON-safe branding; the logo data URI is print-only (dropped from the JSON export).
+        "branding": {**branding.for_report(tenant), "logo": branding.logo_data_uri(tenant)},
     }
 
     if full:

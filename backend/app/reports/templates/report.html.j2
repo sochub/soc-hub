@@ -1,19 +1,35 @@
 <!doctype html>
-{#- Autoescaped. The two chart SVGs are the ONLY |safe values: app/reports/charts.py escapes its own input. -#}
+{#- Autoescaped. The two chart SVGs are the ONLY |safe values: app/reports/charts.py escapes its own input.
+    brand.accent is a validated #rrggbb and brand.logo a validated data: URI (app/reports/pdf.py::_brand). -#}
 {%- set c = report.case -%}
 {%- set r = report.report -%}
 {%- set ms = report.milestones -%}
+{%- set assets = report.get("assets") or [] -%}
+{%- set attack = report.get("attack") or [] -%}
+{%- set phases = report.get("phases") or [] -%}
+{%- set sev_colors = {"critical": "#b91c1c", "high": "#c2410c", "medium": "#b45309", "low": "#1d4ed8", "info": "#52525b"} -%}
+{%- set ns = namespace(mal=0) -%}
+{%- for i in report.iocs if i.verdicts | selectattr("verdict", "equalto", "malicious") | list -%}{%- set ns.mal = ns.mal + 1 -%}{%- endfor -%}
+{%- set n_mal = ns.mal -%}
+{%- set compromised = assets | selectattr("status", "equalto", "compromised") | list | length -%}
 {%- macro more(section) -%}
   {%- if truncated.get(section) -%}<p class="more">+{{ truncated[section] }} more — see JSON export</p>{%- endif -%}
+{%- endmacro -%}
+{%- macro sev(level) -%}
+  <span class="sev" style="background: {{ sev_colors.get((level or '') | lower, '#52525b') }}">{{ (level or "—") | upper }}</span>
+{%- endmacro -%}
+{%- macro bar(done, total) -%}
+  {%- set pct = ((done / total * 100) | round | int) if total else 0 -%}
+  <div class="bar"><div class="bar-fill" style="width: {{ pct }}%"></div></div>
 {%- endmacro -%}
 {%- macro timeline_table(rows) -%}
   {%- if rows -%}
   <table>
-    <thead><tr><th class="n">#</th><th class="w-dt">Time (UTC)</th><th>Lane</th><th>Event</th><th>Actor</th></tr></thead>
+    <thead><tr><th class="n">#</th><th class="w-dt">Time (UTC)</th><th class="w-lane">Lane</th><th>Event</th><th class="w-actor">Actor</th></tr></thead>
     <tbody>
     {%- for e in rows[:limits.timeline] %}
-      <tr><td class="mono n">{{ e.n }}</td><td class="mono">{{ e.at | dt(false) }}</td><td>{{ e.lane }}</td>
-          <td class="wrap">{{ e.text | defang_text }}</td><td class="wrap">{{ e.actor or "—" }}</td></tr>
+      <tr><td class="mono n">{{ e.n }}</td><td class="mono">{{ e.at | dt(false) }}</td><td><span class="lane lane-{{ e.lane }}">{{ e.lane }}</span></td>
+          <td class="wrap">{{ e.text | defang_text }}</td><td class="wrap small">{{ e.actor or "—" }}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
@@ -28,95 +44,236 @@
 {{ font_css }}
 @page {
   size: A4;
-  margin: 18mm 14mm 18mm 14mm;
+  margin: 22mm 16mm 20mm 16mm;
+  @top-left { content: string(org); font: 600 7.5pt 'IBM Plex Sans'; color: #52525b; vertical-align: bottom; padding-bottom: 3mm; }
+  @top-right { content: "{{ case_ref }}"; font: 7.5pt 'Roboto Mono'; color: #52525b; vertical-align: bottom; padding-bottom: 3mm; }
   @top-center { content: "TLP:{{ tlp_label }}"; background: {{ tlp_bg }}; color: {{ tlp_fg }};
-                border: 1px solid {{ tlp_border }}; font: 600 8pt 'IBM Plex Sans'; padding: 1mm 4mm;
-                height: auto; margin-top: 6mm; }
-  @bottom-center { content: "TLP:{{ tlp_label }}"; background: {{ tlp_bg }}; color: {{ tlp_fg }};
-                   border: 1px solid {{ tlp_border }}; font: 600 8pt 'IBM Plex Sans'; padding: 1mm 4mm;
-                   height: auto; margin-bottom: 6mm; }
-  @bottom-right { content: "{{ case_ref }} · page " counter(page) " of " counter(pages);
-                  font: 7.5pt 'Roboto Mono'; color: #52525b; }
+                border: 1px solid {{ tlp_border }}; font: 600 7.5pt 'IBM Plex Sans'; padding: 0.8mm 4mm;
+                height: auto; margin-top: 8mm; }
+  @bottom-left { content: "Confidential · handle per TLP:{{ tlp_label }}"; font: 7pt 'IBM Plex Sans'; color: #71717a; }
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 7.5pt 'Roboto Mono'; color: #52525b; }
 }
-html { font-family: 'IBM Plex Sans', sans-serif; font-size: 9.5pt; color: #18181b; line-height: 1.45; }
-h1 { font-size: 20pt; font-weight: 600; margin: 0 0 4mm; overflow-wrap: anywhere; }
-h2 { font-size: 13pt; font-weight: 600; margin: 8mm 0 3mm; padding-bottom: 1mm; border-bottom: 1px solid #d4d4d8;
-     page-break-after: avoid; }
-h3 { font-size: 10.5pt; font-weight: 600; margin: 4mm 0 2mm; page-break-after: avoid; }
+@page cover { margin: 0; @top-left { content: none; } @top-right { content: none; } @top-center { content: none; }
+              @bottom-left { content: none; } @bottom-right { content: none; } }
+html { font-family: 'IBM Plex Sans', sans-serif; font-size: 9.5pt; color: #18181b; line-height: 1.5; }
+body { margin: 0; }
+h1 { font-size: 24pt; font-weight: 600; line-height: 1.2; margin: 0 0 6mm; overflow-wrap: anywhere; }
+h2 { font-size: 14pt; font-weight: 600; margin: 0 0 4mm; padding-bottom: 1.5mm; color: #18181b;
+     border-bottom: 2px solid {{ brand.accent }}; page-break-after: avoid; }
+h2 .num { color: {{ brand.accent }}; margin-right: 2mm; }
+h3 { font-size: 10.5pt; font-weight: 600; margin: 5mm 0 2mm; page-break-after: avoid; }
+section.sec { margin-top: 10mm; }
+section.chapter { page-break-before: always; margin-top: 0; }
 .mono, td.mono, .facts dd { font-family: 'Roboto Mono', monospace; font-size: 8pt; }
+.small { font-size: 8pt; }
 .prose { white-space: pre-wrap; overflow-wrap: anywhere; }
 .muted { color: #71717a; }
 .more { color: #52525b; font-style: italic; font-size: 8.5pt; }
 .note { border-left: 3px solid #ea580c; background: #fff7ed; padding: 2mm 3mm; margin: 3mm 0; }
-.cover { page-break-after: always; padding-top: 30mm; }
-.cover .kicker { font-family: 'Roboto Mono', monospace; font-size: 9pt; color: #52525b; letter-spacing: 0.08em; }
-.tlp-badge { display: inline-block; padding: 1mm 4mm; font-weight: 600; background: {{ tlp_bg }};
-             color: {{ tlp_fg }}; border: 1px solid {{ tlp_border }}; margin: 4mm 0; }
-.facts { display: grid; grid-template-columns: 38mm auto; gap: 1mm 4mm; margin: 0; }
+.callout { border-left: 3px solid {{ brand.accent }}; background: #f4f4f5; padding: 3mm 4mm; margin: 3mm 0; }
+
+/* cover */
+.cover { page: cover; height: 297mm; position: relative; page-break-after: always; }
+.cover .band { height: 92mm; background: {{ brand.accent }}; color: #fff; padding: 22mm 18mm 0; }
+.cover .band .kicker { font-family: 'Roboto Mono', monospace; font-size: 8.5pt; letter-spacing: 0.14em; opacity: 0.85; }
+.cover .band .org { font-size: 13pt; font-weight: 600; margin-top: 3mm; string-set: org content(); }
+.cover .logo { position: absolute; top: 20mm; right: 18mm; max-height: 22mm; max-width: 55mm;
+               background: #fff; padding: 2.5mm; border-radius: 2mm; }
+.cover .body { padding: 14mm 18mm 0; }
+.cover .tlp-badge { display: inline-block; padding: 1.2mm 5mm; font-weight: 600; background: {{ tlp_bg }};
+                    color: {{ tlp_fg }}; border: 1px solid {{ tlp_border }}; margin: 0 0 8mm; }
+.cover .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm 10mm; margin-top: 6mm; }
+.cover .meta > div { border-top: 1px solid #d4d4d8; padding-top: 2mm; }
+.cover .meta .k { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.08em; color: #71717a; }
+.cover .meta .v { font-size: 10pt; font-weight: 600; overflow-wrap: anywhere; }
+.cover .foot { position: absolute; bottom: 16mm; left: 18mm; right: 18mm; font-size: 7.5pt; color: #71717a;
+               border-top: 1px solid #e4e4e7; padding-top: 3mm; }
+
+/* contents */
+.toc ol { list-style: none; padding: 0; margin: 0; }
+.toc li { margin: 2.2mm 0; }
+.toc a { color: #18181b; text-decoration: none; }
+.toc a::after { content: leader('.') target-counter(attr(href), page); color: #71717a; }
+.toc li.app { margin-left: 0; color: #3f3f46; }
+
+/* kpis */
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; margin: 4mm 0; }
+.kpi { border: 1px solid #e4e4e7; border-top: 3px solid {{ brand.accent }}; padding: 2.5mm 3mm; }
+.kpi .k { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.08em; color: #71717a; }
+.kpi .v { font-size: 13pt; font-weight: 600; margin-top: 1mm; }
+.kpi .s { font-size: 7.5pt; color: #71717a; }
+.sev { display: inline-block; color: #fff; font-size: 7pt; font-weight: 600; letter-spacing: 0.06em; padding: 0.4mm 2mm; border-radius: 1mm; }
+
+.facts { display: grid; grid-template-columns: 40mm auto; gap: 1mm 4mm; margin: 0; }
 .facts dt { color: #52525b; }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 table { width: 100%; border-collapse: collapse; margin: 2mm 0; table-layout: fixed; }
-th { text-align: left; font-weight: 600; font-size: 8pt; color: #3f3f46; border-bottom: 1px solid #a1a1aa;
-     padding: 1mm 1.5mm; }
-td { border-bottom: 1px solid #e4e4e7; padding: 1mm 1.5mm; vertical-align: top; font-size: 8.5pt; }
+th { text-align: left; font-weight: 600; font-size: 7.5pt; color: #3f3f46; background: #f4f4f5;
+     text-transform: uppercase; letter-spacing: 0.04em; padding: 1.5mm 2mm; }
+td { border-bottom: 1px solid #e4e4e7; padding: 1.5mm 2mm; vertical-align: top; font-size: 8.5pt; }
 td.wrap, td.mono { overflow-wrap: anywhere; word-break: break-word; }
 th.n, td.n { width: 9mm; }
-th.w-dt { width: 37mm; }
+th.w-dt { width: 30mm; }
+th.w-lane { width: 24mm; }
+th.w-actor { width: 34mm; }
 tr { page-break-inside: avoid; }
+.lane { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.04em; color: #3f3f46; }
+.lane-detection { color: #c2410c; } .lane-investigation { color: #7c3aed; } .lane-indicators { color: #b91c1c; }
 .chart svg { width: 100%; height: auto; }
 .chart { margin: 3mm 0; }
+.bar { height: 2.2mm; background: #e4e4e7; border-radius: 1mm; overflow: hidden; }
+.bar-fill { height: 100%; background: {{ brand.accent }}; }
 .mal { color: #b91c1c; font-weight: 600; }
+.ok { color: #15803d; font-weight: 600; }
+
+/* finding cards */
+.finding { border: 1px solid #e4e4e7; border-left: 4px solid #a1a1aa; padding: 2.5mm 3.5mm; margin: 0 0 3mm; page-break-inside: avoid; }
+.finding.is-mal { border-left-color: #b91c1c; }
+.finding .head { display: flex; justify-content: space-between; gap: 3mm; }
+.finding .val { font-family: 'Roboto Mono', monospace; font-size: 8.5pt; font-weight: 600; overflow-wrap: anywhere; }
+.finding .attrs { font-size: 7.5pt; color: #52525b; margin-top: 1mm; }
+.scale td:first-child { width: 28mm; }
 .integrity { font-size: 8pt; color: #52525b; }
 </style>
 </head>
 <body>
 
 <section class="cover">
-  <div class="kicker">INCIDENT REPORT · {{ case_ref }}</div>
-  <h1>{{ c.title }}</h1>
-  <div class="tlp-badge">TLP:{{ tlp_label }}</div>
-  <dl class="facts">
-    <dt>Severity</dt><dd>{{ c.severity }}</dd>
-    <dt>Status</dt><dd>{{ c.status }}</dd>
-    {% if c.get("outcome") %}<dt>Outcome</dt><dd>{{ c.outcome | replace("_", " ") | title }}</dd>
-    {% if c.get("closing_note") %}<dt>Closing note</dt><dd>{{ c.closing_note }}</dd>{% endif %}{% endif %}
-    <dt>Owner</dt><dd>{{ c.owner or "—" }}</dd>
-    <dt>Opened</dt><dd>{{ c.created_at | dt }}</dd>
-    <dt>Resolved</dt><dd>{{ c.resolved_at | dt }}</dd>
-    <dt>Report type</dt><dd>{{ "Full" if report.meta.full else "Key events" }}</dd>
-    <dt>Generated</dt><dd>{{ report.meta.generated_at | dt }}</dd>
-    <dt>Generated by</dt><dd>{{ report.meta.generated_by.email if report.meta.generated_by else "—" }}</dd>
-    <dt>Narrative updated</dt><dd>{{ r.updated_at | dt }}{% if r.updated_by %} by {{ r.updated_by }}{% endif %}</dd>
-  </dl>
+  <div class="band">
+    <div class="kicker">INCIDENT RESPONSE REPORT · {{ case_ref | upper }}</div>
+    <div class="org">{{ brand.org_name }}</div>
+  </div>
+  {%- if brand.logo %}<img class="logo" src="{{ brand.logo }}" alt="">{% endif %}
+  <div class="body">
+    <h1>{{ c.title }}</h1>
+    <div class="tlp-badge">TLP:{{ tlp_label }}</div> {{ sev(c.severity) }}
+    <div class="meta">
+      <div><div class="k">Status</div><div class="v">{{ c.status | replace("_", " ") | title }}</div></div>
+      <div><div class="k">Outcome</div><div class="v">{{ (c.get("outcome") or "pending") | replace("_", " ") | title }}</div></div>
+      <div><div class="k">Incident owner</div><div class="v">{{ c.owner or "—" }}</div></div>
+      <div><div class="k">Report type</div><div class="v">{{ "Full (with appendices)" if report.meta.full else "Key events" }}</div></div>
+      <div><div class="k">Opened</div><div class="v">{{ c.created_at | dt }}</div></div>
+      <div><div class="k">Resolved</div><div class="v">{{ c.resolved_at | dt }}</div></div>
+      <div><div class="k">Generated</div><div class="v">{{ report.meta.generated_at | dt }}</div></div>
+      <div><div class="k">Prepared by</div><div class="v">{{ report.meta.generated_by.email if report.meta.generated_by else "—" }}</div></div>
+    </div>
+  </div>
+  <div class="foot">{{ brand.org_name }} · TLP:{{ tlp_label }} · This document is confidential and intended only for its named recipients.</div>
 </section>
 
 <section>
-  <h2>1. Executive summary</h2>
-  <div class="prose">{{ report.report.executive_summary or "—" }}</div>
+  <h2>Document control</h2>
+  <table>
+    <thead><tr><th>Version</th><th>Date (UTC)</th><th>Author</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Narrative</td><td class="mono">{{ r.updated_at | dt(false) }}</td><td class="wrap">{{ r.updated_by or "—" }}</td><td>Last edit of the report narrative</td></tr>
+      <tr><td>Issued</td><td class="mono">{{ report.meta.generated_at | dt(false) }}</td><td class="wrap">{{ report.meta.generated_by.email if report.meta.generated_by else "—" }}</td><td>Generated from the case record ({{ report.meta.schema }})</td></tr>
+    </tbody>
+  </table>
+  <h3>Classification and distribution</h3>
+  <p>This report is marked <strong>TLP:{{ tlp_label }}</strong>. Recipients may share it only as that marking allows
+  (see Appendix C). Indicator values are defanged so they cannot be opened by accident.</p>
+  <h3>Disclaimer</h3>
+  <div class="callout prose">{{ brand.disclaimer }}</div>
+
+  <div class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#s-summary">1. Executive summary</a></li>
+      <li><a href="#s-scope">2. Scope and affected assets</a></li>
+      <li><a href="#s-method">3. Methodology and response progress</a></li>
+      <li><a href="#s-attack">4. Attack narrative and timeline</a></li>
+      <li><a href="#s-iocs">5. Indicators of compromise</a></li>
+      <li><a href="#s-impact">6. Impact</a></li>
+      <li><a href="#s-actions">7. Actions taken</a></li>
+      <li><a href="#s-evidence">8. Evidence</a></li>
+      <li><a href="#s-lessons">9. Lessons learned</a></li>
+      {%- if report.meta.full %}
+      <li class="app"><a href="#a-timeline">Appendix A. Full timeline</a></li>
+      <li class="app"><a href="#a-audit">Appendix B. Audit trail</a></li>
+      {%- endif %}
+      <li class="app"><a href="#a-scales">Appendix C. Rating scales</a></li>
+      <li class="app"><a href="#a-integrity">Report integrity</a></li>
+    </ol>
+  </div>
+</section>
+
+<section class="chapter" id="s-summary">
+  <h2><span class="num">1</span>Executive summary</h2>
+  <div class="kpis">
+    <div class="kpi"><div class="k">Severity</div><div class="v">{{ sev(c.severity) }}</div><div class="s">{{ c.status | replace("_", " ") }}</div></div>
+    <div class="kpi"><div class="k">Time to detect</div><div class="v">{{ ms.ttd_seconds | duration }}</div><div class="s">first seen → detected</div></div>
+    <div class="kpi"><div class="k">Time to contain</div><div class="v">{{ ms.ttc_seconds | duration }}</div><div class="s">detected → contained</div></div>
+    <div class="kpi"><div class="k">Time to recover</div><div class="v">{{ ms.ttr_seconds | duration }}</div><div class="s">contained → recovered</div></div>
+    <div class="kpi"><div class="k">Indicators</div><div class="v">{{ report.iocs | length }}</div><div class="s">{{ n_mal }} flagged malicious</div></div>
+    <div class="kpi"><div class="k">Affected assets</div><div class="v">{{ assets | length }}</div><div class="s">{{ compromised }} compromised</div></div>
+    <div class="kpi"><div class="k">ATT&amp;CK tactics</div><div class="v">{{ attack | length }}</div><div class="s">observed in investigation</div></div>
+    <div class="kpi"><div class="k">SLA</div><div class="v small">{{ c.sla.response | replace("_", " ") }}</div><div class="s">resolution: {{ c.sla.resolution | replace("_", " ") }}</div></div>
+  </div>
+  <div class="prose">{{ r.executive_summary or "—" }}</div>
   {%- if ms.out_of_order %}
   <p class="note">Milestone times are out of order — check the overrides.</p>
   {%- endif %}
+  <h3>Incident lifecycle</h3>
   <div class="chart">{{ lifecycle_svg | safe }}</div>
-  <h3>Key facts</h3>
+  {%- if c.get("closing_note") %}
+  <h3>Closing note</h3>
+  <div class="callout prose">{{ c.closing_note }}</div>
+  {%- endif %}
   <dl class="facts">
-    <dt>Time to detect</dt><dd>{{ ms.ttd_seconds | duration }}</dd>
-    <dt>Time to contain</dt><dd>{{ ms.ttc_seconds | duration }}</dd>
-    <dt>Time to recover</dt><dd>{{ ms.ttr_seconds | duration }}</dd>
-    <dt>SLA response</dt><dd>{{ c.sla.response }}</dd>
-    <dt>SLA resolution</dt><dd>{{ c.sla.resolution }}</dd>
-    <dt>Indicators</dt><dd>{{ report.iocs | length }}</dd>
     <dt>Evidence files</dt><dd>{{ report.evidence | length }}</dd>
     <dt>Tags</dt><dd>{{ c.tags | join(", ") if c.tags else "—" }}</dd>
   </dl>
 </section>
 
-<section>
-  <h2>2. Impact</h2>
-  <div class="prose">{{ r.impact or "—" }}</div>
+<section class="sec" id="s-scope">
+  <h2><span class="num">2</span>Scope and affected assets</h2>
+  {%- if assets %}
+  <table>
+    <thead><tr><th style="width:30%">Asset</th><th>Type</th><th>IP</th><th>Domain</th><th>Status</th></tr></thead>
+    <tbody>
+    {%- for a in assets %}
+      <tr><td class="wrap">{{ a.name }}</td><td>{{ a.type }}</td><td class="mono">{{ a.ip or "—" }}</td>
+          <td class="wrap">{{ a.domain or "—" }}</td>
+          <td class="{{ 'mal' if a.status == 'compromised' else ('ok' if a.status == 'not_compromised' else 'muted') }}">{{ a.status | replace("_", " ") }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- else %}<p class="muted">No assets were recorded on this case.</p>{%- endif %}
 </section>
 
-<section>
-  <h2>3. Key timeline</h2>
+<section class="sec" id="s-method">
+  <h2><span class="num">3</span>Methodology and response progress</h2>
+  <p>The response followed the NIST SP 800-61 incident handling lifecycle. Each phase below shows the playbook
+  tasks completed on this case.</p>
+  <table>
+    <thead><tr><th style="width:30%">Phase</th><th style="width:15%">Tasks</th><th>Progress</th></tr></thead>
+    <tbody>
+    {%- for p in phases %}
+      <tr><td>{{ p.phase | replace("_", " ") | capitalize }}</td><td class="mono">{{ p.done }} / {{ p.total }}</td>
+          <td>{% if p.total %}{{ bar(p.done, p.total) }}{% else %}<span class="muted small">no tasks</span>{% endif %}</td></tr>
+    {%- else %}
+      <tr><td colspan="3" class="muted">No playbook tasks on this case.</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="sec" id="s-attack">
+  <h2><span class="num">4</span>Attack narrative and timeline</h2>
+  <h3>MITRE ATT&amp;CK tactics observed</h3>
+  {%- if attack %}
+  <table>
+    <thead><tr><th style="width:16%">ID</th><th style="width:24%">Tactic</th><th style="width:10%">Events</th><th>Observed</th></tr></thead>
+    <tbody>
+    {%- for t in attack %}
+      <tr><td class="mono">{{ t.tactic_id }}</td><td>{{ t.tactic }}</td><td class="mono">{{ t.count }}</td>
+          <td class="wrap">{{ t.events | join("; ") | defang_text }}<br><span class="muted small">first {{ t.first_at | dt }}</span></td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- else %}<p class="muted">No investigation events were mapped to ATT&amp;CK tactics.</p>{%- endif %}
+  <h3>Key timeline</h3>
   <div class="chart">{{ timeline_svg | safe }}</div>
   {%- if report.meta.full %}
   <p class="muted">The numbered timeline (all events) is in Appendix A.</p>
@@ -125,33 +282,36 @@ tr { page-break-inside: avoid; }
   {%- endif %}
 </section>
 
-<section>
-  <h2>4. Indicators of compromise</h2>
+<section class="sec" id="s-iocs">
+  <h2><span class="num">5</span>Indicators of compromise</h2>
   {%- if report.iocs %}
-  <p class="muted">Values are defanged.</p>
-  <table>
-    <thead><tr><th style="width:40%">Value</th><th>Type</th><th>TLP</th><th>Threat</th><th style="width:28%">Verdicts</th></tr></thead>
-    <tbody>
-    {%- for i in report.iocs[:limits.iocs] %}
-      <tr><td class="mono">{{ i.value | defang(i.type) }}</td><td>{{ i.type }}</td><td>{{ i.tlp or "—" }}</td>
-          <td>{{ i.threat_level or "—" }}</td>
-          <td>{% for v in i.verdicts %}<span class="{{ 'mal' if v.verdict == 'malicious' else '' }}">{{ v.source }}: {{ v.verdict }}{% if v.score is not none %} ({{ v.score }}){% endif %}</span>{% if not loop.last %}<br>{% endif %}{% else %}—{% endfor %}</td></tr>
-    {%- endfor %}
-    </tbody>
-  </table>
+  <p class="muted">Malicious indicators are listed first. Values are defanged.</p>
+  {%- for i in report.iocs[:limits.iocs] %}
+  {%- set is_mal = i.verdicts | selectattr("verdict", "equalto", "malicious") | list | length > 0 %}
+  <div class="finding {{ 'is-mal' if is_mal else '' }}">
+    <div class="head"><div class="val">{{ i.value | defang(i.type) }}</div><div>{{ sev(i.threat_level) if i.threat_level else "" }}</div></div>
+    <div class="attrs">Type: {{ i.type }} · TLP: {{ i.tlp or "—" }}
+      {%- if i.verdicts %} · {% for v in i.verdicts %}<span class="{{ 'mal' if v.verdict == 'malicious' else '' }}">{{ v.source }}: {{ v.verdict }}{% if v.score is not none %} ({{ v.score }}){% endif %}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</div>
+  </div>
+  {%- endfor %}
   {{ more("iocs") }}
   {%- else %}<p class="muted">No indicators recorded.</p>{%- endif %}
 </section>
 
-<section>
-  <h2>5. Actions taken</h2>
+<section class="sec" id="s-impact">
+  <h2><span class="num">6</span>Impact</h2>
+  <div class="prose">{{ r.impact or "—" }}</div>
+</section>
+
+<section class="sec" id="s-actions">
+  <h2><span class="num">7</span>Actions taken</h2>
   {%- for phase, items in report.actions.items() %}
   <h3>{{ phase | replace("_", " ") | capitalize }}</h3>
   <table>
-    <thead><tr><th>Task</th><th class="w-dt">Completed (UTC)</th><th>By</th></tr></thead>
+    <thead><tr><th>Task</th><th class="w-dt">Completed (UTC)</th><th class="w-actor">By</th></tr></thead>
     <tbody>
     {%- for t in items[:limits.tasks] %}
-      <tr><td class="wrap">{{ t.title }}</td><td class="mono">{{ t.completed_at | dt(false) }}</td><td class="wrap">{{ t.completed_by or "—" }}</td></tr>
+      <tr><td class="wrap">{{ t.title }}</td><td class="mono">{{ t.completed_at | dt(false) }}</td><td class="wrap small">{{ t.completed_by or "—" }}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
@@ -160,7 +320,7 @@ tr { page-break-inside: avoid; }
   <h3>Outstanding</h3>
   {%- if report.outstanding %}
   <table>
-    <thead><tr><th>Task</th><th>Phase</th></tr></thead>
+    <thead><tr><th>Task</th><th style="width:30%">Phase</th></tr></thead>
     <tbody>
     {%- for t in report.outstanding[:limits.tasks] %}
       <tr><td class="wrap">{{ t.title }}</td><td>{{ (t.phase or "—") | replace("_", " ") }}</td></tr>
@@ -171,8 +331,8 @@ tr { page-break-inside: avoid; }
   {%- else %}<p class="muted">Nothing outstanding.</p>{%- endif %}
 </section>
 
-<section>
-  <h2>6. Evidence</h2>
+<section class="sec" id="s-evidence">
+  <h2><span class="num">8</span>Evidence</h2>
   {%- if report.evidence %}
   <table>
     <thead><tr><th style="width:22%">File</th><th style="width:9%">Size</th><th style="width:30%">SHA-256</th><th style="width:11%">Malicious</th><th>Uploaded (UTC)</th></tr></thead>
@@ -188,15 +348,17 @@ tr { page-break-inside: avoid; }
   {%- else %}<p class="muted">No evidence files.</p>{%- endif %}
 </section>
 
-<section>
-  <h2>7. Lessons learned</h2>
+<section class="sec" id="s-lessons">
+  <h2><span class="num">9</span>Lessons learned</h2>
   <div class="prose">{{ r.lessons_learned or "—" }}</div>
 </section>
 
 {%- if report.meta.full %}
-<section>
+<section class="chapter" id="a-timeline">
   <h2>Appendix A. Full timeline</h2>
   {{ timeline_table(report.timeline) }}
+</section>
+<section class="sec" id="a-audit">
   <h2>Appendix B. Audit trail</h2>
   {%- set audit = report.get("audit") or [] %}
   {%- if audit %}
@@ -214,7 +376,39 @@ tr { page-break-inside: avoid; }
 </section>
 {%- endif %}
 
-<section class="integrity">
+<section class="chapter" id="a-scales">
+  <h2>Appendix C. Rating scales</h2>
+  <h3>Severity</h3>
+  <table class="scale">
+    <tbody>
+      <tr><td>{{ sev("critical") }}</td><td>Active compromise of critical systems or data, or business operations stopped. Immediate response.</td></tr>
+      <tr><td>{{ sev("high") }}</td><td>Confirmed compromise with significant potential impact. Response within hours.</td></tr>
+      <tr><td>{{ sev("medium") }}</td><td>Suspicious activity or limited compromise, contained impact. Response within a business day.</td></tr>
+      <tr><td>{{ sev("low") }}</td><td>Minor policy violation or low-risk activity.</td></tr>
+      <tr><td>{{ sev("info") }}</td><td>Informational; no action required beyond review.</td></tr>
+    </tbody>
+  </table>
+  <h3>Traffic Light Protocol (TLP 2.0)</h3>
+  <table class="scale">
+    <tbody>
+      <tr><td><strong>TLP:RED</strong></td><td>For the eyes and ears of individual recipients only, no further disclosure.</td></tr>
+      <tr><td><strong>TLP:AMBER</strong></td><td>Limited to the recipient's organization and its clients who need to know.</td></tr>
+      <tr><td><strong>TLP:GREEN</strong></td><td>Limited to the recipient's community; not for public channels.</td></tr>
+      <tr><td><strong>TLP:CLEAR</strong></td><td>No limit on disclosure, subject to copyright rules.</td></tr>
+    </tbody>
+  </table>
+  <h3>Outcome</h3>
+  <table class="scale">
+    <tbody>
+      <tr><td>True positive with impact</td><td>Malicious activity confirmed and it affected systems, data or operations.</td></tr>
+      <tr><td>True positive without impact</td><td>Malicious activity confirmed but stopped before causing harm.</td></tr>
+      <tr><td>False positive</td><td>The detection fired on activity that was not malicious.</td></tr>
+      <tr><td>Legitimate</td><td>The activity was authorized or expected.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="integrity" id="a-integrity">
   <h2>Report integrity</h2>
   <p>Generated by SOC Hub {{ report.meta.app_version }} ({{ report.meta.schema }}) at {{ report.meta.generated_at | dt }}
   from the case record as it stood at that time. Narrative text is reproduced verbatim and never interpreted as markup;
