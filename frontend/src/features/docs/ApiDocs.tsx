@@ -18,7 +18,7 @@ export default function ApiDocs() {
         <PageContainer>
             <div>
                 <h1 className="text-3xl font-bold text-fg tracking-tight">API Docs</h1>
-                <p className="text-fg-3 mt-1">Build integrations against the SOC Hub API.</p>
+                <p className="text-fg-3 mt-1">Build integrations against the sochub API.</p>
             </div>
 
             <div className="glass-panel p-5 rounded-xl border border-line space-y-3">

@@ -7,7 +7,7 @@ export function GuestShell({ children }: { children: React.ReactNode }) {
     return (
         <div className="min-h-screen bg-canvas text-fg flex flex-col">
             <header className="h-12 border-b border-line flex items-center px-4 text-sm font-semibold">
-                SOC Hub <span className="ml-2 text-fg-3 font-normal">· guest access</span>
+                sochub <span className="ml-2 text-fg-3 font-normal">· guest access</span>
             </header>
             <main className="flex-1 w-full max-w-3xl mx-auto px-4 py-8">{children}</main>
         </div>

@@ -9,7 +9,7 @@ import {
 import { cn } from '../../lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import { api, session } from '../../api/client';
-import type { User } from '../../types';
+import type { Tenant, User } from '../../types';
 import CopilotWidget from '../../features/copilot/CopilotWidget';
 import NotificationBell from '../../features/notifications/NotificationBell';
 import TenantSwitcher from '../../features/tenants/TenantSwitcher';
@@ -63,6 +63,19 @@ export default function Layout() {
         });
     };
 
+    // Super admins may sit in a tenant they're not a member of: same cached list the TenantSwitcher loads.
+    const { data: allTenants } = useQuery({
+        queryKey: ['tenants', 'all'],
+        queryFn: async () => (await api.get('/tenants/')).data as Tenant[],
+        enabled: !!currentUser?.is_super_admin,
+        staleTime: 5 * 60 * 1000,
+    });
+    const activeId = currentUser?.active_tenant_id;
+    const tenantName = currentUser?.memberships?.find((m) => m.tenant_id === activeId)?.tenant_name
+        ?? allTenants?.find((t) => t.id === activeId)?.name;
+    const appName = tenantName ? `sochub - ${tenantName}` : 'sochub';
+    useEffect(() => { document.title = tenantName ? `sochub - ${tenantName}` : 'sochub'; }, [tenantName]);
+
     const displayName = currentUser?.full_name || currentUser?.email || 'User';
     const displayRole = currentUser?.role ? currentUser.role.replace('_', ' ') : '';
 
@@ -99,7 +112,7 @@ export default function Layout() {
                             SH
                         </span>
                         {(showLabels || mobileOpen) && (
-                            <span className="font-display font-semibold text-[17px] tracking-tight text-fg truncate">sochub</span>
+                            <span className="font-display font-semibold text-[17px] tracking-tight text-fg truncate" title={appName}>{appName}</span>
                         )}
                     </Link>
                     <button onClick={() => setMobileOpen(false)}

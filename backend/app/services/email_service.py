@@ -63,15 +63,15 @@ async def send_invitation_email(
     # Get tenant name for email
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = result.scalars().first()
-    tenant_name = html.escape(tenant.name if tenant else "SOC Hub")
+    tenant_name = html.escape(tenant.name if tenant else "sochub")
     safe_link = html.escape(invite_link)
 
-    subject = f"You've been invited to {tenant_name} on SOC Hub"
+    subject = f"You've been invited to {tenant_name} on sochub"
     html_body = f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>You've been invited!</h2>
-        <p>You've been invited to join <strong>{tenant_name}</strong> on SOC Hub.</p>
+        <p>You've been invited to join <strong>{tenant_name}</strong> on sochub.</p>
         <p>Click the link below to set up your account:</p>
         <p><a href="{safe_link}" style="display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 6px;">Accept Invitation</a></p>
         <p>Or copy this link: <br/><code>{safe_link}</code></p>
@@ -100,7 +100,7 @@ async def send_sla_breach_email(to_email: str, case, breach_type: str) -> bool:
         <h2 style="color: #b91c1c;">SLA breach — {label} target missed</h2>
         <p>Case <strong>#{case.id}: {safe_title}</strong> (severity: {html.escape(severity)})
         has missed its {label} SLA target.</p>
-        <p style="color: #666; font-size: 12px;">This is an automated notification from SOC Hub's SLA monitoring.</p>
+        <p style="color: #666; font-size: 12px;">This is an automated notification from sochub's SLA monitoring.</p>
     </body>
     </html>
     """
@@ -139,7 +139,7 @@ def send_guest_reset_email(to_email: str, link: str) -> bool:
          text-decoration:none;border-radius:6px;">Choose a new password</a></p>
       <p style="color:#666;font-size:12px;">This link expires in 30 minutes. If you didn't ask for it, ignore this email.</p>
     </body></html>"""
-    return _send_email(to_email, "Reset your SOC Hub guest password", body, log_recipient=False)
+    return _send_email(to_email, "Reset your sochub guest password", body, log_recipient=False)
 
 
 def send_guest_register_email(to_email: str, link: str) -> bool:
@@ -155,7 +155,7 @@ def send_guest_register_email(to_email: str, link: str) -> bool:
          text-decoration:none;border-radius:6px;">Choose a password</a></p>
       <p style="color:#666;font-size:12px;">This link expires in 30 minutes. If you didn't ask for it, ignore this email.</p>
     </body></html>"""
-    return _send_email(to_email, "Confirm your SOC Hub guest account", body, log_recipient=False)
+    return _send_email(to_email, "Confirm your sochub guest account", body, log_recipient=False)
 
 
 def send_guest_digest_email(to_email: str, *, tenant_name: str, case_id: int, case_title: str,

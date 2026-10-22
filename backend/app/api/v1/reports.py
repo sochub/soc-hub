@@ -5,7 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +17,9 @@ from app.ai.errors import AIError
 from app.api import deps
 from app.models.case import Case
 from app.models.case_report import CaseReport
+from app.models.tenant import Tenant
 from app.models.user import User
+from app.reports import branding as brand_mod
 from app.reports import milestones as ms_mod
 from app.reports import tlp as tlp_mod
 from app.reports.builder import build_report, min_tlp, report_row, to_jsonable
@@ -27,6 +30,7 @@ from app.services.ai_service import _parse_json_reply
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
+branding_router = APIRouter()  # mounted under /tenants
 logger = logging.getLogger(__name__)
 # Never log narrative text, IOC values or AI replies: ids, formats and outcomes only.
 _LOG = "report %s tenant=%s case=%s format=%s full=%s outcome=%s"
@@ -248,6 +252,7 @@ async def report_chart(
 
 def _json_bytes(report: dict) -> bytes:
     out = to_jsonable(report)
+    (out.get("branding") or {}).pop("logo", None)  # print-only; the JSON stays small
     for i in out.get("iocs") or []:
         # R6: credentials never belong in a report; values otherwise stay raw (not defanged).
         if (i.get("type") or "").lower() == "url" and i.get("value") is not None:
@@ -298,3 +303,87 @@ async def export_report(
     return Response(body, media_type=media, headers={
         "Content-Disposition": f'attachment; filename="{filename}"', "X-Content-SHA256": sha,
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+# --- tenant report branding ---
+
+class BrandingIn(BaseModel):
+    org_name: Optional[str] = Field(None, max_length=120)
+    accent: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    disclaimer: Optional[str] = Field(None, max_length=4000)
+
+
+class BrandingOut(BrandingIn):
+    has_logo: bool
+
+
+def _branding_out(t: Tenant) -> BrandingOut:
+    return BrandingOut(org_name=t.report_org_name, accent=t.report_accent, disclaimer=t.report_disclaimer,
+                       has_logo=bool(t.report_logo))
+
+
+@branding_router.get("/current/report-branding", response_model=BrandingOut)
+async def get_branding(db: AsyncSession = Depends(deps.get_db),
+                       current_user: User = Depends(deps.get_current_active_user),
+                       tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    return _branding_out(await db.get(Tenant, tenant_id))
+
+
+@branding_router.put("/current/report-branding", response_model=BrandingOut)
+async def update_branding(*, body: BrandingIn, db: AsyncSession = Depends(deps.get_db),
+                          current_user: User = Depends(deps.require_admin),
+                          tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    t = await db.get(Tenant, tenant_id)
+    t.report_org_name = (body.org_name or "").strip() or None
+    t.report_accent = body.accent or None
+    t.report_disclaimer = (body.disclaimer or "").strip() or None
+    await create_audit_log(db=db, entity_type="tenant", entity_id=t.id, action="report_branding_changed",
+                           tenant_id=t.id, user_id=current_user.id,
+                           changes={"org_name": t.report_org_name, "accent": t.report_accent,
+                                    "disclaimer_set": t.report_disclaimer is not None})
+    await db.commit()
+    return _branding_out(t)
+
+
+@branding_router.put("/current/report-branding/logo", response_model=BrandingOut)
+async def upload_logo(*, file: UploadFile = File(...), db: AsyncSession = Depends(deps.get_db),
+                      current_user: User = Depends(deps.require_admin),
+                      tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    data = await file.read(brand_mod.LOGO_MAX_BYTES + 1)
+    if len(data) > brand_mod.LOGO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Logo must be 256 KB or smaller")
+    mime = brand_mod.sniff_logo(data)
+    if mime is None:
+        raise HTTPException(status_code=415, detail="Logo must be a PNG or JPEG image")
+    t = await db.get(Tenant, tenant_id)
+    t.report_logo, t.report_logo_mime = data, mime
+    await create_audit_log(db=db, entity_type="tenant", entity_id=t.id, action="report_logo_changed",
+                           tenant_id=t.id, user_id=current_user.id,
+                           changes={"mime": mime, "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+    await db.commit()
+    return _branding_out(t)
+
+
+@branding_router.delete("/current/report-branding/logo", response_model=BrandingOut)
+async def delete_logo(db: AsyncSession = Depends(deps.get_db),
+                      current_user: User = Depends(deps.require_admin),
+                      tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    t = await db.get(Tenant, tenant_id)
+    if t.report_logo is not None:
+        t.report_logo = t.report_logo_mime = None
+        await create_audit_log(db=db, entity_type="tenant", entity_id=t.id, action="report_logo_removed",
+                               tenant_id=t.id, user_id=current_user.id, changes={})
+        await db.commit()
+    return _branding_out(t)
+
+
+@branding_router.get("/current/report-branding/logo")
+async def get_logo(db: AsyncSession = Depends(deps.get_db),
+                   current_user: User = Depends(deps.get_current_active_user),
+                   tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Response:
+    t = await db.get(Tenant, tenant_id)
+    mime = brand_mod.sniff_logo(t.report_logo or b"")
+    if mime is None:
+        raise HTTPException(status_code=404, detail="No logo")
+    return Response(t.report_logo, media_type=mime, headers={
+        "Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})

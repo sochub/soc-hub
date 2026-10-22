@@ -94,7 +94,7 @@ export default function AcceptInvitation() {
                 <div className="space-y-2">
                     <h2 className="text-2xl font-bold">Join {validation.tenant_name}</h2>
                     <p className="text-fg-2 text-sm">
-                        You've been invited as <span className="text-fg font-medium">{validation.role}</span> to join {validation.tenant_name} on SOC Hub.
+                        You've been invited as <span className="text-fg font-medium">{validation.role}</span> to join {validation.tenant_name} on sochub.
                     </p>
                     <p className="text-fg-3 text-xs">{validation.email}</p>
                 </div>

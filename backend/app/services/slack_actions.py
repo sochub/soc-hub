@@ -58,7 +58,7 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
         _, token = await load_integration(db, tenant_id)
         user = await _platform_user(db, tenant_id, await _slack_email(token, clicker))
         if not user:
-            await _ephemeral(payload, "Your Slack account isn't linked to a SOC Hub user with analyst access in this tenant.")
+            await _ephemeral(payload, "Your Slack account isn't linked to a sochub user with analyst access in this tenant.")
             return
         case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalars().first()
         if not case:

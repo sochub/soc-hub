@@ -86,7 +86,7 @@ async def test_config(db: AsyncSession = Depends(deps.get_db), current_user: Use
         await db.commit()
         if integ.default_channel:
             await slack_call(token, "chat.postMessage", channel=integ.default_channel,
-                             text=":white_check_mark: SOC Hub is connected to this channel.")
+                             text=":white_check_mark: sochub is connected to this channel.")
     except SlackError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "team": auth.get("team"), "team_id": integ.team_id}

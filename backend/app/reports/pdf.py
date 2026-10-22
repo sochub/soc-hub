@@ -15,6 +15,7 @@ from weasyprint import HTML, URLFetcher
 from weasyprint.urls import URLFetcherResponse
 
 from app.core.config import settings
+from app.reports import branding
 from app.reports import tlp as tlp_mod
 from app.reports.builder import PDF_LIMITS, compute_truncated
 from app.reports.charts import lifecycle_svg, timeline_svg
@@ -141,6 +142,18 @@ _ENV = Environment(loader=FileSystemLoader(str(TEMPLATES)), autoescape=True, und
 _ENV.filters.update(defang=_defang_filter, defang_text=_defang_text_filter, dt=_dt, duration=fmt_duration, filesize=_filesize)
 
 
+_LOGO_URI = re.compile(r"^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$")
+
+
+def _brand(report: dict) -> dict:
+    """Branding for the template. Accent goes into CSS, so it is re-validated here, not trusted from the dict."""
+    b = report.get("branding") or {}
+    logo = b.get("logo")
+    return {"org_name": b.get("org_name") or "sochub", "accent": branding.accent(b.get("accent")),
+            "disclaimer": b.get("disclaimer") or branding.DEFAULT_DISCLAIMER,
+            "logo": logo if isinstance(logo, str) and _LOGO_URI.match(logo) else None}
+
+
 def render_html(report: dict) -> str:
     tlp = report["report"]["tlp"]
     tlp = tlp if tlp in tlp_mod.LABEL else "red"  # unknown marking: fail closed to the strictest
@@ -151,7 +164,7 @@ def render_html(report: dict) -> str:
         # @font-face rules and silently fall back to DejaVu.
         font_css=Markup(font_face_css()), limits=PDF_LIMITS, truncated=compute_truncated(report),  # nosec B704  # nosemgrep: python.flask.security.xss.audit.explicit-unescape-with-markup.explicit-unescape-with-markup -- constant vendored CSS
         tlp_label=tlp_mod.LABEL[tlp], tlp_bg=bg, tlp_fg=fg, tlp_border="#000000" if tlp == "white" else bg,
-        case_ref=f"Case #{int(report['case']['id']):04d}",
+        case_ref=f"Case #{int(report['case']['id']):04d}", brand=_brand(report),
         lifecycle_svg=lifecycle_svg(report["milestones"]), timeline_svg=timeline_svg(report["timeline"]))
 
 
