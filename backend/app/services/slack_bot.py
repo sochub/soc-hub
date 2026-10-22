@@ -361,3 +361,39 @@ async def publish_home(tenant_id: int, slack_user_id: str) -> None:
         names = {user.id: user.full_name or user.email} if user else {}
         await _safe(slack_call(token, "views.publish", user_id=slack_user_id,
                                view=ui.home_view(cases, names, linked=bool(user))))
+
+
+# --- transport-independent dispatch (HTTP request URLs and Socket Mode share these) ---
+
+async def dispatch_interactive(db, integ: SlackIntegration, payload: dict) -> Optional[dict]:
+    """Handle one verified interactivity payload; returns the response body Slack expects (or None)."""
+    from app.tasks.workflows import handle_slack_interaction_task
+
+    kind = payload.get("type")
+    try:
+        if kind == "view_submission":
+            return await handle_submission(db, integ, payload)
+        if kind in ("shortcut", "message_action", "block_actions") and await open_modal_for(db, integ, payload):
+            return None
+    except SlackError:
+        logger.exception("Slack interaction failed for tenant %s", integ.tenant_id)
+        return None
+    if kind == "block_actions":
+        handle_slack_interaction_task.delay(integ.tenant_id, payload)  # slower work: Celery
+    return None
+
+
+async def dispatch_command(db, integ: SlackIntegration, form: dict) -> dict:
+    try:
+        return await handle_command(db, integ, form)
+    except SlackError:
+        logger.exception("Slack command failed for tenant %s", integ.tenant_id)
+        return _ephemeral("Something went wrong talking to Slack. Try again.")
+
+
+def dispatch_event(integ: SlackIntegration, payload: dict) -> None:
+    from app.tasks.slack import slack_home_task
+
+    event = payload.get("event") or {}
+    if event.get("type") == "app_home_opened" and event.get("tab") == "home" and event.get("user"):
+        slack_home_task.delay(integ.tenant_id, event["user"])

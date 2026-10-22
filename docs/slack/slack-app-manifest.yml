@@ -1,7 +1,10 @@
-# Slack app manifest for sochub. In Slack: Create New App > From an app manifest, paste this,
-# replace YOUR-SOCHUB-HOST (3 places), install to your workspace, then paste the bot token and
-# signing secret in sochub > Settings > Integrations > Slack. Existing apps: App Manifest > paste > Save,
-# then reinstall the app so the new scopes apply.
+# Slack app manifest for sochub (Socket Mode: Slack talks to sochub over an outbound WebSocket,
+# so no public URL is needed).
+# 1. Slack: Create New App > From an app manifest > paste this > Create > Install to Workspace.
+#    Existing app: App Manifest > paste > Save, then Reinstall to Workspace.
+# 2. Basic Information > App-Level Tokens > Generate, scope connections:write -> xapp-... token.
+# 3. sochub > Settings > Integrations > Slack: paste the bot token (xoxb-) and the app-level token (xapp-).
+# Prefer HTTP request URLs instead? See docs/slack/setup.md ("HTTP mode").
 display_information:
   name: sochub
   description: Incident response from Slack. Create cases, get paged and run war rooms with sochub
@@ -16,7 +19,6 @@ features:
     always_online: true
   slash_commands:
     - command: /sochub
-      url: https://YOUR-SOCHUB-HOST/api/v1/slack/commands
       description: Create, find and work sochub cases
       usage_hint: "new [title] | case <id> | mine | help"
       should_escape: false
@@ -40,12 +42,10 @@ oauth_config:
       - channels:manage     # create war-room channels and invite responders
 settings:
   event_subscriptions:
-    request_url: https://YOUR-SOCHUB-HOST/api/v1/slack/events
     bot_events:
       - app_home_opened
   interactivity:
     is_enabled: true
-    request_url: https://YOUR-SOCHUB-HOST/api/v1/slack/interactions
   org_deploy_enabled: false
-  socket_mode_enabled: false
+  socket_mode_enabled: true
   token_rotation_enabled: false

@@ -1,13 +1,27 @@
-# Slack setup (bring your own app)
+# Slack setup (bring your own app, Socket Mode)
 
-1. Go to https://api.slack.com/apps, click **Create New App**, then **From a manifest**. Paste `slack-app-manifest.yml` from this folder, replacing `YOUR-SOCHUB-HOST` (3 places) with your sochub host.
-   Already have the app? Open **App Manifest**, paste the new manifest, **Save**, then **Reinstall to Workspace** so the new scopes (`commands`, `channels:manage`) apply.
-2. Click **Install to Workspace**.
-3. Copy the **Bot User OAuth Token** (`xoxb-...`, under OAuth & Permissions) and the **Signing Secret** (under Basic Information).
-4. In sochub, open **Integrations > Slack**. Paste both values and a default channel (for example `#soc-alerts`), click **Save**, then **Test**. A message should appear in the channel. An admin must click **Test** at least once: it stores the workspace `team_id`, and until then every Slack request (buttons, commands, events) is rejected with 401.
+sochub uses Slack **Socket Mode**: the `slack-socket` service opens an outbound WebSocket to Slack, and
+commands, button clicks, forms and App Home events arrive over it. No public URL, ngrok or inbound firewall
+rule is needed. Messages sochub sends (cards, alerts, DMs) are normal HTTPS calls to the Slack API.
+
+1. Go to https://api.slack.com/apps, click **Create New App**, then **From a manifest**, and paste `slack-app-manifest.yml` from this folder.
+   Already have the app? Open **App Manifest**, paste the new manifest, **Save**, then **Reinstall to Workspace**.
+2. Click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-...`, under OAuth & Permissions).
+3. Under **Basic Information > App-Level Tokens**, click **Generate Token and Scopes**, add the scope `connections:write`, and copy the `xapp-...` token.
+4. In sochub, open **Integrations > Slack**. Paste the bot token and the app-level token, a default channel (for example `#soc-alerts`), click **Save**, then **Test**. Test stores the workspace `team_id`, checks both tokens and posts a message in the channel. Within ~30 seconds the card shows **socket connected**.
 5. Optional: set a **responder alerts channel** and the **minimum severity** to page on (see below).
 6. Run `/invite @sochub` in every channel that workflows or responder alerts post to.
-7. Local development: run `ngrok http 80` and use `https://<ngrok-id>.ngrok.app` as the host in the manifest URLs.
+
+The `slack-socket` service is part of both compose files. One replica handles every tenant (a second one for redundancy is fine: Slack allows up to 10 connections per app and delivers each event to only one), and it
+reconnects by itself. Adding, rotating or removing a token in the UI takes effect within 30 seconds.
+
+### HTTP mode (alternative)
+
+If you'd rather have Slack call sochub over HTTPS, leave the app-level token empty and paste the
+**Signing Secret** (Basic Information) instead. In the manifest set `socket_mode_enabled: false` and add
+request URLs: `request_url: https://YOUR-SOCHUB-HOST/api/v1/slack/interactions` under `interactivity`,
+`.../api/v1/slack/events` under `event_subscriptions`, and `url: .../api/v1/slack/commands` on the slash command.
+Every HTTP request is verified with the signing secret.
 
 ## What you can do in Slack
 
@@ -32,6 +46,7 @@ analyst or admin of the tenant the workspace is connected to. Unlinked users get
 | `users_not_found` | The email is not a member of the workspace. |
 | `invalid_auth` | Wrong bot token. |
 | `missing_scope` on war rooms or `/sochub` | The app was created from an older manifest: re-apply this one and reinstall. |
-| `/sochub` says "dispatch_failed" | The commands URL is not reachable from Slack. |
-| Buttons or commands do nothing | The URLs are not reachable, the signing secret is wrong (check backend logs for 401s), or **Test** was never clicked so `team_id` is not stored. |
+| `/sochub` says "dispatch_failed" | Socket Mode: the `slack-socket` service is down. HTTP mode: the commands URL is not reachable. |
+| Card says **socket not connected** | The `slack-socket` service isn't running, or the app-level token is wrong/revoked (`docker compose logs slack-socket`). |
+| Buttons or commands do nothing | Socket Mode: see above. HTTP mode: the URLs are not reachable, the signing secret is wrong (check backend logs for 401s), or **Test** was never clicked so `team_id` is not stored. |
 | No responder alerts | Minimum severity is "off", the case is below it, or the bot is not in the alerts channel. |

@@ -96,6 +96,17 @@ services:
       redis:
         condition: service_healthy
 
+  # Slack Socket Mode (exactly one replica is enough; idles when no tenant uses it).
+  slack-socket:
+    <<: *backend
+    command: python -m app.slack_socket
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
   frontend:
     image: docker.io/sochub/sochub-frontend:${SOCHUB_TAG:-latest}
     restart: unless-stopped
