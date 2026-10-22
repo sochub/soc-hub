@@ -111,7 +111,7 @@ export default function Login() {
                             <span className="font-display text-xl font-semibold tracking-tight">sochub</span>
                         </div>
                         <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
-                        <p className="text-fg-2">Enter your credentials to access the SOC hub.</p>
+                        <p className="text-fg-2">Enter your credentials to access</p>
                     </div>
 
                     {challenge?.kind === 'code' ? (
