@@ -14,6 +14,7 @@ import CopilotWidget from '../../features/copilot/CopilotWidget';
 import NotificationBell from '../../features/notifications/NotificationBell';
 import TenantSwitcher from '../../features/tenants/TenantSwitcher';
 import CommandPalette from './CommandPalette';
+import { DEMO, DEMO_REPO_URL } from '../../demo';
 
 const NAV_GROUPS = [
     { label: 'operate', items: [
@@ -56,6 +57,7 @@ export default function Layout() {
     });
 
     const handleLogout = () => {
+        if (DEMO) { window.location.assign('/'); return; }  // demo: back to the website
         // Record the sign-out (best effort, never blocks): POST /auth/logout, 2s timeout.
         api.post('/auth/logout', null, { timeout: 2000 }).catch(() => undefined).finally(() => {
             session.clear();
@@ -209,6 +211,12 @@ export default function Layout() {
 
             {/* Main */}
             <div className="flex-1 flex flex-col h-full overflow-hidden">
+                {DEMO && (
+                    <div role="note" className="shrink-0 px-4 py-1.5 text-xs text-center bg-accent/15 border-b border-accent/30 text-fg-2">
+                        <span className="font-semibold text-accent">Demo</span> · read-only sample data, changes aren't saved ·{' '}
+                        <a href={DEMO_REPO_URL} target="_blank" rel="noopener noreferrer" className="underline text-fg hover:text-accent">Get sochub on GitHub →</a>
+                    </div>
+                )}
                 <header className="h-14 px-4 sm:px-6 flex items-center justify-between border-b border-line bg-canvas/80 backdrop-blur shrink-0">
                     <div className="flex items-center gap-3 min-w-0">
                         <button onClick={() => setMobileOpen(true)}

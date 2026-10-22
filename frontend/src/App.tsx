@@ -1,6 +1,10 @@
 import { lazy } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { DEMO } from './demo';
+
+// The static demo has no server-side SPA fallback, so it routes on the URL hash.
+const Router = DEMO ? HashRouter : BrowserRouter;
 import { queryClient } from './api/queryClient';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/layout/Layout';
@@ -57,9 +61,9 @@ function App() {
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
+        <Router>
           <Routes>
-            <Route path="/login" element={<Login />} />
+            <Route path="/login" element={DEMO ? <Navigate to="/" replace /> : <Login />} />
             <Route path="/invite/:token" element={<AcceptInvitation />} />
             <Route path="/guest/link" element={<GuestLinkPage />} />
             <Route path="/guest/link/:token" element={<GuestLinkPage />} />
@@ -110,7 +114,7 @@ function App() {
               </Route>
             </Route>
           </Routes>
-        </BrowserRouter>
+        </Router>
       </QueryClientProvider>
     </ErrorBoundary>
   );

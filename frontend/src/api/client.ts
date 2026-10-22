@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { DEMO } from '../demo';
 
 // The session token lives in an HttpOnly cookie the browser sends on its own; page scripts never see it.
 // X-Requested-With is the CSRF header the API requires on cookie-authenticated writes.
@@ -15,7 +16,7 @@ const FLAG = 'signed_in';
 try { localStorage.removeItem('token'); } catch { /* sessions from before the cookie switch: sign in again */ }
 
 export const session = {
-    active: () => { try { return localStorage.getItem(FLAG) === '1'; } catch { return false; } },
+    active: () => { if (DEMO) return true; try { return localStorage.getItem(FLAG) === '1'; } catch { return false; } },
     mark: () => { try { localStorage.setItem(FLAG, '1'); } catch { /* private mode */ } },
     clear: () => { try { localStorage.removeItem(FLAG); } catch { /* private mode */ } },
 };

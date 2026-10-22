@@ -53,3 +53,4 @@ celerybeat.pid
 # Local agent tooling (not tracked)
 .claude/
 docs/superpowers/
+frontend/dist-demo/
