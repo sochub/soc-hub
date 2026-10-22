@@ -65,8 +65,13 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
         setattr(case, field, value)
 
     if "status" in changes:
-        db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="status_change",
-                             content=f"Status changed from {changes['status']['from']} to {changes['status']['to']}"))
+        content = f"Status changed from {changes['status']['from']} to {changes['status']['to']}"
+        if update_data["status"] == CaseStatus.CLOSED:
+            if case.outcome:
+                content += f"\n\n**Outcome:** {_plain(case.outcome).replace('_', ' ')}"
+            if case.closing_note:
+                content += f"\n\n**Closing note:** {case.closing_note}"
+        db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="status_change", content=content))
         await guest_notify.enqueue(db, case, "status_change",
                                    f"Status changed to {str(changes['status']['to']).replace('_', ' ').title()}")
         new_status = update_data["status"]

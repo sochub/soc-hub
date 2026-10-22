@@ -6,6 +6,7 @@ import { cn } from '../../lib/utils';
 import { formatDateTime } from '../../utils/datetime';
 import type { CaseEvent, User } from '../../types';
 import TimelineSuggest from './TimelineSuggest';
+import { Markdown, MarkdownField } from '../../components/Markdown';
 
 // Categories: 3 generic + 12 ATT&CK tactics. Colour is deterministic per category.
 const EVENT_CATEGORIES: [string, string, string][] = [
@@ -133,7 +134,7 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
                 <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="Title" className={cn(field, 'sm:col-span-2')} aria-label="Title" />
                 <input value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })} placeholder="Source (EDR, Sysmon, proxy log…)" className={field} aria-label="Source" />
                 <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="Tags, comma separated" className={field} aria-label="Tags" />
-                <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} placeholder="What happened (markdown)" rows={3} className={cn(field, 'sm:col-span-2 resize-none')} aria-label="Content" />
+                <div className="sm:col-span-2"><MarkdownField value={draft.content}><textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} placeholder="What happened (markdown)" rows={3} className={cn(field, 'w-full resize-none')} aria-label="Content" /></MarkdownField></div>
                 <textarea value={draft.raw} onChange={(e) => setDraft({ ...draft, raw: e.target.value })} placeholder="Raw log line / evidence excerpt" rows={2} className={cn(field, 'sm:col-span-2 resize-none font-mono text-xs')} aria-label="Raw" />
             </div>
             {artifacts.length > 0 && (
@@ -229,7 +230,7 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
                                             )}
                                         </div>
                                         <p className="mt-1 text-sm font-medium text-fg">{e.title}</p>
-                                        {e.content && <p className="mt-1 text-sm text-fg-2 whitespace-pre-wrap">{e.content}</p>}
+                                        {e.content && <Markdown content={e.content} className="mt-1 text-sm text-fg-2" />}
                                         {e.raw && <pre className="mt-2 text-[11px] font-mono text-fg-3 bg-raised rounded-sm p-2 overflow-x-auto whitespace-pre-wrap break-all">{e.raw}</pre>}
                                         {(e.tags.length > 0 || e.artifacts.length > 0) && (
                                             <div className="mt-2 flex flex-wrap gap-1.5">

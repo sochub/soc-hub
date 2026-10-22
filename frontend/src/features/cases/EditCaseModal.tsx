@@ -17,9 +17,10 @@ interface EditCaseModalProps {
     };
     onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; outcome: string | null; closing_note: string | null }) => void;
     isSubmitting: boolean;
+    error?: string | null;
 }
 
-export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSubmitting }: EditCaseModalProps) {
+export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSubmitting, error }: EditCaseModalProps) {
     const [formData, setFormData] = useState({
         title: '',
         description: '',
@@ -46,7 +47,13 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
         }
     }, [caseData, show]);
 
+    const [localError, setLocalError] = useState<string | null>(null);
     const handleSubmit = () => {
+        if (formData.status === 'closed' && !formData.outcome) {
+            setLocalError('Pick an outcome to close the case.');
+            return;
+        }
+        setLocalError(null);
         const tagsArray = formData.tags.split(',').map(t => t.trim()).filter(t => t);
         onSubmit({
             ...formData,
@@ -54,7 +61,7 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
             closing_note: formData.closing_note || null,
             tags: tagsArray
         });
-        onClose();
+        // the parent closes the modal on success, so a failed save keeps the form and shows why
     };
 
     return (
@@ -73,6 +80,7 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
             </>}
         >
             <div className="space-y-4">
+                {(localError || error) && <p role="alert" className="text-sm text-severity-critical">{localError || error}</p>}
                 <div>
                     <label className={modalLabel}>Title</label>
                     <input
