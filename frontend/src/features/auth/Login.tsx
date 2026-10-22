@@ -255,12 +255,22 @@ export default function Login() {
             </div>
             <div className="hidden lg:flex items-center justify-center bg-canvas relative overflow-hidden">
                 <div className="absolute inset-0 bg-linear-to-tr from-accent/20 to-raised/40" />
-                <div className="relative z-10 text-center space-y-4 p-8">
-                    <h2 className="text-4xl font-bold text-brand-gradient">
-                        Secure Operations
+                <div className="relative z-10 space-y-6 p-8 max-w-lg w-full">
+                    <h2 className="text-4xl font-bold text-brand-gradient text-center">
+                        Assume breach.<br />Respond faster.
                     </h2>
-                    <p className="text-fg-2 max-w-md mx-auto">
-                        Advanced case management powered by AI for modern security teams.
+                    {/* Decorative: a sample incident run, styled as a terminal session. */}
+                    <pre aria-hidden="true" className="font-mono text-[12px] leading-6 text-fg-2 bg-canvas/80 border border-line rounded-lg p-4 overflow-hidden">
+                        <span className="text-muted">$ </span>sochub triage --alert EDR-4412{'\n'}
+                        <span className="text-lime">[+]</span> correlated 3 IOCs across 2 hosts{'\n'}
+                        <span className="text-lime">[+]</span> mapped T1566.002 → playbook: phishing{'\n'}
+                        <span className="text-severity-high">[!]</span> beacon to 203.0.113.9:443 every 60s{'\n'}
+                        <span className="text-muted">$ </span>sochub contain --isolate WS-FIN-014{'\n'}
+                        <span className="text-lime">[✓]</span> contained in 00:42:17 · MTTR ↓ 38%{'\n'}
+                        <span className="text-muted">$ </span><span className="inline-block w-2 h-4 align-middle bg-accent animate-pulse" />
+                    </pre>
+                    <p className="text-fg-3 text-sm text-center">
+                        Detect · Contain · Eradicate · Recover · Document. One case file from first alert to final report.
                     </p>
                 </div>
             </div>

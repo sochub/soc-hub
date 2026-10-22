@@ -120,7 +120,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
     const trust = data.external_id ? JSON.stringify({
         Version: '2012-10-17',
         Statement: [{
-            Effect: 'Allow', Principal: { AWS: data.deployment_principal_arn ?? '<SOC Hub server role ARN>' },
+            Effect: 'Allow', Principal: { AWS: data.deployment_principal_arn ?? '<sochub server role ARN>' },
             Action: 'sts:AssumeRole', Condition: { StringEquals: { 'sts:ExternalId': data.external_id } },
         }],
     }, null, 2) : null;
@@ -172,7 +172,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                                                 <button type="button" className="text-xs text-accent flex items-center gap-1" onClick={copyTrust}><Copy size={12} />Copy</button>
                                             </div>
                                             <pre className="text-[11px] font-mono bg-surface border border-line p-2 overflow-x-auto">{trust}</pre>
-                                            {!data.deployment_principal_arn && <p className="text-xs text-fg-3 mt-1">Replace the placeholder principal with the ARN of the role the SOC Hub server runs as.</p>}
+                                            {!data.deployment_principal_arn && <p className="text-xs text-fg-3 mt-1">Replace the placeholder principal with the ARN of the role the sochub server runs as.</p>}
                                         </div>
                                     ) : <p className="text-xs text-fg-3">Save with role mode to generate the External ID.</p>}
                                 </>

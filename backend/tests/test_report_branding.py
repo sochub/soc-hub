@@ -44,7 +44,7 @@ def test_render_uses_branding_and_never_trusts_accent_or_logo():
 
 def test_render_without_branding_keeps_working():
     html = render_html(make_report())  # reports built before branding existed
-    assert "SOC Hub" in html and "Appendix C. Rating scales" in html
+    assert "sochub" in html and "Appendix C. Rating scales" in html
 
 
 def test_json_export_drops_logo():

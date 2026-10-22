@@ -74,7 +74,7 @@ export default function Layout() {
     const tenantName = currentUser?.memberships?.find((m) => m.tenant_id === activeId)?.tenant_name
         ?? allTenants?.find((t) => t.id === activeId)?.name;
     const appName = tenantName ? `sochub - ${tenantName}` : 'sochub';
-    useEffect(() => { document.title = tenantName ? `SOC Hub - ${tenantName}` : 'SOC Hub — Case Management'; }, [tenantName]);
+    useEffect(() => { document.title = tenantName ? `sochub - ${tenantName}` : 'sochub'; }, [tenantName]);
 
     const displayName = currentUser?.full_name || currentUser?.email || 'User';
     const displayRole = currentUser?.role ? currentUser.role.replace('_', ' ') : '';

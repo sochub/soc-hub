@@ -149,7 +149,7 @@ def _brand(report: dict) -> dict:
     """Branding for the template. Accent goes into CSS, so it is re-validated here, not trusted from the dict."""
     b = report.get("branding") or {}
     logo = b.get("logo")
-    return {"org_name": b.get("org_name") or "SOC Hub", "accent": branding.accent(b.get("accent")),
+    return {"org_name": b.get("org_name") or "sochub", "accent": branding.accent(b.get("accent")),
             "disclaimer": b.get("disclaimer") or branding.DEFAULT_DISCLAIMER,
             "logo": logo if isinstance(logo, str) and _LOGO_URI.match(logo) else None}
 
