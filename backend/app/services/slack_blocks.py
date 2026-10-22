@@ -79,7 +79,8 @@ def case_card(case, owner: Optional[str] = None, *, note: Optional[str] = None, 
 
 def card_text(case) -> str:
     """Notification fallback text (push notifications, screen readers)."""
-    return f"#{case.id:04d} [{_val(case.severity).upper()}] {(case.title or '')[:150]}"
+    # Slack parses `text` too: escape it like the blocks, or a title like "<!channel>" pings everyone.
+    return f"#{case.id:04d} [{_val(case.severity).upper()}] {slack_escape((case.title or '')[:150])}"
 
 
 def _severity_options() -> List[dict]:

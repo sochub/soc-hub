@@ -22,6 +22,7 @@ from app.services.case_service import add_timeline_note, apply_case_update, crea
 from app.services.slack_actions import _platform_user, _slack_email
 from app.services.slack_service import SlackError, load_integration, slack_call
 from app.utils.crypto import decrypt
+from app.workflows.templating import slack_escape
 
 logger = logging.getLogger(__name__)
 UNLINKED = "Your Slack account isn't linked to a sochub analyst in this tenant. Ask an admin to invite the email on your Slack profile."
@@ -88,7 +89,7 @@ async def handle_command(db, integ: SlackIntegration, form: dict) -> dict:
         for c in cases:
             blocks += ui.case_card(c, user.full_name or user.email) + [{"type": "divider"}]
         return _ephemeral(f"{len(cases)} open case(s)", blocks[:50])
-    return _ephemeral(f"Unknown command `{verb[:20]}`.\n{ui.HELP}")
+    return _ephemeral(f"Unknown command `{slack_escape(verb[:20])}`.\n{ui.HELP}")
 
 
 # --- shortcuts and modal-opening buttons (inline: they need the trigger_id within 3 s) ---

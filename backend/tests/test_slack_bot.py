@@ -49,6 +49,9 @@ def test_card_escapes_user_text():
                         status=CaseStatus.OPEN, slack_channel_id=None)
     text = json.dumps(ui.case_card(c, "<b>owner</b>"))
     assert "<!channel>" not in text and "<@U1>" not in text and "&lt;!channel&gt;" in text
+    c.title = "<!channel> <https://evil.example|click> <@U1>"
+    fallback = ui.card_text(c)
+    assert "<!channel>" not in fallback and "<https://" not in fallback and "<@U1>" not in fallback
 
 
 async def _scenario(monkeypatch):
