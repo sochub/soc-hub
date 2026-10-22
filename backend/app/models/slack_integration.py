@@ -13,6 +13,13 @@ class SlackIntegration(Base):
     team_id = Column(String, nullable=True, index=True)
     bot_token_enc = Column(Text, nullable=False)
     signing_secret_enc = Column(Text, nullable=False)
+    # App-level token (xapp-, scope connections:write). When set, Slack talks to us over Socket Mode
+    # (app/slack_socket.py) instead of the HTTP request URLs.
+    app_token_enc = Column(Text, nullable=True)
     default_channel = Column(String, nullable=True)
+    # Responder alerts: cases at or above this severity are posted to alert_channel (or default_channel).
+    # NULL severity = alerts off.
+    alert_channel = Column(String, nullable=True)
+    alert_min_severity = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

@@ -57,7 +57,7 @@ async def _scenario(calls, behavior):
                     assert row.bot_token_enc != TOKEN and row.signing_secret_enc != SECRET, "enc"
 
                 r = await c.post(u + "/test")
-                assert r.status_code == 200 and r.json() == {"ok": True, "team": "Acme", "team_id": "T123"}, f"d {r.text}"
+                assert r.status_code == 200 and r.json() == {"ok": True, "team": "Acme", "team_id": "T123", "socket_mode": False}, f"d {r.text}"
                 assert [x[1] for x in calls] == ["auth.test", "chat.postMessage"] and calls[0][0] == TOKEN, "d calls"
                 assert (await c.get(u)).json()["team_id"] == "T123", "d get"
 

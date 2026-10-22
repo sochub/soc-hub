@@ -32,6 +32,9 @@ def emit_event(tenant_id: int, event_type: str, *, case_id: Optional[int] = None
     try:
         from app.tasks.workflows import dispatch_event_task  # late import: avoids worker import cycle
         dispatch_event_task.delay(tenant_id, event_type, case_id, alert_id, changes or {}, depth)
+        if case_id and event_type in ("case.created", "case.updated"):
+            from app.tasks.slack import slack_case_event_task  # Slack responder alerts / live cards
+            slack_case_event_task.delay(tenant_id, event_type, case_id, changes or {})
     except Exception:
         # The originating change is already committed; never fail the request over enqueueing.
         logger.exception("failed to enqueue %s event for tenant %s", event_type, tenant_id)

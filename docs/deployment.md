@@ -34,6 +34,7 @@ The backend image runs three ways; only the command changes:
 | API | _(image default)_ `uvicorn app.main:app --host 0.0.0.0 --port 8000` | 1+ |
 | Worker + scheduler | `celery -A app.worker.celery_app worker -B --loglevel=info -s /tmp/celerybeat-schedule` | **exactly 1** (`-B` embeds the scheduler) |
 | Migrations | `alembic upgrade head` | one-off, before API/worker start on each upgrade |
+| Slack Socket Mode | `python -m app.slack_socket` | 1 (a 2nd for redundancy is fine); idles if no tenant uses Socket Mode |
 
 Create the first admin once the stack is up:
 `python -m app.scripts.create_super_admin --email you@example.com` (same image, interactive).
@@ -60,7 +61,8 @@ another TLS proxy in front of `HTTP_PORT`.
   in a task share `localhost`, so set `BACKEND_UPSTREAM=http://localhost:8000`.
   Expose 8080 through an Application Load Balancer (HTTPS listener).
 - **Worker**: a second service from the backend image with the worker command,
-  desired count 1.
+  desired count 1. Slack Socket Mode: one more service with `python -m app.slack_socket`
+  (outbound only, so no load balancer target).
 - **Migrations**: a one-off task (`aws ecs run-task` with command
   `alembic upgrade head`) before rolling a new tag.
 - **State**: RDS PostgreSQL and ElastiCache Redis (or Redis as its own small
@@ -75,7 +77,8 @@ another TLS proxy in front of `HTTP_PORT`.
 - `Deployment` + `Service` named `backend` (port 8000) and `frontend`
   (port 8080); the frontend's default `BACKEND_UPSTREAM` already matches.
   Expose `frontend` through an Ingress with TLS.
-- Worker: a `Deployment` with `replicas: 1` and the worker command.
+- Worker: a `Deployment` with `replicas: 1` and the worker command; Slack Socket Mode: a
+  `Deployment` with `python -m app.slack_socket` (no Service needed, it only connects out).
 - Migrations: a `Job` (or a Helm pre-upgrade hook) running `alembic upgrade head`.
 - Attachments: a `PersistentVolumeClaim` at `/data/attachments`, or S3.
 - Secrets: a `Secret` mounted with `envFrom`; images run fine with

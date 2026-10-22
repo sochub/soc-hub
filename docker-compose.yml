@@ -155,6 +155,28 @@ services:
       - 8.8.8.8
       - 8.8.4.4
 
+  # Slack Socket Mode: one outbound WebSocket per tenant with an app-level token (no public Slack URLs).
+  # Idles harmlessly when no tenant uses Socket Mode.
+  slack-socket:
+    build: ./backend
+    command: python -m app.slack_socket
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-sicms}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devredispass}@redis:6379/0
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_network
   frontend:
     build: ./frontend
     security_opt:
