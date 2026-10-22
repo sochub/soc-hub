@@ -182,7 +182,7 @@ Steps include Slack "ask a person" prompts, HTTP calls and case actions.
 | Auth | JWT (HS256) with session revocation · Argon2 · TOTP two-factor · per-tenant SAML SSO (python3-saml) |
 | Background | Celery · Redis |
 | AI | Ollama (local, default `llama3`) or a per-tenant provider |
-| Infra | Docker Compose |
+| Infra | Docker Compose · multi-arch images on Docker Hub |
 
 ## Quick start
 
@@ -206,6 +206,11 @@ data, configuring SSO, etc.) see **[docs/getting-started.md](docs/getting-starte
 > strong `SECRET_KEY`, `POSTGRES_PASSWORD` and `REDIS_PASSWORD` values: in
 > production the app refuses to boot with weak or default credentials. The
 > defaults are for **local development only**.
+
+**Deploying for real?** Prebuilt multi-arch images are published to Docker Hub
+(`sochub/sochub-backend`, `sochub/sochub-frontend`). Run them with
+`docker-compose.prod.yml` on any server, or on ECS Fargate or Kubernetes. See
+**[docs/deployment.md](docs/deployment.md)**.
 
 ## Documentation
 
