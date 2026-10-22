@@ -1,13 +1,16 @@
+import json
 import zlib
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 
 from app.models.case import Alert, Case, CaseSeverity, CaseStatus
 from app.services.case_service import add_alert_artifacts, create_case_record
 from app.utils.audit import create_audit_log
 from app.workflows.events import emit_event
 from app.workflows.nodes import NodeContext, NodeError, executor
+from app.workflows.templating import eval_expr
 
 
 def _case_data(config: dict) -> dict:
@@ -101,3 +104,55 @@ async def run_alert_dismiss(nctx: NodeContext, config: dict) -> dict:
                            tenant_id=nctx.run.tenant_id, user_id=None,
                            changes={"reason": alert.dismiss_reason, "by": "automation"})
     return {"alert_id": alert.id, "dismissed": True}
+
+
+_ALERT_SEVERITIES = ("critical", "high", "medium", "low", "info")
+MAX_ALERT_PAYLOAD = 256 * 1024
+
+
+@executor("alert_create")
+async def run_alert_create(nctx: NodeContext, config: dict) -> dict:
+    """Pull-style ingest: same idempotent insert as the webhook (alerts.ingest_alert)."""
+    source = str(config.get("source") or "").strip()
+    external_id = str(config.get("external_id") or "").strip()
+    if not 1 <= len(source) <= 100:
+        raise NodeError("source must be 1-100 characters")
+    if not 1 <= len(external_id) <= 255:
+        raise NodeError("external_id must be 1-255 characters")
+    title = str(config.get("title") or "")[:500]
+    raw_sev = str(config.get("severity") or "").strip().lower()
+    severity = raw_sev if raw_sev in _ALERT_SEVERITIES else "medium"
+    payload = config.get("payload")
+    if isinstance(payload, str):
+        payload = eval_expr(payload, nctx.ctx) if payload.strip() else {}
+    elif payload is None:
+        payload = {}
+    if not isinstance(payload, (dict, list)):
+        raise NodeError(f"payload must evaluate to an object or list, got {type(payload).__name__}")
+    try:
+        size = len(json.dumps(payload))
+    except (TypeError, ValueError):
+        raise NodeError("payload is not JSON-serialisable") from None
+    if size > MAX_ALERT_PAYLOAD:
+        raise NodeError(f"payload is {size} bytes; the limit is {MAX_ALERT_PAYLOAD}")
+
+    tenant_id = nctx.run.tenant_id
+    alert_id = (await nctx.db.execute(
+        insert(Alert).values(source=source, external_id=external_id, title=title, payload=payload,
+                             status="pending", severity=severity, tenant_id=tenant_id)
+        .on_conflict_do_nothing(constraint="uq_alerts_tenant_source_external").returning(Alert.id)
+    )).scalar()
+    created = alert_id is not None
+    if created:
+        await create_audit_log(db=nctx.db, entity_type="alert", entity_id=alert_id, action="created_by_workflow",
+                               tenant_id=tenant_id, user_id=None,
+                               changes={"source": source, "external_id": external_id, "by": "automation"})
+        depth = nctx.run.depth + 1
+        nctx.after_commit.append(lambda: emit_event(tenant_id, "alert.ingested", alert_id=alert_id, depth=depth))
+    else:
+        alert_id = (await nctx.db.execute(select(Alert.id).where(
+            Alert.tenant_id == tenant_id, Alert.source == source, Alert.external_id == external_id))).scalar_one()
+    out = {"alert_id": alert_id, "created": created}
+    if raw_sev and raw_sev not in _ALERT_SEVERITIES:
+        out["severity_defaulted"] = True
+    return out

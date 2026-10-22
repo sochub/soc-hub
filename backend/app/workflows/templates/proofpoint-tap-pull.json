@@ -1,0 +1,180 @@
+{
+  "key": "proofpoint-tap-pull",
+  "name": "Proofpoint TAP: pull delivered threats and permitted clicks",
+  "vendor": "Proofpoint",
+  "kind": "ingest",
+  "description": "Every 5 minutes, reads the TAP SIEM API (/v2/siem/all, JSON) and creates one pending alert per threat message that was delivered and per click on a malicious URL that was permitted (source proofpoint-tap).",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [],
+  "secrets": [
+    {
+      "name": "PROOFPOINT_PRINCIPAL",
+      "description": "TAP service credential principal (sent as the Basic auth user name).",
+      "hosts": [
+        "tap-api-v2.proofpoint.com"
+      ]
+    },
+    {
+      "name": "PROOFPOINT_SECRET",
+      "description": "TAP service credential secret (Basic auth password).",
+      "hosts": [
+        "tap-api-v2.proofpoint.com"
+      ]
+    }
+  ],
+  "setup": "## Proofpoint side\n1. TAP dashboard > Settings > Connected Applications > **Create New Credential**. Copy the service principal and secret.\n2. Store them as `PROOFPOINT_PRINCIPAL` and `PROOFPOINT_SECRET`, allowed host `tap-api-v2.proofpoint.com`.\n\n## How it works\n- `GET https://tap-api-v2.proofpoint.com/v2/siem/all?format=json&sinceSeconds=<n>` with HTTP Basic auth. `n` = seconds from the previous run to this run plus 5 minutes of overlap, capped at 3600 (the API reads at most one hour per call). `sinceSeconds` counts back from the API server's clock, so a window always ends at \"now\".\n- `messagesDelivered` (threat messages that reached a mailbox): external id `msg:<GUID>`, severity high for malware/phish/impostor classification, low for spam, medium otherwise.\n- `clicksPermitted` (a user clicked a malicious URL and was let through): external id `click:<id>`, severity critical for malware/phish, high otherwise.\n- Blocked messages and blocked clicks are not ingested (they were stopped). Add loops over `messagesBlocked` / `clicksBlocked` if you want them.\n\n## Limits\n- ponytail: if the run was delayed more than 5 minutes after its fire time, or the previous successful run is more than an hour old, events older than the one-hour read are not fetched.\n- At most **250 delivered messages and 250 permitted clicks per run** are ingested (the rest of that window is dropped; the loop's `max_items` caps how many children one run may start).\n- Rate limit: 1800 requests per rolling 24 h for `/v2/siem/all` (shared with the other SIEM endpoints except clicks/permitted); every 5 minutes uses 288. 429 fails the run with `Proofpoint TAP pull failed: HTTP 429`.\n\nDocs: [TAP SIEM API](https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/SIEM_API).\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "{%- macro ep(s) -%}{%- set mo = s[5:7]|int -%}{%- set y = (s[0:4]|int) - (1 if mo <= 2 else 0) -%}{%- set era = y // 400 -%}{%- set yoe = y - era * 400 -%}{%- set doe = yoe * 365 + yoe // 4 - yoe // 100 + (153 * (mo + (-3 if mo > 2 else 9)) + 2) // 5 + (s[8:10]|int) - 1 -%}{{ ((era * 146097 + doe - 719468) * 86400 + (s[11:13]|int) * 3600 + (s[14:16]|int) * 60 + (s[17:19]|int)) }}{%- endmacro -%}https://tap-api-v2.proofpoint.com/v2/siem/all?format=json&sinceSeconds={{ [ep(trigger.fired_at)|int - ep(trigger.since)|int + 300, 3600] | min }}",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "auth": {
+            "type": "basic",
+            "username": "{{ secrets.PROOFPOINT_PRINCIPAL }}",
+            "password": "{{ secrets.PROOFPOINT_SECRET }}"
+          }
+        }
+      },
+      {
+        "id": "ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200 and steps.pull.output.body is mapping"
+        }
+      },
+      {
+        "id": "failed",
+        "type": "fail",
+        "position": {
+          "x": 560,
+          "y": 280
+        },
+        "config": {
+          "message": "Proofpoint TAP pull failed: HTTP {{ steps.pull.output.status }}"
+        }
+      },
+      {
+        "id": "messages",
+        "type": "for_each",
+        "position": {
+          "x": 0,
+          "y": 400
+        },
+        "config": {
+          "items": "(steps.pull.output.body.get('messagesDelivered') or [])[:250]",
+          "concurrency": 5,
+          "max_items": 250
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create_message",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "proofpoint-tap",
+          "external_id": "msg:{{ loop.item.GUID }}",
+          "title": "Delivered {{ ((loop.item.get('threatsInfoMap') or [{}])[0].get('classification') or 'unknown') | lower }} email to {{ (loop.item.recipient if loop.item.get('recipient') is string else (loop.item.get('recipient') or []) | join(', ')) or 'unknown recipient' }}: {{ loop.item.get('subject') or '(no subject)' }}",
+          "severity": "{% set c = ((loop.item.get('threatsInfoMap') or [{}])[0].get('classification') or 'unknown') | lower %}{{ 'high' if c in ['malware', 'phish', 'impostor'] else 'low' if c == 'spam' else 'medium' }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "messages"
+      },
+      {
+        "id": "clicks",
+        "type": "for_each",
+        "position": {
+          "x": 520,
+          "y": 400
+        },
+        "config": {
+          "items": "(steps.pull.output.body.get('clicksPermitted') or [])[:250]",
+          "concurrency": 5,
+          "max_items": 250
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create_click",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "proofpoint-tap",
+          "external_id": "click:{{ loop.item.id }}",
+          "title": "Permitted click on {{ (loop.item.get('classification') or 'unknown') | lower }} URL by {{ loop.item.get('recipient') or 'unknown recipient' }}: {{ loop.item.get('url') or '?' }}",
+          "severity": "{{ 'critical' if ((loop.item.get('classification') or '') | lower) in ['malware', 'phish'] else 'high' }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "clicks"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok",
+        "source": "pull",
+        "target": "ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ok_messages",
+        "source": "ok",
+        "target": "messages",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_clicks",
+        "source": "ok",
+        "target": "clicks",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_failed",
+        "source": "ok",
+        "target": "failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

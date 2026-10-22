@@ -2,6 +2,8 @@
 
 Automations run a small graph of steps in response to an event: a case is created or updated, an alert is ingested, or an analyst clicks "Run workflow". Graphs are built in the Automations page (admins) and executed by the Celery worker.
 
+Ready-made workflows for Okta, Microsoft 365, Entra ID, CrowdStrike, SentinelOne, AWS, Google Workspace, Cloudflare and more are listed in [Integration templates](integrations/README.md) and installable from **Workflows › Templates**.
+
 ## Concepts
 
 - **Trigger**: exactly one per workflow: `case.created`, `case.updated` (context includes `changes` for status, severity, tags, assignee), `alert.ingested`, or `manual`.
@@ -19,8 +21,8 @@ Text fields are Jinja2 templates (sandboxed, strict: an undefined variable is an
 | Name | Meaning |
 |---|---|
 | `case` | The run's case, reloaded before each step. `null` until one exists, e.g. before `alert_promote`. Includes `artifacts` (`[{type, value}]`, `type` is the custom key for custom types), `attributes` (first value per type, e.g. `case.attributes.username`) and `attributes_all` (all values per type). See [Custom artifact types](#custom-artifact-types). |
-| `alert` | The run's alert (`source`, `external_id`, `title`, `payload`, `status`), reloaded fresh. For a run without its own alert (manual, `case.*`), this is the newest alert promoted into the case, or `null`. |
-| `trigger` | The event payload: `event`, `case_id`, `alert_id`, `changes`. For `case.updated`, `changes` has one `{from, to}` entry per changed field, with enum values as plain strings (`trigger.changes.severity.to == 'critical'`, `trigger.changes.status.from == 'new'`). `tags` also has `added` and `removed` lists (`'phishing' in trigger.changes.tags.added`). An owner change appears as both `owner_id` and `assignee` (`{from, to}` user ids). |
+| `alert` | The run's alert (`source`, `external_id`, `title`, `severity`, `payload`, `status`), reloaded fresh. For a run without its own alert (manual, `case.*`), this is the newest alert promoted into the case, or `null`. |
+| `trigger` | The event payload: `event`, `case_id`, `alert_id`, `changes`. For `schedule`, it also has `fired_at` and `since` (UTC `YYYY-MM-DDTHH:MM:SSZ`: the fire time of the last successful run, so a failed or throttled pull's window is read again; one hour back on the first run; never more than 24 hours back), so a pull can ask a vendor API for `{{ trigger.since }}` onwards. For `case.updated`, `changes` has one `{from, to}` entry per changed field, with enum values as plain strings (`trigger.changes.severity.to == 'critical'`, `trigger.changes.status.from == 'new'`). `tags` also has `added` and `removed` lists (`'phishing' in trigger.changes.tags.added`). An owner change appears as both `owner_id` and `assignee` (`{from, to}` user ids). |
 | `steps.<node_id>.output` | Output of an already completed step. Loop child runs also see the parent's. |
 | `loop.item`, `loop.index` | Inside a `for_each` body only. |
 | `dry_run` | Boolean. |
@@ -47,8 +49,15 @@ Use them in templates:
 - `condition`: `expression`. Outputs the boolean on the `true` / `false` handles.
 - `for_each`: container node. `items` (expression evaluating to a list), `concurrency` (default 5, max 20), `max_items` (default 100, hard cap 500; more fails the step). One child run per item; output `{results: [{index, status, steps: {node_id: output}}], succeeded, failed}`.
 
+- `fail`: `message` (templated). Stops the run as failed with that message. Use it on the false branch of a status check after a vendor pull, so a 401/429 shows as a failed run and the next schedule re-reads the window.
+
 **Actions**
 - `http_request`: `method`, `url`, `headers`, `body` (templated), optional `retries`, `execute_in_dry_run`, `mock_output`. Output `{status, headers, body}` (body parsed as JSON when possible). 4xx responses don't fail the step: the status is in `output.status`, so branch on it with a condition. Bodies over 1 MB are truncated and `output.truncated` is true.
+  - Optional `auth` (templated like headers) for OAuth2 client credentials: `{"type": "oauth2_client_credentials", "token_url": "...", "client_id": "...", "client_secret": "{{ secrets.CLIENT_SECRET }}", "scope": "...", "audience": "..."}` (`scope` and `audience` optional; some providers such as Wiz require `audience`). The OAuth token is bound to the same hosts as the secrets used in `auth`, so those secrets must list both the token host and the API host. Before the request the node POSTs `grant_type=client_credentials` (form-encoded) to `token_url`, with the same SSRF rules as `url`; a secret in the token request must list the token host in its allowed hosts. A non-2xx answer or one without `access_token` fails the step with `token request failed: HTTP <status>` (the body is never shown). The token is sent as `Authorization: Bearer ...`, replacing any Authorization header, and is masked from the step output and errors; it is never stored. Tokens are cached per worker process until 60 s before `expires_in`. In a dry run nothing is requested and `would_do.auth` shows the secret placeholders.
+  - `{"type": "basic", "username": "...", "password": "{{ secrets.PASSWORD }}"}` sends `Authorization: Basic base64(username:password)`, built inside the node after secret resolution. `password` must be a secret reference.
+  - `{"type": "aws_sigv4", "access_key_id": "{{ secrets.AWS_ACCESS_KEY_ID }}", "secret_access_key": "{{ secrets.AWS_SECRET_ACCESS_KEY }}", "session_token": "{{ secrets.AWS_SESSION_TOKEN }}", "region": "us-east-1", "service": "guardduty"}` signs the request with AWS Signature Version 4 (`session_token` optional). A JSON body is serialised once and the exact bytes sent are signed, with the URL host as `Host` (also when the connection is pinned to a vetted IP). `secret_access_key` must be a secret reference; `region` and `service` must match `[a-z0-9-]{2,32}`. Static keys from tenant secrets only: no IAM role, instance profile or assume-role.
+  - `{"type": "google_service_account", "service_account_key": "{{ secrets.GWS_SA_KEY }}", "scopes": "https://www.googleapis.com/auth/apps.alerts", "subject": "admin@example.com"}` (`scopes` space-separated; `subject` optional, the user to impersonate with domain-wide delegation). The secret holds the full service-account JSON key and must be a secret reference. Inside the node the key signs an RS256 JWT (`iss` = `client_email`, `aud` = the token URL, 1 h lifetime, `kid` = `private_key_id`), exchanged at the fixed URL `https://oauth2.googleapis.com/token` (the key's `token_uri` is ignored). As with OAuth2, the token is bound to the secret's hosts, so `GWS_SA_KEY` must list `oauth2.googleapis.com` and the API host; tokens are cached per subject, scopes and key. A malformed key fails with a generic error; the key, JWT and token never reach output, errors or logs.
+  - For basic and aws_sigv4, the credentials go to the request host itself, so every secret used must allow that host. Any Authorization header is replaced. The password, keys, session token, the Basic header value and the SigV4 signature are masked from the step output and errors and never logged. Unknown `auth.type` or missing required keys fail validation.
 - `slack_post_message`: see [Slack nodes](#slack-nodes).
 - `slack_ask_user`: DM a user by email with buttons and wait for the answer; see [Slack nodes](#slack-nodes).
 - `case_update`: severity, status, assignee, add/remove tags.
@@ -57,10 +66,11 @@ Use them in templates:
 - `case_search`: read-only. Filters: status in, tags contain, title contains, artifact value equals, created within N hours. Output `{cases: [...], first, count}` (max 50).
 - `alert_promote`: `mode` `new` | `link` | `group`, see below. Output `{case_id, created}`. Sets the run's case, so later nodes act on the promoted case.
 - `alert_dismiss`: optional templated `reason`. Sets `alert.status = dismissed` and stores the reason.
+- `alert_create`: creates a `pending` alert from data a workflow pulled (e.g. a vendor API on a schedule). `source` (1-100 chars), `external_id` (1-255), `title` (cut to 500), `severity` (`critical`/`high`/`medium`/`low`/`info`; empty or anything else becomes `medium`, and an unknown value adds `severity_defaulted: true` to the output), `payload` (expression, no `{{ }}`, that evaluates to an object or list of at most 256 KB, e.g. `loop.item`). Idempotent on (tenant, `source`, `external_id`) like the webhook: an event seen twice (overlapping schedule windows) returns the existing alert with `created: false` and does not fire `alert.ingested` again. Output `{alert_id, created}`. A new alert fires `alert.ingested` (counts toward the loop guard). Allowed in any workflow.
 
 Every non-trigger step must have an incoming edge; a disconnected step means the workflow cannot be enabled.
 
-`alert_*` nodes are only allowed in `alert.ingested` workflows. Promoting or dismissing an alert that is no longer `pending` fails the step.
+`alert_promote` and `alert_dismiss` are only allowed in `alert.ingested` workflows. Promoting or dismissing an alert that is no longer `pending` fails the step.
 
 ## Join and skip semantics
 

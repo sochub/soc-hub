@@ -2,7 +2,7 @@
 import copy
 import logging
 import secrets as _stdlib_secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -119,6 +119,23 @@ async def dispatch_event(tenant_id, event_type, case_id, alert_id, changes, dept
         advance_run_task.delay(rid)
 
 
+MAX_SCHEDULE_LOOKBACK = timedelta(hours=24)
+
+
+async def _schedule_since(db, workflow_id: int, now: datetime) -> datetime:
+    """Window start for a pull: the fire time of the last SUCCESSFUL run, so a failed or throttled pull's
+    window is read again next time (alert_create dedupes the overlap). Capped at 24 h back; 1 h on first run."""
+    prev = (await db.execute(select(WorkflowRun.trigger_payload).where(
+        WorkflowRun.workflow_id == workflow_id, WorkflowRun.status == "succeeded",
+        WorkflowRun.is_dry_run == False, WorkflowRun.parent_run_id.is_(None),  # noqa: E712
+    ).order_by(WorkflowRun.started_at.desc()).limit(1))).scalar()
+    try:
+        since = datetime.fromisoformat((prev or {})["fired_at"]).astimezone(timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return now - timedelta(hours=1)
+    return max(since, now - MAX_SCHEDULE_LOOKBACK)
+
+
 async def run_due_schedules(now: datetime) -> List[int]:
     """Beat sweep (every 60s): fire each enabled schedule workflow whose cron matches `now` (UTC, minute precision).
     `last_fired_at` in the same minute means a drifted/duplicate tick already fired it."""
@@ -137,7 +154,9 @@ async def run_due_schedules(now: datetime) -> List[int]:
                 continue
             if not cron_matches(wf.trigger_filter or "", minute):
                 continue
-            payload = {"event": "schedule", "fired_at": now.isoformat(), "case_id": None, "alert_id": None, "changes": {}}
+            since = (await _schedule_since(db, wf.id, now)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            payload = {"event": "schedule", "fired_at": now.isoformat(), "since": since,
+                       "case_id": None, "alert_id": None, "changes": {}}
             run = await create_run(db, wf, trigger_payload=payload, case_id=None, alert_id=None, depth=0)
             wf.last_fired_at = now
             run_ids.append(run.id)

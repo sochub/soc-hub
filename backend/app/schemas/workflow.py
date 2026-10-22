@@ -46,6 +46,11 @@ class DryRunIn(BaseModel):
     ask_user_answers: Dict[str, str] = {}
 
 
+class TemplateInstallIn(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    params: Dict[str, str] = {}
+
+
 class AllowlistIn(BaseModel):
     hosts: List[str]
 

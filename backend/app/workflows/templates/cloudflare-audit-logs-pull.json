@@ -1,0 +1,156 @@
+{
+  "key": "cloudflare-audit-logs-pull",
+  "name": "Cloudflare: pull security-relevant audit logs",
+  "vendor": "Cloudflare",
+  "kind": "ingest",
+  "description": "Every 15 minutes, reads the account's audit logs (v2) since the previous run and creates one pending alert per security-relevant change: members and roles, API tokens, IAM and SSO, Access, firewall/WAF rules and security settings (source cloudflare-audit).",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/15 * * * *",
+  "params": [
+    {
+      "key": "ACCOUNT_ID",
+      "label": "Cloudflare account ID",
+      "placeholder": "023e105f4ecef8ad9ca31a8372d0c353",
+      "help": "32-character account ID (dashboard: Account home > the account's menu > Copy account ID, or any zone's Overview page, API section)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "CLOUDFLARE_API_TOKEN",
+      "description": "Cloudflare API token (sent as `Authorization: Bearer <token>`) with **Account > Account Settings > Read** on this account.",
+      "hosts": [
+        "api.cloudflare.com"
+      ]
+    }
+  ],
+  "setup": "## Cloudflare side\n1. API token with **Account > Account Settings > Read** (API name *Account Settings Read*) for this account. Store it as `CLOUDFLARE_API_TOKEN`, allowed host `api.cloudflare.com`.\n\n## How it works\n- `GET https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/logs/audit?since=<previous run>&before=<this run>&direction=asc&limit=200&action_type.not=view` (Audit Logs v2, generally available since March 2026; `since` and `before` are required).\n- Each entry is kept when its `raw.uri` contains one of these paths:\n  - high: `/members`, `/tokens`, `/iam/`, `/roles`, `/sso` (members and role changes, API token create/roll/delete, IAM groups and policies, SSO connectors)\n  - medium: `/access/`, `/firewall/`, `/rulesets`, `/rate_limits`, `/bot_management`, `/logpush/`, `/settings/security_level`, `/settings/ssl`, `/settings/min_tls_version`, `/settings/waf`, `/settings/browser_check`, `/settings/always_use_https`, `/settings/security_header` (Access apps/policies/IdPs/service tokens, IP Access rules and other firewall tools, WAF custom/managed/rate-limiting rulesets, bot settings, Logpush jobs, security-related zone settings)\n- External id = the entry `id`; title `Cloudflare audit: <action.description> by <actor email or token name> on <zone>`; payload = the entry. A failed action (`action.result: failure`) gets `(failed)` in the title.\n- To widen or narrow the list, edit the two path lists in the loop's `relevant` condition and in `create`'s severity.\n- A non-200 answer or `success: false` fails the run with the HTTP status; the next run re-reads the window without duplicates.\n\n## Limits\n- ponytail: one page per run (`limit=200`); `result_info.cursor` is not followed, so more than 200 logged changes in 15 minutes are cut off (raise `limit` and the loop's `max_items`, max 500, together). Every entry in the page is checked in its own loop child.\n- Login failures are not available here: Audit Logs v2 does not log `GET` requests or `4xx` responses at GA, and dashboard sign-ins are user-level events. Before/after values of a change are not in v2 yet (Cloudflare suggests v1, `GET /accounts/<id>/audit_logs`, for those).\n- Audit logs are kept 18 months.\n\nDocs: [Audit Logs](https://developers.cloudflare.com/fundamentals/account/account-security/audit-logs/), [List account audit logs (v2)](https://developers.cloudflare.com/api/resources/accounts/subresources/logs/subresources/audit/methods/list/), [Audit Logs v2 GA](https://developers.cloudflare.com/changelog/2026-03-10-audit-logs-v2-ga/), [Token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://api.cloudflare.com/client/v4/accounts/%%ACCOUNT_ID%%/logs/audit?since={{ trigger.since | urlencode }}&before={{ (trigger.fired_at[:19] ~ 'Z') | urlencode }}&direction=asc&limit=200&action_type.not=view",
+          "headers": {
+            "Authorization": "Bearer {{ secrets.CLOUDFLARE_API_TOKEN }}",
+            "Accept": "application/json"
+          }
+        },
+        "retries": 2
+      },
+      {
+        "id": "ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200 and steps.pull.output.body is mapping and steps.pull.output.body.get('success') and steps.pull.output.body.get('result') is sequence and steps.pull.output.body.get('result') is not string"
+        }
+      },
+      {
+        "id": "failed",
+        "type": "fail",
+        "position": {
+          "x": 600,
+          "y": 400
+        },
+        "config": {
+          "message": "Cloudflare audit log pull failed: HTTP {{ steps.pull.output.status }}"
+        }
+      },
+      {
+        "id": "each",
+        "type": "for_each",
+        "position": {
+          "x": 100,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.pull.output.body.result[:200]",
+          "concurrency": 5,
+          "max_items": 200
+        },
+        "size": {
+          "width": 460,
+          "height": 300
+        }
+      },
+      {
+        "id": "relevant",
+        "type": "condition",
+        "position": {
+          "x": 120,
+          "y": 60
+        },
+        "config": {
+          "expression": "[\"/members\", \"/tokens\", \"/iam/\", \"/roles\", \"/sso\", \"/access/\", \"/firewall/\", \"/rulesets\", \"/rate_limits\", \"/bot_management\", \"/logpush/\", \"/settings/security_level\", \"/settings/ssl\", \"/settings/min_tls_version\", \"/settings/waf\", \"/settings/browser_check\", \"/settings/always_use_https\", \"/settings/security_header\"] | select('in', (((loop.item.get('raw') or {}).get('uri') or '') | lower)) | list | length > 0"
+        },
+        "parent_id": "each"
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 120,
+          "y": 180
+        },
+        "config": {
+          "source": "cloudflare-audit",
+          "external_id": "{{ loop.item.id }}",
+          "title": "Cloudflare audit: {{ (loop.item.get('action') or {}).get('description') or ((loop.item.get('action') or {}).get('type', 'change') ~ ' ' ~ ((loop.item.get('resource') or {}).get('product') or 'resource')) }} by {{ (loop.item.get('actor') or {}).get('email') or (loop.item.get('actor') or {}).get('token_name') or (loop.item.get('actor') or {}).get('type') or 'unknown actor' }}{{ (' on ' ~ (loop.item.get('zone') or {}).get('name')) if (loop.item.get('zone') or {}).get('name') else '' }}{{ ' (failed)' if (loop.item.get('action') or {}).get('result') == 'failure' else '' }}",
+          "severity": "{{ 'high' if ([\"/members\", \"/tokens\", \"/iam/\", \"/roles\", \"/sso\"] | select('in', (((loop.item.get('raw') or {}).get('uri') or '') | lower)) | list) else 'medium' }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "each"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok",
+        "source": "pull",
+        "target": "ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ok_each",
+        "source": "ok",
+        "target": "each",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_failed",
+        "source": "ok",
+        "target": "failed",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_relevant_create",
+        "source": "relevant",
+        "target": "create",
+        "source_handle": "true"
+      }
+    ]
+  }
+}

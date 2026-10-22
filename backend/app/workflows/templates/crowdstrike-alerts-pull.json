@@ -1,0 +1,231 @@
+{
+  "key": "crowdstrike-alerts-pull",
+  "name": "CrowdStrike Falcon: pull alerts",
+  "vendor": "CrowdStrike",
+  "kind": "ingest",
+  "description": "Every 5 minutes, fetch Falcon alerts created since the previous run (Alerts API v2) and ingest each one as a pending alert (source crowdstrike, deduplicated on composite_id, severity from the 1-100 score).",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [
+    {
+      "key": "FALCON_API_HOST",
+      "label": "Falcon API host",
+      "placeholder": "api.crowdstrike.com",
+      "help": "Your Falcon cloud's API host: api.crowdstrike.com (US-1), api.us-2.crowdstrike.com (US-2), api.eu-1.crowdstrike.com (EU-1) or api.laggar.gcw.crowdstrike.com (US-GOV-1). Host only, no https://."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "FALCON_CLIENT_ID",
+      "description": "Falcon API client ID (Support and resources > API clients and keys).",
+      "hosts": [
+        "%%FALCON_API_HOST%%"
+      ]
+    },
+    {
+      "name": "FALCON_CLIENT_SECRET",
+      "description": "Falcon API client secret, shown once when the client is created.",
+      "hosts": [
+        "%%FALCON_API_HOST%%"
+      ]
+    }
+  ],
+  "setup": "## Falcon side\n1. In the Falcon console open **Support and resources > API clients and keys** and **Create API client**.\n2. Grant **Alerts: Read**. Add **Hosts: Read** and **Hosts: Write** too if you will also install *CrowdStrike Falcon: contain host* with the same client.\n3. Copy the client ID and secret into the secrets `FALCON_CLIENT_ID` and `FALCON_CLIENT_SECRET`, both allowed for your API host. The token URL and the API share that host.\n4. Set `FALCON_API_HOST` to the API host of your cloud (the console URL tells you: falcon.us-2... is US-2).\n\n## How it works\n- `ids`: `GET /alerts/queries/alerts/v2?filter=created_timestamp:>='<since>'&sort=created_timestamp|asc&limit=100` (FQL, URL-encoded). `<since>` is the fire time of the last successful run.\n- A non-200 answer (401 bad credentials, 403 missing scope, 429 throttled) ends the run as failed (`CrowdStrike pull failed: ... HTTP <status>`); the next run re-reads the window. No ids is a normal, successful run: the entities call is skipped.\n- `details`: only when ids came back, `POST /alerts/entities/alerts/v2` with `{\"composite_ids\": [...]}`.\n- One alert per item: external id = `composite_id`; severity: 80-100 critical, 60-79 high, 40-59 medium, 20-39 low, 1-19 info; title = `display_name` + `device.hostname`; payload = the full alert.\n- Overlapping windows are safe: an alert already ingested is not created twice.\n\n## Limits\n- One page per run: at most **100 alerts per window**. After a successful run the next one starts at this run's fire time, so alerts beyond the first 100 of a window are not fetched. Raise `limit` in `ids` and `max_items` on `loop` together (max 500) if you expect bursts.\n- After failed runs the window is re-read from the last successful run, at most 24 h back.\n- All Falcon products are pulled (epp, idp, overwatch, ...). To keep endpoint detections only, add `+product:'epp'` inside the filter.\n\nDocs relied on:\n- OAuth2 token (`POST /oauth2/token`, returns **201** with `access_token`, `expires_in` 1799 s): https://developer.crowdstrike.com/api-reference/collections/oauth2/\n- Alerts (`GET /alerts/queries/alerts/v2`, `POST /alerts/entities/alerts/v2` with `composite_ids`): https://developer.crowdstrike.com/api-reference/collections/alerts/\n- Hosts (`GET /devices/queries/devices/v1`, `POST /devices/entities/devices-actions/v2?action_name=contain`): https://developer.crowdstrike.com/api-reference/collections/hosts/\n- Alert FQL fields (`created_timestamp`, `severity` 1-100 bands, `composite_id`, `device.hostname`): https://github.com/CrowdStrike/falcon-mcp/blob/main/falcon_mcp/resources/detections.py\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "ids",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://%%FALCON_API_HOST%%/alerts/queries/alerts/v2?filter={{ (\"created_timestamp:>='\" ~ trigger.since ~ \"'\") | urlencode }}&sort=created_timestamp%7Casc&limit=100",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_client_credentials",
+            "token_url": "https://%%FALCON_API_HOST%%/oauth2/token",
+            "client_id": "{{ secrets.FALCON_CLIENT_ID }}",
+            "client_secret": "{{ secrets.FALCON_CLIENT_SECRET }}"
+          }
+        }
+      },
+      {
+        "id": "ids_ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.ids.output.status == 200 and steps.ids.output.body is mapping"
+        }
+      },
+      {
+        "id": "ids_failed",
+        "type": "fail",
+        "position": {
+          "x": 520,
+          "y": 400
+        },
+        "config": {
+          "message": "CrowdStrike pull failed: alert id query returned HTTP {{ steps.ids.output.status }}"
+        }
+      },
+      {
+        "id": "has_ids",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "expression": "(steps.ids.output.body.get('resources') or []) | length > 0"
+        }
+      },
+      {
+        "id": "details",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://%%FALCON_API_HOST%%/alerts/entities/alerts/v2",
+          "headers": {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "composite_ids": "{{ steps.ids.output.body.resources }}"
+          },
+          "auth": {
+            "type": "oauth2_client_credentials",
+            "token_url": "https://%%FALCON_API_HOST%%/oauth2/token",
+            "client_id": "{{ secrets.FALCON_CLIENT_ID }}",
+            "client_secret": "{{ secrets.FALCON_CLIENT_SECRET }}"
+          }
+        }
+      },
+      {
+        "id": "details_ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 640
+        },
+        "config": {
+          "expression": "steps.details.output.status == 200 and steps.details.output.body is mapping"
+        }
+      },
+      {
+        "id": "details_failed",
+        "type": "fail",
+        "position": {
+          "x": 520,
+          "y": 760
+        },
+        "config": {
+          "message": "CrowdStrike pull failed: alert details returned HTTP {{ steps.details.output.status }}"
+        }
+      },
+      {
+        "id": "loop",
+        "type": "for_each",
+        "position": {
+          "x": 120,
+          "y": 760
+        },
+        "config": {
+          "items": "steps.details.output.body.get('resources') or []",
+          "concurrency": 5,
+          "max_items": 100
+        },
+        "size": {
+          "width": 460,
+          "height": 220
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "config": {
+          "source": "crowdstrike",
+          "external_id": "{{ loop.item.composite_id }}",
+          "title": "{{ loop.item.get('display_name') or loop.item.get('name') or 'CrowdStrike alert' }} on {{ (loop.item.get('device') or {}).get('hostname') or 'unknown host' }}",
+          "severity": "{% set s = loop.item.get('severity') or 0 %}{{ 'critical' if s >= 80 else 'high' if s >= 60 else 'medium' if s >= 40 else 'low' if s >= 20 else 'info' }}",
+          "payload": "loop.item"
+        },
+        "parent_id": "loop"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_ids",
+        "source": "start",
+        "target": "ids",
+        "source_handle": null
+      },
+      {
+        "id": "e_ids_ids_ok",
+        "source": "ids",
+        "target": "ids_ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ids_ok_has_ids",
+        "source": "ids_ok",
+        "target": "has_ids",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ids_ok_ids_failed",
+        "source": "ids_ok",
+        "target": "ids_failed",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_has_ids_details",
+        "source": "has_ids",
+        "target": "details",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_details_details_ok",
+        "source": "details",
+        "target": "details_ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_details_ok_loop",
+        "source": "details_ok",
+        "target": "loop",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_details_ok_details_failed",
+        "source": "details_ok",
+        "target": "details_failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

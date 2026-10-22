@@ -1,0 +1,127 @@
+{
+  "key": "edr-alerts-to-case",
+  "name": "EDR alerts to case (CrowdStrike, SentinelOne)",
+  "vendor": "EDR",
+  "kind": "triage",
+  "description": "For every ingested CrowdStrike or SentinelOne alert: dismiss low and informational ones with a reason; group the rest into one case per host (24 h window), add the hostname artifact and apply the EDR triage playbook.",
+  "trigger_type": "alert.ingested",
+  "trigger_filter": "alert.source in ['crowdstrike', 'sentinelone']",
+  "params": [
+    {
+      "key": "PLAYBOOK_ID",
+      "label": "Playbook id",
+      "placeholder": "42",
+      "help": "Id of your installed \"EDR Detection Triage\" playbook (Playbooks > My playbooks; import it from the Marketplace first)."
+    }
+  ],
+  "secrets": [],
+  "setup": "Works with the alerts created by *CrowdStrike Falcon: pull alerts* and *SentinelOne: pull threats* (sources `crowdstrike` and `sentinelone`).\n\n1. Import the **EDR Detection Triage** playbook from Playbooks > Marketplace and put its id in `PLAYBOOK_ID`.\n2. Create the custom artifact type with key `hostname` (Settings > Artifact types). The response templates read the target host from it. If it is missing, the artifact step records an error and the run continues.\n\n## Rules\n- Uses the alert's severity, set by the pull templates (CrowdStrike score bands, SentinelOne confidence). `low` and `info` alerts are dismissed with a reason.\n- Everything else is promoted with mode `group`, key `host:<hostname>`, window 24 h: alerts from the same host land in one open case. The case gets the alert's severity when it is created (a later, more severe alert does not raise it), the tag `edr`, the hostname artifact and the playbook tasks.\n- An alert without a hostname is grouped under `host:unknown:<alert id>` (its own case).\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "is_low",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "expression": "alert.severity in ['low', 'info']"
+        }
+      },
+      {
+        "id": "dismiss",
+        "type": "alert_dismiss",
+        "position": {
+          "x": 520,
+          "y": 280
+        },
+        "config": {
+          "reason": "auto: {{ alert.severity }} severity {{ alert.source }} alert"
+        }
+      },
+      {
+        "id": "promote",
+        "type": "alert_promote",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "mode": "group",
+          "title": "EDR: {{ alert.title }}",
+          "severity": "{{ alert.severity }}",
+          "tags": "edr, {{ alert.source }}",
+          "group_key": "host:{{ (((alert.payload.get('device') or {}).get('hostname') if alert.source == 'crowdstrike' else (alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName')) or '') or ('unknown:' ~ alert.external_id) }}",
+          "window_hours": 24
+        }
+      },
+      {
+        "id": "host_artifact",
+        "type": "case_add_artifact",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "artifact_type": "hostname",
+          "value": "{{ ((alert.payload.get('device') or {}).get('hostname') if alert.source == 'crowdstrike' else (alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName')) or '' }}",
+          "description": "Host from {{ alert.source }} alert {{ alert.external_id }}"
+        },
+        "continue_on_error": true
+      },
+      {
+        "id": "playbook",
+        "type": "case_apply_playbook",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "template_id": "%%PLAYBOOK_ID%%"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_is_low",
+        "source": "start",
+        "target": "is_low",
+        "source_handle": null
+      },
+      {
+        "id": "e_is_low_dismiss",
+        "source": "is_low",
+        "target": "dismiss",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_is_low_promote",
+        "source": "is_low",
+        "target": "promote",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_promote_host_artifact",
+        "source": "promote",
+        "target": "host_artifact",
+        "source_handle": null
+      },
+      {
+        "id": "e_host_artifact_playbook",
+        "source": "host_artifact",
+        "target": "playbook",
+        "source_handle": null
+      }
+    ]
+  }
+}

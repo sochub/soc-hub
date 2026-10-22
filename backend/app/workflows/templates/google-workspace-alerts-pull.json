@@ -1,0 +1,144 @@
+{
+  "key": "google-workspace-alerts-pull",
+  "name": "Google Workspace: pull Alert Center alerts",
+  "vendor": "Google",
+  "kind": "ingest",
+  "description": "Every 5 minutes, reads new Google Workspace Alert Center alerts (government-backed attack warnings, leaked passwords, suspicious logins, Gmail phishing, device compromise, sensitive admin actions, rule alerts) and creates one pending alert per Alert Center alert.",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [
+    {
+      "key": "ADMIN_EMAIL",
+      "label": "Admin to impersonate",
+      "placeholder": "alert-reader@example.com",
+      "help": "Email of the Workspace admin the service account acts as (domain-wide delegation). Needs the Alert Center privilege (View access is enough)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "GWS_SA_KEY",
+      "description": "Full JSON key of the Google Cloud service account used to read Alert Center alerts (domain-wide delegation for the apps.alerts scope).",
+      "hosts": [
+        "oauth2.googleapis.com",
+        "alertcenter.googleapis.com"
+      ]
+    }
+  ],
+  "setup": "### Google Cloud side\n1. In a Google Cloud project: APIs & Services > Library > enable **Google Workspace Alert Center API**.\n2. IAM & Admin > Service accounts > **Create service account** (no project roles needed). Open it > Keys > Add key > **JSON**; keep the file.\n3. On the service account's Details page copy the **Unique ID / OAuth 2 Client ID** (numeric).\n\n### Admin console side (super admin)\n1. Security > Access and data control > API controls > **Manage Domain Wide Delegation** > Add new: paste the client ID, OAuth scopes `https://www.googleapis.com/auth/apps.alerts`, Authorize. It can take up to 24 h to apply.\n2. Pick the admin to impersonate (`ADMIN_EMAIL`). Super Admin and Services Admin already have full Alert Center access; for least privilege use a custom role with Account > Admin roles > Privileges > **Alert Center: View access** only (reporting rule alerts also need the Reports privilege, DLP alerts a DLP privilege).\n\n### Here\n1. Settings > Secrets: add `GWS_SA_KEY` with the whole JSON key file as the value, allowed hosts `oauth2.googleapis.com` (token exchange) **and** `alertcenter.googleapis.com` (API call): the access token is bound to the hosts of the key's secret.\n2. Install with `ADMIN_EMAIL`.\n\nToken: a JWT signed with the key (`sub` = `ADMIN_EMAIL`, scope `apps.alerts`) is exchanged at `https://oauth2.googleapis.com/token`; the access token is cached per worker until shortly before it expires and never stored.\n\n### What it calls\n`GET https://alertcenter.googleapis.com/v1beta1/alerts?filter=createTime >= \"<previous run>\"&orderBy=createTime desc&pageSize=100` (filter URL-encoded; `customerId` is inferred from the impersonated admin). Each alert becomes an alert with source `google-workspace`, external id = `alertId`, title = `type` plus the affected user (`data.email`) when the alert has one, payload = the whole Alert Center alert (including `data` and `metadata`).\n\nSeverity: by alert type first (Potential ransomware detected = critical; Government attack warning, Leaked password, Device compromised, Suspicious programmatic login, User suspended (suspicious activity), admin-privilege / SSO / super admin password changes, Customer takeout initiated, Malware reclassification, Phishing in inboxes due to bad whitelist = high; Suspicious login, Suspicious login (less secure app), Suspicious device activity, user-reported / reclassified phishing = medium; spam suspensions, user and settings changes = low; outages, MSA, APNS and configuration notices = info); other types (Activity Rule, Reporting Rule, Data Loss Prevention, new types) use `metadata.severity` HIGH/MEDIUM/LOW, else medium.\n\n### Limits\nponytail: one page per run (`pageSize=100`, newest first); `nextPageToken` is not followed, so more than 100 new alerts in 5 minutes keeps only the newest 100. The window is on `createTime`, and runs overlap safely (the same `alertId` never creates a second alert). Alert Center API quotas apply per project (see the Cloud console quotas page). A non-200 answer (key not authorised for the scope, admin without Alert Center access, 429) creates nothing and fails the run with the HTTP status; the next run re-reads the window from the last successful run (at most 24 h back).\n\nDocs: [alerts.list](https://developers.google.com/workspace/admin/alertcenter/reference/rest/v1beta1/alerts/list), [Alert resource](https://developers.google.com/workspace/admin/alertcenter/reference/rest/v1beta1/alerts), [Query filters](https://developers.google.com/workspace/admin/alertcenter/guides/query-filters), [Alert types](https://developers.google.com/workspace/admin/alertcenter/reference/alert-types), [Domain-wide delegation](https://developers.google.com/workspace/admin/directory/v1/guides/delegation), [Grant access to the alert center](https://support.google.com/a/answer/9176596).",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "retries": 2,
+        "config": {
+          "method": "GET",
+          "url": "https://alertcenter.googleapis.com/v1beta1/alerts?filter={{ ('createTime >= \"' ~ trigger.since ~ '\"') | urlencode }}&orderBy={{ 'createTime desc' | urlencode }}&pageSize=100",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "auth": {
+            "type": "google_service_account",
+            "service_account_key": "{{ secrets.GWS_SA_KEY }}",
+            "scopes": "https://www.googleapis.com/auth/apps.alerts",
+            "subject": "%%ADMIN_EMAIL%%"
+          }
+        }
+      },
+      {
+        "id": "ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200"
+        }
+      },
+      {
+        "id": "each",
+        "type": "for_each",
+        "position": {
+          "x": 140,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.pull.output.body.get('alerts') or []",
+          "concurrency": 5,
+          "max_items": 100
+        },
+        "size": {
+          "width": 420,
+          "height": 200
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 110,
+          "y": 80
+        },
+        "parent_id": "each",
+        "config": {
+          "source": "google-workspace",
+          "external_id": "{{ loop.item.alertId }}",
+          "title": "{{ loop.item.type }}{% if (loop.item.get('data') or {}).get('email') %} ({{ loop.item.data.email }}){% endif %}",
+          "severity": "{{ {'Potential ransomware detected': 'critical', 'Government attack warning': 'high', 'Leaked password': 'high', 'Device compromised': 'high', 'Suspicious programmatic login': 'high', 'User suspended (suspicious activity)': 'high', 'User granted Admin privilege': 'high', 'Primary admin changed': 'high', 'Super admin password reset': 'high', 'SSO profile added': 'high', 'SSO profile updated': 'high', 'SSO profile deleted': 'high', 'Customer takeout initiated': 'high', 'Malware reclassification': 'high', 'Phishing in inboxes due to bad whitelist': 'high', 'Suspicious login': 'medium', 'Suspicious login (less secure app)': 'medium', 'Suspicious device activity': 'medium', 'User reported phishing': 'medium', 'Phishing reclassification': 'medium', 'Suspicious message reported': 'medium', 'User reported spam spike': 'low', 'User suspended (spam)': 'low', 'User suspended (spam through relay)': 'low', 'Account suspension warning': 'low', 'User suspended': 'low', 'New user Added': 'low', 'Suspended user made active': 'low', 'User deleted': 'low', 'Users Admin privilege revoked': 'low', 'Users password changed': 'low', 'User suspended (Administrator email alert)': 'low', 'Calendar settings changed': 'low', 'Drive settings changed': 'low', 'Email settings changed': 'low', 'Mobile settings changed': 'low', 'Access Approvals request': 'low', 'Google Operations': 'info', 'Apps outage': 'info', 'MSA Billing': 'info', 'MSA Legal': 'info', 'MSA Product': 'info', 'MSA Security': 'info', 'APNS certificate is expiring soon': 'info', 'APNS certificate has expired': 'info', 'Configuration problem': 'info', 'AppMaker Default Cloud SQL setup': 'info', 'Client-side encryption service unavailable': 'info', 'File syncing resumed': 'info'}.get(loop.item.type) or {'HIGH': 'high', 'MEDIUM': 'medium', 'LOW': 'low'}.get(((loop.item.get('metadata') or {}).get('severity') or '') | upper, 'medium') }}",
+          "payload": "loop.item"
+        }
+      },
+      {
+        "id": "failed",
+        "type": "fail",
+        "position": {
+          "x": 560,
+          "y": 400
+        },
+        "config": {
+          "message": "Google Workspace alerts pull failed: HTTP {{ steps.pull.output.status }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok",
+        "source": "pull",
+        "target": "ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ok_each",
+        "source": "ok",
+        "target": "each",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_failed",
+        "source": "ok",
+        "target": "failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

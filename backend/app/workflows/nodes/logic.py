@@ -39,3 +39,9 @@ async def run_for_each(nctx: NodeContext, config: dict):
     step_id = nctx.step.id
     nctx.after_commit.append(lambda: loop_tick_task.delay(step_id))
     return WAIT
+
+
+@executor("fail")
+async def run_fail(nctx: NodeContext, config: dict) -> dict:
+    """Stop the run as failed with a message, e.g. when a vendor pull returns 401/429."""
+    raise NodeError(str(config.get("message") or "stopped by fail step")[:500])

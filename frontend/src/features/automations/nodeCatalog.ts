@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion } from 'lucide-react';
+import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX } from 'lucide-react';
 import type { TriggerType } from './types';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
@@ -72,6 +72,7 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'url', label: 'URL', kind: 'text', required: true, placeholder: 'https://hooks.example.com/{{ case.id }}' },
             { key: 'headers', label: 'Headers (JSON)', kind: 'json', placeholder: '{"Authorization": "Bearer ..."}' },
             { key: 'body', label: 'Body (JSON or text)', kind: 'json' },
+            { key: 'auth', label: 'Auth (JSON, optional)', kind: 'json', placeholder: '{"type": "oauth2_client_credentials", "token_url": "https://login.example.com/oauth2/token", "client_id": "...", "client_secret": "{{ secrets.CLIENT_SECRET }}", "scope": "..."}', help: 'type: oauth2_client_credentials (token_url, client_id, client_secret, scope?), basic (username, password) aws_sigv4 (access_key_id, secret_access_key, session_token?, region, service) or google_service_account (service_account_key, scopes, subject?). The secret field must be {{ secrets.NAME }}; tokens, headers and signatures never reach output' },
         ],
     },
     {
@@ -122,8 +123,22 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'case_id', label: 'Case ID (link)', kind: 'text' },
         ],
     },
+    {
+        type: 'fail', label: 'Fail run', category: 'Logic', icon: OctagonX,
+        fields: [{ key: 'message', label: 'Message', kind: 'text', required: true, placeholder: 'Pull failed: HTTP {{ steps.pull.output.status }}', help: 'Stops the run as failed, so the next schedule re-reads this window' }],
+    },
     { type: 'alert_dismiss', label: 'Dismiss alert', category: 'Alerts', icon: XCircle, alertOnly: true, sideEffect: true,
       fields: [{ key: 'reason', label: 'Reason', kind: 'text' }] },
+    {
+        type: 'alert_create', label: 'Create alert', category: 'Alerts', icon: BellPlus, sideEffect: true,
+        fields: [
+            { key: 'source', label: 'Source', kind: 'text', required: true, placeholder: 'okta' },
+            { key: 'external_id', label: 'External ID', kind: 'text', required: true, placeholder: '{{ loop.item.uuid }}', help: 'Dedup key: an existing (source, external ID) is not created again' },
+            { key: 'title', label: 'Title', kind: 'text', required: true, placeholder: '{{ loop.item.displayMessage }}' },
+            { key: 'severity', label: 'Severity', kind: 'text', placeholder: 'medium', help: 'critical, high, medium, low or info; anything else becomes medium' },
+            { key: 'payload', label: 'Payload', kind: 'expression', placeholder: 'loop.item', help: 'Expression for an object or list (≤ 256 KB), no {{ }}' },
+        ],
+    },
 ];
 
 export const NODE_DEF: Record<string, NodeDef> = Object.fromEntries(NODE_DEFS.map((d) => [d.type, d]));
