@@ -3,12 +3,12 @@ name: Images
 # Build multi-arch images and push them to Docker Hub:
 #   sochub/sochub-backend   (API, Celery worker and migrations: same image, different command)
 #   sochub/sochub-frontend  (nginx serving the SPA and proxying /api/v1 to BACKEND_UPSTREAM)
-# Needs repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (a Docker Hub access token).
+# Runs ONLY when a maintainer publishes a GitHub release (tag vX.Y.Z): pushes and pull
+# requests, including from forks, never publish images. The Docker Hub credentials live in the
+# `dockerhub` environment, so they can also be restricted to release tags and required reviewers.
 on:
-  push:
-    branches: [main]
-    tags: ["v*.*.*"]
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -21,6 +21,7 @@ jobs:
   image:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    environment: dockerhub
     strategy:
       fail-fast: false
       matrix:
@@ -41,9 +42,9 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: docker.io/sochub/sochub-${{ matrix.name }}
-          # main -> latest + sha-<short>; tag v1.2.3 -> 1.2.3, 1.2, sha-<short>
+          # release v1.2.3 -> 1.2.3, 1.2, sha-<short>, and latest (not for pre-releases like v1.3.0-rc.1)
+          flavor: latest=auto
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha

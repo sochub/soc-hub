@@ -1,16 +1,17 @@
 # Deployment
 
-Every merge to `main` and every `v*.*.*` tag publishes two multi-arch
-(`linux/amd64`, `linux/arm64`) images to Docker Hub
-(`.github/workflows/images.yml`):
+Publishing a GitHub release (tag `vX.Y.Z`) builds two multi-arch
+(`linux/amd64`, `linux/arm64`) images and pushes them to Docker Hub
+(`.github/workflows/images.yml`). Nothing else publishes: pushes to `main` and pull
+requests (including from forks) never do.
 
 | Image | Runs | Port |
 |---|---|---|
 | `sochub/sochub-backend` | API (default command), Celery worker, migrations, admin scripts | 8000 |
 | `sochub/sochub-frontend` | nginx: the web UI, proxies `/api/v1` to `BACKEND_UPSTREAM` | 8080 |
 
-Tags: `latest` (main), `1.4.0` / `1.4` (release tags), `sha-<short>` (every build).
-Pin a release or `sha-` tag in production, not `latest`.
+Tags: `1.4.0` and `1.4` from release `v1.4.0`, `sha-<short>`, and `latest` for the newest
+non-pre-release. Pin a version in production, not `latest`.
 
 Both images run as non-root users (backend uid 10001, frontend uid 101) and
 carry no secrets; all configuration comes from environment variables.
@@ -80,8 +81,13 @@ another TLS proxy in front of `HTTP_PORT`.
 - Secrets: a `Secret` mounted with `envFrom`; images run fine with
   `runAsNonRoot: true` and `allowPrivilegeEscalation: false`.
 
-## Publishing setup (maintainers)
+## Publishing a release (maintainers)
 
-The workflow needs two repository secrets: `DOCKERHUB_USERNAME` and
-`DOCKERHUB_TOKEN` (a Docker Hub access token with read/write on the `sochub`
-namespace). Run it manually from Actions → Images → Run workflow.
+1. Create a Docker Hub access token with read/write on the `sochub` namespace.
+2. In GitHub → Settings → Environments, create **`dockerhub`** and add the secrets
+   `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` there (not as repository secrets).
+   Recommended protection: deployment branches and tags limited to `v*`, and yourself
+   as required reviewer.
+3. Publish a release: `gh release create v1.4.0 --generate-notes` (or from the GitHub
+   UI). Only people with write access can create releases, so contributors' pull
+   requests can't trigger a publish.
