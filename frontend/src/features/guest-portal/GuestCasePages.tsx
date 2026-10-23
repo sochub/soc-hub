@@ -114,7 +114,7 @@ export function GuestCasePage() {
 
             {canWrite && (
                 <section className="bg-panel border border-line rounded-lg p-4 space-y-3">
-                    <label className="flex flex-col items-center justify-center gap-2 border border-dashed border-line rounded-lg p-6 text-sm text-fg-3 cursor-pointer hover:bg-raised/40"
+                    <label className="relative flex flex-col items-center justify-center gap-2 border border-dashed border-line rounded-lg p-6 text-sm text-fg-3 cursor-pointer hover:bg-raised/40"
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) upload.mutate(f); }}>
                         <Upload size={18} /> {upload.isPending ? 'Uploading…' : 'Drop evidence here or click to choose a file'}

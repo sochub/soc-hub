@@ -95,7 +95,7 @@ export default function ReportBrandingSection() {
                             {logoUrl ? <img src={logoUrl} alt="Report logo" className="max-h-10 max-w-28 object-contain" />
                                 : <span className="text-[10px] text-zinc-500">No logo</span>}
                         </div>
-                        <label className={`${btnSecondary} cursor-pointer`}>
+                        <label className={`${btnSecondary} relative cursor-pointer`}>
                             {upload.isPending ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />} Upload
                             <input type="file" accept="image/png,image/jpeg" className="sr-only"
                                 onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ''; }} />

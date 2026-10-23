@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { UserCheck } from 'lucide-react';
+import { Check, UserCheck } from 'lucide-react';
 import { api } from '../../api/client';
 import { Button } from '../../components/ui';
 import type { GuestSettings } from '../../types';
@@ -10,6 +10,7 @@ export default function GuestSettingsSection() {
     const [domainsDraft, setDomains] = useState<string | null>(null);
     const [ssoDraft, setRequireSso] = useState<boolean | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [saved, setSaved] = useState(false);
     const { data, isLoading } = useQuery({
         queryKey: ['tenant-guest-settings'],
         queryFn: async () => (await api.get('/tenants/current/guests')).data as GuestSettings,
@@ -20,7 +21,10 @@ export default function GuestSettingsSection() {
         mutationFn: async () => (await api.put('/tenants/current/guests', {
             domain_allowlist: domains.split(/[\s,]+/).filter(Boolean), require_sso: requireSso,
         })).data as GuestSettings,
-        onSuccess: (d) => { setError(null); setDomains(null); setRequireSso(null); qc.setQueryData(['tenant-guest-settings'], d); },
+        onSuccess: (d) => {
+            setError(null); setDomains(null); setRequireSso(null); qc.setQueryData(['tenant-guest-settings'], d);
+            setSaved(true); setTimeout(() => setSaved(false), 2500);
+        },
         onError: (err) => {
             const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
             setError(typeof d === 'string' ? d : 'Could not save guest settings.');
@@ -36,7 +40,7 @@ export default function GuestSettingsSection() {
             {isLoading || !data ? <p className="p-4 font-mono text-xs text-muted">$ loading…</p> : (
                 <div className="p-4 space-y-3">
                     <label htmlFor="guest-domains" className="block text-sm text-fg">Allowed email domains (one per line)</label>
-                    <textarea id="guest-domains" rows={4} value={domains} onChange={(e) => setDomains(e.target.value)}
+                    <textarea id="guest-domains" rows={4} value={domains} onChange={(e) => { setDomains(e.target.value); setSaved(false); }}
                         placeholder="company.com" className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg font-mono" />
                     <p className="text-xs text-fg-3">Leave empty to turn guest access off for this organization.</p>
                     <label className="flex items-center gap-2 text-sm text-fg cursor-pointer">
@@ -46,7 +50,10 @@ export default function GuestSettingsSection() {
                     </label>
                     {!data.sso_ready && <p className="text-xs text-fg-3">Configure and enable SSO first.</p>}
                     {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
-                    <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Save</Button>
+                    <div className="flex items-center gap-3">
+                        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Save</Button>
+                        {saved && <span role="status" className="flex items-center gap-1 text-xs text-emerald-400"><Check size={13} /> Saved</span>}
+                    </div>
                 </div>
             )}
         </section>

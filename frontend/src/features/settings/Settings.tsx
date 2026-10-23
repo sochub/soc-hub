@@ -144,6 +144,7 @@ function MfaRequirementSection() {
                             : `${n} member${n === 1 ? '' : 's'} ${n === 1 ? "doesn't" : "don't"} have MFA yet.`}
                         {data.require_mfa && n > 0 && ' They will be asked to set it up at their next sign-in.'}
                     </p>
+                    <p className="text-xs text-fg-3">Members who sign in through single sign-on are not affected; their identity provider handles two-factor.</p>
                     {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
                 </div>
             )}
@@ -325,7 +326,8 @@ export default function Settings() {
                                 )}
                                 <p className="text-[11px] text-muted leading-relaxed pt-1">
                                     Users sign in via “Sign in with SSO” on the login page using your tenant slug.
-                                    NameID must be the user's email address. Password login remains available.
+                                    Send the email as the NameID (format emailAddress) or an <code className="num">email</code> attribute,
+                                    and the full name as <code className="num">displayName</code>. Password login remains available.
                                 </p>
                             </div>
                         </div>
