@@ -128,7 +128,7 @@ def run() -> None:
     assert api_key.startswith("whk_"), (
         f"api_key should start with 'whk_', got: {api_key!r}"
     )
-    print(f"[check] created webhook id={wid} key_prefix={api_key[:8]}...")
+    print(f"[check] created webhook id={wid}")
 
     # -- Ingest alert (source stamped from webhook name, not payload) --
     r = httpx.post(

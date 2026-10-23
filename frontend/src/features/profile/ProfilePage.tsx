@@ -14,6 +14,7 @@ import { formatDateTime } from '../../utils/datetime';
 const card = 'bg-panel border border-line';
 const cardHead = 'px-4 h-11 flex items-center border-b border-line text-sm font-semibold text-fg';
 const MAX_AVATAR = 2 * 1024 * 1024;
+const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
 function apiError(err: unknown, fallback: string): string {
     const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
@@ -68,7 +69,8 @@ function ProfileCard({ me }: { me: User }) {
 
     const onFile = (file?: File) => {
         if (!file) return;
-        if (file.size > MAX_AVATAR) { setMsg({ ok: false, text: 'Image must be PNG, JPEG or WebP up to 2 MB' }); return; }
+        // The preview is a blob: URL in <img>; only ever show the image types the server accepts.
+        if (file.size > MAX_AVATAR || !AVATAR_TYPES.includes(file.type)) { setMsg({ ok: false, text: 'Image must be PNG, JPEG or WebP up to 2 MB' }); return; }
         setMsg(null);
         setPreview(URL.createObjectURL(file));
         upload.mutate(file);

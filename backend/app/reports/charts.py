@@ -9,7 +9,8 @@ LANES = ("detection", "investigation", "analyst", "indicators", "evidence")
 LANE_LABELS = {"detection": "Detection", "investigation": "Investigation", "analyst": "Analyst",
                "indicators": "Indicators", "evidence": "Evidence"}
 
-_ILLEGAL = re.compile("[^\x09\x0a\x0d\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+# Characters XML 1.0 disallows (valid: #x9 #xA #xD #x20-#xD7FF #xE000-#xFFFD #x10000-#x10FFFF).
+_ILLEGAL = re.compile(r"[^\x09\x0a\x0d\x20-\uD7FF\uE000-\uFFFD\U00010000-\U0010FFFF]")
 
 
 def _xml_safe(s) -> str:
