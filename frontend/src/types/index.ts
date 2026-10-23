@@ -129,6 +129,8 @@ export interface CopilotAction {
   type: CopilotActionType;
   summary: string;
   params: Record<string, unknown>;
+  /** Set once the action ran; stored on the message so it survives a reload. */
+  result?: ActionResult | null;
 }
 
 export interface RelatedCase {
