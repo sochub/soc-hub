@@ -305,7 +305,9 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
                     _err(errors, nid, f"missing required field 'auth.{k}'")
             sec = auth.get(secret_key)
             # A literal secret would be stored in the graph and in every run's step input.
-            if not isinstance(sec, str) or not re.fullmatch(r"\s*\{\{\s*secrets\.[A-Z][A-Z0-9_]{1,63}\s*\}\}\s*", sec):
+            # Trim and cap first: the editor sends arbitrary strings and the pattern must stay linear.
+            if (not isinstance(sec, str) or len(sec) > 200
+                    or not re.fullmatch(r"\{\{\s*secrets\.[A-Z][A-Z0-9_]{1,63}\s*\}\}", sec.strip())):
                 _err(errors, nid, f"auth.{secret_key} must be a secret reference like {{{{ secrets.NAME }}}}")
             for k in ("region", "service") if auth.get("type") == "aws_sigv4" else ():
                 v = auth.get(k)
