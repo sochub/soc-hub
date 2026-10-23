@@ -166,9 +166,9 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                                         <div className="copilot-markdown leading-relaxed">
                                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                                         </div>
-                                        {msg.action && <CopilotActionCard action={msg.action} caseId={caseId} />}
+                                        {msg.action && <CopilotActionCard action={msg.action} caseId={caseId} messageId={msg.id} />}
                                         {(msg.suggestions ?? []).map((s, i) => (
-                                            <CopilotSuggestionChip key={`${msg.id}-sugg-${i}`} action={s} caseId={caseId} />
+                                            <CopilotSuggestionChip key={`${msg.id}-sugg-${i}`} action={s} caseId={caseId} messageId={msg.id} suggestionIndex={i} />
                                         ))}
                                     </>
                                 ) : (
