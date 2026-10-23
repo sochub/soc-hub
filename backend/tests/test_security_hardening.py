@@ -10,7 +10,7 @@ from app.main import app
 from app.models.case import Alert
 from app.models.invitation import Invitation, InvitationStatus
 from app.models.membership import TenantMembership
-from app.models.webhook import Webhook, hash_webhook_key
+from app.models.webhook import Webhook, verify_webhook_key
 from tests.guest_fixtures import client, make_case, make_tenant, make_user, run
 
 
@@ -95,12 +95,12 @@ def test_webhook_key_stored_hashed_and_shown_once():
                 r = await c.post("/api/v1/integrations/webhooks", json={"name": "Splunk"}, headers=h)
                 assert r.status_code == 201
                 key = r.json()["api_key"]
-                assert key.startswith("whk_") and r.json()["key_prefix"] == key[:8]
+                assert key.startswith("whk_") and r.json()["key_prefix"] == key[:12]
                 listed = (await c.get("/api/v1/integrations/webhooks", headers=h)).json()
-                assert listed[0]["api_key"] is None and listed[0]["key_prefix"] == key[:8]
+                assert listed[0]["api_key"] is None and listed[0]["key_prefix"] == key[:12]
                 async with AsyncSessionLocal() as db:
                     row = (await db.execute(select(Webhook).where(Webhook.tenant_id == t.id))).scalar_one()
-                    assert row.key_hash == hash_webhook_key(key) and key not in row.key_hash
+                    assert row.key_hash.startswith("$argon2id$") and verify_webhook_key(key, row.key_hash)
                 alert = {"external_id": f"x-{ids.h}", "title": "t", "payload": {}}
                 assert (await c.post("/api/v1/alerts/webhook", json=alert, headers={"X-API-Key": key})).status_code < 300
                 assert (await c.post("/api/v1/alerts/webhook", json=alert,

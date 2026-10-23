@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 from fastapi import Depends, Request, HTTPException, Query, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
@@ -14,7 +15,10 @@ from app.db.session import get_db
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.models.webhook import Webhook, hash_webhook_key
+from app.models.webhook import (
+    LEGACY_PREFIX_LEN, PREFIX_LEN, Webhook, hash_webhook_key, is_legacy_hash, verify_webhook_key,
+    webhook_key_prefix,
+)
 from app.schemas import user as user_schema
 from app.utils.roles import resolve_active_role
 
@@ -177,6 +181,12 @@ async def get_effective_tenant_id(
 # Named so the OpenAPI reference shows the webhook auth as an API key in the
 # X-API-Key header. auto_error=False keeps our own 401 below (a missing header
 # returns 401, matching the invalid-key behavior verify_webhooks.py asserts).
+# Argon2 verify costs tens of ms; alert floods reuse the same few keys, so remember recent successes.
+# An entry only counts while the row still has the same id and hash (rotation/deletion invalidates it).
+# ponytail: per-process FIFO, plaintext keys in memory only; a shared cache isn't needed at this scale.
+_VERIFIED_CACHE_SIZE = 256
+_verified_webhooks: dict = {}
+
 webhook_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False, scheme_name="WebhookApiKey")
 
 
@@ -196,15 +206,32 @@ async def get_webhook_from_key(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
         )
-    result = await db.execute(
+    candidates = (await db.execute(
         select(Webhook)
         .join(Tenant, Tenant.id == Webhook.tenant_id)
         .where(
-            Webhook.key_hash == hash_webhook_key(x_api_key),
+            Webhook.key_prefix.in_({x_api_key[:PREFIX_LEN], x_api_key[:LEGACY_PREFIX_LEN]}),
             Tenant.is_active == True,  # noqa: E712
         )
-    )
-    webhook = result.scalars().first()
+    )).scalars().all()
+    webhook = None
+    for row in candidates:
+        if _verified_webhooks.get(x_api_key) == (row.id, row.key_hash):
+            webhook = row
+            break
+    if webhook is None:
+        for row in candidates:
+            if await asyncio.to_thread(verify_webhook_key, x_api_key, row.key_hash):
+                webhook = row
+                break
+        if webhook is not None:
+            if is_legacy_hash(webhook.key_hash):  # upgrade a pre-Argon2 row now that we've seen its key
+                webhook.key_hash = await asyncio.to_thread(hash_webhook_key, x_api_key)
+                webhook.key_prefix = webhook_key_prefix(x_api_key)
+                await db.commit()
+            if len(_verified_webhooks) >= _VERIFIED_CACHE_SIZE:
+                _verified_webhooks.pop(next(iter(_verified_webhooks)))
+            _verified_webhooks[x_api_key] = (webhook.id, webhook.key_hash)
     if webhook is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

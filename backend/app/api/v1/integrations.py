@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.api import deps
 from app.models.case import Case
 from app.models.user import User
-from app.models.webhook import Webhook, hash_webhook_key
+from app.models.webhook import Webhook, hash_webhook_key, webhook_key_prefix
 from app.tasks.jira import create_jira_ticket_task
 from app.api.v1.tenants import generate_webhook_key
 
@@ -78,7 +78,8 @@ async def create_webhook(
 ) -> Any:
     """Create a named webhook for the active tenant. Admin only."""
     key = generate_webhook_key()
-    webhook = Webhook(tenant_id=tenant_id, name=webhook_in.name, key_hash=hash_webhook_key(key), key_prefix=key[:8])
+    webhook = Webhook(tenant_id=tenant_id, name=webhook_in.name, key_hash=hash_webhook_key(key),
+                      key_prefix=webhook_key_prefix(key))
     db.add(webhook)
     await db.commit()
     await db.refresh(webhook)
