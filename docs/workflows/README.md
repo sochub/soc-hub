@@ -1,12 +1,12 @@
-# Automations (Workflows)
+# Workflows
 
-Automations run a small graph of steps in response to an event: a case is created or updated, an alert is ingested, or an analyst clicks "Run workflow". Graphs are built in the Automations page (admins) and executed by the Celery worker.
+Workflows run a small graph of steps in response to an event: a case is created or updated, an alert is ingested, or an analyst clicks "Run workflow". Graphs are built on the Workflows page (admins) and executed by the Celery worker.
 
 Ready-made workflows for Okta, Microsoft 365, Entra ID, CrowdStrike, SentinelOne, AWS, Google Workspace, Cloudflare and more are listed in [Integration templates](integrations/README.md) and installable from **Workflows › Templates**.
 
 ## Concepts
 
-- **Trigger**: exactly one per workflow: `case.created`, `case.updated` (context includes `changes` for status, severity, tags, assignee), `alert.ingested`, or `manual`.
+- **Trigger**: exactly one per workflow: `case.created`, `case.updated` (context includes `changes` for status, severity, tags, assignee), `alert.ingested`, `schedule` (cron), or `manual`.
 - **Filter**: optional expression on the trigger, for example `'phishing' in case.tags` or `alert.source == 'EDR' and alert.payload.severity >= 7`. If it is false, no run is created.
 - **Nodes**: the steps. Case nodes act on the run's case by default; an optional templated `case_id` overrides it.
 - **Edges**: connect a node's output to the next node. A `condition` node has two outgoing handles, `true` and `false`; only the matching edge is followed.
@@ -82,7 +82,7 @@ A node runs when all its incoming edges are resolved and at least one is active;
 
 ## Dry run
 
-Admins can dry-run a workflow (even a disabled one) against a case, an alert, or a sample payload from the Automations page. The saved graph is used and the run is stored, marked as a dry run.
+Admins can dry-run a workflow (even a disabled one) against a case, an alert, or a sample payload from the Workflows page. The saved graph is used and the run is stored, marked as a dry run.
 
 - Executes for real (read-only): trigger, `condition`, `for_each`, `case_search`, templating.
 - Simulated: case and alert mutation nodes, `slack_post_message`, and `http_request` unless `execute_in_dry_run: true` (meant for GET lookups; SSRF rules still apply). Each simulated step stores its fully rendered input in `output.would_do`.
@@ -96,7 +96,7 @@ Cases created by an automation emit `case.created` at depth + 1, and updates lik
 
 ## HTTP allowlist and SSRF
 
-`http_request` allows only `http`/`https`. The host is resolved and rejected if any address is loopback, private (RFC1918, ULA), link-local (including `169.254.169.254`), shared/CGNAT (`100.64.0.0/10`), reserved, unspecified, or multicast, unless the hostname is on the tenant's HTTP allowlist (Automations settings, admin only). The request then connects to the vetted address itself, so a second DNS answer cannot rebind it to an internal host; the hostname is still sent as `Host` and used for TLS SNI and certificate verification. Allowlisted hosts are trusted by name and resolved normally. Redirects are not followed and the response body is capped at 1 MB.
+`http_request` allows only `http`/`https`. The host is resolved and rejected if any address is loopback, private (RFC1918, ULA), link-local (including `169.254.169.254`), shared/CGNAT (`100.64.0.0/10`), reserved, unspecified, or multicast, unless the hostname is on the tenant's HTTP allowlist (Workflows settings, admin only). The request then connects to the vetted address itself, so a second DNS answer cannot rebind it to an internal host; the hostname is still sent as `Host` and used for TLS SNI and certificate verification. Allowlisted hosts are trusted by name and resolved normally. Redirects are not followed and the response body is capped at 1 MB.
 
 ## Worked example: group EDR alerts into one case
 
@@ -132,7 +132,7 @@ In the mrkdwn fields (`slack_post_message.text`, `slack_ask_user.message`) every
 
 ### `slack_post_message`
 
-Config: `channel` (blank uses the integration's default channel), `text` (templated, mrkdwn), `include_case_buttons` (`yes`/`no`; adds Acknowledge / Assign to me / Close buttons for the run's case). Output `{channel, ts}`. The bot must be in the channel (`/invite @SOC Hub`).
+Config: `channel` (blank uses the integration's default channel), `text` (templated, mrkdwn), `include_case_buttons` (`yes`/`no`; adds Acknowledge / Assign to me / Close buttons for the run's case). Output `{channel, ts}`. The bot must be in the channel (`/invite @sochub`).
 
 ### `slack_ask_user`
 
@@ -150,7 +150,7 @@ Waiting, timeout and cancel behaviour:
 - **Waiting**: the run stays `waiting` and holds no worker. The first valid click resumes the run; the DM is edited to show the answer and later clicks are ignored.
 - **Timeout**: a beat sweep completes the step with `{response: null, timed_out: true}` (the run continues, it does not fail) and edits the DM to say the request expired. Branch on it with `steps.ask.output.timed_out`.
 - **Cancel**: cancelling a run (or a parent run whose loop children are waiting) edits every open question to "This request was withdrawn." after the cancel commits. This is best effort and never blocks the cancel.
-- **Security**: interaction requests are verified with the app's signing secret and rejected with 401 when the signature is wrong, the team is unknown, or the timestamp is more than 5 minutes old. Buttons only resolve steps of the tenant that owns the Slack team.
+- **Security**: in Socket Mode (the default) clicks arrive over the tenant's own `slack-socket` connection, which only Slack can open with that tenant's app-level token; payloads from another workspace are dropped. In HTTP mode, requests are verified with the app's signing secret and rejected with 401 when the signature is wrong, the team is unknown, or the timestamp is more than 5 minutes old. Either way, buttons only resolve steps of the tenant that owns the Slack team.
 
 ### Dry run
 
@@ -187,10 +187,9 @@ If the `selectattr` expression is awkward for your data, put a `condition` plus 
 
 The engine paths above are covered by automated tests and dry runs. These live steps still need a person, a real Slack workspace and a browser:
 
-- [ ] Install the Slack app from the manifest, save the token and signing secret, click **Test** once (stores `team_id`; buttons return 401 until then).
-- [ ] Expose the backend with `ngrok http 80` and set the interactivity URL to `https://<id>.ngrok.app/api/v1/slack/interactions`.
+- [ ] Install the Slack app from the manifest, save the bot token and the app-level token (Socket Mode), click **Test** once (stores `team_id`; buttons are ignored until then), and check the card says *socket connected*. HTTP mode instead: save the signing secret and expose the backend (for example `ngrok http 80`) as the interactivity URL, see [Slack setup](../slack/setup.md).
 - [ ] Example 1, enabled: create a case tagged `x`; webhook.site receives the POST; the DM arrives. Answer **No**: case becomes critical with the note. Repeat with **Yes**: note plus closed. Repeat unanswered with `timeout_hours` `0.02`: escalated with "nothing (timeout)".
 - [ ] Example 2, enabled: ingest the alert with two real Slack users: one case, two DMs; one **No** makes the case critical.
 - [ ] Cancel a waiting run from the UI: the DM changes to "This request was withdrawn."
-- [ ] UI click-throughs: build both graphs in the Automations editor, dry-run with answers, and check skipped (gray) and simulated markers on the run page.
-- [ ] Viewer role: sees Automations and runs but cannot save, enable, dry-run, run or cancel (API returns 403, covered by `tests/test_wf_api.py`).
+- [ ] UI click-throughs: build both graphs in the Workflows editor, dry-run with answers, and check skipped (gray) and simulated markers on the run page.
+- [ ] Viewer role: sees Workflows and runs but cannot save, enable, dry-run, run or cancel (API returns 403, covered by `tests/test_wf_api.py`).

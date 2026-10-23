@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Docker + Docker Compose
-- ~6 GB free disk for the local LLM model
+- ~3 GB free disk and ~4 GB free RAM for the local LLM model
 
 ## 1. Configure environment
 
@@ -32,7 +32,7 @@ See [configuration.md](configuration.md) for every variable.
 docker compose up -d --build
 ```
 
-This starts six services:
+This starts seven services:
 
 | Service | Port | Purpose |
 |---|---|---|
@@ -42,12 +42,13 @@ This starts six services:
 | `redis` | 127.0.0.1:6379 | Celery broker + login rate limiting (password-protected) |
 | `ollama` | 127.0.0.1:11434 | Local LLM — **auto-pulls** the model on first boot |
 | `worker` | — | Celery worker |
+| `slack-socket` | — | Slack Socket Mode connections (idles until a tenant adds an app-level token) |
 
 Everything except nginx is published on loopback only, so local tools (psql,
 redis-cli, an IDE) work but other machines on the network cannot reach the
 database, Redis, the LLM or the API directly.
 
-The Ollama container pulls `OLLAMA_MODEL` (default `llama3`, ~4.7 GB) automatically
+The Ollama container pulls `llama3.2:3b` (~2 GB; set in `docker-compose.yml`) automatically
 on first start and caches it in the `ollama_data` volume. Watch progress with
 `docker compose logs -f ollama`; until it finishes, AI features return an
 "unavailable" message but the rest of the app works.
@@ -74,7 +75,7 @@ existing email upgrades that user to super-admin instead of duplicating.
 ## 5. Sign in
 
 Open **http://localhost** and log in. A super-admin can create tenants
-(**Tenants**), invite users (**Users**), and switch the active tenant from the
+(**Settings → Tenants**), invite users (**Settings → Users**), and switch the active tenant from the
 sidebar picker.
 
 ## 6. (Optional) Seed demo data
@@ -96,8 +97,8 @@ docker compose exec backend python -m app.scripts.seed_incidents --tenant-id 1 -
 ## Operational notes
 
 - **Apply backend code changes:** the API runs with `--reload`, but on macOS the
-  bind-mount may not deliver file events — `docker compose restart backend` after
-  backend edits to be safe.
+  bind-mount may not deliver file events — `docker compose restart backend worker slack-socket`
+  after backend edits to be safe (all three run the same code).
 - **Frontend changes:** the frontend is a built nginx image —
   `docker compose up -d --build frontend` to redeploy.
 - **Fresh database:** migrations are designed to apply cleanly in one

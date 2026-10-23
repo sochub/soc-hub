@@ -6,7 +6,7 @@
                        ┌──────────────┐
                        │   Browser    │
                        └──────┬───────┘
-                              │  :80
+                              │  :80 → 8080
                        ┌──────▼───────┐      proxies /api/v1 → backend:8000
                        │  frontend    │  (nginx, built React 19 SPA)
                        └──────┬───────┘
@@ -18,6 +18,8 @@
                 ┌─────────▼──┐   ┌─▼──────────┐   ┌──────────┐
                 │ PostgreSQL │   │   Redis    │◀──│  worker  │ (Celery)
                 └────────────┘   └────────────┘   └──────────┘
+                                  slack-socket: outbound Slack Socket Mode
+                                  WebSockets, one per tenant (same code/DB)
 ```
 
 ## Backend (`backend/app`)
@@ -31,13 +33,13 @@
 | `ai/` | Provider-agnostic LLM layer (LiteLLM): providers, tenant config, AWS credentials |
 | `services/` | AI service (copilot/triage prompts), SAML, email, Jira integrations |
 | `utils/` | Audit logging, role resolution, copilot heuristics |
-| `scripts/` | CLI: create super-admin, seed incidents, seed playbooks |
+| `scripts/` | CLI: create super-admin, reset MFA, seed incidents, seed playbooks, demo fixtures |
 | `alembic/` | Database migrations |
 
 ## Data model (core)
 
 - **users** — account + `is_super_admin` flag (no per-tenant role here).
-- **tenants** — each with its own `webhook_api_key`.
+- **tenants** — alert **webhooks** (several per tenant) each carry their own hashed API key.
 - **tenant_memberships** `(user_id, tenant_id, role)` — the single source of truth
   for a user's role *in a tenant* (`admin` / `analyst` / `viewer`).
 - **tenant_sso_configs** — per-tenant SAML settings (1:1 with tenant).
@@ -72,4 +74,4 @@ Every data query filters by `tenant_id`; cross-tenant access returns `404`.
   global copilot widget).
 - TanStack Query for server state; axios client in `api/client.ts` sends `X-Requested-With` (the cookie
   carries the session) and handles 401 → re-login. localStorage holds only a non-secret `signed_in` hint.
-- Theme: light "Telemetry Console" — see [features.md](features.md).
+- Theme: dark sochub.io palette, semantic color tokens in `frontend/src/index.css` — see [features.md](features.md).

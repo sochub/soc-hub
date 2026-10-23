@@ -1,6 +1,6 @@
 <div align="center">
 
-# SOC Hub — Case Management
+# sochub — Case Management
 
 **A multi-tenant Security Operations Center (SOC) case-management platform with a built-in, local-LLM investigation copilot.**
 
@@ -8,7 +8,7 @@ FastAPI · React 19 · PostgreSQL · Ollama
 
 <br/>
 
-<img src="docs/images/dashboard.png" alt="SOC Hub operations dashboard" width="900" />
+<img src="docs/images/dashboard.png" alt="sochub operations dashboard" width="900" />
 
 ▶️ [Watch the 40-second product tour](docs/media/tour.mp4)
 
@@ -16,7 +16,7 @@ FastAPI · React 19 · PostgreSQL · Ollama
 
 ---
 
-SOC Hub is an incident-response workbench for security teams. Analysts triage cases,
+sochub is an incident-response workbench for security teams. Analysts triage cases,
 attach IOCs and artifacts, work IR playbooks, and visualize how indicators connect
 cases — assisted by an AI copilot that runs entirely on a **local** model (no data
 leaves your infrastructure) and proposes actions you explicitly approve.
@@ -42,13 +42,13 @@ leaves your infrastructure) and proposes actions you explicitly approve.
 - 🔑 **Workflow secrets**: encrypted credentials bound to allowed hosts.
   - They're inserted only at send time and redacted from run history.
 - 🔔 **Collaboration**: `@mentions` in comments, case following, and an in-app notification bell.
-  - Mentions and assignments also go out by Slack DM or email.
+  - Mentions, assignments and SLA breaches also go out by Slack DM or email.
 - 👤 **Profiles & two-factor**: photo, timezone, and a password change that signs out your other sessions.
   - Authenticator-app MFA, which a tenant can make mandatory.
 - 📊 **Telemetry dashboard**: opened-vs-resolved trends, a severity × status heatmap, case aging, MTTR and SLA compliance.
 - 🕸️ **Investigation graph**: a force-directed map of cases, artifacts and IOCs that reveals cross-case correlation.
 - 🔐 **Security first**:
-  - per-tenant webhook keys and per-tenant SAML SSO;
+  - per-webhook API keys and per-tenant SAML SSO;
   - Argon2 password hashing and session revocation;
   - SSRF-guarded automations;
   - security headers and full audit logging.
@@ -86,8 +86,8 @@ In comments you can mention a teammate by typing `@`.
 ### 🔔 Notifications
 
 Mentions, assignments, status and severity changes, comments on cases you follow,
-and SLA breaches all land in the bell. Mentions and assignments also go out by
-Slack DM or email.
+and SLA breaches all land in the bell. Mentions, assignments and SLA breaches also go
+out by Slack DM or email.
 
 <img src="docs/images/notifications.png" alt="Notification panel" width="900" />
 
@@ -181,13 +181,13 @@ Steps include Slack "ask a person" prompts, HTTP calls and case actions.
 | Frontend | React 19 · TypeScript · TanStack Query · React Router v7 · Tailwind CSS · Recharts |
 | Auth | JWT (HS256) with session revocation · Argon2 · TOTP two-factor · per-tenant SAML SSO (python3-saml) |
 | Background | Celery · Redis |
-| AI | Ollama (local, default `llama3`) or a per-tenant provider |
+| AI | Ollama (local, `llama3.2:3b`) or a per-tenant provider |
 | Infra | Docker Compose · multi-arch images on Docker Hub |
 
 ## Quick start
 
 ```bash
-# 1. Bring up the full stack (db, redis, ollama, backend, worker, frontend)
+# 1. Bring up the full stack (db, redis, ollama, backend, worker, slack-socket, frontend)
 docker compose up -d --build      # the ollama container auto-pulls the model on first boot
 
 # 2. Apply database migrations
@@ -221,6 +221,7 @@ Full docs live in **[`docs/`](docs/README.md)**:
 | [Getting Started](docs/getting-started.md) | Setup, bootstrap, demo data, model pull |
 | [Architecture](docs/architecture.md) | Components, data model, request flow |
 | [Configuration](docs/configuration.md) | Environment variables, security knobs |
+| [Configuration guide](docs/configuration-guide.md) | SSO attributes, MFA, guests, Slack and AI set up right, with screenshots and error fixes |
 | [Features](docs/features.md) | Copilot, playbooks, dashboard, graph, multi-tenancy |
 | [SAML SSO](docs/sso/saml-design.md) | Per-tenant single sign-on |
 | [Design notes](docs/README.md#design-notes) | Per-subsystem design records |
