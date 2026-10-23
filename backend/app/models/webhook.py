@@ -3,8 +3,7 @@ from sqlalchemy.sql import func
 from app.core.security import get_password_hash, verify_password
 from app.db.base_class import Base
 
-PREFIX_LEN = 12        # "whk_" + 8 random chars: narrows the lookup to (almost always) one row
-LEGACY_PREFIX_LEN = 8  # keys created before Argon2 stored only "whk_" + 4 chars
+PREFIX_LEN = 12  # "whk_" + 8 random chars: narrows the lookup to (almost always) one row
 
 
 def hash_webhook_key(key: str) -> str:
@@ -17,6 +16,7 @@ def webhook_key_prefix(key: str) -> str:
 
 
 def is_legacy_hash(stored: str) -> bool:
+    """Rows from before Argon2 (unsalted SHA-256). Their keys no longer work; an admin rotates them."""
     return not stored.startswith("$argon2")
 
 
@@ -38,4 +38,8 @@ class Webhook(Base):
     key_hash = Column(String(255), unique=True, nullable=False)
     # e.g. "whk_Ab3dEf9h": tells keys apart in the UI and narrows the lookup before Argon2 verify
     key_prefix = Column(String(16), nullable=False, index=True)
+
+    @property
+    def needs_rotation(self) -> bool:
+        return is_legacy_hash(self.key_hash)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

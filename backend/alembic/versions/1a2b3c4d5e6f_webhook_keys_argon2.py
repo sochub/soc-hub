@@ -4,8 +4,8 @@ Revision ID: 1a2b3c4d5e6f
 Revises: e0f1a2b3c4d5
 Create Date: 2026-10-23 14:00:00.000000
 
-Existing SHA-256 hashes stay valid and are re-hashed with Argon2 on each key's first use
-(see app.api.deps.get_webhook_from_key); they can't be converted without the plaintext key.
+Existing SHA-256 hashes can't be converted without the plaintext key and are no longer accepted:
+those webhooks show "needs rotation" in Settings > Integrations until an admin rotates their key.
 """
 from alembic import op
 import sqlalchemy as sa
