@@ -10,7 +10,7 @@ COPY . .
 RUN npm run build
 
 # Production Stage: nginx as a non-root user, listening on 8080
-FROM nginxinc/nginx-unprivileged:alpine
+FROM nginx/nginx-unprivileged:alpine
 
 # Copy the nginx config template; rendered at start with only these variables substituted.
 # BACKEND_UPSTREAM: where the API lives (compose/k8s service name, or http://localhost:8000
