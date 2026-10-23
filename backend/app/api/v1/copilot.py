@@ -29,6 +29,7 @@ from app.utils.copilot_heuristics import (
 from app.utils.roles import resolve_active_role
 
 router = APIRouter()
+MAX_CASE_ARTIFACTS = 10  # indicators auto-attached when the copilot creates a case
 
 # Statuses that count as "open" work in the queue overview.
 _CLOSED_STATUSES = {CaseStatus.RESOLVED, CaseStatus.CLOSED}
@@ -483,6 +484,12 @@ async def chat_copilot(
             else:
                 action = None
 
+    if action and action.get("type") == "create_case":
+        said = "\n".join(m["content"] for m in history if m["role"] == "user")
+        found = detect_indicators(said, limit=MAX_CASE_ARTIFACTS)
+        if found:
+            action.setdefault("params", {})["artifacts"] = found
+
     display_text = strip_action_blocks(response_text)
     if action and not display_text:
         display_text = action.get("summary") or "I've prepared an action below — confirm to run it."
@@ -586,7 +593,101 @@ async def execute_action(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Execute a copilot-proposed action. Writes require analyst-or-above and are
-    audit-logged; everything is scoped to the active tenant."""
+    audit-logged; everything is scoped to the active tenant.
+
+    With `message_id` the proposal is taken from that (own) message rather than the request, an
+    already-executed proposal returns its stored result, the result is stored on the message,
+    and in a general session a case created earlier in the conversation is the default target.
+    """
+    msg = None
+    if req.message_id is not None:
+        msg = (await db.execute(
+            select(CopilotMessage).join(CopilotSession).options(selectinload(CopilotMessage.session))
+            .where(CopilotMessage.id == req.message_id, CopilotSession.user_id == current_user.id,
+                   CopilotSession.tenant_id == tenant_id)
+        )).scalars().first()
+        if msg is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+        stored = _proposal(msg, req.suggestion_index)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if stored.get("result"):
+            return ActionResult(**stored["result"])
+        req.type, req.params = stored.get("type", req.type), stored.get("params") or {}
+        if msg.session.case_id is not None:
+            req.case_id = msg.session.case_id
+        elif req.case_id is None:
+            req.case_id = await _conversation_case(db, msg)
+
+    result = await _run_action(db, req, current_user, tenant_id)
+
+    if msg is not None and req.type in WRITE_ACTIONS:
+        # ponytail: not locked; two Confirms landing in the same instant can both run. Lock the row if that shows up.
+        await db.refresh(msg)
+        stored = dict(_proposal(msg, req.suggestion_index) or {})
+        stored["result"] = result.model_dump(exclude_none=True)
+        if req.suggestion_index is None:
+            msg.action = stored
+        else:
+            msg.suggestions = [stored if i == req.suggestion_index else s for i, s in enumerate(msg.suggestions)]
+        await db.commit()
+    return result
+
+
+def _proposal(msg: CopilotMessage, index: Optional[int]) -> Optional[Dict[str, Any]]:
+    if index is None:
+        return msg.action
+    items = msg.suggestions or []
+    return items[index] if 0 <= index < len(items) else None
+
+
+async def _conversation_case(db: AsyncSession, msg: CopilotMessage) -> Optional[int]:
+    """The most recent case created by a confirmed action earlier in this conversation."""
+    rows = (await db.execute(
+        select(CopilotMessage.action).where(CopilotMessage.session_id == msg.session_id,
+                                            CopilotMessage.id <= msg.id, CopilotMessage.action.isnot(None))
+        .order_by(CopilotMessage.id.desc())
+    )).scalars().all()
+    for action in rows:
+        if action.get("type") == "create_case" and (action.get("result") or {}).get("case_id"):
+            return action["result"]["case_id"]
+    return None
+
+
+async def _attach_artifact(db: AsyncSession, *, tenant_id: int, user_id: int, case_id: int, value: str,
+                           atype: ArtifactType, description: Optional[str] = None) -> Artifact:
+    """Find-or-create the (shared, non-isolated) artifact and link it to the case once."""
+    artifact = (await db.execute(
+        select(Artifact).where(
+            Artifact.value == value, Artifact.artifact_type == atype, Artifact.custom_type_id.is_(None),
+            Artifact.tenant_id == tenant_id, Artifact.isolated == False,  # noqa: E712
+        )
+    )).scalars().first()
+    if not artifact:
+        artifact = Artifact(artifact_type=atype, value=value, description=description,
+                            isolated=False, tenant_id=tenant_id, created_by=user_id)
+        db.add(artifact)
+        await db.flush()
+    link = await db.execute(
+        select(CaseArtifact).where(CaseArtifact.case_id == case_id, CaseArtifact.artifact_id == artifact.id)
+    )
+    if not link.scalars().first():
+        db.add(CaseArtifact(case_id=case_id, artifact_id=artifact.id, added_by=user_id))
+        db.add(TimelineEvent(case_id=case_id, user_id=user_id, event_type="artifact_added",
+                             content=f"Added artifact: {value} ({atype.value})"))
+    await create_audit_log(db=db, entity_type="artifact", entity_id=artifact.id, action="create",
+                           tenant_id=tenant_id, user_id=user_id)
+    return artifact
+
+
+def _artifact_type(raw: Any) -> ArtifactType:
+    try:
+        return ArtifactType(str(raw or "other").lower())
+    except ValueError:
+        return ArtifactType.OTHER
+
+
+async def _run_action(db: AsyncSession, req: ActionExecuteRequest, current_user: User, tenant_id: int) -> ActionResult:
     if req.type not in ACTION_TYPES:
         raise HTTPException(status_code=400, detail="Unknown action type.")
 
@@ -613,52 +714,37 @@ async def execute_action(
             db, tenant_id=tenant_id, user_id=current_user.id,
             data={"title": title, "description": p.get("description"), "severity": severity,
                   "status": CaseStatus.NEW})
+        # Indicators from the conversation, shown on the card before Confirm (see chat_copilot).
+        added = []
+        for item in (p.get("artifacts") or [])[:MAX_CASE_ARTIFACTS]:
+            value = str((item or {}).get("value") or "").strip()[:2048]
+            if value:
+                await _attach_artifact(db, tenant_id=tenant_id, user_id=current_user.id, case_id=case.id,
+                                       value=value, atype=_artifact_type(item.get("artifact_type")))
+                added.append(value)
         await db.commit()
         from app.tasks.triage import run_case_triage_task  # lazy: tasks.triage imports this module
         run_case_triage_task.delay(triage_id)
-        return ActionResult(ok=True, message=f"Created case #{case.id}: {title}", case_id=case.id)
+        extra = f" with {len(added)} artifact(s): {', '.join(added)}" if added else ""
+        return ActionResult(ok=True, message=f"Created case #{case.id}: {title}{extra}", case_id=case.id)
 
     if req.type == "add_artifact":
         if not req.case_id:
-            raise HTTPException(status_code=400, detail="Open a case to add an artifact.")
+            raise HTTPException(status_code=400, detail="Open a case (or create one in this chat) to add an artifact.")
         await _get_case_in_tenant(db, req.case_id, tenant_id)
         value = (p.get("value") or "").strip()
         if not value:
             raise HTTPException(status_code=400, detail="An artifact value is required.")
-        try:
-            atype = ArtifactType(str(p.get("artifact_type", "other")).lower())
-        except ValueError:
-            atype = ArtifactType.OTHER
-        existing = await db.execute(
-            select(Artifact).where(
-                Artifact.value == value, Artifact.artifact_type == atype, Artifact.custom_type_id.is_(None),
-                Artifact.tenant_id == tenant_id, Artifact.isolated == False,  # noqa: E712
-            )
-        )
-        artifact = existing.scalars().first()
-        if not artifact:
-            artifact = Artifact(artifact_type=atype, value=value, description=p.get("description"),
-                                isolated=False, tenant_id=tenant_id, created_by=current_user.id)
-            db.add(artifact)
-            await db.flush()
-        link = await db.execute(
-            select(CaseArtifact).where(
-                CaseArtifact.case_id == req.case_id, CaseArtifact.artifact_id == artifact.id
-            )
-        )
-        if not link.scalars().first():
-            db.add(CaseArtifact(case_id=req.case_id, artifact_id=artifact.id, added_by=current_user.id))
-            db.add(TimelineEvent(case_id=req.case_id, user_id=current_user.id, event_type="artifact_added",
-                                 content=f"Added artifact: {value} ({atype.value})"))
-        await create_audit_log(db=db, entity_type="artifact", entity_id=artifact.id, action="create",
-                               tenant_id=tenant_id, user_id=current_user.id)
+        atype = _artifact_type(p.get("artifact_type"))
+        await _attach_artifact(db, tenant_id=tenant_id, user_id=current_user.id, case_id=req.case_id,
+                               value=value, atype=atype, description=p.get("description"))
         await db.commit()
         return ActionResult(ok=True, message=f"Added artifact `{value}` ({atype.value}) to case #{req.case_id}.",
                             case_id=req.case_id)
 
     if req.type == "add_timeline_note":
         if not req.case_id:
-            raise HTTPException(status_code=400, detail="Open a case to add a note.")
+            raise HTTPException(status_code=400, detail="Open a case (or create one in this chat) to add a note.")
         note_case = await _get_case_in_tenant(db, req.case_id, tenant_id)
         content = (p.get("content") or "").strip()
         if not content:

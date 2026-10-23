@@ -31,6 +31,13 @@ function ParamPreview({ action }: { action: CopilotAction }) {
                     <div><dt className="inline text-fg-3">title: </dt><dd className="inline text-fg">{p.title}</dd></div>
                     {p.severity && <div><dt className="inline text-fg-3">severity: </dt><dd className="inline text-fg">{p.severity}</dd></div>}
                     {p.description && <div><dt className="inline text-fg-3">description: </dt><dd className="inline text-fg-2">{String(p.description).slice(0, 140)}</dd></div>}
+                    {Array.isArray(p.artifacts) && p.artifacts.length > 0 && (
+                        <div><dt className="inline text-fg-3">artifacts: </dt><dd className="inline">
+                            {p.artifacts.map((a: { value: string; artifact_type: string }) => (
+                                <code key={a.value} className="bg-panel text-accent px-1 py-0.5 mr-1">{a.value}</code>
+                            ))}
+                        </dd></div>
+                    )}
                 </dl>
             );
         case 'add_artifact':
@@ -54,39 +61,48 @@ function ParamPreview({ action }: { action: CopilotAction }) {
 interface Props {
     action: CopilotAction;
     caseId?: number | null;
+    /** The message that proposed it: the server stores the result there (and won't run it twice). */
+    messageId: number;
+    suggestionIndex?: number;
 }
 
-export default function CopilotActionCard({ action, caseId }: Props) {
+function useExecute({ action, caseId, messageId, suggestionIndex }: Props) {
     const qc = useQueryClient();
-    const [state, setState] = useState<'idle' | 'cancelled'>('idle');
-    const isWrite = WRITE_ACTIONS.has(action.type);
-
-    const exec = useMutation({
-        mutationFn: async () => {
-            const res = await api.post('/copilot/actions/execute', {
-                type: action.type,
-                params: action.params,
-                case_id: caseId ?? null,
-            });
-            return res.data as ActionResult;
-        },
-        onSuccess: () => {
-            // Refresh anything the action may have changed.
-            qc.invalidateQueries({ queryKey: ['cases'] });
-            qc.invalidateQueries({ queryKey: ['artifacts'] });
-            if (caseId) qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
+    return useMutation({
+        mutationFn: async () => (await api.post('/copilot/actions/execute', {
+            type: action.type,
+            params: action.params,
+            case_id: caseId ?? null,
+            message_id: messageId,
+            suggestion_index: suggestionIndex ?? null,
+        })).data as ActionResult,
+        onSuccess: (r) => {
+            // Refresh anything the action may have changed, plus the session so the stored result sticks.
+            for (const key of ['cases', 'artifacts', 'iocs', 'copilot-session']) qc.invalidateQueries({ queryKey: [key] });
+            const id = r.case_id ?? caseId;
+            if (id) {
+                qc.invalidateQueries({ queryKey: ['case', String(id)] });
+                qc.invalidateQueries({ queryKey: ['case-tasks', id] });
+            }
         },
     });
+}
+
+export default function CopilotActionCard(props: Props) {
+    const { action } = props;
+    const [state, setState] = useState<'idle' | 'cancelled'>('idle');
+    const isWrite = WRITE_ACTIONS.has(action.type);
+    const exec = useExecute(props);
 
     // Read-only correlation runs automatically.
     useEffect(() => {
-        if (!isWrite && state === 'idle' && !exec.isPending && !exec.data) {
+        if (!isWrite && state === 'idle' && !exec.isPending && !exec.data && !action.result) {
             exec.mutate();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const result = exec.data;
+    const result = exec.data ?? action.result;
 
     return (
         <div className="mt-2 rounded-xl border border-accent/30 bg-accent/6 p-3 text-sm">
@@ -165,35 +181,18 @@ export default function CopilotActionCard({ action, caseId }: Props) {
 }
 
 /** Proactive suggestion chip — "I noticed X, want me to add it?" with Add/Dismiss. */
-export function CopilotSuggestionChip({ action, caseId }: Props) {
-    const qc = useQueryClient();
+export function CopilotSuggestionChip(props: Props) {
+    const { action } = props;
     const [dismissed, setDismissed] = useState(false);
-
-    const exec = useMutation({
-        mutationFn: async () => {
-            const res = await api.post('/copilot/actions/execute', {
-                type: action.type,
-                params: action.params,
-                case_id: caseId ?? null,
-            });
-            return res.data as ActionResult;
-        },
-        onSuccess: () => {
-            qc.invalidateQueries({ queryKey: ['cases'] });
-            qc.invalidateQueries({ queryKey: ['artifacts'] });
-            if (caseId) {
-                qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
-                qc.invalidateQueries({ queryKey: ['case-tasks', caseId] });
-            }
-        },
-    });
+    const exec = useExecute(props);
+    const done = exec.data ?? action.result;
 
     if (dismissed) return null;
 
-    if (exec.data) {
+    if (done) {
         return (
             <p className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-400">
-                <Check size={13} className="shrink-0" /> {exec.data.message}
+                <Check size={13} className="shrink-0" /> {done.message}
             </p>
         );
     }
