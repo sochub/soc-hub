@@ -114,6 +114,15 @@ def normalize_messages(messages: List[dict]) -> List[dict]:
     return ([{"role": "system", "content": "\n\n".join(system)}] if system else []) + turns
 
 
+# Models that rejected `temperature` at runtime. litellm.drop_params only drops what its model map
+# knows about; newer hosted models (e.g. recent Claude on Bedrock, inference profiles) refuse it anyway.
+_NO_TEMPERATURE: set = set()
+
+
+def _rejects_temperature(e: Exception) -> bool:
+    return isinstance(e, litellm.BadRequestError) and "temperature" in str(e).lower()
+
+
 async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float], json_mode: bool,
                 max_tokens: Optional[int], timeout: Optional[float], allowlist: Sequence[str]) -> str:
     secrets = list((cfg.secrets or {}).values())
@@ -138,7 +147,8 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
         raise _fail(AIUnavailable, f"AI provider misconfigured: {e}", e) from None
     if guarded:
         kwargs["api_base"] = _pin(kwargs["api_base"], pinned_ip)
-    if temperature is not None:
+    model_key = (cfg.provider, cfg.model)
+    if temperature is not None and model_key not in _NO_TEMPERATURE:
         kwargs["temperature"] = temperature
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
@@ -151,7 +161,15 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
         kwargs["client"], to_close = _no_redirect_client(cfg, kwargs, refused)
     # `from None` throughout: the raw provider exception may carry keys; only the scrubbed text survives.
     try:
-        resp = await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
+        try:
+            resp = await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
+        except Exception as e:
+            if "temperature" not in kwargs or not _rejects_temperature(e):
+                raise
+            logger.info("AI model %s/%s rejects temperature; retrying without it", *model_key)
+            _NO_TEMPERATURE.add(model_key)
+            kwargs.pop("temperature")
+            resp = await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
     except Exception as e:
         if refused:
             raise _fail(AIUnavailable, "AI endpoint redirect refused", "RedirectRefused") from None

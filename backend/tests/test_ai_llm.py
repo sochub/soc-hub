@@ -363,3 +363,40 @@ def test_tenant_redirects_refused(provider, path):
     finally:
         origin.shutdown()
         target.shutdown()
+
+
+BEDROCK = ProviderConfig("bedrock", "us.anthropic.claude-new-v1:0", "deployment", region="us-east-1", auth_mode="chain")
+
+
+def test_temperature_dropped_when_model_rejects_it(monkeypatch):
+    seen = []
+
+    async def fake(**kw):
+        seen.append(dict(kw))
+        if "temperature" in kw:
+            raise litellm.BadRequestError("temperature is not supported for this model", model="m",
+                                          llm_provider="bedrock")
+        return resp("ok")
+
+    async def creds(cfg, **kw):
+        return {"aws_access_key_id": "AKIAEXAMPLE", "aws_secret_access_key": "secret-example"}
+    monkeypatch.setattr(llm.litellm, "acompletion", fake)
+    monkeypatch.setattr(llm, "bedrock_credentials", creds)
+    monkeypatch.setattr(llm, "_NO_TEMPERATURE", set())
+    assert run(llm.complete_with(BEDROCK, [{"role": "user", "content": "x"}], temperature=0.3)) == "ok"
+    assert [("temperature" in k) for k in seen] == [True, False]  # retried once without it
+    seen.clear()
+    assert run(llm.complete_with(BEDROCK, [{"role": "user", "content": "x"}], temperature=0.3)) == "ok"
+    assert len(seen) == 1 and "temperature" not in seen[0]  # remembered: no failing first call
+
+
+def test_other_bad_requests_not_retried(monkeypatch):
+    n = []
+
+    async def fake(**kw):
+        n.append(1)
+        raise litellm.BadRequestError("max_tokens too large", model="m", llm_provider="openai")
+    monkeypatch.setattr(llm.litellm, "acompletion", fake)
+    with pytest.raises(AIError):
+        run(llm.complete_with(OPENAI, [{"role": "user", "content": "x"}], temperature=0.3))
+    assert n == [1]

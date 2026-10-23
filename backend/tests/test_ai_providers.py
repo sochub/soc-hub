@@ -56,7 +56,7 @@ def test_vertex_deployment_uses_adc():
 
 
 def test_bedrock_chain_and_creds():
-    assert build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="chain", source="deployment")) == {"model": "bedrock/m1", "aws_region_name": "us-east-1"}
+    assert build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="chain", source="deployment")) == {"model": "bedrock/converse/m1", "aws_region_name": "us-east-1"}
     kw = build_kwargs(cfg("bedrock", region="us-east-1", auth_mode="role", role_arn="arn:aws:iam::1:role/r"),
                       aws_creds={"aws_access_key_id": "A", "aws_secret_access_key": "S", "aws_session_token": "T"})
     assert kw["aws_access_key_id"] == "A" and kw["aws_session_token"] == "T"
@@ -92,7 +92,7 @@ def test_model_id_passed_verbatim(model):
     kw = build_kwargs(cfg("openai_compatible", model=model, api_base="https://x/v1"))
     assert kw["model"] == f"openai/{model}"
     kw = build_kwargs(cfg("bedrock", model=model, region="us-east-1", auth_mode="chain", source="deployment"))
-    assert kw["model"] == f"bedrock/{model}"
+    assert kw["model"] == f"bedrock/converse/{model}"
 
 
 def test_invalid_vertex_json_is_config_error():
@@ -144,3 +144,14 @@ def test_vertex_service_account_normalised():
     sa.pop("token_uri")
     creds = json.loads(build_kwargs(_vertex(sa))["vertex_credentials"])
     assert creds == SA_OK  # token_uri forced, universe_domain and unknown keys dropped
+
+
+@pytest.mark.parametrize("model,expected", [
+    ("global.anthropic.claude-sonnet-4-5-20250929-v1:0", "bedrock/converse/global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
+    ("arn:aws:bedrock:us-east-1:111122223333:application-inference-profile/abc123",
+     "bedrock/converse/arn:aws:bedrock:us-east-1:111122223333:application-inference-profile/abc123"),
+    ("invoke/anthropic.claude-v2", "bedrock/invoke/anthropic.claude-v2"),  # explicit route kept
+])
+def test_bedrock_pinned_to_converse(model, expected):
+    kw = build_kwargs(cfg("bedrock", model=model, region="us-east-1", auth_mode="chain", source="deployment"))
+    assert kw["model"] == expected
