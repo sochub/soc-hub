@@ -112,9 +112,10 @@ AI_MODEL=gemini-2.0-flash
 VERTEX_PROJECT=my-project
 VERTEX_LOCATION=us-central1
 
-# AWS Bedrock with an instance / task role (no keys in config)
+# AWS Bedrock with an instance / task role (no keys in config).
+# Use an inference profile id (us./eu./apac./global. prefix): newer models only run through one.
 AI_PROVIDER=bedrock
-AI_MODEL=anthropic.claude-3-5-sonnet-20240620-v1:0
+AI_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0
 AI_AWS_REGION=us-east-1
 ```
 
@@ -129,7 +130,65 @@ applies, in this order:
 4. ECS / Fargate task role
 5. EC2 instance profile (IMDS)
 
-The deployment identity needs `bedrock:InvokeModel` on the models it uses.
+The deployment identity needs the [Bedrock permissions below](#bedrock-permissions-and-model-access).
+
+#### Bedrock permissions and model access
+
+sochub calls the **Converse** API (the `bedrock-runtime` endpoint of the configured region), which
+AWS authorizes as `bedrock:InvokeModel`.
+
+**Model id.** Paste one of:
+
+- an **inference profile id**, e.g. `us.anthropic.claude-sonnet-4-5-20250929-v1:0` (cross-region:
+  `us.` / `eu.` / `apac.` …, or `global.`). Most current models can only be called this way;
+- a base **model id**, e.g. `anthropic.claude-3-haiku-20240307-v1:0`, for models that still offer
+  on-demand throughput in your region;
+- an **application inference profile ARN** (`arn:aws:bedrock:<region>:<acct>:application-inference-profile/…`).
+  Its region must be the region configured in sochub.
+
+**IAM policy** for the identity that calls Bedrock (the deployment identity, or the tenant's role):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "bedrock:InvokeModel*",
+    "Resource": [
+      "arn:aws:bedrock:*::foundation-model/*",
+      "arn:aws:bedrock:*:*:inference-profile/*",
+      "arn:aws:bedrock:*:*:application-inference-profile/*"
+    ]
+  }]
+}
+```
+
+The `*` region on `foundation-model` matters: an inference profile routes requests to other regions,
+and AWS checks the permission on the foundation model **in each region the profile can use**
+(`global.` profiles too). Scope it down to specific model/profile ARNs if you like, but keep every
+destination region.
+
+**First use of a model in an account** (AWS enables most models on first call):
+
+- **Anthropic models**: someone must submit the one-time *use case details* form first (Bedrock
+  console → Model catalog → an Anthropic model, or the `PutUseCaseForModelAccess` API). Until it is
+  approved, calls return `AccessDeniedException`.
+- **Models sold through AWS Marketplace** (most third-party models): the first call subscribes the
+  account, so the identity making it needs `aws-marketplace:Subscribe`,
+  `aws-marketplace:Unsubscribe` and `aws-marketplace:ViewSubscriptions`, or someone else must call the
+  model once (for example in the Bedrock playground). Later calls don't need these permissions. It can
+  take a few minutes to settle.
+
+**Common Bedrock errors** (shown to admins by **Test connection**):
+
+| Error | Fix |
+|---|---|
+| `ValidationException` mentioning *on-demand throughput isn't supported* | Use the model's **inference profile id** (`us.…`, `eu.…`, `global.…`) instead of the base model id. |
+| `AccessDeniedException` | Missing IAM permission (often the foundation model in another region, see above), the Anthropic use-case form isn't done, or the Marketplace subscription hasn't completed. |
+| `ResourceNotFoundException` / model identifier is invalid | Typo, or the model/profile isn't offered in the configured region. |
+| `ThrottlingException` | Account quota for that model; request an increase or use a cross-region profile. |
+| `Bedrock role assumption failed: AccessDenied` | Trust policy principal or External ID doesn't match, or the server identity lacks `sts:AssumeRole` on the role. |
+| Temperature errors | Handled automatically: sochub retries without `temperature` for models that reject it. |
 
 ### Tenant overrides
 
@@ -181,20 +240,9 @@ full reason, with secrets scrubbed, is shown only to admins in **Test connection
    }
    ```
 
-3. Give the role permission to invoke the model:
-
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [{
-       "Effect": "Allow",
-       "Action": "bedrock:InvokeModel",
-       "Resource": "arn:aws:bedrock:<region>::foundation-model/*"
-     }]
-   }
-   ```
-
-   Inference profiles also need their `inference-profile` ARN in `Resource`.
+3. Give the role the [Bedrock IAM policy](#bedrock-permissions-and-model-access) (`bedrock:InvokeModel*`
+   on foundation models in every region, inference profiles and application inference profiles), and
+   check the model's first-use requirements in that section.
 4. The server's own identity needs `sts:AssumeRole` on that role. Paste the role
    ARN, save, and run **Test connection**.
 

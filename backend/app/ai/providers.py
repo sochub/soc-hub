@@ -10,6 +10,9 @@ _PREFIX = {
     "anthropic": "anthropic", "gemini": "gemini", "vertex": "vertex_ai", "bedrock": "bedrock",
 }
 
+# An explicit LiteLLM route in the model id ("invoke/…", "chat_completions/…") is respected.
+_BEDROCK_ROUTES = frozenset({"converse", "invoke", "chat_completions", "openai"})
+
 SECRET_FIELDS: Dict[str, frozenset] = {
     "ollama": frozenset(),
     "openai": frozenset({"api_key", "organization"}),
@@ -107,6 +110,10 @@ def build_kwargs(cfg: ProviderConfig, aws_creds: Optional[dict] = None) -> dict:
         raise ConfigError("missing " + ", ".join(missing))
     p, s = cfg.provider, cfg.secrets or {}
     kw: dict = {"model": f"{_PREFIX[p]}/{cfg.model}"}
+    if p == "bedrock" and cfg.model.split("/", 1)[0] not in _BEDROCK_ROUTES:
+        # Converse is Bedrock's model-agnostic chat API. Without the pin LiteLLM uses the per-family
+        # InvokeModel route for ids missing from its model map (new models, new inference profiles).
+        kw["model"] = f"bedrock/converse/{cfg.model}"
     if p in ("ollama", "openai_compatible"):
         kw["api_base"] = cfg.api_base
     if p in ("openai", "openai_compatible", "anthropic", "gemini") and s.get("api_key"):

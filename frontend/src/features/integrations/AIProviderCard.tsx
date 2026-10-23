@@ -151,7 +151,10 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                         </select></label>
                     <label className="block"><span className="label-mono">model</span>
                         <input className={`${input} font-mono`} value={(form.model as string) ?? ''} onChange={(e) => set('model', e.target.value)}
-                            placeholder={provider === 'bedrock' ? 'anthropic.claude-3-5-sonnet-20241022-v2:0' : 'model id'} /></label>
+                            placeholder={provider === 'bedrock' ? 'us.anthropic.claude-sonnet-4-5-20250929-v1:0' : 'model id'} /></label>
+                    {provider === 'bedrock' && (
+                        <p className="text-xs text-fg-3">Use an inference profile id (<span className="font-mono">us.</span> / <span className="font-mono">eu.</span> / <span className="font-mono">global.</span>…) or an application inference profile ARN; newer models only run through one. The AWS identity needs <span className="font-mono">bedrock:InvokeModel*</span> on the profile and on the model in every region it routes to, and Anthropic models need the one-time use case form (see docs/configuration.md, “Bedrock permissions and model access”).</p>
+                    )}
                     {spec.plain.map((f) => (
                         <label key={f} className="block"><span className="label-mono">{FIELD_LABEL[f]}</span>
                             <input className={`${input} font-mono`} value={(form[f] as string) ?? ''} onChange={(e) => set(f, e.target.value)} /></label>

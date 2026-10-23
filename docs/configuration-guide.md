@@ -160,6 +160,10 @@ More symptoms are in the [Slack troubleshooting table](slack/setup.md#troublesho
 - `AI_*` settings go in **`backend/.env`**, not the root `.env`: compose does not pass them through.
 - Hosted providers: set `AI_PROVIDER`, `AI_MODEL` and `AI_API_KEY` (see `backend/.env.example`). Tenant
   admins can override the provider per tenant unless `AI_ALLOW_TENANT_OVERRIDE=false`.
+- **AWS Bedrock**: use an **inference profile id** as the model (e.g. `us.anthropic.claude-sonnet-4-5-20250929-v1:0`),
+  grant `bedrock:InvokeModel*` on foundation models in **every** region the profile routes to, and complete the
+  Anthropic use-case form once per account. Policy, first-use rules and an error table:
+  [Bedrock permissions and model access](configuration.md#bedrock-permissions-and-model-access).
 - Slow answers: the backend waits `AI_TIMEOUT_SECONDS` (120 s by default) and nginx waits 300 s. A
   "didn't answer in time" banner usually means the model is too large for the hardware.
 - Use **Clear** in the copilot header to start a fresh conversation; old context otherwise carries over.
