@@ -222,17 +222,18 @@ function MfaCard({ me }: { me: User }) {
     const [setupOpen, setSetupOpen] = useState(false);
     const [offOpen, setOffOpen] = useState(false);
     const enabled = !!me.mfa_enabled;
+    const viaSso = !enabled && me.has_password === false;  // same wording as tenant settings
 
     return (
         <section className={card}>
             <h2 className={cardHead}>Two-factor authentication</h2>
             <div className="p-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm">
-                    {enabled ? <ShieldCheck size={16} className="text-emerald-400" /> : <ShieldOff size={16} className="text-muted" />}
-                    <span className="text-fg-2">{enabled ? 'Two-factor authentication is on.' : 'Two-factor authentication is off.'}</span>
+                    {enabled || viaSso ? <ShieldCheck size={16} className="text-emerald-400" /> : <ShieldOff size={16} className="text-muted" />}
+                    <span className="text-fg-2">{enabled ? 'Two-factor authentication is on.' : viaSso ? 'Two-factor authentication is handled by single sign-on.' : 'Two-factor authentication is off.'}</span>
                 </div>
-                {!enabled && me.has_password !== false && <button type="button" className={btnPrimary} onClick={() => setSetupOpen(true)}>Turn on</button>}
-                {!enabled && me.has_password === false && (
+                {!enabled && !viaSso && <button type="button" className={btnPrimary} onClick={() => setSetupOpen(true)}>Turn on</button>}
+                {viaSso && (
                     <p className="text-xs text-fg-3 w-full">This account signs in through single sign-on; your identity provider handles two-factor.</p>
                 )}
                 {enabled && !me.mfa_required_by_tenant && me.has_password !== false && (

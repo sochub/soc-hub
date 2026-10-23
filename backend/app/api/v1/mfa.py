@@ -267,11 +267,12 @@ class SecurityIn(BaseModel):
 
 
 async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
+    # SSO-only accounts are excluded: their identity provider handles two-factor (same rule as login).
     n = (await db.execute(
         select(func.count()).select_from(TenantMembership)
         .join(User, User.id == TenantMembership.user_id)
         .where(TenantMembership.tenant_id == tenant.id, User.is_active.is_(True),
-               User.mfa_enabled_at.is_(None))
+               User.mfa_enabled_at.is_(None), User.password_login_enabled.is_(True))
     )).scalar_one()
     return SecurityOut(require_mfa=bool(tenant.require_mfa), members_without_mfa=int(n))
 
