@@ -1,7 +1,7 @@
 from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -344,6 +344,31 @@ async def get_or_create_session(
     return session
 
 
+async def _drop_sessions(db: AsyncSession, tenant_id: int, user_id: int, case_id: Optional[int]) -> None:
+    """Delete the user's sessions for a case (or the general one).
+
+    Bulk delete so the DB's ON DELETE CASCADE removes the messages; an ORM delete would try to
+    null their session_id (the relationship has no cascade) and fail the NOT NULL constraint.
+    """
+    await db.execute(delete(CopilotSession).where(
+        CopilotSession.case_id == case_id if case_id is not None else CopilotSession.case_id.is_(None),
+        CopilotSession.user_id == user_id,
+        CopilotSession.tenant_id == tenant_id,
+    ))
+
+
+@router.post("/sessions/general/restart", response_model=CopilotSessionSchema)
+async def restart_general_session(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Start a fresh general (case-less) session, replacing the old one."""
+    await _drop_sessions(db, tenant_id, current_user.id, None)
+    return await _create_general_session_with_briefing(db, tenant_id, current_user.id)
+
+
 @router.post("/sessions/{case_id}/restart", response_model=CopilotSessionSchema)
 async def restart_session(
     *,
@@ -360,18 +385,7 @@ async def restart_session(
     if not result.scalars().first():
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Delete existing sessions for this user + case
-    result = await db.execute(
-        select(CopilotSession).where(
-            CopilotSession.case_id == case_id,
-            CopilotSession.user_id == current_user.id,
-            CopilotSession.tenant_id == tenant_id,
-        )
-    )
-    old_sessions = result.scalars().all()
-    for s in old_sessions:
-        await db.delete(s)
-    await db.flush()
+    await _drop_sessions(db, tenant_id, current_user.id, case_id)
 
     session = await _create_session_with_briefing(db, case_id, tenant_id, current_user.id)
     return session
