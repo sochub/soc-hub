@@ -1,6 +1,3 @@
-import hashlib
-import hmac
-
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from app.core.security import get_password_hash, verify_password
@@ -25,11 +22,10 @@ def is_legacy_hash(stored: str) -> bool:
 
 def verify_webhook_key(key: str, stored: str) -> bool:
     """CPU-heavy for Argon2 rows: call it off the event loop."""
-    if not is_legacy_hash(stored):
-        return verify_password(key, stored)
-    # Rows from before Argon2 hold an unsalted SHA-256 that can't be converted without the key.
-    # The caller re-hashes them with Argon2 on first successful use; drop this branch once none remain.
-    return hmac.compare_digest(stored, hashlib.sha256(key.encode()).hexdigest())
+    if is_legacy_hash(stored):
+        # Legacy SHA-256 webhook hashes are no longer accepted.
+        return False
+    return verify_password(key, stored)
 
 
 class Webhook(Base):
