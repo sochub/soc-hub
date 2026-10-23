@@ -91,6 +91,29 @@ def _no_redirect_client(cfg: ProviderConfig, kwargs: dict, refused: list) -> Tup
     return handler, [owned, http]
 
 
+def normalize_messages(messages: List[dict]) -> List[dict]:
+    """Shape a chat for the strictest providers (Claude on Bedrock/Anthropic) without losing context.
+
+    - one system message, first;
+    - no assistant turn before the first user turn: the copilot's welcome briefing (or history cut
+      off mid-conversation) is folded into the system prompt instead of being dropped;
+    - consecutive same-role turns merged (a failed reply leaves user, user behind).
+    """
+    system = [m["content"] for m in messages if m.get("role") == "system" and m.get("content")]
+    turns: List[dict] = []
+    for m in messages:
+        role, content = m.get("role"), m.get("content")
+        if role == "system" or not content:
+            continue
+        if not turns and role == "assistant":
+            system.append(f"Earlier in this conversation you said:\n{content}")
+        elif turns and turns[-1]["role"] == role:
+            turns[-1] = {"role": role, "content": f"{turns[-1]['content']}\n\n{content}"}
+        else:
+            turns.append({"role": role, "content": content})
+    return ([{"role": "system", "content": "\n\n".join(system)}] if system else []) + turns
+
+
 async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float], json_mode: bool,
                 max_tokens: Optional[int], timeout: Optional[float], allowlist: Sequence[str]) -> str:
     secrets = list((cfg.secrets or {}).values())
@@ -128,7 +151,7 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
         kwargs["client"], to_close = _no_redirect_client(cfg, kwargs, refused)
     # `from None` throughout: the raw provider exception may carry keys; only the scrubbed text survives.
     try:
-        resp = await litellm.acompletion(messages=messages, **kwargs)
+        resp = await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
     except Exception as e:
         if refused:
             raise _fail(AIUnavailable, "AI endpoint redirect refused", "RedirectRefused") from None
