@@ -884,9 +884,10 @@ these changes.
   ≥12 chars with upper, lower, and a digit; common passwords rejected.
 - **Alert webhook** — `POST /api/v1/alerts/webhook` is authenticated **per webhook**.
   Tenant admins create named webhooks (one per source, e.g. "Splunk") in
-  **Settings → Integrations**; each has its own key, stored only as an Argon2id hash (keys from older
-  versions are re-hashed on first use) and
-  sent as the `X-API-Key` header. The key alone determines the destination tenant and
+  **Settings → Integrations**; each has its own key, stored only as an Argon2id hash. Keys created before
+  Argon2 hashing (unsalted SHA-256) no longer authenticate: those webhooks show **needs rotation**;
+  use **Rotate key** (`POST /api/v1/integrations/webhooks/{id}/rotate`) and update the sending tool. The
+  key is sent as the `X-API-Key` header. The key alone determines the destination tenant and
   the alert's source name.
 - **Security headers** — CSP, `X-Frame-Options`, HSTS, etc. on every response.
 - **Audit log** — every mutation is recorded with tenant, actor, and change set.

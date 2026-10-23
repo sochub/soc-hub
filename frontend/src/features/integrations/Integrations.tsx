@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import type { User } from '../../types';
-import { Plus, Trash2, Copy, Check } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, Copy, Check } from 'lucide-react';
 import HttpAllowlistCard from './HttpAllowlistCard';
 import SlackCard from './SlackCard';
 import AIProviderCard from './AIProviderCard';
@@ -10,7 +10,7 @@ import ThreatIntelCard from './ThreatIntelCard';
 import SecretsCard from './SecretsCard';
 import PageContainer from '../../components/layout/PageContainer';
 
-interface Webhook { id: number; name: string; key_prefix: string; created_at: string; }
+interface Webhook { id: number; name: string; key_prefix: string; created_at: string; needs_rotation?: boolean; }
 // Only the create response carries the full key; the server keeps just its hash.
 interface NewWebhook extends Webhook { api_key: string; }
 
@@ -32,6 +32,10 @@ export default function Integrations() {
     const create = useMutation({
         mutationFn: async (n: string) => (await api.post('/integrations/webhooks', { name: n })).data as NewWebhook,
         onSuccess: (wh) => { setName(''); setCopied(false); setCreated(wh); qc.invalidateQueries({ queryKey: ['webhooks'] }); },
+    });
+    const rotate = useMutation({
+        mutationFn: async (id: number) => (await api.post(`/integrations/webhooks/${id}/rotate`)).data as NewWebhook,
+        onSuccess: (wh) => { setCopied(false); setCreated(wh); qc.invalidateQueries({ queryKey: ['webhooks'] }); },
     });
     const revoke = useMutation({
         mutationFn: async (id: number) => api.delete(`/integrations/webhooks/${id}`),
@@ -84,7 +88,7 @@ export default function Integrations() {
                     <div className="glass-panel rounded-xl border border-line overflow-hidden">
                         <table className="w-full text-sm text-left">
                             <thead className="bg-panel border-b border-line text-xs uppercase text-fg-3 font-semibold tracking-wider">
-                                <tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">API Key</th><th className="px-4 py-3 w-32">Created</th><th className="px-4 py-3 w-20"></th></tr>
+                                <tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">API Key</th><th className="px-4 py-3 w-32">Created</th><th className="px-4 py-3 w-24"></th></tr>
                             </thead>
                             <tbody className="divide-y divide-line">
                                 {(webhooks || []).length === 0 ? (
@@ -94,11 +98,21 @@ export default function Integrations() {
                                         <td className="px-4 py-2.5 font-medium text-fg">{wh.name}</td>
                                         <td className="px-4 py-2.5">
                                             <span className="font-mono text-xs text-fg-2">{wh.key_prefix}…</span>
+                                            {wh.needs_rotation && (
+                                                <span className="ml-2 text-[11px] text-amber-300" title="This key predates the current key hashing and no longer authenticates. Rotate it and update the sending tool.">
+                                                    needs rotation
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-2.5 text-fg-3 text-xs">{new Date(wh.created_at).toLocaleDateString()}</td>
                                         <td className="px-4 py-2.5">
-                                            <button onClick={() => { if (confirm(`Revoke "${wh.name}"? Its key stops working.`)) revoke.mutate(wh.id); }}
-                                                className="text-muted hover:text-red-400"><Trash2 size={15} /></button>
+                                            <span className="flex items-center gap-2.5">
+                                                <button onClick={() => { if (confirm(`Issue a new key for "${wh.name}"? The current key stops working.`)) rotate.mutate(wh.id); }}
+                                                    disabled={rotate.isPending} aria-label={`Rotate key for ${wh.name}`} title="Rotate key"
+                                                    className={wh.needs_rotation ? 'text-amber-300 hover:text-amber-200' : 'text-muted hover:text-fg'}><RefreshCw size={15} /></button>
+                                                <button onClick={() => { if (confirm(`Revoke "${wh.name}"? Its key stops working.`)) revoke.mutate(wh.id); }}
+                                                    aria-label={`Revoke ${wh.name}`} className="text-muted hover:text-red-400"><Trash2 size={15} /></button>
+                                            </span>
                                         </td>
                                     </tr>
                                 ))}

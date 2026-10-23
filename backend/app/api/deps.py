@@ -15,10 +15,7 @@ from app.db.session import get_db
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.models.webhook import (
-    LEGACY_PREFIX_LEN, PREFIX_LEN, Webhook, hash_webhook_key, is_legacy_hash, verify_webhook_key,
-    webhook_key_prefix,
-)
+from app.models.webhook import PREFIX_LEN, Webhook, verify_webhook_key
 from app.schemas import user as user_schema
 from app.utils.roles import resolve_active_role
 
@@ -210,7 +207,7 @@ async def get_webhook_from_key(
         select(Webhook)
         .join(Tenant, Tenant.id == Webhook.tenant_id)
         .where(
-            Webhook.key_prefix.in_({x_api_key[:PREFIX_LEN], x_api_key[:LEGACY_PREFIX_LEN]}),
+            Webhook.key_prefix == x_api_key[:PREFIX_LEN],  # pre-Argon2 rows (8-char prefix) never match
             Tenant.is_active == True,  # noqa: E712
         )
     )).scalars().all()
@@ -225,10 +222,6 @@ async def get_webhook_from_key(
                 webhook = row
                 break
         if webhook is not None:
-            if is_legacy_hash(webhook.key_hash):  # upgrade a pre-Argon2 row now that we've seen its key
-                webhook.key_hash = await asyncio.to_thread(hash_webhook_key, x_api_key)
-                webhook.key_prefix = webhook_key_prefix(x_api_key)
-                await db.commit()
             if len(_verified_webhooks) >= _VERIFIED_CACHE_SIZE:
                 _verified_webhooks.pop(next(iter(_verified_webhooks)))
             _verified_webhooks[x_api_key] = (webhook.id, webhook.key_hash)

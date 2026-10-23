@@ -10,7 +10,7 @@ from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.case import Alert
 from app.models.tenant import Tenant
-from app.models.webhook import Webhook, hash_webhook_key
+from app.models.webhook import Webhook, hash_webhook_key, webhook_key_prefix
 
 URL = "/api/v1/alerts/webhook"
 
@@ -22,7 +22,8 @@ async def _scenario(emitted, concurrent):
         db.add(t)
         await db.flush()
         key = f"idem-{secrets.token_hex(16)}"
-        wh = Webhook(tenant_id=t.id, name="Splunk", key_hash=hash_webhook_key(key), key_prefix=key[:8])
+        wh = Webhook(tenant_id=t.id, name="Splunk", key_hash=hash_webhook_key(key),
+                     key_prefix=webhook_key_prefix(key))
         db.add(wh)
         await db.commit()
         tid, wid = t.id, wh.id

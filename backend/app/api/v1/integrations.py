@@ -49,7 +49,8 @@ class WebhookOut(BaseModel):
     id: int
     name: str
     key_prefix: str
-    api_key: Optional[str] = None  # only in the create response; never stored
+    api_key: Optional[str] = None  # only in the create/rotate response; never stored
+    needs_rotation: bool = False  # key predates Argon2 hashing and no longer authenticates
     created_at: datetime
     class Config:
         from_attributes = True
@@ -81,6 +82,29 @@ async def create_webhook(
     webhook = Webhook(tenant_id=tenant_id, name=webhook_in.name, key_hash=hash_webhook_key(key),
                       key_prefix=webhook_key_prefix(key))
     db.add(webhook)
+    await db.commit()
+    await db.refresh(webhook)
+    out = WebhookOut.model_validate(webhook)
+    out.api_key = key
+    return out
+
+
+@router.post("/webhooks/{webhook_id}/rotate", response_model=WebhookOut)
+async def rotate_webhook(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    webhook_id: int,
+    current_user: User = Depends(deps.require_admin),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Issue a new key for a webhook (same id and name). The old key stops working immediately."""
+    webhook = (await db.execute(
+        select(Webhook).where(Webhook.id == webhook_id, Webhook.tenant_id == tenant_id)
+    )).scalars().first()
+    if not webhook:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    key = generate_webhook_key()
+    webhook.key_hash, webhook.key_prefix = hash_webhook_key(key), webhook_key_prefix(key)
     await db.commit()
     await db.refresh(webhook)
     out = WebhookOut.model_validate(webhook)
