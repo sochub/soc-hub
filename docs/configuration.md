@@ -836,7 +836,8 @@ these changes.
   ≥12 chars with upper, lower, and a digit; common passwords rejected.
 - **Alert webhook** — `POST /api/v1/alerts/webhook` is authenticated **per webhook**.
   Tenant admins create named webhooks (one per source, e.g. "Splunk") in
-  **Settings → Integrations**; each has its own key, stored only as a SHA-256 hash and
+  **Settings → Integrations**; each has its own key, stored only as an Argon2id hash (keys from older
+  versions are re-hashed on first use) and
   sent as the `X-API-Key` header. The key alone determines the destination tenant and
   the alert's source name.
 - **Security headers** — CSP, `X-Frame-Options`, HSTS, etc. on every response.
