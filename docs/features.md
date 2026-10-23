@@ -35,6 +35,10 @@ local Ollama by default (see [AI providers](#ai-providers)).
   hallucinated), so "add a comment: …" records exactly what you said.
 - **Proactive suggestions** — it flags IOCs it notices in conversation
   ("add `1.2.3.4` as an artifact?") and offers to record findings to the timeline.
+- **Paste-friendly** — the message box grows with the text and keeps line breaks, so you can paste
+  logs or alert bodies (Enter sends, Shift+Enter adds a line).
+- **Clear** — the header's Clear button starts a fresh conversation (case or general), so unrelated
+  questions don't share context.
 
 See the design notes: [global widget](copilot/A-global-widget-design.md),
 [actions](copilot/B-actions-design.md).
@@ -76,7 +80,7 @@ Tenant admins store API tokens in Integrations -> Secrets and reference them in
 workflow HTTP nodes as `{{ secrets.NAME }}`. Values are encrypted, write-only,
 restricted to allowed hosts, sent over HTTPS only (unless the host is on the
 tenant HTTP allowlist), and never appear in run history (placeholders and `••••`
-instead). Only names a template actually references are resolved. An Automations
+instead). Only names a template actually references are resolved. A Workflows
 banner flags workflows with plaintext credentials; its Review dialog converts them
 to secrets in one step. HTTP nodes set to execute in dry run use real secrets. See [configuration](configuration.md#workflow-secrets).
 
@@ -103,13 +107,13 @@ fonts. See [configuration](configuration.md#incident-reports).
 Type `@` in a case comment to mention a teammate. A bell in the top bar and a `/notifications` page show
 mentions, assignments, new comments, status/severity changes and SLA breaches on cases you own or follow
 (owners always follow; commenting or being mentioned follows too; Follow/Following toggle in the case
-header). Mentions and assignments also go out as a Slack DM, or email if Slack isn't connected, at most once
+header). Mentions, assignments and SLA breaches also go out as a Slack DM, or email if Slack isn't connected, at most once
 per user per case every 5 minutes, and never with comment text. See
 [configuration](configuration.md#notifications-and-mentions).
 
 ## Telemetry dashboard
 
-A light, developer-centric "Telemetry Console" dashboard:
+The **Overview** page, a dark, developer-centric dashboard:
 
 - KPI tiles (total / open / critical / resolution rate / MTTR / this week) — the
   Total/Open/Critical tiles deep-link to a pre-filtered case list.
@@ -127,8 +131,8 @@ for a detail dossier with links into cases.
 
 ## Alert ingestion
 
-External tools post alerts to `POST /api/v1/alerts/webhook` using a **per-tenant**
-`X-API-Key`. The key determines the destination tenant; a leaked key can only ever
+External tools post alerts to `POST /api/v1/alerts/webhook` using a **per-webhook**
+`X-API-Key` (create one per source in **Settings → Integrations**). The key determines the destination tenant; a leaked key can only ever
 write to its owning tenant.
 
 Ingestion is **idempotent** on `(tenant, source, external_id)`, where `source` is

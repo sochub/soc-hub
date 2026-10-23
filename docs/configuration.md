@@ -3,6 +3,9 @@
 Backend settings come from environment variables (see `backend/.env.example`).
 Copy it to `backend/.env` and adjust.
 
+> Setting up SSO, two-factor, guests, Slack or the copilot? The
+> [configuration guide](configuration-guide.md) walks through each screen and explains the common errors.
+
 ## docker-compose (`.env` next to `docker-compose.yml`)
 
 See `.env.example`. These are interpolated into `docker-compose.yml`; the
@@ -50,7 +53,7 @@ below. A tenant admin can optionally **override** it for their tenant under
 | `VERTEX_PROJECT` / `VERTEX_LOCATION` | Vertex AI project and region | _(unset)_ |
 | `AI_TIMEOUT_SECONDS` | Per-call timeout (must be > 0) | `120` |
 | `AI_ALLOW_TENANT_OVERRIDE` | Allow tenant admins to set their own provider | `true` |
-| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Legacy Ollama settings, still honoured | `http://localhost:11434` / `llama3` |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Legacy Ollama settings, still honoured. Under docker compose the model is set to `llama3.2:3b` in `docker-compose.yml` (edit it there; `backend/.env` doesn't override it) | `http://localhost:11434` / `llama3` |
 
 **Backward compatibility.** With `AI_PROVIDER` unset, nothing changes: the app
 uses Ollama at `OLLAMA_BASE_URL` with `OLLAMA_MODEL`, as before.
@@ -71,7 +74,8 @@ real environment variables: in the backend and worker `environment:` section of
 work from `backend/.env`.)
 
 > Model choice matters for the copilot's action reliability. With Ollama,
-> `llama3.1` and `qwen2.5` emit structured actions more reliably than `llama3`.
+> larger models such as `llama3.1:8b` and `qwen2.5` emit structured actions more reliably than the
+> default `llama3.2:3b`, at the cost of more RAM.
 
 ### Examples
 
@@ -227,7 +231,7 @@ with "AI endpoint redirect refused". Point `api_base` at the final URL.
 
 ## Threat-intel enrichment
 
-SOC Hub can look up IOCs and artifacts in public threat-intelligence services and
+sochub can look up IOCs and artifacts in public threat-intelligence services and
 show the verdicts on the IOC/artifact. It is configured per tenant by a tenant
 admin in **Integrations -> Threat intel** (API: `GET/PUT/DELETE /api/v1/enrichment/config`,
 `POST /api/v1/enrichment/config/test`).
@@ -331,7 +335,7 @@ Files are written with mode 0600 (opened with `O_EXCL|O_NOFOLLOW`) and directori
 The storage root is strict: a key can never resolve outside it.
 
 **S3.** Credentials come from the standard AWS chain (environment, shared config, then
-an IAM role); prefer an IAM role. No keys are configured in SOC Hub. Uploads are sent
+an IAM role); prefer an IAM role. No keys are configured in sochub. Uploads are sent
 with server-side encryption (`AES256`).
 
 **Upload size limit.** It is enforced twice: by nginx (`client_max_body_size` follows
@@ -562,7 +566,7 @@ really sends the request, so it resolves real secrets. Allowed hosts and the HTT
 rule still apply. Use that option only for read-only lookups.
 
 **Scan and convert (existing workflows).** When workflows hold what looks like a
-literal credential, admins see a banner in **Automations**: "N workflows contain
+literal credential, admins see a banner in **Workflows**: "N workflows contain
 plaintext credentials — move them to Secrets", with **Review** and **Dismiss**
 buttons. The scan looks at `http_request` nodes with a literal host, in these
 places:
@@ -682,11 +686,11 @@ A failure while writing notifications is logged and never blocks the comment or 
 
 ### External delivery
 
-Only `mention` and `assigned` notifications leave the app, after the transaction commits, through the
+Only `mention`, `assigned` and `sla_breach` notifications leave the app, after the transaction commits, through the
 `deliver_notifications_task` Celery task (ids only).
 
 1. If the tenant has an active Slack integration, the user is found by their email in that Slack workspace
-   and sent a DM. The message is the summary, the case title and a link.
+   and sent a DM. The message is a case card (severity, status, owner and action buttons) with a link.
 2. If there is no Slack integration, or the lookup/post fails permanently (for example the email is not in
    Slack), an email is sent when SMTP is configured (see [Email](#email-optional--invitations-work-without-it)).
    Subject is the summary; the body is summary, case title and link.
@@ -736,14 +740,14 @@ bare 413. Other users may see a replaced photo up to 5 minutes late (browser cac
 limits, in its own `pwd:` counters). The
 new password follows the normal policy. On success all of the user's **other sessions
 are signed out** and this session gets a fresh token. Accounts created through SSO
-have no SOC Hub password (`has_password` is false): they cannot change one here, and
+have no sochub password (`has_password` is false): they cannot change one here, and
 cannot turn two-factor off themselves (an admin resets it instead).
 
 ### Two-factor authentication (TOTP)
 
 Users enrol under **Profile → Two-factor authentication**: scan the QR code (or type
 the key) into an authenticator app, then enter the 6-digit code **and their current
-password** to turn it on. (Accounts without a SOC Hub password — created through SSO —
+password** to turn it on. (Accounts without a sochub password — created through SSO —
 don't see "Turn on": their identity provider handles two-factor.) After that,
 password login returns a short-lived challenge and a second step
 (`POST /api/v1/auth/login/mfa`) exchanges challenge + code for the access token.
@@ -762,14 +766,14 @@ session it is spent (tracked in Redis), and reusing it returns
 - Turning two-factor off needs the **current password and a valid code**.
 - There are **no backup codes**. Recovery is an admin reset (below).
 - The secret is stored encrypted; it is shown only once, during setup.
-- **SSO logins skip SOC Hub two-factor** — the identity provider is trusted to
+- **SSO logins skip sochub two-factor** — the identity provider is trusted to
   enforce its own MFA. Two-factor applies to password sign-in only. Because a
   tenant's admins control its IdP, a tenant's SSO only signs in accounts that
   belong to **that tenant alone**: it refuses **super admins**, users who are also
   members of **another tenant**, and existing users who are **not a member** of the
   tenant (it never adds a membership to an existing account). Those users sign in
   with their password (and two-factor). Auto-provisioning only creates **new**
-  users. Accounts created by SSO have no SOC Hub password, so they can't be added
+  users. Accounts created by SSO have no sochub password, so they can't be added
   to another tenant (inviting one is refused with 409) — that would lock them out.
 
 **Tenant requirement.** A tenant admin can enable **Settings → Two-factor
@@ -778,7 +782,8 @@ before turning it on). Members of that tenant who have not enrolled are forced t
 their next password login (they get a setup-only token and the setup dialog), and
 **switching into** such a tenant is blocked (`403 mfa_setup_required`) until they have
 enrolled. While any tenant a user belongs to requires two-factor, the user cannot
-turn it off. The Security panel shows how many members have not enrolled yet.
+turn it off. The Security panel shows how many members have not enrolled yet; SSO-only accounts
+are not counted, since their identity provider handles two-factor.
 
 **Admin reset.** A user who loses their device is recovered by an admin: a **tenant
 admin** can reset members of the active tenant, a **super admin** can reset anyone.
@@ -829,9 +834,11 @@ these changes.
   [Profile and two-factor authentication](#profile-and-two-factor-authentication).
 - **Passwords** — Argon2 hashed; policy enforced everywhere a password is set:
   ≥12 chars with upper, lower, and a digit; common passwords rejected.
-- **Alert webhook** — `POST /api/v1/alerts/webhook` is authenticated **per tenant**.
-  Each tenant has its own `webhook_api_key` (super-admin can view/rotate); the key
-  alone determines the destination tenant, sent as the `X-API-Key` header.
+- **Alert webhook** — `POST /api/v1/alerts/webhook` is authenticated **per webhook**.
+  Tenant admins create named webhooks (one per source, e.g. "Splunk") in
+  **Settings → Integrations**; each has its own key, stored only as a SHA-256 hash and
+  sent as the `X-API-Key` header. The key alone determines the destination tenant and
+  the alert's source name.
 - **Security headers** — CSP, `X-Frame-Options`, HSTS, etc. on every response.
 - **Audit log** — every mutation is recorded with tenant, actor, and change set.
 - **Per-tenant SSO** — see [sso/saml-design.md](sso/saml-design.md).

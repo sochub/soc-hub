@@ -32,7 +32,7 @@ Guest sign-ins are `security` events with `actor = guest:<email>`. Link and SSO 
 - MFA sign-ins record `login.success` alongside `mfa.challenge_passed`, and setting up MFA during sign-in records it alongside `mfa.enabled`.
 - `ip` is the `X-Real-IP`/peer address only if it parses as an IP address, else the socket peer, else NULL.
 - Anonymous 401s are recorded per request (one `http.denied` row each). In production put an nginx `limit_req` zone in front of the API so a flood of unauthenticated requests can't flood the table.
-- Slack signed interactions (`POST /api/v1/slack/interactions`) are recorded as platform-level `write` rows (tenant NULL).
+- In Slack HTTP mode, signed Slack requests (`POST /api/v1/slack/interactions`, `/commands`, `/events`) are recorded as platform-level `write` rows (tenant NULL). In Socket Mode (the default) they never reach the HTTP API, so they produce no such rows; the case changes they cause are still in the case audit trail.
 
 ## Sensitive reads
 
@@ -69,7 +69,7 @@ The export releases the request's DB session before streaming and fetches each 1
 - **New sensitive read**: `@router.get(..., dependencies=[audit_read("thing.view")])`.
 - **Exclude a write route**: add `"METHOD /route/template": "reason"` to `AUDIT_EXCLUDED_ROUTES` in `middleware.py`. `tests/test_audit_guarantees.py` fails if an entry names a route that doesn't exist.
 - **New security event**: `await audit_event("security", "thing.happened", request=request, ...)`.
-- Route templates come from `middleware._route_template(scope)`, which relies on a private FastAPI attribute (FastAPI 0.142.2). The guarantees test cross-checks it against OpenAPI, so an upgrade that breaks it fails loudly.
+- Route templates come from `middleware._route_template(scope)`, which relies on a private FastAPI attribute (FastAPI 0.143.0). The guarantees test cross-checks it against OpenAPI, so an upgrade that breaks it fails loudly.
 - Tests: a conftest autouse fixture deletes every audit row a test inserts.
 
 ## Deploying the migration

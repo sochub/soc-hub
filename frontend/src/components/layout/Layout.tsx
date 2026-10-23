@@ -110,9 +110,7 @@ export default function Layout() {
                 <div className={cn('h-14 flex items-center border-b border-line shrink-0',
                     collapsed ? 'lg:justify-center px-3' : 'px-4 justify-between')}>
                     <Link to="/" className="flex items-center gap-2.5 min-w-0">
-                        <span className="w-7 h-7 flex items-center justify-center rounded-md bg-brand-gradient font-mono text-[11px] font-bold shrink-0">
-                            SH
-                        </span>
+                        <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="w-7 h-7 shrink-0" />
                         {(showLabels || mobileOpen) && (
                             <span className="font-display font-semibold text-[17px] tracking-tight text-fg truncate" title={appName}>{appName}</span>
                         )}
@@ -131,11 +129,7 @@ export default function Layout() {
                 </div>
 
                 {/* Tenant switcher (hidden when collapsed on desktop) */}
-                {(showLabels || mobileOpen) && (
-                    <div className="px-3 py-3 border-b border-line">
-                        <TenantSwitcher />
-                    </div>
-                )}
+                {(showLabels || mobileOpen) && <TenantSwitcher />}
 
                 {/* Nav */}
                 <nav className="flex-1 overflow-y-auto py-2">

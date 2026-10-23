@@ -190,7 +190,7 @@ export default function Dashboard() {
             <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
                 <div>
                     <h1 className="text-xl font-semibold tracking-tight text-fg">Overview</h1>
-                    <p className="label-mono mt-1">soc_hub // case telemetry</p>
+                    <p className="label-mono mt-1">sochub // case telemetry</p>
                 </div>
                 <button onClick={() => setShowNewCaseModal(true)}
                     className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover transition-colors">

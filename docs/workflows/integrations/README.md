@@ -1,6 +1,6 @@
 # Integration templates
 
-Ready-made workflows that pull security alerts and events from SaaS and cloud tools on a schedule, turn them into cases, and run response actions. They ship with SOC Hub: any instance on this version lists them under **Workflows › Templates**.
+Ready-made workflows that pull security alerts and events from SaaS and cloud tools on a schedule, turn them into cases, and run response actions. They ship with sochub: any instance on this version lists them under **Workflows › Templates**.
 
 ## How to use them
 

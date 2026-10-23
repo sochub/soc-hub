@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User as UserIcon, Loader2, Sparkles, Terminal, RotateCcw, X } from 'lucide-react';
+import { Send, Bot, User as UserIcon, Loader2, Sparkles, Terminal, Eraser, X } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -36,6 +36,7 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
     const isCase = !!caseId && caseId > 0;
     const [input, setInput] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
     const queryClient = useQueryClient();
 
     const sessionKey = isCase ? ['copilot-session', caseId] : ['copilot-session', 'general'];
@@ -73,15 +74,20 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
     });
 
     const restartMutation = useMutation({
-        mutationFn: async () => {
-            // Restart is only available for case sessions.
-            return (await api.post(`/copilot/sessions/${caseId}/restart`)).data;
-        },
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: sessionKey }),
+        mutationFn: async () => (await api.post(`/copilot/sessions/${isCase ? caseId : 'general'}/restart`)).data,
+        onSuccess: () => { chatMutation.reset(); return queryClient.invalidateQueries({ queryKey: sessionKey }); },
     });
 
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
+    // Grow with the text (pasted reports, logs) up to max-h, then scroll.
+    useEffect(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${el.scrollHeight}px`;
+    }, [input]);
+
+    const handleSubmit = (e?: React.FormEvent) => {
+        e?.preventDefault();
         if (!input.trim() || chatMutation.isPending || !session) return;
         const message = input;
         setInput('');
@@ -105,17 +111,16 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                     )}
                 </h3>
                 <div className="flex items-center gap-2">
-                    {isCase && (
-                        <button
-                            onClick={() => restartMutation.mutate()}
-                            disabled={restartMutation.isPending || isLoadingSession}
-                            title="Restart session"
-                            aria-label="Restart session"
-                            className="p-1.5 text-fg-3 hover:text-white hover:bg-raised rounded-md transition-all disabled:opacity-50"
-                        >
-                            <RotateCcw size={14} className={restartMutation.isPending ? 'animate-spin' : ''} />
-                        </button>
-                    )}
+                    <button
+                        onClick={() => restartMutation.mutate()}
+                        disabled={restartMutation.isPending || chatMutation.isPending || isLoadingSession}
+                        title="Clear conversation"
+                        aria-label="Clear conversation"
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-fg-3 hover:text-fg hover:bg-raised rounded-md transition-all disabled:opacity-50"
+                    >
+                        {restartMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Eraser size={13} />}
+                        Clear
+                    </button>
                     {onClose && (
                         <button
                             onClick={onClose}
@@ -151,7 +156,7 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                                 {msg.role === 'assistant' ? <Bot size={16} /> : <UserIcon size={16} />}
                             </div>
                             <div className={cn(
-                                'rounded-xl p-3 text-sm max-w-[85%]',
+                                'rounded-xl p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere]',
                                 msg.role === 'assistant'
                                     ? 'bg-raised/80 text-fg border border-line shadow-xs'
                                     : 'bg-accent/10 text-accent border border-accent/20'
@@ -180,8 +185,8 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                             <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/30 text-accent flex items-center justify-center shrink-0 shadow-lg">
                                 <UserIcon size={16} />
                             </div>
-                            <div className="rounded-xl p-3 text-sm max-w-[85%] bg-accent/10 text-accent border border-accent/20">
-                                <p className="leading-relaxed">{chatMutation.variables}</p>
+                            <div className="rounded-xl p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere] bg-accent/10 text-accent border border-accent/20">
+                                <p className="leading-relaxed whitespace-pre-wrap">{chatMutation.variables}</p>
                             </div>
                         </motion.div>
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
@@ -207,14 +212,19 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
             <div className="p-4 border-t border-line bg-panel/30 shrink-0">
                 <form onSubmit={handleSubmit} className="relative group">
                     <div className="absolute inset-0 bg-accent/5 rounded-lg -z-10 group-focus-within:bg-accent/10 transition-colors" />
-                    <input
-                        type="text"
+                    <textarea
+                        ref={inputRef}
+                        rows={1}
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => {
+                            // Enter sends, Shift+Enter adds a line; never send mid-IME composition.
+                            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSubmit(); }
+                        }}
                         placeholder={isCase ? 'Ask about this case…' : 'Ask about the queue or SOC topics…'}
                         disabled={isLoadingSession || !session}
                         aria-label="Message the copilot"
-                        className="w-full bg-canvas/80 border border-line rounded-lg py-3 pl-10 pr-10 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent/50 focus:border-accent/50 transition-all text-fg placeholder:text-fg-3 font-medium disabled:opacity-50"
+                        className="block w-full max-h-48 resize-none overflow-y-auto bg-canvas/80 border border-line rounded-lg py-3 pl-10 pr-10 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent/50 focus:border-accent/50 transition-all text-fg placeholder:text-fg-3 font-medium disabled:opacity-50"
                     />
                     <Terminal size={14} className="absolute left-3.5 top-3.5 text-fg-3 group-focus-within:text-accent transition-colors" />
                     <button

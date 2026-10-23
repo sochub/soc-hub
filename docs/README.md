@@ -1,6 +1,6 @@
 # Documentation
 
-Documentation for **SOC Hub — Case Management**. Start with the guides, then dive
+Documentation for **sochub — Case Management**. Start with the guides, then dive
 into the per-subsystem design notes.
 
 ## Guides
@@ -10,7 +10,13 @@ into the per-subsystem design notes.
 | [Getting Started](getting-started.md) | Run the stack, bootstrap an admin, seed demo data |
 | [Architecture](architecture.md) | High-level components, data model, request flow |
 | [Configuration](configuration.md) | Environment variables and security settings |
+| [Configuration guide](configuration-guide.md) | Step-by-step SSO, MFA, guests, Slack and AI setup with screenshots, and what each error means |
+| [Deployment](deployment.md) | Prebuilt images, Fargate, a VPS or Kubernetes |
 | [Features](features.md) | Copilot, playbooks, dashboard, graph, multi-tenancy, webhooks |
+| [Slack](slack/setup.md) | Bring-your-own Slack app, Socket Mode, `/sochub` |
+| [Workflows](workflows/README.md) | Automation engine and vendor integrations |
+| [Case guests](guests/README.md) | Inviting outside people to a single case |
+| [Audit log](audit/README.md) | What the platform audit log records |
 
 ## Design notes
 

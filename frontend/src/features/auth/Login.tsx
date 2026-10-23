@@ -105,9 +105,7 @@ export default function Login() {
                 <div className="w-full max-w-sm space-y-8">
                     <div className="space-y-2">
                         <div className="flex items-center gap-2.5 mb-6">
-                            <div className="w-9 h-9 flex items-center justify-center bg-brand-gradient rounded-lg font-mono text-xs font-bold">
-                                SH
-                            </div>
+                            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="w-9 h-9" />
                             <span className="font-display text-xl font-semibold tracking-tight">sochub</span>
                         </div>
                         <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>

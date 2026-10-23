@@ -183,7 +183,7 @@
   @apply border-line my-3;
 }
 .copilot-markdown table {
-  @apply w-full border-collapse my-2 text-xs;
+  @apply block max-w-full overflow-x-auto border-collapse my-2 text-xs;
 }
 .copilot-markdown th {
   @apply bg-panel text-fg-2 font-semibold text-left p-2 border border-line;

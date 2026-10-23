@@ -73,7 +73,7 @@ export default function TenantSwitcher() {
     };
 
     return (
-        <div className="relative">
+        <div className="px-3 py-3 border-b border-line"><div className="relative">
             <p className="label-mono mb-1.5 px-1">{isSuper ? 'viewing tenant' : 'tenant'}</p>
             <button
                 onClick={() => { setOpen((o) => !o); setMfaBlocked(false); setSwitchError(null); }}
@@ -131,6 +131,6 @@ export default function TenantSwitcher() {
                     })}
                 </ul>
             )}
-        </div>
+        </div></div>
     );
 }
