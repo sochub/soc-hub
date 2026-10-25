@@ -215,6 +215,22 @@ def test_revoke():
     _wrap(body)
 
 
+def test_non_ascii_client_id_is_refused_not_500():
+    async def body(c, ids):
+        cid, u, t_ok, j = await _grant(c, ids)
+        bad = "cl\u00efent-\u00e9"
+        r = await c.post(TOKEN, data={"grant_type": "refresh_token", "refresh_token": j["refresh_token"],
+                                      "client_id": bad})
+        assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+        code, verifier = await _code(c, cid, u, t_ok.id)
+        r = await c.post(TOKEN, data=_exchange_form(bad, code, verifier))
+        assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+        r = await c.post(REVOKE, data={"token": j["refresh_token"], "client_id": bad})
+        assert r.status_code == 200
+        assert (await _verify(j["access_token"])) is not None
+    _wrap(body)
+
+
 def test_verify_ok_returns_live_role():
     async def body(c, ids):
         cid, u, t_ok, j = await _grant(c, ids)
@@ -329,3 +345,11 @@ def test_verify_super_admin_needs_membership():
             await db.commit()
         assert (await _verify(j["access_token"])) is None
     _wrap(body)
+
+
+def test_resource_by_url_ignores_trailing_slash():
+    from app.oauth.resources import resource_by_url
+    url = RESOURCES["mcp"].url
+    assert resource_by_url(url + "/") is RESOURCES["mcp"]
+    assert resource_by_url(url) is RESOURCES["mcp"]
+    assert resource_by_url(url + "/x") is None

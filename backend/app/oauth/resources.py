@@ -24,7 +24,8 @@ RESOURCES: dict[str, Resource] = {
 
 
 def resource_by_url(url: Optional[str]) -> Optional[Resource]:
-    """None / omitted selects the default (mcp); an unknown URL returns None."""
+    """None / omitted selects the default (mcp); an unknown URL returns None. A trailing slash is ignored."""
     if not url:
         return RESOURCES["mcp"]
-    return next((r for r in RESOURCES.values() if r.url == url), None)
+    url = url.rstrip("/")
+    return next((r for r in RESOURCES.values() if r.url.rstrip("/") == url), None)

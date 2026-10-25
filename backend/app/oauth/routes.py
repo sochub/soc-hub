@@ -384,6 +384,11 @@ async def _load_user(db: AsyncSession, user_id) -> Optional[User]:
                              .execution_options(populate_existing=True))).scalar_one_or_none()
 
 
+def _same(a: str, b: str) -> bool:
+    """Constant-time string equality that also accepts non-ASCII input (compare_digest on str does not)."""
+    return hmac.compare_digest(a.encode(), b.encode())
+
+
 async def _exchange_code(request: Request, db: AsyncSession, form) -> JSONResponse:
     code, redirect_uri = _form_str(form, "code"), _form_str(form, "redirect_uri")
     client_id, verifier = _form_str(form, "client_id"), _form_str(form, "code_verifier")
@@ -396,7 +401,7 @@ async def _exchange_code(request: Request, db: AsyncSession, form) -> JSONRespon
         stored = json.loads(raw)
     except (TypeError, ValueError):
         return _token_err("invalid_grant", "The authorization code is invalid or expired.")
-    if (not hmac.compare_digest(str(stored.get("client_id", "")), client_id)
+    if (not _same(str(stored.get("client_id", "")), client_id)
             or stored.get("redirect_uri") != redirect_uri
             or not _pkce_ok(verifier, stored.get("code_challenge"))):
         return _token_err("invalid_grant", "The authorization code does not match this request.")
@@ -425,7 +430,7 @@ async def _refresh(request: Request, db: AsyncSession, form) -> JSONResponse:
     owner = (await db.execute(select(AuthSession.client_id).where(
         AuthSession.id == sid, AuthSession.kind == "oauth"))).first() if _SID_RE.match(sid) else None
     # A refresh token presented by another client is refused before it can rotate anything.
-    if owner is None or not hmac.compare_digest(str(owner[0] or ""), client_id):
+    if owner is None or not _same(str(owner[0] or ""), client_id):
         return _token_err("invalid_grant", "The refresh token is invalid.")
     try:
         row, user, new_refresh = await sessions.rotate(db, presented, kind="oauth")
@@ -472,7 +477,7 @@ async def revoke(request: Request, db: AsyncSession = Depends(deps.get_db)):
         return ok
     row = (await db.execute(select(AuthSession).where(
         AuthSession.id == sid, AuthSession.kind == "oauth", AuthSession.revoked_at.is_(None)))).scalar_one_or_none()
-    if row is None or not hmac.compare_digest(str(row.client_id or ""), client_id):
+    if row is None or not _same(str(row.client_id or ""), client_id):
         return ok
     h = sessions.hash_secret(secret)
     if not (hmac.compare_digest(h, row.refresh_hash)
