@@ -220,6 +220,11 @@ async def switch_tenant(
             raise HTTPException(status_code=403, detail="You are not a member of that tenant.")
 
     if not login_tenant.session_may_enter(current_user, target.id, target.member_login_method):
+        # Break-glass admin without MFA: enrolling MFA is what would let this session in.
+        if (current_user.mfa_enabled_at is None
+                and login_tenant.session_may_enter(current_user, target.id, target.member_login_method,
+                                                   mfa_enabled=True)):
+            raise HTTPException(status_code=403, detail="mfa_setup_required")
         raise login_tenant.method_refusal(current_user, target.id, target.member_login_method, target.slug)
 
     if (current_user.mfa_enabled_at is None

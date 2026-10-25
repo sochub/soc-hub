@@ -18,11 +18,14 @@ def _member_role(user: User, tenant_id: int) -> Optional[str]:
     return next((m.role for m in user.memberships if m.tenant_id == tenant_id), None)
 
 
-def session_may_enter(user: User, tenant_id: int, method: str) -> bool:
-    """Login policy: may this request's session (its amr / sso_tid) act in `tenant_id`?"""
+def session_may_enter(user: User, tenant_id: int, method: str, *, mfa_enabled: Optional[bool] = None) -> bool:
+    """Login policy: may this request's session (its amr / sso_tid) act in `tenant_id`?
+    `mfa_enabled` overrides the user's real MFA state (to ask "would it, once MFA is on?")."""
+    if mfa_enabled is None:
+        mfa_enabled = user.mfa_enabled_at is not None
     return member_may_enter(
         method, amr=getattr(user, "_amr", AMR_PWD), sso_tenant_id=getattr(user, "_sso_tenant_id", None),
-        tenant_id=tenant_id, role=_member_role(user, tenant_id), mfa_enabled=user.mfa_enabled_at is not None,
+        tenant_id=tenant_id, role=_member_role(user, tenant_id), mfa_enabled=mfa_enabled,
         is_super_admin=bool(user.is_super_admin))
 
 
