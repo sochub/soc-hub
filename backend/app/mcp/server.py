@@ -39,7 +39,7 @@ from app.oauth.tokens import OAuthPrincipal, verify_oauth_access_token
 
 logger = logging.getLogger(__name__)
 
-ROLE_ORDER = {"viewer": 0, "analyst": 1, "admin": 2, "super_admin": 2}  # super_admin is never a membership role
+ROLE_ORDER = {"viewer": 0, "analyst": 1, "admin": 2}  # live membership roles (tenant_role); never "super_admin"
 
 INSTRUCTIONS = (
     "SOC Hub case management. Every tool acts as the signed-in analyst, in one organization (tenant), with that "
@@ -112,8 +112,7 @@ async def _principal(db, at: AccessToken) -> OAuthPrincipal:
     user._amr = c.get("amr")
     user._sso_tenant_id = c.get("sso_tenant_id")
     user._session_id = c["session_id"]
-    role = "admin" if c["role"] == "super_admin" else c["role"]
-    return OAuthPrincipal(user=user, tenant_id=c["tenant_id"], role=role, session_id=c["session_id"],
+    return OAuthPrincipal(user=user, tenant_id=c["tenant_id"], role=c["role"], session_id=c["session_id"],
                           client_id=at.client_id, client_name=c.get("client_name") or at.client_id,
                           scopes=tuple(at.scopes))
 
@@ -151,6 +150,8 @@ async def _call(name: str, ctx: Optional[Context], args: dict) -> dict:
                 raise SDKToolError(str(e)) from None
         return result
     except SDKToolError:
+        if outcome == "success":  # refused before the tool ran (e.g. the principal no longer resolves)
+            outcome = "denied"
         raise
     except Exception:
         outcome = "error"

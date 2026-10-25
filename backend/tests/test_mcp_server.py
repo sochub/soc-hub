@@ -249,3 +249,21 @@ def test_web_token_rejected():
                          headers={**ACCEPT, "Authorization": f"Bearer {web}"})
         assert r.status_code == 401
     _go(body)
+
+
+def test_refused_principal_is_not_audited_as_success(monkeypatch):
+    from app.mcp import server as mcp_srv
+
+    async def refuse(db, at):
+        raise mcp_srv.SDKToolError("Not authorized")
+    monkeypatch.setattr(mcp_srv, "_principal", refuse)
+
+    async def body(c, ids):
+        t, user, _, token = await _setup(ids)
+        r = await (await Mcp(c, token).init()).call("whoami")
+        assert r["error"] and "Not authorized" in r["text"]
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(AuditLog).where(AuditLog.action == "mcp.whoami",
+                                                            AuditLog.user_id == user.id))).scalars().all()
+        assert len(rows) == 1 and rows[0].outcome == "denied"
+    _go(body)
