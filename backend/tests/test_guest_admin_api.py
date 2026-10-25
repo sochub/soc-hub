@@ -241,5 +241,11 @@ def test_active_reflects_allowlist_and_tenant_and_login_link(monkeypatch):
         async with client() as cl:
             r = await cl.post(f"/api/v1/cases/{c_sso.id}/guests", json={"email": e, "permission": "viewer"})
             assert r.status_code == 201
+            assert "/guest/login" in sent[-1] and "?t=" not in sent[-1]  # SAML ready, but guests use password
+            async with AsyncSessionLocal() as db:
+                (await db.get(Tenant, t_sso.id)).guest_login_method = "saml"
+                await db.commit()
+            r = await cl.post(f"/api/v1/cases/{c_sso.id}/guests/{r.json()['id']}/resend")
+            assert r.status_code in (200, 204), r.text
             assert f"/guest/login?t={t_sso.slug}" in sent[-1]
     run(body)

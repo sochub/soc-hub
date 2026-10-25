@@ -27,11 +27,11 @@ PW = "Old-Password-12345"
 async def _setup():
     h = secrets.token_hex(3)
     async with AsyncSessionLocal() as db:
-        ta = Tenant(name="wf-test", slug=f"wf-test-{h}-sa")
+        ta = Tenant(name="wf-test", slug=f"wf-test-{h}-sa", member_login_method="saml")
         tb = Tenant(name="wf-test", slug=f"wf-test-{h}-sb")
         db.add_all([ta, tb])
         await db.flush()
-        db.add(TenantSSOConfig(tenant_id=ta.id, enabled=True, idp_entity_id="https://idp.example.com",
+        db.add(TenantSSOConfig(tenant_id=ta.id, idp_entity_id="https://idp.example.com",
                                idp_sso_url="https://idp.example.com/sso", idp_x509_cert="MIIB",
                                auto_provision=True, default_role="analyst"))
         users = {}

@@ -43,7 +43,7 @@ async def make_tenant(db, ids: Ids, *, allow=(DOMAIN,), require_sso=False, sso=F
     await db.flush()
     ids.tenants.append(int(t.id))
     if sso:
-        db.add(TenantSSOConfig(tenant_id=t.id, enabled=True, idp_entity_id="https://idp.example/e",
+        db.add(TenantSSOConfig(tenant_id=t.id, idp_entity_id="https://idp.example/e",
                                idp_sso_url="https://idp.example/sso", idp_x509_cert="MIIB"))
     await db.commit()
     return t

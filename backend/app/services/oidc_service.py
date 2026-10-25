@@ -176,7 +176,7 @@ async def verify_id_token(id_token: str, meta: dict, *, client_id: str, nonce: s
         )
     except jwt.PyJWTError as e:
         raise OIDCError("id_token", f"invalid token: {type(e).__name__}") from e
-    if not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
+    if not nonce or not secrets.compare_digest(str(claims.get("nonce", "")).encode(), nonce.encode()):
         raise OIDCError("id_token", "nonce mismatch")
     return claims
 

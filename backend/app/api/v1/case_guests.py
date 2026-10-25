@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
-from app.api.v1.sso import _sso_ready, _tenant_and_config
+from app.api.v1.sso import _tenant_and_config, oidc_ready, saml_ready
 from app.core.config import settings
 from app.guests import notify as guest_notify
 from app.guests import tokens
@@ -18,7 +18,6 @@ from app.guests.access import domain_allowed
 from app.models.case import Case, TimelineEvent
 from app.models.case_guest import CaseGuest, GuestAccount
 from app.models.tenant import LOGIN_METHODS, Tenant
-from app.models.tenant_sso_config import TenantSSOConfig
 from app.models.user import User
 from app.schemas import case as case_schema
 from app.services.email_service import send_guest_invite_email
@@ -97,12 +96,10 @@ def _check_expiry(value: Optional[datetime]) -> datetime:
 async def portal_link(db: AsyncSession, grant: CaseGuest, tenant: Tenant) -> str:
     """Where an email should send this guest: SSO/account login, or a fresh magic link."""
     base = settings.FRONTEND_URL.rstrip("/")
-    if tenant.guest_login_method != "password":
+    if tenant.guest_login_method != "password":  # ?t= offers the SSO button: only where guests sign in that way
         return f"{base}/guest/login?t={tenant.slug}"
-    if grant.guest_account_id is not None:  # ?t= offers the SSO button, so only when SSO actually works
-        cfg = (await db.execute(select(TenantSSOConfig).where(TenantSSOConfig.tenant_id == tenant.id))
-               ).scalars().first()
-        return f"{base}/guest/login?t={tenant.slug}" if _sso_ready(cfg) else f"{base}/guest/login"
+    if grant.guest_account_id is not None:
+        return f"{base}/guest/login"
     return f"{base}/guest/link#{tokens.issue_link(grant.id)}"
 
 
@@ -262,13 +259,9 @@ async def share_timeline_event(*, case_id: int, event_id: int, body: ShareIn, db
                              .where(TimelineEvent.id == event_id))).scalars().first()
 
 
-def _oidc_ready(cfg: Optional[TenantSSOConfig]) -> bool:
-    return bool(cfg and cfg.oidc_issuer and cfg.oidc_client_id and cfg.oidc_client_secret_enc)
-
-
 async def _settings_out(db: AsyncSession, tenant: Tenant) -> GuestSettingsOut:
     _, cfg = await _tenant_and_config(db, tenant.slug)
-    saml, oidc = _sso_ready(cfg), _oidc_ready(cfg)
+    saml, oidc = saml_ready(cfg), oidc_ready(cfg)
     return GuestSettingsOut(domain_allowlist=list(tenant.guest_domain_allowlist or []),
                             login_method=tenant.guest_login_method, sso_ready=saml or oidc,
                             saml_ready=saml, oidc_ready=oidc)
