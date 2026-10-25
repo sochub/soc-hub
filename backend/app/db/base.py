@@ -31,3 +31,5 @@ from app.models.case_report import CaseReport  # noqa: F401
 from app.models.tenant_secret import TenantSecret  # noqa: F401
 from app.models.notification import Notification, CaseFollower  # noqa: F401
 from app.models.case_guest import CaseGuest, GuestAccount, GuestNotification  # noqa: F401
+from app.models.auth_session import AuthSession  # noqa: F401
+from app.models.oauth_client import OAuthClient  # noqa: F401
