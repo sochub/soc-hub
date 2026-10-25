@@ -81,11 +81,20 @@ async def _revoke_and_raise(db, row: AuthSession, code: str) -> None:
     raise RefreshError(code)
 
 
-async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, User, str]:
+async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, User, Optional[str]]:
     """Validate a refresh token and rotate its secret. Returns ``(row, user, new_refresh_token)``.
 
+    ``new_refresh_token`` is None for the benign race: the presented secret is the one a concurrent refresh
+    rotated less than REFRESH_GRACE_SECONDS ago. The row's hashes and ``rotated_at`` are left untouched (only
+    ``last_used_at`` is bumped); the caller re-issues the access token only and must NOT replace the
+    client's refresh token, so the client keeps the winner's secret and no false reuse alarm follows.
+
     The session row is locked (SELECT ... FOR UPDATE) so concurrent rotations serialize. On success it
-    flushes and the caller commits (which also releases the lock). Refusals that revoke commit first.
+    flushes and the caller commits (which also releases the lock).
+
+    Refusals that revoke the session (reuse, token_version change, inactive/deleted user) COMMIT the
+    caller's session before raising, so the revocation survives the caller's rollback. Any other pending
+    work on ``db`` is committed with it: call ``rotate`` before making other changes in the same session.
     """
     sid, _, secret = (refresh_token or "").partition(".")
     if not _SID_RE.match(sid) or not secret:
@@ -120,14 +129,16 @@ async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, Use
     if user is None or not user.is_active or int(user.token_version or 0) != row.tv:
         await _revoke_and_raise(db, row, "revoked")
 
-    new_secret = _new_secret()
-    if not grace:
-        row.prev_refresh_hash = row.refresh_hash
-        row.rotated_at = now
-    # In the grace path prev_refresh_hash/rotated_at stay put: the window is bounded from the first
-    # rotation and cannot be extended by replaying the old secret.
-    row.refresh_hash = hash_secret(new_secret)
     row.last_used_at = now
+    if grace:
+        # No new secret: the winner's secret stays current, and the window (bounded from the first
+        # rotation) cannot be extended by replaying the old secret.
+        await db.flush()
+        return row, user, None
+    new_secret = _new_secret()
+    row.prev_refresh_hash = row.refresh_hash
+    row.rotated_at = now
+    row.refresh_hash = hash_secret(new_secret)
     await db.flush()
     return row, user, f"{row.id}.{new_secret}"
 

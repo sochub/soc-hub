@@ -115,15 +115,25 @@ def test_concurrent_refresh_grace():
         async with AsyncSessionLocal() as db:
             _, _, first = await sessions.rotate(db, token, kind="web")
             await db.commit()
-        rotated = (await _row(sid)).rotated_at
+        rotated = await _row(sid)
         async with AsyncSessionLocal() as db:
-            row, _, second = await sessions.rotate(db, token, kind="web")  # old secret, within grace
+            row, user, second = await sessions.rotate(db, token, kind="web")  # old secret, within grace
             await db.commit()
-        assert second not in (token, first) and row.id == sid
+        assert second is None and row.id == sid and user.id == u.id
         after = await _row(sid)
         assert after.revoked_at is None
-        assert after.refresh_hash == sessions.hash_secret(second.split(".", 1)[1])
-        assert after.rotated_at == rotated  # grace window is not extended by replays
+        assert after.refresh_hash == rotated.refresh_hash == sessions.hash_secret(first.split(".", 1)[1])
+        assert after.prev_refresh_hash == rotated.prev_refresh_hash
+        assert after.rotated_at == rotated.rotated_at  # grace window is not extended by replays
+        # The winner's secret still rotates normally afterwards, and so does its successor.
+        async with AsyncSessionLocal() as db:
+            _, _, third = await sessions.rotate(db, first, kind="web")
+            await db.commit()
+        assert third is not None
+        async with AsyncSessionLocal() as db:
+            _, _, fourth = await sessions.rotate(db, third, kind="web")
+            await db.commit()
+        assert fourth is not None and (await _row(sid)).revoked_at is None
     _with_session(t)
 
 
@@ -138,12 +148,36 @@ def test_parallel_rotations_serialize():
                 _, _, new = await sessions.rotate(db, token, kind="web")
                 await db.commit()
                 return new
-        a, b = await asyncio.gather(one(), one())
-        assert a != b
+        results = await asyncio.gather(one(), one())
+        winners = [r for r in results if r is not None]
+        assert len(winners) == 1 and results.count(None) == 1
         after = await _row(sid)
         assert after.revoked_at is None
-        assert after.refresh_hash in (sessions.hash_secret(a.split(".", 1)[1]),
-                                      sessions.hash_secret(b.split(".", 1)[1]))
+        assert after.refresh_hash == sessions.hash_secret(winners[0].split(".", 1)[1])
+    _with_session(t)
+
+
+def test_inactive_user_refused():
+    async def t(sid, token, ids, u, sids):
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(User).where(User.id == u.id).values(is_active=False))
+            await db.commit()
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RefreshError) as ei:
+                await sessions.rotate(db, token, kind="web")
+            await db.rollback()
+        assert ei.value.code == "revoked"
+        assert (await _row(sid)).revoked_at is not None
+    _with_session(t)
+
+
+def test_extra_dot_token_is_reuse():
+    async def t(sid, token, ids, u, sids):
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RefreshError) as ei:
+                await sessions.rotate(db, f"{sid}.a.b", kind="web")
+        assert ei.value.code == "reuse"
+        assert (await _row(sid)).revoked_at is not None
     _with_session(t)
 
 
