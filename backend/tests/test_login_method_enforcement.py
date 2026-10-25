@@ -258,3 +258,54 @@ def test_saml_session_works(monkeypatch):
         me = await c.get("/api/v1/users/me", headers={"Cookie": f"{COOKIE}={sess}"})
         assert me.status_code == 200 and me.json()["active_tenant_id"] == t.id
     _go(body)
+
+
+async def _disable(c, tok, secret):
+    return await c.post("/api/v1/users/me/mfa/disable", headers=_bearer(tok),
+                        json={"current_password": PW, "code": totp.totp_at(secret, time.time())})
+
+
+async def _mfa_on(uid) -> bool:
+    async with AsyncSessionLocal() as db:
+        return (await db.get(User, uid)).mfa_enabled_at is not None
+
+
+def test_fallback_admin_cannot_disable_mfa():
+    async def body(c, ids):
+        secret = totp.new_secret()
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids, "saml")
+            u = await _user(db, ids, "adm", [(t, "admin")], mfa_secret=secret)
+            tok = security.issue_access_token(u, t.id, amr="pwd")
+        r = await _disable(c, tok, secret)
+        assert r.status_code == 403, r.text
+        assert r.json()["detail"] == "Two-factor authentication is required for password sign-in at this organization."
+        assert await _mfa_on(u.id)
+    _go(body)
+
+
+def test_admin_at_password_tenant_can_disable_mfa():
+    async def body(c, ids):
+        secret = totp.new_secret()
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids, "password")
+            u = await _user(db, ids, "adm", [(t, "admin")], mfa_secret=secret)
+            tok = security.issue_access_token(u, t.id, amr="pwd")
+        r = await _disable(c, tok, secret)
+        assert r.status_code == 200, r.text
+        assert not await _mfa_on(u.id)
+    _go(body)
+
+
+def test_switch_into_sso_tenant_admin_without_mfa_needs_setup():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            ta = await _tenant(db, ids, "password")
+            tb = await _tenant(db, ids, "saml")
+            u = await _user(db, ids, "adm", [(ta, "admin"), (tb, "admin")])
+        r = await _pw(c, u.email)
+        assert r.status_code == 200 and "access_token" in r.json(), r.text
+        sw = await c.post("/api/v1/auth/switch-tenant", headers=_bearer(r.json()["access_token"]),
+                          json={"tenant_id": tb.id})
+        assert sw.status_code == 403 and sw.json()["detail"] == "mfa_setup_required", sw.text
+    _go(body)

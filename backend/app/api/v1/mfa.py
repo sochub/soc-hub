@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.audit.events import audit_event
 from app.auth import login_tenant
-from app.auth.login_policy import sso_required_error
+from app.auth.login_policy import is_password_fallback, sso_required_error
 from app.api.v1.users import _audit_tenant
 from app.core import security, session_cookie, totp
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
@@ -215,10 +215,15 @@ async def mfa_disable(
         raise HTTPException(status_code=400, detail="Two-factor authentication is not enabled")
     if await deps.tenant_requires_mfa(db, user):  # super admins: any tenant
         raise HTTPException(status_code=403, detail="Your organization requires two-factor authentication")
+    active = getattr(user, "_active_tenant_id", None)
+    if active is not None and not user.is_super_admin:  # break-glass password session needs MFA
+        method = (await db.execute(select(Tenant.member_login_method).where(Tenant.id == active))).scalar()
+        if method and is_password_fallback(method, user._amr):
+            raise HTTPException(status_code=403, detail=(
+                "Two-factor authentication is required for password sign-in at this organization."))
     ip = client_ip(request)
     await _check_current_password(pwd_throttle, user, body.current_password, ip)
     await verify_user_code(db, redis, throttle, user, body.code, ip)
-    active = getattr(user, "_active_tenant_id", None)
     amr, sso_tid = user._amr, user._sso_tenant_id
     user.mfa_secret_enc = None
     user.mfa_enabled_at = None
