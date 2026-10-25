@@ -105,7 +105,8 @@ async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: 
     """The IdP (`proto`: saml|oidc) proves `email`; issue a guest session only if it has an active grant in
     THIS tenant and the tenant's guests sign in with that protocol. Never touches users/memberships."""
     if tenant.guest_login_method != proto:
-        return _guest_error_redirect(tenant, "This organization's guests sign in another way.")
+        return await _acs_fail(request, tenant, "This organization's guests sign in another way.", "not_enabled",
+                               guest=True, retry_tenant=tenant)
     email = email.strip().lower()
     grants = (await db.execute(select(CaseGuest).join(Tenant, Tenant.id == CaseGuest.tenant_id).where(
         CaseGuest.tenant_id == tenant.id, CaseGuest.email == email, *GUEST_ACTIVE()))).scalars().all()
