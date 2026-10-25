@@ -42,6 +42,10 @@ class Settings(BaseSettings):
 
     REDIS_URL: str = "redis://localhost:6379"
 
+    # Hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an
+    # internal network). Exact-match, like the workflow HTTP allowlist.
+    OIDC_PRIVATE_HOSTS: list[str] = []
+
     # CORS: comma-separated list of allowed origins. Empty = no cross-origin
     # access (frontend is served same-origin behind nginx). Stored as a raw
     # string and parsed via `cors_origins` to avoid pydantic-settings' JSON
