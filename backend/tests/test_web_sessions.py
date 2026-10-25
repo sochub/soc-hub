@@ -1,6 +1,7 @@
 """Web sessions: every member sign-in is a server-side session (``sid`` in a 1 h access token) with a
 rotating refresh token; revoked sessions are refused on every request."""
 import time
+from datetime import timedelta
 from http.cookies import SimpleCookie
 
 import jwt
@@ -132,7 +133,7 @@ def test_login_sets_refresh_cookie():
         secure = settings.PUBLIC_BASE_URL.startswith("https")
         ref = ck[REFRESH_COOKIE]
         assert ref["httponly"] and ref["samesite"].lower() == "strict"
-        assert ref["path"] == "/api/v1/auth/refresh" and ref["max-age"] == str(30 * 86400)
+        assert ref["path"] == "/api/v1/auth" and ref["max-age"] == str(30 * 86400)
         assert bool(ref["secure"]) == secure
         acc = ck[COOKIE]
         assert acc["httponly"] and acc["samesite"].lower() == "strict" and acc["path"] == "/api"
@@ -167,7 +168,7 @@ def test_refresh_rotates_and_new_access_works():
         assert bad.status_code == 401
         cleared = _cookies(bad)
         assert cleared[COOKIE]["max-age"] == "0" and cleared[REFRESH_COOKIE]["max-age"] == "0"
-        assert cleared[REFRESH_COOKIE]["path"] == "/api/v1/auth/refresh"
+        assert cleared[REFRESH_COOKIE]["path"] == "/api/v1/auth"
         assert (await _call(c, "GET", "/api/v1/users/me", access=new_access)).status_code == 401
     _go(body)
 
@@ -415,4 +416,98 @@ def test_refresh_works_after_mfa_disable():
         r = await _call(c, "POST", "/api/v1/users/me/mfa/disable", access=a_access, headers=XRW,
                         json={"current_password": PW, "code": totp.totp_at(secret, time.time())})
         await _assert_only_current_survives(c, r, a_access, b_refresh)
+    _go(body)
+
+
+LOGOUT = "/api/v1/auth/logout"
+
+
+def _all_cleared(r):
+    ck = _cookies(r)
+    assert ck[COOKIE]["max-age"] == "0" and ck[REFRESH_COOKIE]["max-age"] == "0"
+    assert ck[REFRESH_COOKIE]["path"] == "/api/v1/auth"
+
+
+def test_logout_revokes_policy_refused_session():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            u = await _user(db, ids, "a", [(t, "analyst")])
+        access, refresh = await _spa_login(c, u.email)
+        async with AsyncSessionLocal() as db:  # the tenant moves to SSO: this pwd session is now refused
+            (await db.get(type(t), t.id)).member_login_method = "oidc"
+            await db.commit()
+        assert (await _call(c, "GET", "/api/v1/users/me", access=access)).status_code == 403
+        r = await _call(c, "POST", LOGOUT, access=access, refresh=refresh, headers=XRW)
+        assert r.status_code == 204, r.text
+        _all_cleared(r)
+        assert (await _row(_claims(access)["sid"])).revoked_at is not None
+    _go(body)
+
+
+def test_logout_with_only_refresh_cookie_revokes():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            u = await _user(db, ids, "a", [(t, "analyst")])
+        access, refresh = await _spa_login(c, u.email)
+        r = await _call(c, "POST", LOGOUT, refresh=refresh, headers=XRW)  # access cookie expired/absent
+        assert r.status_code == 204, r.text
+        _all_cleared(r)
+        assert (await _row(_claims(access)["sid"])).revoked_at is not None
+    _go(body)
+
+
+def test_logout_with_expired_access_token_revokes():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            u = await _user(db, ids, "a", [(t, "analyst")])
+        access, _ = await _api_login(c, u.email)
+        expired = security.create_access_token({k: v for k, v in _claims(access).items() if k != "exp"},
+                                               expires_delta=timedelta(seconds=-60))
+        r = await _call(c, "POST", LOGOUT, headers=_bearer(expired))
+        assert r.status_code == 204, r.text
+        assert (await _row(_claims(access)["sid"])).revoked_at is not None
+    _go(body)
+
+
+def test_logout_forged_refresh_does_not_revoke():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            u = await _user(db, ids, "a", [(t, "analyst")])
+            other = await _user(db, ids, "b", [(t, "analyst")])
+        access, _ = await _spa_login(c, u.email)
+        sid = _claims(access)["sid"]
+        r = await _call(c, "POST", LOGOUT, refresh=f"{sid}.forged-secret", headers=XRW)
+        assert r.status_code == 204, r.text
+        _all_cleared(r)
+        assert (await _row(sid)).revoked_at is None
+        # a validly signed token of another user naming this sid does not revoke it either
+        o_access, _ = await _api_login(c, other.email)
+        forged = security.create_access_token({**{k: v for k, v in _claims(o_access).items() if k != "exp"},
+                                               "sid": sid})
+        assert (await _call(c, "POST", LOGOUT, headers=_bearer(forged))).status_code == 204
+        assert (await _row(sid)).revoked_at is None
+    _go(body)
+
+
+def test_logout_cookie_without_csrf_header_403():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            u = await _user(db, ids, "a", [(t, "analyst")])
+        access, refresh = await _spa_login(c, u.email)
+        assert (await _call(c, "POST", LOGOUT, access=access, refresh=refresh)).status_code == 403
+        assert (await _call(c, "POST", LOGOUT, refresh=refresh)).status_code == 403
+        assert (await _row(_claims(access)["sid"])).revoked_at is None
+    _go(body)
+
+
+def test_logout_without_credentials_still_clears():
+    async def body(c, ids):
+        r = await _call(c, "POST", LOGOUT)
+        assert r.status_code == 204
+        _all_cleared(r)
     _go(body)

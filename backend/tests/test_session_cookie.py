@@ -58,7 +58,7 @@ def test_browser_session_cookie():
                 # the refresh token: its own HttpOnly cookie, sent only to the refresh endpoint
                 rf = _cookies(r)[REFRESH_COOKIE]
                 assert rf["httponly"] and rf["samesite"].lower() == "strict"
-                assert rf["path"] == "/api/v1/auth/refresh" and rf["max-age"] == str(settings.REFRESH_IDLE_DAYS * 86400)
+                assert rf["path"] == "/api/v1/auth" and rf["max-age"] == str(settings.REFRESH_IDLE_DAYS * 86400)
                 assert bool(rf["secure"]) == settings.PUBLIC_BASE_URL.startswith("https")
 
                 # API client login: bearer + refresh tokens in the body

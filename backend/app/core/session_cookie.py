@@ -1,8 +1,8 @@
 """Browser sessions ride in an HttpOnly cookie, so page scripts (an XSS included) can never read the token.
 
 - API clients keep using `Authorization: Bearer`; the header wins when both are present.
-- The refresh token rides in its own HttpOnly cookie (`sochub_refresh`), scoped to the refresh endpoint only,
-  so no other request ever carries it.
+- The refresh token rides in its own HttpOnly cookie (`sochub_refresh`), scoped to the auth endpoints (refresh,
+  logout), so no data request ever carries it.
 - The SPA sends `X-Requested-With` on every call. A cookie-authenticated unsafe request without it is refused
   (CSRF defence on top of SameSite=Strict), and a response never puts the token in its body for the SPA or for
   a cookie-authenticated caller, so a script running in the page cannot mint itself a readable token.
@@ -15,7 +15,7 @@ from app.core.config import settings
 
 COOKIE = "sochub_session"
 REFRESH_COOKIE = "sochub_refresh"
-REFRESH_PATH = "/api/v1/auth/refresh"
+REFRESH_PATH = "/api/v1/auth"  # refresh and logout (which revokes by it) only
 CSRF_HEADER = "x-requested-with"
 _SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 

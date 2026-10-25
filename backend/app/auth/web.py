@@ -6,10 +6,14 @@
   takes the new token version and a new refresh secret; every other session of the user is revoked.
 - ``switch_session_tenant``: same session, new active tenant.
 - ``refresh_tenant``: the active tenant a refreshed access token may carry (login policy re-applied).
+- ``logout_targets``: the sessions a sign-out may revoke, without requiring a usable (unexpired, policy-
+  admitted) access token.
 """
+import hmac
 from datetime import datetime, timezone
 from typing import Optional
 
+import jwt
 from fastapi import HTTPException, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import sessions
 from app.auth.login_tenant import session_may_enter
 from app.core import security, session_cookie
+from app.core.config import settings
 from app.models.auth_session import AuthSession
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -101,3 +106,39 @@ async def refresh_tenant(db: AsyncSession, user: User, session: AuthSession) -> 
         if session_may_enter(user, tid, method):
             return True, tid
     return (not rows), None
+
+
+async def logout_targets(db: AsyncSession, refresh_token: Optional[str],
+                         access_token: Optional[str]) -> list[AuthSession]:
+    """Live web sessions the caller proves it holds: a refresh token whose secret matches the row's current
+    or previous hash, and/or an access token with a valid signature (expiry NOT required, so an expired
+    session can still be signed out) whose ``sid`` belongs to the token's user."""
+    found: dict[str, AuthSession] = {}
+
+    async def live(sid) -> Optional[AuthSession]:
+        if not isinstance(sid, str) or not sid:
+            return None
+        row = (await db.execute(select(AuthSession).where(AuthSession.id == sid))).scalar_one_or_none()
+        return row if row is not None and row.kind == KIND and row.revoked_at is None else None
+
+    if refresh_token:
+        sid, _, secret = refresh_token.partition(".")
+        row = await live(sid) if secret else None
+        if row is not None:
+            presented = sessions.hash_secret(secret)
+            if hmac.compare_digest(presented, row.refresh_hash) or (
+                    row.prev_refresh_hash and hmac.compare_digest(presented, row.prev_refresh_hash)):
+                found[row.id] = row
+    if access_token:
+        try:
+            payload = jwt.decode(access_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM],
+                                 options={"verify_exp": False})
+        except jwt.PyJWTError:
+            payload = None
+        if payload and not payload.get("purpose") and isinstance(payload.get("sub"), str):
+            row = await live(payload.get("sid"))
+            if row is not None:
+                uid = (await db.execute(select(User.id).where(User.email == payload["sub"]))).scalar()
+                if uid is not None and uid == row.user_id:
+                    found[row.id] = row
+    return list(found.values())

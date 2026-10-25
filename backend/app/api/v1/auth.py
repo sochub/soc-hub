@@ -244,14 +244,24 @@ async def switch_tenant(
 async def logout(
     request: Request,
     db: AsyncSession = Depends(deps.get_db),
-    current_user: User = Depends(deps.get_current_active_user),
-    tenant_id: int = Depends(deps.get_effective_tenant_id),
+    bearer: Optional[str] = Depends(deps.oauth2_scheme),
 ) -> Response:
-    """Revoke this session server-side (its access and refresh tokens stop working) and drop both cookies."""
-    await sessions.revoke(db, current_user._session_id, user_id=current_user.id)
-    await db.commit()
-    await audit_event("security", "logout", request=request, user_id=current_user.id,
-                      user_email=current_user.email, tenant_id=tenant_id)
+    """Revoke this session server-side and drop both cookies. Deliberately needs no usable access token:
+    an expired or policy-refused session must still be able to sign out. Always 204 and clears both cookies,
+    even when nothing could be revoked."""
+    if bearer:  # the header wins, as for every request: cookies are ignored
+        refresh_token, access_token = None, bearer
+    else:  # cookie-authenticated: CSRF header required before anything is revoked
+        refresh_token = request.cookies.get(session_cookie.REFRESH_COOKIE)
+        access_token = request.cookies.get(session_cookie.COOKIE)
+        if (refresh_token or access_token) and session_cookie.CSRF_HEADER not in request.headers:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing X-Requested-With header")
+    for row in await web.logout_targets(db, refresh_token, access_token):
+        if await sessions.revoke(db, row.id, user_id=row.user_id):
+            await db.commit()
+            email = (await db.execute(select(User.email).where(User.id == row.user_id))).scalar()
+            await audit_event("security", "logout", request=request, user_id=row.user_id, user_email=email,
+                              tenant_id=row.tenant_id)
     out = Response(status_code=204)
     session_cookie.clear_session(out)
     session_cookie.clear_refresh(out)
