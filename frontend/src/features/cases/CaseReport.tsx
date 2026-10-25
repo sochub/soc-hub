@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, FileDown, FileJson, Save, Sparkles } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
+import MilestonesEditor from './MilestonesEditor';
 import { useCanRun } from '../enrichment/useCanRun';
 import { btnPrimary, btnSecondary } from '../../components/layout/Modal';
-import type { CaseReportView, MilestoneKey, ReportDraft, TLPLevel } from '../../types';
+import type { CaseReportView, ReportDraft, TLPLevel } from '../../types';
 
 const TEXT_MAX = 20000;
 const TLP_ORDER: TLPLevel[] = ['white', 'green', 'amber', 'red'];
@@ -24,36 +25,16 @@ const TEXT_FIELDS = [
 ] as const;
 type TextKey = typeof TEXT_FIELDS[number]['key'];
 
-const MILESTONES: { key: MilestoneKey; label: string }[] = [
-    { key: 'first_seen', label: 'First seen' },
-    { key: 'detected', label: 'Detected' },
-    { key: 'contained', label: 'Contained' },
-    { key: 'recovered', label: 'Recovered' },
-];
 const DURATIONS = [
     { key: 'ttd_seconds', label: 'Time to detect', span: 'first seen → detected' },
     { key: 'ttc_seconds', label: 'Time to contain', span: 'detected → contained' },
     { key: 'ttr_seconds', label: 'Time to recover', span: 'contained → recovered' },
 ] as const;
 
-type Form = Record<TextKey, string> & Record<MilestoneKey, string> & { tlp: TLPLevel };
+type Form = Record<TextKey, string> & { tlp: TLPLevel };
 
 const tlpIndex = (t: TLPLevel) => TLP_ORDER.indexOf(t);
 const clampTlp = (t: TLPLevel, min: TLPLevel): TLPLevel => (tlpIndex(t) < tlpIndex(min) ? min : t);
-
-/** UTC ISO → value for a datetime-local input (local wall time, minute precision). */
-function isoToLocal(iso: string | null): string {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-
-function fmtLocal(iso: string | null): string {
-    if (!iso) return 'unknown';
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? 'unknown' : d.toLocaleString();
-}
 
 function fmtDuration(s: number | null): string {
     if (s === null || s < 0) return 'unknown';
@@ -98,10 +79,6 @@ function formFrom(v: CaseReportView): Form {
         impact: r.impact ?? '',
         lessons_learned: r.lessons_learned ?? '',
         tlp: clampTlp(r.tlp, v.min_tlp),
-        first_seen: isoToLocal(r.first_seen_at),
-        detected: isoToLocal(r.detected_at),
-        contained: isoToLocal(r.contained_at),
-        recovered: isoToLocal(r.recovered_at),
     };
 }
 
@@ -208,13 +185,6 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
             if (!form || !data) throw new Error('not loaded');
             const body: Record<string, unknown> = { tlp: form.tlp };
             for (const { key } of TEXT_FIELDS) body[key] = form[key] === '' ? null : form[key];
-            for (const { key } of MILESTONES) {
-                const field = `${key}_at` as const;
-                const local = form[key];
-                // Untouched overrides keep their exact stored value (inputs are minute precision).
-                if (local === isoToLocal(data.report[field])) body[field] = data.report[field];
-                else body[field] = local ? new Date(local).toISOString() : null;
-            }
             return (await api.put(`/cases/${caseId}/report`, body)).data as CaseReportView;
         },
         onSuccess: (view) => {
@@ -358,7 +328,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
             <div className="glass-panel p-4 rounded-lg bg-panel border border-line space-y-3">
                 <div className="flex items-baseline justify-between">
                     <h4 className="text-xs font-semibold text-fg-2 uppercase tracking-wider">Milestones</h4>
-                    <span className="text-[11px] text-muted">Local time · leave blank to use the computed value</span>
+                    <span className="text-[11px] text-muted">Shared with the case timeline · leave blank to use the computed value</span>
                 </div>
                 {outOfOrder.length > 0 && (
                     <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-sm px-3 py-2">
@@ -369,45 +339,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                         </span>
                     </div>
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {MILESTONES.map(({ key, label }) => {
-                        const m = ms[key];
-                        const computedText = m.source === 'override' ? null : fmtLocal(m.at);
-                        const hasOverride = form[key] !== '';
-                        return (
-                            <div key={key}>
-                                <label htmlFor={`report-ms-${key}`} className="block text-xs font-medium text-fg-2 mb-1.5">{label}</label>
-                                <input
-                                    id={`report-ms-${key}`}
-                                    type="datetime-local"
-                                    disabled={readOnly}
-                                    value={form[key]}
-                                    placeholder={computedText ?? ''}
-                                    onChange={(e) => update({ [key]: e.target.value } as Partial<Form>)}
-                                    className="w-full text-sm num border border-line rounded-sm px-2 py-1.5 bg-panel text-fg focus:outline-hidden focus:border-accent disabled:bg-surface"
-                                />
-                                <div className="mt-1 text-[11px] text-muted flex items-center gap-2 min-h-[16px]">
-                                    {hasOverride ? (
-                                        <>
-                                            <span>Override</span>
-                                            {!readOnly && (
-                                                <button type="button" onClick={() => update({ [key]: '' } as Partial<Form>)}
-                                                    className="text-accent hover:underline">use computed</button>
-                                            )}
-                                        </>
-                                    ) : (
-                                        m.source === 'override' ? (
-                                            // The saved value is an override, so the computed one is not known until the save.
-                                            <span>Computed value shown after saving</span>
-                                        ) : (
-                                            <span title="Computed from case data">Computed: <span className="num">{computedText ?? 'unknown'}</span></span>
-                                        )
-                                    )}
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
+                <MilestonesEditor key={JSON.stringify(ms)} caseId={caseId} milestones={ms} canEdit={!readOnly} />
                 <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-fg-3 pt-1">
                     {DURATIONS.map((d) => (
                         <span key={d.key}>{d.label}: <span className="num text-fg">{fmtDuration(ms[d.key])}</span></span>
