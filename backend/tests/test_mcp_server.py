@@ -33,7 +33,8 @@ def _go(body):
         await engine.dispose()
         ids = Ids()
         ids.clients, ids.playbooks = [], []
-        # The session manager is single-use per process; each test runs the app lifespan in its own loop.
+        # StreamableHTTPSessionManager.run() is single-use per instance (stateless or not); each test runs the
+        # app lifespan in its own loop.
         mcp_server.session_manager._has_started = False
         try:
             async with app.router.lifespan_context(app):
@@ -80,12 +81,11 @@ def _parse(r: httpx.Response) -> dict:
 
 class Mcp:
     def __init__(self, c: httpx.AsyncClient, token: str):
-        self.c, self.token, self.sid, self.n = c, token, None, 0
+        self.c, self.token, self.ready, self.n = c, token, False, 0
 
     def _h(self):
         h = {**ACCEPT, "Authorization": f"Bearer {self.token}"}
-        if self.sid:
-            h["Mcp-Session-Id"] = self.sid
+        if self.ready:  # stateless server: no Mcp-Session-Id, only the negotiated protocol version
             h["Mcp-Protocol-Version"] = "2025-11-25"
         return h
 
@@ -104,7 +104,8 @@ class Mcp:
             "protocolVersion": "2025-11-25", "capabilities": {},
             "clientInfo": {"name": "pytest", "version": "1"}}})
         assert r.status_code == 200, r.text
-        self.sid = r.headers["mcp-session-id"]
+        assert "mcp-session-id" not in r.headers  # stateless transport
+        self.ready = True
         r = await self.post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert r.status_code == 202, r.text
         return self

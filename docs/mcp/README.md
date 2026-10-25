@@ -105,6 +105,9 @@ person whose role is no higher than the work needs.
   (`docker compose build backend worker`), because `requirements.txt` changed.
 - nginx must proxy `/mcp`, `/mcp/` and `/.well-known/oauth-*` to the backend with buffering off (the shipped
   `frontend/nginx/default.conf.template` does).
+- The transport is **stateless**: every request is served on its own (no `Mcp-Session-Id`, nothing kept in
+  memory between calls), so several backend replicas can sit behind a load balancer with **no sticky
+  sessions**. Each request is still authenticated and role-checked live.
 - Smoke check against a running stack (creates and removes its own test tenant, by explicit ids):
   `docker exec case_management-backend-1 python -m app.scripts.mcp_smoke --base-url http://frontend:8080`.
   It skips the interactive consent step; see the script header.

@@ -202,9 +202,11 @@ if ":" in _host:  # IPv6 literal
     _host = f"[{_host}]"
 _origin = f"{_public.scheme}://{_public.netloc}"
 
-# Built at import, before the lifespan touches mcp_server.session_manager.
+# Built at import, before the lifespan touches mcp_server.session_manager. Stateless: every POST is served on
+# its own (no Mcp-Session-Id, no in-memory session), so any backend replica can answer any request.
 _sdk_app = mcp_server.streamable_http_app(
     streamable_http_path="/",
+    stateless_http=True,
     transport_security=TransportSecuritySettings(allowed_hosts=[_host, f"{_host}:*"],
                                                  allowed_origins=[_origin]),
 )
