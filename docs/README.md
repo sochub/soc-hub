@@ -18,6 +18,7 @@ into the per-subsystem design notes.
 | [Case guests](guests/README.md) | Inviting outside people to a single case |
 | [Audit log](audit/README.md) | What the platform audit log records |
 | [Sessions and OAuth](oauth/README.md) | Login sessions, refresh rotation, the OAuth authorization server, connected apps |
+| [Connecting AI clients (MCP)](mcp/README.md) | MCP server for Claude Code, Claude Desktop and Cursor: setup, tools, roles, attribution, revoking |
 
 ## Design notes
 

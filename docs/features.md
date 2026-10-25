@@ -166,3 +166,11 @@ password fallback for admins with MFA (audited). Users sign in via "Sign in with
 using their tenant slug. An SSO session opens only the tenant whose IdP issued it, and
 super admins never sign in through a tenant IdP. See [sso/oidc.md](sso/oidc.md) and
 [sso/saml-design.md](sso/saml-design.md).
+
+## AI clients (MCP)
+
+Tenant admins can switch on **Settings -> AI clients (MCP)** so members connect Claude Code, Claude Desktop or
+Cursor to `<PUBLIC_BASE_URL>/mcp`. After a browser sign-in and consent (with a tenant picker), the client gets 26
+tools to read alerts and cases, add notes, artifacts and IOCs, promote alerts, apply playbooks and run manual
+workflows, always with the signed-in person's live role. Writes show "via MCP" in the case Activity tab and as
+`mcp.<tool>` audit entries; users and admins can revoke connected apps. See [mcp/README.md](mcp/README.md).
