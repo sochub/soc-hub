@@ -19,7 +19,7 @@ def sp_urls(slug: str) -> Dict[str, str]:
         "entity_id": f"{base}/api/v1/auth/saml/{slug}/metadata",
         "acs_url": f"{base}/api/v1/auth/saml/{slug}/acs",
         "metadata_url": f"{base}/api/v1/auth/saml/{slug}/metadata",
-        "login_url": f"{base}/api/v1/auth/saml/{slug}/login",
+        "login_url": f"{base}/api/v1/auth/sso/{slug}/login",
     }
 
 
