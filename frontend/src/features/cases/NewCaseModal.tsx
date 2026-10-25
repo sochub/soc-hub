@@ -29,8 +29,14 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
     const [artifacts, setArtifacts] = useState<Array<{ type: string; value: string; isolated: boolean; enrichment?: any }>>([]);
     // "Incident started": pre-filled with now; only sent when the analyst moved it (else First seen stays computed).
     const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    // The modal stays mounted between opens: re-take "now" each time it opens (React "adjust state on prop change").
     const [incidentStart, setIncidentStart] = useState(nowLocal);
-    const [startTouched, setStartTouched] = useState(false);
+    const [startDefault, setStartDefault] = useState(incidentStart);
+    const [wasShown, setWasShown] = useState(show);
+    if (show !== wasShown) {
+        setWasShown(show);
+        if (show) { const n = nowLocal(); setIncidentStart(n); setStartDefault(n); }
+    }
 
     const { data: playbooks = [] } = useQuery({
         queryKey: ['playbooks', 'mine'],
@@ -50,8 +56,6 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
             playbook_template_id: ''
         });
         setArtifacts([]);
-        setIncidentStart(nowLocal());
-        setStartTouched(false);
         onClose();
     };
 
@@ -61,7 +65,8 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
             ...caseData,
             tags: tagsArray,
             artifacts,
-            ...(startTouched && incidentStart && localToIso(incidentStart) ? { first_seen_at: localToIso(incidentStart) as string } : {}),
+            // Declared only when the analyst moved it away from the default (editing back to it counts as untouched).
+            ...(incidentStart !== startDefault && localToIso(incidentStart) ? { first_seen_at: localToIso(incidentStart) as string } : {}),
         });
         handleClose();
     };
@@ -184,7 +189,7 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                                     Incident started <span className="text-muted font-normal">(defaults to now · move it back if it began earlier)</span>
                                 </label>
                                 <input id="new-case-incident-start" type="datetime-local" value={incidentStart} min="1970-01-01T00:00" max={nowLocal()}
-                                    onChange={(e) => { setIncidentStart(e.target.value); setStartTouched(true); }}
+                                    onChange={(e) => setIncidentStart(e.target.value)}
                                     className={modalInput} />
                             </div>
 

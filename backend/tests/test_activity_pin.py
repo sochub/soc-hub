@@ -26,7 +26,8 @@ def test_pin_activity():
         url = f"/api/v1/cases/{c.id}/timeline/{ev.id}/pin"
         async with client() as cl:
             r = await cl.patch(url, headers=h, json={"pinned": True})
-            assert r.status_code == 200, r.text and r.json()["pinned"] is True
+            assert r.status_code == 200, r.text
+            assert r.json()["pinned"] is True
             g = await cl.get(f"/api/v1/cases/{c.id}", headers=h)
             assert [e["pinned"] for e in g.json()["timeline_events"] if e["id"] == ev.id] == [True]
             r = await cl.patch(url, headers=h, json={"pinned": False})

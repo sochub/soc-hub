@@ -29,18 +29,11 @@ async def case_milestones(db, case) -> dict:
 
 
 _NAMES = {"first_seen": "First seen", "detected": "Detected", "contained": "Contained", "recovered": "Recovered"}
-_PAIRS = (("first_seen", "detected"), ("detected", "contained"), ("contained", "recovered"))
-
-
 def introduced_inversions(effective: dict, changed: set) -> list:
-    """Adjacent pairs out of order where at least one side was changed by this request.
-    Pre-existing (computed) inversions never block an unrelated edit."""
-    bad = []
-    for a, b in _PAIRS:
-        x, y = calc.aware(effective.get(a)), calc.aware(effective.get(b))
-        if x is not None and y is not None and x > y and (a in changed or b in changed):
-            bad.append((a, b))
-    return bad
+    """Out-of-order neighbours among the *known* milestones (an unknown one in between doesn't hide an inversion),
+    reported only when this request changed one side. Pre-existing (computed) inversions never block an edit."""
+    known = [(k, calc.aware(effective.get(k))) for k in KEYS if effective.get(k) is not None]
+    return [(a, b) for (a, x), (b, y) in zip(known, known[1:]) if x > y and (a in changed or b in changed)]
 
 
 def inversion_message(pair) -> str:

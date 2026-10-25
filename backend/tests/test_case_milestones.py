@@ -259,3 +259,26 @@ def test_create_case_with_first_seen(monkeypatch):
             bad = await cl.post("/api/v1/cases/", headers=h, json={"title": "ms-future", "first_seen_at": _future(hours=1)})
             assert bad.status_code == 422
     run(body)
+
+
+def test_put_recovered_before_detected_without_contained_422():
+    async def body(ids):
+        _, c, h = await _setup(ids)  # detected = case creation (computed); contained unknown
+        async with client() as cl:
+            r = await cl.put(f"/api/v1/cases/{c.id}/milestones", headers=h,
+                             json={"recovered_at": "2000-01-01T00:00:00Z"})
+        assert r.status_code == 422, r.text
+        assert "Detected" in r.text and "Recovered" in r.text
+    run(body)
+
+
+def test_naive_datetimes_rejected():
+    async def body(ids):
+        t, c, h = await _setup(ids)
+        async with client() as cl:
+            r = await cl.put(f"/api/v1/cases/{c.id}/milestones", headers=h, json={"recovered_at": "2099-01-02T00:00:00"})
+            assert r.status_code == 422, r.text
+            assert "timezone" in r.text
+            r = await cl.post("/api/v1/cases/", headers=h, json={"title": "naive", "first_seen_at": "2020-01-02T00:00:00"})
+            assert r.status_code == 422, r.text
+    run(body)

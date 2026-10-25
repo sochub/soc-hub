@@ -143,6 +143,13 @@ class CaseBase(BaseModel):
 
     _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
 
+def _require_tz(v: Optional[datetime]) -> Optional[datetime]:
+    """Incident times must carry an offset: a naive time would be read in the server's zone."""
+    if v is not None and (v.tzinfo is None or v.utcoffset() is None):
+        raise ValueError("Milestone times must include a timezone")
+    return v
+
+
 class CaseCreate(CaseBase):
     # Analyst-declared incident start; omitted when the analyst left the form default.
     first_seen_at: Optional[datetime] = None
@@ -150,10 +157,9 @@ class CaseCreate(CaseBase):
     @field_validator("first_seen_at")
     @classmethod
     def _not_future(cls, v):
-        if v is not None:
-            aware = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
-            if aware > datetime.now(timezone.utc) + timedelta(seconds=60):
-                raise ValueError("incident start cannot be in the future")
+        v = _require_tz(v)
+        if v is not None and v > datetime.now(timezone.utc) + timedelta(seconds=60):
+            raise ValueError("incident start cannot be in the future")
         return v
 
 
@@ -167,6 +173,8 @@ class MilestonesIn(BaseModel):
     detected_at: Optional[datetime] = None
     contained_at: Optional[datetime] = None
     recovered_at: Optional[datetime] = None
+
+    _tz = field_validator("first_seen_at", "detected_at", "contained_at", "recovered_at")(_require_tz)
 
 class CaseUpdate(BaseModel):
     title: Optional[str] = None
