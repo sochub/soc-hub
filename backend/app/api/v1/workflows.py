@@ -14,7 +14,7 @@ from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.schemas.workflow import (AllowlistIn, DryRunIn, ManualRunIn, RunDetail, RunSummary,
                                   TemplateInstallIn, WorkflowIn, WorkflowOut, WorkflowSummary)
 from app.utils.audit import create_audit_log
-from app.workflows.runtime import cancel_run, create_run, flush_withdrawals
+from app.workflows.runtime import cancel_run, create_run, flush_withdrawals, start_manual_run
 from app.workflows import templates as wf_templates
 from app.workflows.validation import workflow_errors
 
@@ -228,13 +228,15 @@ async def run_manual(workflow_id: int, body: ManualRunIn, db: AsyncSession = Dep
                      tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     from app.tasks.workflows import advance_run_task
     wf = await _get_workflow(db, workflow_id, tenant_id)
-    if wf.trigger_type != "manual" or not wf.enabled:
+    if wf.trigger_type != "manual" or not wf.enabled:  # checked before the case lookup, as before
         raise HTTPException(status_code=400, detail="Only enabled manual workflows can be run by hand")
     case = (await db.execute(select(Case).where(Case.id == body.case_id, Case.tenant_id == tenant_id))).scalars().first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    run = await create_run(db, wf, trigger_payload={"event": "manual", "case_id": case.id, "user_id": current_user.id},
-                           case_id=case.id, user_id=current_user.id)
+    try:
+        run = await start_manual_run(db, wf=wf, case=case, user_id=current_user.id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Only enabled manual workflows can be run by hand")
     await db.commit()
     advance_run_task.delay(run.id)
     return {"run_id": run.id}

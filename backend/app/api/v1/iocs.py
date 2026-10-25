@@ -9,6 +9,7 @@ from app.models.enrichment_result import EnrichmentResult
 from app.models.ioc import IOC
 from app.models.user import User
 from app.schemas import ioc as ioc_schema
+from app.services import ioc_service
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
@@ -75,21 +76,7 @@ async def create_ioc(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create a new IOC."""
-    ioc = IOC(
-        **ioc_in.model_dump(),
-        tenant_id=tenant_id,
-        created_by=current_user.id,
-    )
-    db.add(ioc)
-    await db.flush()
-    await create_audit_log(
-        db=db,
-        entity_type="ioc",
-        entity_id=ioc.id,
-        action="create",
-        tenant_id=tenant_id,
-        user_id=current_user.id,
-    )
+    ioc = await ioc_service.create_ioc(db, tenant_id=tenant_id, data=ioc_in.model_dump(), user_id=current_user.id)
     await db.commit()
     await db.refresh(ioc)
     return ioc

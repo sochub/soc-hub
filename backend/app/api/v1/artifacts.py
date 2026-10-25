@@ -8,13 +8,12 @@ from app.api import deps
 from app.models.artifact import Artifact
 from app.models.case import Case
 from app.models.case_artifact import CaseArtifact
-from app.models.ioc import IOC
 from app.models.user import User
 from app.schemas import ioc as ioc_schema
-from app.utils.audit import create_audit_log
 from app.schemas import artifact as artifact_schema
 from app.services.artifact_types import UnknownArtifactType, not_private, resolve_type
 from app.services.case_service import add_artifact_by_key
+from app.services import ioc_service
 
 router = APIRouter()
 
@@ -334,10 +333,6 @@ async def remove_artifact_from_case(
     return {"detail": "Artifact removed from case"}
 
 
-_IOC_TYPE = {"ip": "ip_address", "domain": "domain", "url": "url", "file_hash": "file_hash",
-             "email": "email", "other": "other"}
-
-
 @router.post("/{artifact_id}/promote")
 async def promote_artifact(
     *,
@@ -352,25 +347,9 @@ async def promote_artifact(
     artifact = (await db.execute(select(Artifact).where(Artifact.id == artifact_id, Artifact.tenant_id == tenant_id))).scalars().first()
     if not artifact or artifact.is_private:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    case_id = body.get("case_id")
-    if case_id is not None:
-        linked = (await db.execute(
-            select(CaseArtifact.id).join(Case, Case.id == CaseArtifact.case_id)
-            .where(CaseArtifact.case_id == case_id, CaseArtifact.artifact_id == artifact_id, Case.tenant_id == tenant_id)
-        )).first()
-        if not linked:
-            raise HTTPException(status_code=400, detail="Artifact is not attached to that case")
-    # ponytail: custom artifact types map to "other"
-    ioc_type = _IOC_TYPE.get(artifact.type_key, "other")
-    ioc = (await db.execute(select(IOC).where(IOC.tenant_id == tenant_id, IOC.value == artifact.value, IOC.ioc_type == ioc_type))).scalars().first()
-    created = ioc is None
+    ioc, created = await ioc_service.promote_artifact(db, artifact=artifact, tenant_id=tenant_id,
+                                                      case_id=body.get("case_id"), user_id=current_user.id)
     if created:
-        ioc = IOC(tenant_id=tenant_id, case_id=case_id, ioc_type=ioc_type, value=artifact.value, source="artifact",
-                  tlp="amber", threat_level="medium", description=artifact.description, created_by=current_user.id)
-        db.add(ioc)
-        await db.flush()
-        await create_audit_log(db=db, entity_type="ioc", entity_id=ioc.id, action="create", tenant_id=tenant_id,
-                               user_id=current_user.id, changes={"promoted_from_artifact": artifact_id})
         await db.commit()
         await db.refresh(ioc)
     response.status_code = 201 if created else 200

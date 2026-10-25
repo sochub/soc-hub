@@ -7,7 +7,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
-from app.services import case_service
+from app.services import case_service, task_service
 from app.services.ai_service import AIService, extract_action, strip_action_blocks
 from app.services.artifact_types import not_private
 from app.models.case import Case, CaseStatus, CaseSeverity, TimelineEvent
@@ -21,7 +21,6 @@ from app.schemas.copilot_action import (
     ActionExecuteRequest, ActionResult, RelatedCase, WRITE_ACTIONS, ACTION_TYPES,
 )
 from app.utils.audit import create_audit_log
-from app.utils.playbooks import apply_playbook_to_case
 from app.utils.copilot_heuristics import (
     detect_indicators, extract_note_text, is_note_request, is_declarative_finding,
     is_meta_note,
@@ -790,10 +789,8 @@ async def _run_action(db: AsyncSession, req: ActionExecuteRequest, current_user:
         template_id = p.get("template_id")
         if not template_id:
             raise HTTPException(status_code=400, detail="A playbook template is required.")
-        n = await apply_playbook_to_case(db, case=case, template_id=int(template_id), tenant_id=tenant_id)
-        await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="playbook_applied",
-                               tenant_id=tenant_id, user_id=current_user.id,
-                               changes={"template_id": template_id, "tasks_added": n})
+        n = await task_service.apply_playbook(db, case=case, template_id=int(template_id), tenant_id=tenant_id,
+                                              user_id=current_user.id)
         await db.commit()
         return ActionResult(ok=True, message=f"Applied playbook to case #{case.id} ({n} task(s) added).",
                             case_id=case.id)

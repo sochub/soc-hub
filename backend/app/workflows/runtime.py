@@ -93,6 +93,16 @@ async def create_run(db, workflow: Workflow, *, trigger_payload: dict, case_id: 
     return run
 
 
+async def start_manual_run(db, *, wf: Workflow, case, user_id: int) -> WorkflowRun:
+    """Start a hand-triggered run on a case (flushes only). The caller commits, then enqueues
+    ``advance_run_task.delay(run.id)``. Raises ValueError("not_runnable") unless the workflow is an
+    enabled manual one."""
+    if not (wf.enabled and wf.trigger_type == "manual"):
+        raise ValueError("not_runnable")
+    return await create_run(db, wf, trigger_payload={"event": "manual", "case_id": case.id, "user_id": user_id},
+                            case_id=case.id, user_id=user_id)
+
+
 async def dispatch_event(tenant_id, event_type, case_id, alert_id, changes, depth) -> None:
     from app.tasks.workflows import advance_run_task
     from app.models.case import Alert, Case

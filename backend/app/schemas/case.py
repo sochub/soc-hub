@@ -59,6 +59,9 @@ class AlertUpdate(BaseModel):
 
     _sev = field_validator("severity")(_check_alert_severity)
 
+class AlertDismiss(BaseModel):
+    reason: Optional[str] = Field(None, max_length=1000)
+
 class AlertBulk(BaseModel):
     ids: List[int] = Field(..., min_length=1, max_length=500)
     action: Literal["dismiss", "promote"]

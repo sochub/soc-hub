@@ -3,7 +3,7 @@
 API keys are write-only: responses, audit rows and log lines only ever say which keys are set."""
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
@@ -15,12 +15,9 @@ from app.api import deps
 from app.core.config import settings
 from app.enrichment import hooks
 from app.enrichment.config import DEFAULTS, KEY_FIELDS, decrypt_keys, load_settings, runnable_sources
-from app.enrichment.indicators import normalise, tlp_allows
+from app.enrichment.indicators import normalise
 from app.enrichment.sources import REGISTRY
-from app.enrichment.suggest import suggest
-from app.models.artifact import Artifact
-from app.models.enrichment_result import EnrichmentResult
-from app.models.ioc import IOC
+from app.enrichment.view import enrichment_view, load_target, result_dict
 from app.models.tenant_enrichment_config import TenantEnrichmentConfig
 from app.models.user import User
 from app.schemas.enrichment import EnrichmentConfigIn, RunIn
@@ -35,7 +32,6 @@ _PLAIN = ("auto_max_tlp", "artifact_tlp", "cache_ttl_hours", "sources", "vt_per_
           "internal_domains")
 _CLEAR = {"virustotal_api_key": "clear_virustotal", "abusech_auth_key": "clear_abusech"}
 _TESTS = (("virustotal", "virustotal", "virustotal_api_key"), ("abusech", "urlhaus", "abusech_auth_key"))
-_STALL = timedelta(minutes=10)
 
 
 def _log(op, tid, outcome):
@@ -59,25 +55,10 @@ def _out(row, keys) -> dict:
 
 
 async def _target(db, kind, obj_id, tid):
-    model = IOC if kind == "ioc" else Artifact if kind == "artifact" else None
-    if model is None:
+    target = await load_target(db, kind, obj_id, tid)
+    if target is None:
         raise HTTPException(status_code=404, detail="Not found")
-    obj = (await db.execute(select(model).where(model.id == obj_id, model.tenant_id == tid))).scalars().first()
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Not found")
-    raw_type = obj.ioc_type if kind == "ioc" else getattr(obj.artifact_type, "value", obj.artifact_type)
-    return obj, raw_type
-
-
-def _iso(dt):
-    return dt.isoformat() if dt else None
-
-
-def _result(r: EnrichmentResult, now: datetime) -> dict:
-    stalled = bool(r.status == "pending" and r.updated_at and now - r.updated_at > _STALL)
-    return {"source": r.source, "status": r.status, "verdict": r.verdict, "score": r.score,
-            "summary": r.summary, "link": r.link, "error": r.error, "fetched_at": _iso(r.fetched_at),
-            "stalled": stalled}
+    return target
 
 
 # ---------------------------------------------------------------- config (admin)
@@ -180,25 +161,10 @@ async def test_config(db: AsyncSession = Depends(deps.get_db), current_user: Use
 async def get_results(kind: str, obj_id: int, db: AsyncSession = Depends(deps.get_db),
                       current_user: User = Depends(deps.get_current_active_user),
                       tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
-    obj, raw_type = await _target(db, kind, obj_id, tenant_id)
-    s = await load_settings(db, tenant_id)
-    tlp = obj.tlp if kind == "ioc" else s.artifact_tlp
-    norm = normalise(raw_type, obj.value)
-    rows = []
-    if norm:
-        rows = (await db.execute(select(EnrichmentResult).where(
-            EnrichmentResult.tenant_id == tenant_id, EnrichmentResult.indicator_type == norm[0],
-            EnrichmentResult.indicator_value == norm[1]).order_by(EnrichmentResult.source))).scalars().all()
-    now = datetime.now(timezone.utc)
-    suggestion = None
-    if kind == "ioc" and rows:
-        suggestion = suggest(obj.threat_level, obj.tags or [],
-                             [{"source": r.source, "status": r.status, "verdict": r.verdict, "summary": r.summary}
-                              for r in rows])
-    return {"enrichable": norm is not None, "indicator_type": norm[0] if norm else None,
-            "indicator_value": norm[1] if norm else None, "effective_tlp": tlp,
-            "auto": bool(norm) and tlp_allows(tlp, s.auto_max_tlp),
-            "results": [_result(r, now) for r in rows], "suggestion": suggestion}
+    view = await enrichment_view(db, kind=kind, obj_id=obj_id, tenant_id=tenant_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return view
 
 
 @router.post("/{kind}/{obj_id}/run")
@@ -226,4 +192,4 @@ async def run(kind: str, obj_id: int, body: Optional[RunIn] = Body(None),
             rows.append(await upsert_result(db, tenant_id, itype, v, name, status="pending", error=None))
     hooks.enqueue(tenant_id, raw_type, value, tlp, force=True)
     return Response(status_code=202, media_type="application/json",
-                    content=json.dumps({"results": [_result(r, now) for r in rows]}))
+                    content=json.dumps({"results": [result_dict(r, now) for r in rows]}))
