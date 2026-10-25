@@ -167,6 +167,14 @@ async def revoke(db, session_id: str, *, user_id: Optional[int] = None, tenant_i
     return (res.rowcount or 0) > 0
 
 
+async def revoke_all_for_user(db, user_id: int) -> None:
+    """Revoke every live session (web and OAuth) of a user. Pair it with ``bump_token_version`` when an
+    admin action signs the user out everywhere, so the session list does not show dead sessions as live.
+    Flushes via the UPDATE; the caller commits."""
+    await db.execute(update(AuthSession).where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))
+                     .values(revoked_at=_now()).execution_options(synchronize_session=False))
+
+
 async def is_live(db, session_id: str) -> Optional[AuthSession]:
     """Return the session if it exists and is not revoked, else None.
 

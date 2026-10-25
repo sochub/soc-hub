@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.audit.events import audit_event
-from app.auth import login_tenant, web
+from app.auth import login_tenant, sessions, web
 from app.auth.login_policy import is_password_fallback, sso_required_error
 from app.api.v1.users import _audit_tenant
 from app.core import security, totp
@@ -267,6 +267,7 @@ async def mfa_reset(
     target.mfa_secret_enc = None
     target.mfa_enabled_at = None
     security.bump_token_version(target)
+    await sessions.revoke_all_for_user(db, target.id)
     await _audit(db, actor, "mfa_reset", entity_id=target.id, tenant_id=audit_tid, actor_id=actor.id)
     await db.commit()
     await audit_event("security", "mfa.reset", request=request, user_id=actor.id, user_email=actor.email,

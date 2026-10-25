@@ -12,6 +12,7 @@ from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.audit_log import AuditLog
+from app.models.auth_session import AuthSession
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -231,6 +232,9 @@ def test_admin_reset_revokes_target():
         assert u.mfa_enabled_at is None and u.mfa_secret_enc is None
         assert (await c.get("/api/v1/users/me", headers=old)).status_code == 401
         async with AsyncSessionLocal() as db:
+            live = (await db.execute(select(AuthSession.id).where(
+                AuthSession.user_id == ids["member"], AuthSession.revoked_at.is_(None)))).all()
+            assert live == []
             rows = (await db.execute(select(AuditLog).where(
                 AuditLog.entity_id == ids["member"], AuditLog.action == "mfa_reset"))).scalars().all()
         assert len(rows) == 1 and rows[0].user_id == ids["admin"]

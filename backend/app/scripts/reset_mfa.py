@@ -6,7 +6,7 @@ Usage:
     python -m app.scripts.reset_mfa --email someone@example.com
 
 Clears the stored TOTP secret, marks MFA as off and bumps the user's token
-version (signing them out everywhere). If one of their tenants requires
+version and revokes their sessions (signing them out everywhere). If one of their tenants requires
 two-factor, they are asked to set it up again at their next sign-in.
 
 Use it when nobody who could reset the account in the app is able to sign in —
@@ -21,6 +21,7 @@ from sqlalchemy import func
 from sqlalchemy.future import select
 
 import app.db.base  # noqa: F401 — register all models before any query
+from app.auth.sessions import revoke_all_for_user
 from app.core.security import bump_token_version
 from app.db.session import AsyncSessionLocal, engine
 from app.models.user import User
@@ -39,6 +40,7 @@ async def reset_mfa(email: str) -> int | None:
         user.mfa_secret_enc = None
         user.mfa_enabled_at = None
         bump_token_version(user)
+        await revoke_all_for_user(db, user.id)
         await db.commit()
         return int(user.id)
 

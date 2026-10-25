@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
+from app.models.auth_session import AuthSession
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.membership import TenantMembership
@@ -110,4 +111,8 @@ def test_deactivate_bumps_version():
                         headers=_hdr(await make_web_token(None, a, ids["t"])))
         assert r.status_code == 200, r.text
         assert (await c.get("/api/v1/users/me", headers=_hdr(old))).status_code == 401
+        async with AsyncSessionLocal() as db:
+            live = (await db.execute(select(AuthSession.id).where(
+                AuthSession.user_id == ids["u"], AuthSession.revoked_at.is_(None)))).all()
+        assert live == []
     _scenario(body)

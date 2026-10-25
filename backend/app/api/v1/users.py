@@ -12,7 +12,7 @@ from sqlalchemy.future import select
 
 from app.api import deps
 from app.audit.events import audit_event
-from app.auth import web
+from app.auth import sessions, web
 from app.core import security
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -408,6 +408,7 @@ async def deactivate_user(
     user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     user.is_active = False
     security.bump_token_version(user)
+    await sessions.revoke_all_for_user(db, user.id)
     await db.commit()
     return UserSchema(
         id=user.id, email=user.email, full_name=user.full_name,
