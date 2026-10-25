@@ -16,7 +16,17 @@ ARTIFACT_IOC_TYPE = {"ip": "ip_address", "domain": "domain", "url": "url", "file
                      "email": "email", "other": "other"}
 
 
+async def ensure_case_in_tenant(db: AsyncSession, *, tenant_id: int, case_id: int | None) -> None:
+    """404 "Case not found" unless ``case_id`` is None or a case of ``tenant_id``."""
+    if case_id is None:
+        return
+    found = (await db.execute(select(Case.id).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalar()
+    if found is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+
 async def create_ioc(db: AsyncSession, *, tenant_id: int, data: dict, user_id: int) -> IOC:
+    await ensure_case_in_tenant(db, tenant_id=tenant_id, case_id=data.get("case_id"))
     ioc = IOC(**data, tenant_id=tenant_id, created_by=user_id)
     db.add(ioc)
     await db.flush()

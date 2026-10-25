@@ -122,6 +122,8 @@ async def update_ioc(
         raise HTTPException(status_code=404, detail="IOC not found")
 
     update_data = ioc_in.model_dump(exclude_unset=True)
+    if "case_id" in update_data:
+        await ioc_service.ensure_case_in_tenant(db, tenant_id=tenant_id, case_id=update_data["case_id"])
     changes = {}
     for field, value in update_data.items():
         old_value = getattr(ioc, field)
