@@ -331,6 +331,32 @@ async def update_timeline_event(
     return result.scalars().first()
 
 
+@router.patch("/{case_id}/timeline/{event_id}/pin", response_model=case_schema.TimelineEvent)
+async def pin_timeline_event(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    event_id: int,
+    body: case_schema.PinIn,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Pin or unpin an activity entry on the incident glance."""
+    ev = (await db.execute(select(TimelineEvent).options(selectinload(TimelineEvent.user))
+                           .join(Case, Case.id == TimelineEvent.case_id)
+                           .where(TimelineEvent.id == event_id, TimelineEvent.case_id == case_id,
+                                  Case.tenant_id == tenant_id))).scalars().first()
+    if not ev:
+        raise HTTPException(status_code=404, detail="Timeline event not found")
+    if ev.pinned != body.pinned:
+        ev.pinned = body.pinned
+        await create_audit_log(db=db, entity_type="timeline_event", entity_id=ev.id,
+                               action="timeline_pinned" if body.pinned else "timeline_unpinned",
+                               tenant_id=tenant_id, user_id=current_user.id, changes={"case_id": case_id})
+        await db.commit()
+    return ev
+
+
 @router.delete("/{case_id}/timeline/{event_id}")
 async def delete_timeline_event(
     *,

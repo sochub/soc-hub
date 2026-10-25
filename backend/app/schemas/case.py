@@ -101,6 +101,7 @@ class TimelineEvent(TimelineEventBase):
     guest_email: Optional[str] = None
     via: Optional[str] = None
     via_client: Optional[str] = None
+    pinned: bool = False
 
     class Config:
         from_attributes = True
@@ -154,6 +155,10 @@ class CaseCreate(CaseBase):
             if aware > datetime.now(timezone.utc) + timedelta(seconds=60):
                 raise ValueError("incident start cannot be in the future")
         return v
+
+
+class PinIn(BaseModel):
+    pinned: bool
 
 
 class MilestonesIn(BaseModel):

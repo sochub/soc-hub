@@ -106,6 +106,7 @@ class TimelineEvent(Base):
     guest = relationship("CaseGuest", lazy="joined")
     via = Column(String(16), nullable=True)  # set when an MCP client wrote this entry on behalf of user_id
     via_client = Column(String(200), nullable=True)
+    pinned = Column(Boolean, nullable=False, default=False, server_default="false")  # shown on the incident glance
 
     @property
     def guest_email(self):
