@@ -14,7 +14,8 @@ from app.services.case_service import (
 )
 from app.notifications import service as notif_service
 from app.utils.roles import resolve_active_role
-from app.services.milestones import case_milestones
+from app.utils.audit import create_audit_log
+from app.services.milestones import KEYS as MILESTONE_KEYS, case_milestones, introduced_inversions, inversion_message
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
 from app.workflows.events import emit_event
@@ -172,6 +173,37 @@ async def read_case(
     await _attach_sla(db, tenant_id, [case])
     case.milestones = await case_milestones(db, case)
     return case
+
+@router.put("/{case_id}/milestones")
+async def update_milestones(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    body: case_schema.MilestonesIn,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Declare or clear incident milestones (shared by the glance and the report)."""
+    case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
+                             .with_for_update())).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    patch = body.model_dump(exclude_unset=True)
+    old = {k: getattr(case, k) for k in patch}
+    for k, v in patch.items():
+        setattr(case, k, v)
+    ms = await case_milestones(db, case)
+    bad = introduced_inversions({k: ms[k]["at"] for k in MILESTONE_KEYS}, {k[:-3] for k in patch})
+    if bad:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=inversion_message(bad[0]))
+    iso = lambda d: {k: (v.isoformat() if v is not None else None) for k, v in d.items()}  # noqa: E731
+    await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="milestones_changed",
+                           tenant_id=tenant_id, user_id=current_user.id,
+                           changes={"old": iso(old), "new": iso(patch)})
+    await db.commit()
+    return ms
+
 
 @router.put("/{case_id}", response_model=case_schema.Case)
 async def update_case(

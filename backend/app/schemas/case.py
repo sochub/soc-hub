@@ -1,5 +1,5 @@
 from typing import Optional, List, Any, Literal
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.services.avatars import avatar_version
 from app.models.case import CaseStatus, CaseSeverity, CASE_OUTCOMES
@@ -143,7 +143,25 @@ class CaseBase(BaseModel):
     _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
 
 class CaseCreate(CaseBase):
-    pass
+    # Analyst-declared incident start; omitted when the analyst left the form default.
+    first_seen_at: Optional[datetime] = None
+
+    @field_validator("first_seen_at")
+    @classmethod
+    def _not_future(cls, v):
+        if v is not None:
+            aware = v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+            if aware > datetime.now(timezone.utc) + timedelta(seconds=60):
+                raise ValueError("incident start cannot be in the future")
+        return v
+
+
+class MilestonesIn(BaseModel):
+    """Only keys present in the body change; null clears the declaration."""
+    first_seen_at: Optional[datetime] = None
+    detected_at: Optional[datetime] = None
+    contained_at: Optional[datetime] = None
+    recovered_at: Optional[datetime] = None
 
 class CaseUpdate(BaseModel):
     title: Optional[str] = None

@@ -26,3 +26,22 @@ async def case_milestones(db, case) -> dict:
     for k in KEYS:
         out[k]["source"] = _SOURCE.get(out[k]["source"], out[k]["source"])
     return out
+
+
+_NAMES = {"first_seen": "First seen", "detected": "Detected", "contained": "Contained", "recovered": "Recovered"}
+_PAIRS = (("first_seen", "detected"), ("detected", "contained"), ("contained", "recovered"))
+
+
+def introduced_inversions(effective: dict, changed: set) -> list:
+    """Adjacent pairs out of order where at least one side was changed by this request.
+    Pre-existing (computed) inversions never block an unrelated edit."""
+    bad = []
+    for a, b in _PAIRS:
+        x, y = calc.aware(effective.get(a)), calc.aware(effective.get(b))
+        if x is not None and y is not None and x > y and (a in changed or b in changed):
+            bad.append((a, b))
+    return bad
+
+
+def inversion_message(pair) -> str:
+    return f"{_NAMES[pair[0]]} must not be after {_NAMES[pair[1]]}"
