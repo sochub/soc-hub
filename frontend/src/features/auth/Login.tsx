@@ -5,6 +5,7 @@ import { api, loginNotice, session, ssoLoginUrl } from '../../api/client';
 import { Button, Input, Label } from '../../components/ui';
 import MfaSetupDialog from '../profile/MfaSetupDialog';
 import { mfaErrorMessage } from '../profile/mfaErrors';
+import { takeReturnTo } from './returnTo';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -35,7 +36,7 @@ export default function Login() {
         if (hash === '#sso=ok') {
             window.history.replaceState(null, '', window.location.pathname);
             session.mark();
-            navigate('/');
+            navigate(takeReturnTo());
         } else if (hash.startsWith('#sso_error=')) {
             setError(decodeURIComponent(hash.slice('#sso_error='.length)));
             window.history.replaceState(null, '', window.location.pathname);
@@ -66,7 +67,7 @@ export default function Login() {
                 return;
             }
             session.mark();
-            navigate('/');
+            navigate(takeReturnTo());
         } catch (err: any) {
             const d = err.response?.data?.detail;
             if (err.response?.status === 403 && d?.code === 'sso_required' && d.slug) {
@@ -96,7 +97,7 @@ export default function Login() {
         try {
             await api.post('/auth/login/mfa', { mfa_token: challenge.token, code });
             session.mark();
-            navigate('/');
+            navigate(takeReturnTo());
         } catch (err) {
             if ((err as { response?: { status?: number } }).response?.status === 401) {
                 resetChallenge('Your sign-in expired — please sign in again');
@@ -169,7 +170,7 @@ export default function Login() {
                                 onEnabled={() => {
                                     session.mark();
                                     setChallenge(null);
-                                    navigate('/');
+                                    navigate(takeReturnTo());
                                 }}
                             />
                             <button type="button" onClick={() => resetChallenge()}

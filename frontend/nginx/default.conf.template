@@ -12,6 +12,14 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # OAuth consent screen: never framed (clickjacking on Approve).
+    location = /oauth/consent {
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        try_files /index.html =404;
+    }
+
     # Hashed build output: cache forever, and 404 for missing files instead of
     # falling back to index.html (HTML served as JS fails silently -> blank page).
     location /assets/ {

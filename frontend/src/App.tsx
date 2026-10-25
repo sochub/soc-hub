@@ -13,6 +13,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import RequireRole from './components/auth/RequireRole';
 import Login from './features/auth/Login';
 import AcceptInvitation from './features/auth/AcceptInvitation';
+import OAuthConsent from './features/auth/OAuthConsent';
 import { GuestForgotPage, GuestLinkPage, GuestLoginPage, GuestRegisterPage, GuestResetPage, GuestSsoPage } from './features/guest-portal/GuestAuthPages';
 import { GuestCasePage, GuestHomePage } from './features/guest-portal/GuestCasePages';
 import SettingsHub from './features/settings/SettingsHub';
@@ -76,6 +77,7 @@ function App() {
             <Route path="/guest" element={<GuestHomePage />} />
             <Route path="/guest/cases/:id" element={<GuestCasePage />} />
             <Route element={<ProtectedRoute />}>
+              <Route path="/oauth/consent" element={<OAuthConsent />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="queue" element={<MyQueue />} />
