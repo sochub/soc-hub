@@ -14,6 +14,7 @@ from app.services.case_service import (
 )
 from app.notifications import service as notif_service
 from app.utils.roles import resolve_active_role
+from app.services.milestones import case_milestones
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
 from app.workflows.events import emit_event
@@ -169,6 +170,7 @@ async def read_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     await _attach_sla(db, tenant_id, [case])
+    case.milestones = await case_milestones(db, case)
     return case
 
 @router.put("/{case_id}", response_model=case_schema.Case)

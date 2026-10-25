@@ -56,6 +56,11 @@ class Case(Base):
     # Dedupe markers so the SLA sweep emails once per breach, not every scan.
     sla_response_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
     sla_resolution_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
+    # Declared incident milestones (NULL = computed; see app.services.milestones). Shared by glance and report.
+    first_seen_at = Column(DateTime(timezone=True), nullable=True)
+    detected_at = Column(DateTime(timezone=True), nullable=True)
+    contained_at = Column(DateTime(timezone=True), nullable=True)
+    recovered_at = Column(DateTime(timezone=True), nullable=True)
 
     alerts = relationship("Alert", back_populates="case")
     timeline_events = relationship("TimelineEvent", back_populates="case")
