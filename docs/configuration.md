@@ -453,8 +453,8 @@ storage root or bucket). Operators must purge them by hand.
 
 ## Incident reports
 
-Each case has a **Report** tab. It holds an executive summary, impact, lessons learned, a TLP marking and
-optional milestone overrides, and exports the case as a PDF or JSON file.
+Each case has a **Report** tab. It holds an executive summary, impact, lessons learned and a TLP marking, shows the
+case's incident milestones, and exports the case as a PDF or JSON file.
 
 **PDF engine.** PDFs are rendered with `weasyprint==70.0` (in `requirements.txt`). WeasyPrint needs these Debian
 runtime packages, which `backend/Dockerfile` installs: `libpango-1.0-0`, `libpangoft2-1.0-0`, `libharfbuzz0b`,
@@ -489,10 +489,13 @@ not a TLP counts as RED (fail closed).
   timeline chart and the AI draft prompt. In the PDF, URLs in timeline text are defanged as well. Known
   limitation: a password that itself contains `#` or `?` may be only partly stripped.
 - Timeline event text is capped at 300 characters, in both the PDF and the JSON.
-- Milestones (first seen, detected, contained, recovered) use your override when set and otherwise a computed
-  value (earliest IOC or alert, case creation, latest completed containment task, case resolution). Time to
-  detect, contain and recover (TTD/TTC/TTR) come from them. If milestones are out of order, the affected duration
-  shows as "unknown" with a warning, and saving out-of-order overrides is rejected with 422.
+- Milestones (first seen, detected, contained, recovered) are the **case's** milestones
+  (`PUT /api/v1/cases/{id}/milestones`), shared with the Incident at a glance strip: a declared time when set,
+  otherwise a computed value (earliest IOC or alert, case creation, latest completed containment task, case
+  resolution). Time to detect, contain and recover (TTD/TTC/TTR) come from them. If milestones are out of order,
+  the affected duration shows as "unknown" with a warning; a save that introduces an inversion is rejected with
+  422. Report milestone overrides saved before this change were copied onto their cases by the migration; the
+  report's `PUT` no longer accepts milestone fields (they are ignored).
 - The **key** report includes evidence uploads and deletions (chain of custody). The **full** report adds the
   complete timeline and the audit trail.
 - Large cases are truncated in the PDF (500 timeline events, 1000 IOCs, 1000 evidence files, 2000 audit rows,
