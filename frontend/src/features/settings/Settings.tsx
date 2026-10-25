@@ -165,6 +165,15 @@ function MfaRequirementSection() {
     );
 }
 
+function detailMessage(d: unknown): string {
+    if (typeof d === 'string') return d;
+    if (Array.isArray(d)) {
+        const m = d.map((x) => (x && typeof x === 'object' && typeof (x as { msg?: unknown }).msg === 'string' ? (x as { msg: string }).msg : '')).filter(Boolean);
+        if (m.length) return m.join('; ');
+    }
+    return 'Save failed';
+}
+
 function CopyField({ label, value }: { label: string; value: string }) {
     const [copied, setCopied] = useState(false);
     const copy = async () => {
@@ -329,7 +338,7 @@ export default function Settings() {
                                     </button>
                                     {save.isError && (
                                         <span className="text-xs text-severity-critical">
-                                            {(save.error as any)?.response?.data?.detail ?? 'Save failed'}
+                                            {detailMessage((save.error as any)?.response?.data?.detail)}
                                         </span>
                                     )}
                                 </div>
