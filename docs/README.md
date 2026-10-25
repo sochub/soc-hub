@@ -27,7 +27,7 @@ just the "what"). They double as a changelog of how the product was built.
 |---|---|
 | **Copilot** | [Global widget](copilot/A-global-widget-design.md) · [Actions (propose→confirm)](copilot/B-actions-design.md) |
 | **Playbooks** | [Design](playbooks/A-playbooks-design.md) · [Plan](playbooks/A-playbooks-plan.md) |
-| **SSO** | [Per-tenant SAML](sso/saml-design.md) |
+| **SSO** | [Per-tenant SAML](sso/saml-design.md) · [Login methods and OIDC](sso/oidc.md) |
 | **Backlog** | [Index](backlog/README.md) — designed but unscheduled work |
 
 ## Conventions
