@@ -327,7 +327,9 @@ async def change_password(
     await db.commit()
     await audit_event("security", "password.changed", request=request, user_id=current_user.id,
                       user_email=current_user.email, tenant_id=active)
-    return session_cookie.issue(request, response, security.issue_access_token(current_user, active))
+    token = security.issue_access_token(current_user, active, amr=current_user._amr,
+                                        sso_tenant_id=current_user._sso_tenant_id)
+    return session_cookie.issue(request, response, token)
 
 
 async def _membership_in_tenant(db: AsyncSession, user_id: int, tenant_id: int) -> TenantMembership:

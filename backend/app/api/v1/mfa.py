@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.audit.events import audit_event
+from app.auth.login_policy import sso_required_error
 from app.api.v1.users import _audit_tenant
 from app.core import security, session_cookie, totp
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
@@ -160,6 +161,7 @@ async def mfa_enable(
 ) -> Any:
     user, via_challenge = caller
     jti = getattr(user, "_mfa_challenge_jti", None)
+    amr, sso_tid = user._amr, user._sso_tenant_id  # re-issue keeps how this session signed in
     ip = client_ip(request)
     if not via_challenge and user.password_login_enabled:
         await _check_current_password(pwd_throttle, user, body.current_password, ip)
@@ -171,8 +173,13 @@ async def mfa_enable(
     await verify_user_code(db, redis, throttle, user, body.code, ip)
     if via_challenge and not await spend_mfa_challenge(redis, jti):
         raise HTTPException(status_code=401, detail=LOGIN_EXPIRED, headers={"WWW-Authenticate": "Bearer"})
-    active = (await deps.default_active_tenant_id(db, user) if via_challenge
-              else getattr(user, "_active_tenant_id", None))
+    method = None
+    if via_challenge:  # sign-in: same policy-filtered default tenant as login, MFA now satisfied
+        active, method, refused_slug = await deps.password_login_tenant(db, user, mfa_enabled=True)
+        if refused_slug is not None:
+            raise sso_required_error(refused_slug)
+    else:
+        active = getattr(user, "_active_tenant_id", None)
     user.mfa_enabled_at = datetime.now(timezone.utc)
     security.bump_token_version(user)
     await _audit(db, user, "mfa_enabled")
@@ -182,7 +189,9 @@ async def mfa_enable(
     if via_challenge:  # MFA set up during sign-in: this issues the session's first access token
         await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                           tenant_id=active)
-    return session_cookie.issue(request, response, security.issue_access_token(user, active))
+        await deps.audit_if_password_fallback(request, user, active, method)
+    token = security.issue_access_token(user, active, amr=amr, sso_tenant_id=sso_tid)
+    return session_cookie.issue(request, response, token)
 
 
 @router.post("/me/mfa/disable", response_model=Token, response_model_exclude_unset=True)
@@ -209,6 +218,7 @@ async def mfa_disable(
     await _check_current_password(pwd_throttle, user, body.current_password, ip)
     await verify_user_code(db, redis, throttle, user, body.code, ip)
     active = getattr(user, "_active_tenant_id", None)
+    amr, sso_tid = user._amr, user._sso_tenant_id
     user.mfa_secret_enc = None
     user.mfa_enabled_at = None
     security.bump_token_version(user)
@@ -216,7 +226,8 @@ async def mfa_disable(
     await db.commit()
     await audit_event("security", "mfa.disabled", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=active)
-    return session_cookie.issue(request, response, security.issue_access_token(user, active))
+    token = security.issue_access_token(user, active, amr=amr, sso_tenant_id=sso_tid)
+    return session_cookie.issue(request, response, token)
 
 
 @router.post("/{user_id}/mfa/reset", status_code=204)

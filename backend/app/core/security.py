@@ -27,9 +27,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 MFA_CHALLENGE_MINUTES = 5
 
 
-def issue_access_token(user, active_tenant_id) -> str:
+def issue_access_token(user, active_tenant_id, *, amr: str = "pwd",
+                       sso_tenant_id: Optional[int] = None) -> str:
+    """`amr`: how this session authenticated (pwd|saml|oidc); `sso_tid`: the tenant whose IdP issued it."""
     return create_access_token({"sub": user.email, "active_tenant_id": active_tenant_id,
-                                "tv": user.token_version or 0})
+                                "tv": user.token_version or 0, "amr": amr, "sso_tid": sso_tenant_id})
 
 
 def issue_mfa_challenge(user) -> str:

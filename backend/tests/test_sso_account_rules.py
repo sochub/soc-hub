@@ -1,5 +1,6 @@
-"""SSO account rules (Ruling S1): a tenant's IdP may only sign in accounts that
-belong to that tenant alone; auto-provision only creates NEW users."""
+"""SSO account rules: a tenant's IdP may only sign in existing members of that tenant (they may also
+belong to other tenants; the SSO session only opens this one); never super admins; auto-provision
+only creates NEW users."""
 import asyncio
 import secrets
 import uuid
@@ -116,9 +117,11 @@ def test_super_admins_refused():
     _run(body)
 
 
-def test_member_of_another_tenant_refused():
+def test_member_of_another_tenant_allowed():
     async def body(ids):
-        await _refused(ids, "multi")
+        u = await _resolve(ids, ids["emails"]["multi"])
+        assert u.id == ids["multi"]
+        assert await _memberships(ids["multi"]) == sorted([ids["ta"], ids["tb"]])  # no new membership
     _run(body)
 
 
@@ -171,25 +174,26 @@ def test_acs_redirects_with_clear_message(monkeypatch):
         monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: FakeAuth(current["e"]))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             url = f"/api/v1/auth/saml/{ids['slug']}/acs"
-            for who in ("sa", "multi", "other"):
+            for who in ("sa", "other"):
                 current["e"] = ids["emails"][who]
                 r = await c.post(url, data={"SAMLResponse": "x"})
                 assert r.status_code == 303
                 loc = r.headers["location"]
                 assert "#sso_error=" in loc and "set-cookie" not in r.headers
                 assert unquote(loc.split("#sso_error=", 1)[1]) == sso_mod.SSO_NOT_ALLOWED
-            current["e"] = ids["emails"]["local"]
-            r = await c.post(url, data={"SAMLResponse": "x"})
-            assert r.status_code == 303 and _signed_in(r)
+            for who in ("multi", "local"):
+                current["e"] = ids["emails"][who]
+                r = await c.post(url, data={"SAMLResponse": "x"})
+                assert r.status_code == 303 and _signed_in(r)
         async with AsyncSessionLocal() as db:
             failed = (await db.execute(select(AuditLog).where(
                 AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.failed"))).scalars().all()
             ok = (await db.execute(select(AuditLog).where(
                 AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.success"))).scalars().all()
-        assert len(failed) == 3 and all(r.category == "security" and r.outcome == "denied" for r in failed)
+        assert len(failed) == 2 and all(r.category == "security" and r.outcome == "denied" for r in failed)
         assert {r.changes["reason"] for r in failed} == {"not_allowed"}
         assert sso_mod.SSO_NOT_ALLOWED not in repr([vars(r) for r in failed + ok])
-        assert len(ok) == 1 and ok[0].user_id == ids["local"]
+        assert sorted(r.user_id for r in ok) == sorted([ids["multi"], ids["local"]])
     _run(body)
 
 

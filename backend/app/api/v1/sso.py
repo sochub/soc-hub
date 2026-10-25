@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.api.v1.auth import _safe_domain
 from app.audit.events import audit_event
+from app.auth.login_policy import AMR_SAML
 from app.core import security, session_cookie
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
@@ -179,8 +180,9 @@ async def _resolve_sso_user(
     tenant_ids = set((await db.execute(
         select(TenantMembership.tenant_id).where(TenantMembership.user_id == user.id)
     )).scalars().all())
-    if tenant_ids != {tenant.id}:
-        # Not a member here (never auto-attached), or also a member elsewhere.
+    if tenant.id not in tenant_ids:
+        # Not a member here: never auto-attached. Members of other tenants too are fine: an SSO session
+        # only ever opens the tenant whose IdP issued it (app.auth.login_policy).
         raise HTTPException(status_code=403, detail=SSO_NOT_ALLOWED)
     return user
 
@@ -279,7 +281,8 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
 
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     out = RedirectResponse(f"{base}/login#sso=ok", status_code=303)
-    session_cookie.set_session(out, security.issue_access_token(user, tenant.id))
+    session_cookie.set_session(out, security.issue_access_token(user, tenant.id, amr=AMR_SAML,
+                                                             sso_tenant_id=tenant.id))
     return out
 
 
