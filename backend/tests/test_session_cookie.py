@@ -5,7 +5,8 @@ from sqlalchemy import delete
 
 from app.core import login_throttle
 from app.core.security import get_password_hash
-from app.core.session_cookie import COOKIE
+from app.core.config import settings
+from app.core.session_cookie import COOKIE, REFRESH_COOKIE
 from app.db.session import AsyncSessionLocal
 from app.main import app
 from app.models.membership import TenantMembership
@@ -17,10 +18,15 @@ PW = "Cookie-Passw0rd!x"
 XRW = {"X-Requested-With": "XMLHttpRequest"}
 
 
-def _cookie(r):
+def _cookies(r) -> SimpleCookie:
     c = SimpleCookie()
-    c.load(r.headers["set-cookie"])
-    return c[COOKIE]
+    for raw in r.headers.get_list("set-cookie"):  # one header per cookie
+        c.load(raw)
+    return c
+
+
+def _cookie(r):
+    return _cookies(r)[COOKIE]
 
 
 def test_browser_session_cookie():
@@ -44,14 +50,21 @@ def test_browser_session_cookie():
 
                 # SPA login: cookie only, never a token in the body
                 r = await call("POST", "/api/v1/auth/login/access-token", headers=XRW, data=form)
-                assert r.status_code == 200 and "access_token" not in r.json()
+                assert r.status_code == 200 and "access_token" not in r.json() and "refresh_token" not in r.json()
                 m = _cookie(r)
                 assert m["httponly"] and m["samesite"].lower() == "strict" and m["path"] == "/api"
+                assert m["max-age"] == str(settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
                 sess = m.value
+                # the refresh token: its own HttpOnly cookie, sent only to the refresh endpoint
+                rf = _cookies(r)[REFRESH_COOKIE]
+                assert rf["httponly"] and rf["samesite"].lower() == "strict"
+                assert rf["path"] == "/api/v1/auth/refresh" and rf["max-age"] == str(settings.REFRESH_IDLE_DAYS * 86400)
+                assert bool(rf["secure"]) == settings.PUBLIC_BASE_URL.startswith("https")
 
-                # API client login: bearer token in the body, as before
+                # API client login: bearer + refresh tokens in the body
                 r = await call("POST", "/api/v1/auth/login/access-token", data=form)
                 bearer = r.json()["access_token"]
+                assert r.json()["refresh_token"]
 
                 assert (await call("GET", "/api/v1/users/me", cookie=sess)).status_code == 200
                 assert (await call("GET", "/api/v1/users/me")).status_code == 401
@@ -69,6 +82,7 @@ def test_browser_session_cookie():
 
                 r = await call("POST", "/api/v1/auth/logout", cookie=sess, headers=XRW)
                 assert r.status_code == 204 and _cookie(r)["max-age"] == "0"
+                assert _cookies(r)[REFRESH_COOKIE]["max-age"] == "0"
         finally:
             async with AsyncSessionLocal() as db:
                 await db.execute(delete(TenantMembership).where(TenantMembership.user_id == u.id))

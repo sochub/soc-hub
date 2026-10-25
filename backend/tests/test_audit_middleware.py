@@ -3,6 +3,7 @@ import pytest
 from app.audit import middleware as mw
 from app.audit.middleware import derive_entity
 from tests.audit_fixtures import hdr, rows, run
+from tests.session_fixtures import make_web_token
 
 
 def test_derive_entity():
@@ -147,7 +148,7 @@ def test_super_admin_member_platform_action_is_tenantless_and_hidden_from_tenant
         try:
             async with AsyncSessionLocal() as db:
                 root = (await db.execute(select(User).where(User.id == w.users["root"]))).scalars().one()
-                tok = security.issue_access_token(root, w.ta)
+                tok = await make_web_token(None, root, w.ta)
             r = await c.put(f"/api/v1/tenants/{w.tb}", json={"name": "wf-test"},
                             headers={"Authorization": f"Bearer {tok}"})
             assert r.status_code == 200

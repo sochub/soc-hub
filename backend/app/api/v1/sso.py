@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.api.v1.auth import _safe_domain
 from app.audit.events import audit_event
+from app.auth import web
 from app.auth.login_policy import AMR_OIDC, AMR_SAML
-from app.core import security, session_cookie
+from app.core import security
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
 from app.guests import tokens as guest_tokens
@@ -323,8 +324,7 @@ async def _finish_member_sso(request: Request, db: AsyncSession, tenant: Tenant,
 
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     out = RedirectResponse(f"{base}/login#sso=ok", status_code=303)
-    session_cookie.set_session(out, security.issue_access_token(user, tenant.id, amr=amr,
-                                                             sso_tenant_id=tenant.id))
+    await web.start_web_session(db, request, out, user, tenant.id, amr=amr, sso_tenant_id=tenant.id)
     return out
 
 

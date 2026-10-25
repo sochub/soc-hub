@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 
 from app.api.v1 import mfa as mfa_mod
 from app.api.v1 import sso as sso_mod
+from app.auth import sessions
 from app.core import login_throttle, security, totp
 from app.core.config import settings
 from app.core.security import get_password_hash
@@ -23,6 +24,7 @@ from app.utils.crypto import encrypt
 from tests.audit_fixtures import _FakeThrottle
 from tests.guest_fixtures import FakeAsyncRedis, client, make_tenant, run
 from tests.test_guest_sso import FakeAuth
+from tests.session_fixtures import make_web_token
 
 PW = "Method-Passw0rd!x"
 LOGIN = "/api/v1/auth/login/access-token"
@@ -100,7 +102,8 @@ def _sso_required(r, slug):
 
 def _session_cookie(r) -> str:
     c = SimpleCookie()
-    c.load(r.headers["set-cookie"])
+    for raw in r.headers.get_list("set-cookie"):  # session + refresh cookies
+        c.load(raw)
     return c[COOKIE].value
 
 
@@ -176,7 +179,7 @@ def test_sso_user_keeps_amr_after_mfa_enable():
         async with AsyncSessionLocal() as db:
             t = await _tenant(db, ids, "saml", sso=True)
             u = await _user(db, ids, "sso", [(t, "analyst")], password_login=False)
-            tok = security.issue_access_token(u, t.id, amr="saml", sso_tenant_id=t.id)
+            tok = await make_web_token(None, u, t.id, amr="saml", sso_tenant_id=t.id)
         s = await c.post("/api/v1/users/me/mfa/setup", headers=_bearer(tok))
         assert s.status_code == 200, s.text
         e = await c.post("/api/v1/users/me/mfa/enable", headers=_bearer(tok),
@@ -242,7 +245,10 @@ def test_legacy_token_without_amr_is_pwd():
         async with AsyncSessionLocal() as db:
             t = await _tenant(db, ids, "saml")
             u = await _user(db, ids, "an", [(t, "analyst")])
-        tok = security.create_access_token({"sub": u.email, "active_tenant_id": t.id, "tv": 0})
+            # a live session, but a token minted before amr existed: it counts as a password session
+            row, _ = await sessions.create_session(db, u, kind="web", amr="pwd", tenant_id=t.id)
+            await db.commit()
+        tok = security.create_access_token({"sub": u.email, "active_tenant_id": t.id, "tv": 0, "sid": row.id})
         _sso_required(await c.get("/api/v1/users/me", headers=_bearer(tok)), t.slug)
     _go(body)
 
@@ -276,7 +282,7 @@ def test_fallback_admin_cannot_disable_mfa():
         async with AsyncSessionLocal() as db:
             t = await _tenant(db, ids, "saml")
             u = await _user(db, ids, "adm", [(t, "admin")], mfa_secret=secret)
-            tok = security.issue_access_token(u, t.id, amr="pwd")
+            tok = await make_web_token(None, u, t.id, amr="pwd")
         r = await _disable(c, tok, secret)
         assert r.status_code == 403, r.text
         assert r.json()["detail"] == "Two-factor authentication is required for password sign-in at this organization."
@@ -290,7 +296,7 @@ def test_admin_at_password_tenant_can_disable_mfa():
         async with AsyncSessionLocal() as db:
             t = await _tenant(db, ids, "password")
             u = await _user(db, ids, "adm", [(t, "admin")], mfa_secret=secret)
-            tok = security.issue_access_token(u, t.id, amr="pwd")
+            tok = await make_web_token(None, u, t.id, amr="pwd")
         r = await _disable(c, tok, secret)
         assert r.status_code == 200, r.text
         assert not await _mfa_on(u.id)

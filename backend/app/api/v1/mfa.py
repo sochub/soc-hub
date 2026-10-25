@@ -15,10 +15,10 @@ from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.audit.events import audit_event
-from app.auth import login_tenant
+from app.auth import login_tenant, web
 from app.auth.login_policy import is_password_fallback, sso_required_error
 from app.api.v1.users import _audit_tenant
-from app.core import security, session_cookie, totp
+from app.core import security, totp
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -162,6 +162,7 @@ async def mfa_enable(
 ) -> Any:
     user, via_challenge = caller
     jti = getattr(user, "_mfa_challenge_jti", None)
+    sid = getattr(user, "_session_id", None)  # None on the forced-enrolment (challenge) path
     amr, sso_tid = user._amr, user._sso_tenant_id  # re-issue keeps how this session signed in
     ip = client_ip(request)
     if not via_challenge and user.password_login_enabled:
@@ -191,8 +192,8 @@ async def mfa_enable(
         await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                           tenant_id=active)
         await login_tenant.audit_if_password_fallback(request, user, active, method)
-    token = security.issue_access_token(user, active, amr=amr, sso_tenant_id=sso_tid)
-    return session_cookie.issue(request, response, token)
+        return await web.start_web_session(db, request, response, user, active, amr=amr, sso_tenant_id=sso_tid)
+    return await web.reissue_for_session(db, request, response, user, sid=sid)
 
 
 @router.post("/me/mfa/disable", response_model=Token, response_model_exclude_unset=True)
@@ -210,6 +211,7 @@ async def mfa_disable(
     if not user.password_login_enabled:
         raise HTTPException(status_code=400,
                             detail="Two-factor for SSO-only accounts can only be reset by an admin")
+    sid = user._session_id
     user = await _lock_user(db, user.id)
     if user.mfa_enabled_at is None:
         raise HTTPException(status_code=400, detail="Two-factor authentication is not enabled")
@@ -224,7 +226,6 @@ async def mfa_disable(
     ip = client_ip(request)
     await _check_current_password(pwd_throttle, user, body.current_password, ip)
     await verify_user_code(db, redis, throttle, user, body.code, ip)
-    amr, sso_tid = user._amr, user._sso_tenant_id
     user.mfa_secret_enc = None
     user.mfa_enabled_at = None
     security.bump_token_version(user)
@@ -232,8 +233,7 @@ async def mfa_disable(
     await db.commit()
     await audit_event("security", "mfa.disabled", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=active)
-    token = security.issue_access_token(user, active, amr=amr, sso_tenant_id=sso_tid)
-    return session_cookie.issue(request, response, token)
+    return await web.reissue_for_session(db, request, response, user, sid=sid)
 
 
 @router.post("/{user_id}/mfa/reset", status_code=204)

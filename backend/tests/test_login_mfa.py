@@ -16,6 +16,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.utils.crypto import encrypt
+from tests.session_fixtures import make_web_token
 
 PW = "Old-Password-12345"
 LOGIN = "/api/v1/auth/login/access-token"
@@ -114,7 +115,7 @@ def _bearer(t):
 def test_login_normal():
     async def body(c, ids):
         r = await _pw(c, ids, "plain")
-        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "refresh_token", "token_type"}
         assert (await c.get("/api/v1/users/me", headers=_bearer(r.json()["access_token"]))).status_code == 200
     _scenario(body)
 
@@ -127,7 +128,7 @@ def test_login_mfa_required_then_code():
         code = totp.totp_at(ids["secret"], time.time())
         r2 = await c.post(LOGIN2, json={"mfa_token": r.json()["mfa_token"], "code": code})
         assert r2.status_code == 200, r2.text
-        assert set(r2.json()) == {"access_token", "token_type"}
+        assert set(r2.json()) == {"access_token", "refresh_token", "token_type"}
         me = await c.get("/api/v1/users/me", headers=_bearer(r2.json()["access_token"]))
         assert me.status_code == 200 and me.json()["active_tenant_id"] == ids["ta"]
     _scenario(body)
@@ -220,7 +221,7 @@ def test_switch_tenant_requires_mfa():
         assert at["mfa_setup_required"] is True
         async with AsyncSessionLocal() as db:
             u = (await db.execute(__import__("sqlalchemy").select(User).where(User.id == ids["multi"]))).scalars().one()
-            tok = security.issue_access_token(u, ids["ta"])
+            tok = await make_web_token(None, u, ids["ta"])
         r = await c.post("/api/v1/auth/switch-tenant", headers=_bearer(tok), json={"tenant_id": ids["tb"]})
         assert r.status_code == 403 and r.json()["detail"] == "mfa_setup_required"
         ok = await c.post("/api/v1/auth/switch-tenant", headers=_bearer(tok), json={"tenant_id": ids["ta"]})
@@ -232,7 +233,7 @@ def test_switch_tenant_requires_mfa():
 async def _token(uid, tenant_id):
     async with AsyncSessionLocal() as db:
         u = (await db.execute(select(User).where(User.id == uid))).scalars().one()
-        return security.issue_access_token(u, tenant_id)
+        return await make_web_token(None, u, tenant_id)
 
 
 async def _give_mfa(uid, secret):

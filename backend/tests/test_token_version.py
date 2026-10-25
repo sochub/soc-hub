@@ -13,6 +13,7 @@ from app.main import app
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.membership import TenantMembership
+from tests.session_fixtures import make_web_token
 
 
 def _run(coro):
@@ -66,7 +67,7 @@ def _hdr(tok):
 def test_issued_token_works():
     async def body(c, ids):
         u = await _user(ids["u"])
-        r = await c.get("/api/v1/users/me", headers=_hdr(security.issue_access_token(u, ids["t"])))
+        r = await c.get("/api/v1/users/me", headers=_hdr(await make_web_token(None, u, ids["t"])))
         assert r.status_code == 200
     _scenario(body)
 
@@ -74,7 +75,7 @@ def test_issued_token_works():
 def test_version_mismatch_rejected():
     async def body(c, ids):
         u = await _user(ids["u"])
-        tok = security.issue_access_token(u, ids["t"])
+        tok = await make_web_token(None, u, ids["t"])
         async with AsyncSessionLocal() as db:
             row = (await db.execute(select(User).where(User.id == ids["u"]))).scalars().one()
             security.bump_token_version(row)
@@ -94,7 +95,7 @@ def test_purpose_token_rejected():
 def test_tokens_carry_tv():
     async def body(c, ids):
         u = await _user(ids["u"])
-        payload = jwt.decode(security.issue_access_token(u, ids["t"]), settings.SECRET_KEY,
+        payload = jwt.decode(await make_web_token(None, u, ids["t"]), settings.SECRET_KEY,
                              algorithms=[settings.ALGORITHM])
         assert payload["tv"] == u.token_version
         assert security.decode_mfa_challenge(security.issue_mfa_challenge(u))["purpose"] == "mfa"
@@ -104,9 +105,9 @@ def test_tokens_carry_tv():
 def test_deactivate_bumps_version():
     async def body(c, ids):
         u, a = await _user(ids["u"]), await _user(ids["a"])
-        old = security.issue_access_token(u, ids["t"])
+        old = await make_web_token(None, u, ids["t"])
         r = await c.put(f"/api/v1/users/{ids['u']}/deactivate",
-                        headers=_hdr(security.issue_access_token(a, ids["t"])))
+                        headers=_hdr(await make_web_token(None, a, ids["t"])))
         assert r.status_code == 200, r.text
         assert (await c.get("/api/v1/users/me", headers=_hdr(old))).status_code == 401
     _scenario(body)

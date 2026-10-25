@@ -12,6 +12,7 @@ from app.models.invitation import Invitation, InvitationStatus
 from app.models.membership import TenantMembership
 from app.models.webhook import Webhook, verify_webhook_key
 from tests.guest_fixtures import client, make_case, make_tenant, make_user, run
+from tests.session_fixtures import make_web_token
 
 
 async def _admin(ids):
@@ -20,7 +21,7 @@ async def _admin(ids):
         u = await make_user(db, ids)
         db.add(TenantMembership(user_id=u.id, tenant_id=t.id, role="admin"))
         await db.commit()
-    return t, u, {"Authorization": f"Bearer {security.issue_access_token(u, t.id)}"}
+    return t, u, {"Authorization": f"Bearer {await make_web_token(None, u, t.id)}"}
 
 
 async def _drop(t, u):

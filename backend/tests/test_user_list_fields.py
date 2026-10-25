@@ -14,6 +14,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.case import TimelineEventUser
+from tests.session_fixtures import make_web_token
 
 
 def test_timeline_user_schema_exposes_avatar_fields():
@@ -44,7 +45,7 @@ def test_users_list_and_mentionable_expose_avatar_and_mfa():
                 db.add(TenantMembership(user_id=a.id, tenant_id=tid, role="admin"))
                 db.add(TenantMembership(user_id=b.id, tenant_id=tid, role="analyst"))
                 await db.commit()
-                hdr = {"Authorization": f"Bearer {security.issue_access_token(a, tid)}"}
+                hdr = {"Authorization": f"Bearer {await make_web_token(None, a, tid)}"}
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
                 rows = {r["id"]: r for r in (await c.get("/api/v1/users/", headers=hdr)).json()}
                 assert rows[uids[1]]["has_avatar"] is True and rows[uids[1]]["mfa_enabled"] is True

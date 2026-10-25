@@ -16,6 +16,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.utils.crypto import encrypt
+from tests.session_fixtures import make_web_token
 
 PW = "Old-Password-12345"
 
@@ -81,7 +82,7 @@ async def _user(uid):
 
 async def _hdr(uid, tenant):
     u = await _user(uid)
-    return {"Authorization": f"Bearer {security.issue_access_token(u, tenant)}"}
+    return {"Authorization": f"Bearer {await make_web_token(None, u, tenant)}"}
 
 
 def _scenario(body):
@@ -362,7 +363,7 @@ def test_enable_via_session_requires_current_password():
         assert (await _user(ids["member"])).mfa_enabled_at is None
         r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr,
                          json={"code": totp.totp_at(secret, now), "current_password": PW})
-        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "refresh_token", "token_type"}
     _scenario(body)
 
 
@@ -375,13 +376,13 @@ def test_enable_sso_only_needs_no_password_and_disable_shape():
         secret = (await c.post("/api/v1/users/me/mfa/setup", headers=hdr)).json()["secret"]
         r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr,
                          json={"code": totp.totp_at(secret, time.time())})
-        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "refresh_token", "token_type"}
         # disable response is also just the token
         _, secret2, _, _, r2 = await _enable(c, ids)
         new = {"Authorization": f"Bearer {r2.json()['access_token']}"}
         r = await c.post("/api/v1/users/me/mfa/disable", headers=new,
                          json={"current_password": PW, "code": totp.totp_at(secret2, time.time() + 30)})
-        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "refresh_token", "token_type"}
     _scenario(body)
 
 

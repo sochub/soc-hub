@@ -140,7 +140,8 @@ def _err(r) -> str:
 
 def _cookie(r) -> str:
     c = SimpleCookie()
-    c.load(r.headers["set-cookie"])
+    for raw in r.headers.get_list("set-cookie"):  # one header per cookie (session, refresh, state)
+        c.load(raw)
     return c[COOKIE].value
 
 

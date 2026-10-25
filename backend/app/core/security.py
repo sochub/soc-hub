@@ -27,10 +27,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 MFA_CHALLENGE_MINUTES = 5
 
 
-def issue_access_token(user, active_tenant_id, *, amr: str = "pwd",
+def issue_access_token(user, active_tenant_id, *, sid: str, amr: str = "pwd",
                        sso_tenant_id: Optional[int] = None) -> str:
-    """`amr`: how this session authenticated (pwd|saml|oidc); `sso_tid`: the tenant whose IdP issued it."""
-    return create_access_token({"sub": user.email, "active_tenant_id": active_tenant_id,
+    """`sid`: the live server-side session (app.auth.sessions) this token belongs to; `amr`: how that
+    session authenticated (pwd|saml|oidc); `sso_tid`: the tenant whose IdP issued it."""
+    if not sid:
+        raise ValueError("an access token needs a session id")
+    return create_access_token({"sub": user.email, "active_tenant_id": active_tenant_id, "sid": sid,
                                 "tv": user.token_version or 0, "amr": amr, "sso_tid": sso_tenant_id})
 
 

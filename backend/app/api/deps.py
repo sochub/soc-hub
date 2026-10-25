@@ -9,6 +9,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.audit.context import ctx_of
+from app.auth import sessions
 from app.auth.login_policy import AMR_PWD
 from app.auth.login_tenant import method_refusal, session_may_enter
 from app.core import session_cookie
@@ -42,7 +43,10 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
-        if email is None or payload.get("purpose"):
+        sid = payload.get("sid")
+        # Every member token belongs to a server-side session: tokens without one (minted before
+        # sessions existed) are refused, so everyone signs in once after the upgrade.
+        if email is None or payload.get("purpose") or not isinstance(sid, str) or not sid:
             raise credentials_exception
         token_data = user_schema.TokenData(
             email=email, active_tenant_id=payload.get("active_tenant_id")
@@ -56,6 +60,14 @@ async def get_current_user(
     user = result.scalars().first()
     if user is None or payload.get("tv", 0) != (user.token_version or 0):
         raise credentials_exception
+    # Revocation (logout, credential change, admin) is checked on every request.
+    session = await sessions.is_live(db, sid)
+    if session is None or session.kind != "web" or session.user_id != user.id:
+        raise credentials_exception
+    # is_live may have bumped last_used_at (row lock): commit now so no other request or refresh of this
+    # session waits on this request's transaction.
+    await db.commit()
+    user._session_id = sid
     # Transient, request-scoped: the active tenant chosen for this token.
     user._active_tenant_id = token_data.active_tenant_id
     ctx = ctx_of(request)

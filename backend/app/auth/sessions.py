@@ -143,6 +143,17 @@ async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, Use
     return row, user, f"{row.id}.{new_secret}"
 
 
+def rekey(row: AuthSession) -> str:
+    """Replace the session's refresh secret outright and return the new refresh token. Used after a
+    credential change (password, MFA): unlike ``rotate`` the old secret gets no grace window, so any
+    other copy of it is reuse from now on. The caller flushes/commits."""
+    secret = _new_secret()
+    row.refresh_hash = hash_secret(secret)
+    row.prev_refresh_hash = None
+    row.rotated_at = _now()
+    return f"{row.id}.{secret}"
+
+
 async def revoke(db, session_id: str, *, user_id: Optional[int] = None, tenant_id: Optional[int] = None) -> bool:
     """Revoke one live session. Scope: ``user_id`` → only that user's own session; ``tenant_id`` → only an
     oauth session in that tenant (tenant-admin revocation). Neither → unscoped (internal callers only).

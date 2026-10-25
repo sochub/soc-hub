@@ -17,6 +17,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.storage import get_storage
+from tests.session_fixtures import make_web_token
 
 URL = "/api/v1/users/me/avatar"
 
@@ -59,8 +60,8 @@ async def _mk(h, tag, tenant_ids, super_admin=False):
         return int(u.id)
 
 
-def _hdr(u, tid):
-    return {"Authorization": f"Bearer {security.issue_access_token(u, tid)}"}
+async def _hdr(u, tid):
+    return {"Authorization": f"Bearer {await make_web_token(None, u, tid)}"}
 
 
 async def _user(uid):
@@ -108,7 +109,7 @@ def _scenario(body):
 def test_avatar_reencoded():
     async def body(c, tids, uids, keys):
         a = await _user(uids[0])
-        hdr = _hdr(a, tids[0])
+        hdr = await _hdr(a, tids[0])
         for data, name, ct in ((_png(), "a.png", "image/png"), (_exif_jpeg(), "a.jpg", "image/jpeg")):
             r = await c.put(URL, headers=hdr, files=_up(data, name, ct))
             assert r.status_code == 200, r.text
@@ -126,7 +127,7 @@ def test_avatar_reencoded():
 
 def test_avatar_rejects_fake_and_bomb():
     async def body(c, tids, uids, keys):
-        hdr = _hdr(await _user(uids[0]), tids[0])
+        hdr = await _hdr(await _user(uids[0]), tids[0])
         bomb = _png((9000, 9000), mode="1")  # >80 MP -> DecompressionBombError
         warn = _png((7000, 7000), mode="1")  # ~49 MP -> warning only, must still be 422
         cases = [
@@ -147,20 +148,20 @@ def test_avatar_rejects_fake_and_bomb():
 def test_avatar_access_scoped():
     async def body(c, tids, uids, keys):
         a, b, other, sa = [await _user(u) for u in uids]
-        r = await c.put(URL, headers=_hdr(a, tids[0]), files=_up(_png()))
+        r = await c.put(URL, headers=await _hdr(a, tids[0]), files=_up(_png()))
         assert r.status_code == 200, r.text
         path = f"/api/v1/users/{uids[0]}/avatar"
-        assert (await c.get(path, headers=_hdr(b, tids[0]))).status_code == 200
-        assert (await c.get(path, headers=_hdr(other, tids[1]))).status_code == 404
-        assert (await c.get(path, headers=_hdr(sa, None))).status_code == 200
+        assert (await c.get(path, headers=await _hdr(b, tids[0]))).status_code == 200
+        assert (await c.get(path, headers=await _hdr(other, tids[1]))).status_code == 404
+        assert (await c.get(path, headers=await _hdr(sa, None))).status_code == 200
         # target with no avatar -> 404 even for a same-tenant member
-        assert (await c.get(f"/api/v1/users/{uids[1]}/avatar", headers=_hdr(a, tids[0]))).status_code == 404
+        assert (await c.get(f"/api/v1/users/{uids[1]}/avatar", headers=await _hdr(a, tids[0]))).status_code == 404
     _scenario(body)
 
 
 def test_avatar_replace_deletes_old(monkeypatch):
     async def body(c, tids, uids, keys):
-        hdr = _hdr(await _user(uids[0]), tids[0])
+        hdr = await _hdr(await _user(uids[0]), tids[0])
         st = get_storage()
         deleted = []
         real = type(st).delete
@@ -186,7 +187,7 @@ def test_avatar_replace_deletes_old(monkeypatch):
 
 def test_avatar_delete():
     async def body(c, tids, uids, keys):
-        hdr = _hdr(await _user(uids[0]), tids[0])
+        hdr = await _hdr(await _user(uids[0]), tids[0])
         assert (await c.put(URL, headers=hdr, files=_up(_png()))).status_code == 200
         keys.append((await _user(uids[0])).avatar_key)
         assert (await c.delete(URL, headers=hdr)).status_code == 204
@@ -201,7 +202,7 @@ def test_avatar_delete():
 
 def test_avatar_exif_orientation_and_transparency():
     async def body(c, tids, uids, keys):
-        hdr = _hdr(await _user(uids[0]), tids[0])
+        hdr = await _hdr(await _user(uids[0]), tids[0])
         # 600x200 source, red on the left half, blue on the right; tag 6 = rotate 90 CW on display
         im = Image.new("RGB", (600, 200), "blue")
         im.paste("red", (0, 0, 300, 200))
