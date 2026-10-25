@@ -13,6 +13,16 @@ KID = "k1"
 
 
 @pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("test reached the network")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", boom)
+    monkeypatch.setattr(httpx.AsyncClient, "post", boom)
+    monkeypatch.setattr(svc, "_resolve", boom)  # tests needing DNS override this
+
+
+@pytest.fixture(autouse=True)
 def _clean():
     svc._clear_caches()
     yield
@@ -130,26 +140,31 @@ def _resolver(monkeypatch, mapping):
         ip = mapping[host]
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
 
-    monkeypatch.setattr(socket, "getaddrinfo", fake)
+    monkeypatch.setattr(svc, "_resolve", fake)
 
 
 def test_private_issuer_refused(monkeypatch):
     _resolver(monkeypatch, {"idp.example.com": "10.0.0.5"})
-    assert code_of(lambda: run(svc.discover(ISSUER))) == "discovery"
+    with pytest.raises(OIDCError) as e:
+        run(svc.discover(ISSUER))
+    assert e.value.code == "discovery"
+    assert "non-public address (10.0.0.5)" in str(e.value)
 
 
 def test_private_jwks_uri_refused(monkeypatch):
-    _resolver(monkeypatch, {"idp.example.com": "93.184.216.34"})
+    _resolver(monkeypatch, {"idp.example.com": "93.184.216.34", "keys.example.com": "169.254.169.254"})
     meta = discovery_doc()
-    meta["jwks_uri"] = "https://169.254.169.254/keys"
+    meta["jwks_uri"] = "https://keys.example.com/keys"
     with pytest.raises(OIDCError) as e:
         run(svc.verify_id_token(sign_token(KEY, KID), meta, client_id=CLIENT_ID, nonce="n1"))
     assert e.value.code == "discovery"
+    assert "non-public address (169.254.169.254)" in str(e.value)
 
 
 def test_private_token_endpoint_refused(monkeypatch):
+    _resolver(monkeypatch, {"tok.example.com": "169.254.169.254"})
     meta = discovery_doc()
-    meta["token_endpoint"] = "https://169.254.169.254/token"
+    meta["token_endpoint"] = "https://tok.example.com/token"
     with pytest.raises(OIDCError) as e:
         run(svc.exchange_code(meta, client_id="c", client_secret="s", code="x", redirect_uri="https://a/cb", code_verifier="v"))
     assert e.value.code == "token"

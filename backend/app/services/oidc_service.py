@@ -6,6 +6,7 @@ because the issuer is tenant-admin supplied and discovery documents name further
 import base64
 import hashlib
 import secrets
+import socket
 import time
 from urllib.parse import urlencode, urlparse
 
@@ -17,6 +18,8 @@ from app.workflows.ssrf import SSRFError, assert_url_allowed
 
 _TTL = 3600
 _TIMEOUT = 10.0
+
+_resolve = socket.getaddrinfo  # module-level hook so tests can stub DNS
 
 _discovery_cache: dict[str, tuple[float, dict]] = {}
 _jwks_cache: dict[str, tuple[float, dict]] = {}
@@ -38,7 +41,7 @@ def _guard(url: str, code: str) -> None:
         raise OIDCError(code, "https required")
     try:
         # ponytail: resolve-then-connect leaves a DNS-rebinding window; pin the vetted IP if an IdP ever needs to be untrusted-by-name
-        assert_url_allowed(url, settings.OIDC_PRIVATE_HOSTS)
+        assert_url_allowed(url, settings.OIDC_PRIVATE_HOSTS, resolve=_resolve)
     except SSRFError as e:
         raise OIDCError(code, str(e)) from e
 
