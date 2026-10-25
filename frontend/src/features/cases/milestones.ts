@@ -18,6 +18,15 @@ export function isoToLocal(iso: string | null): string {
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
+/** datetime-local value → ISO UTC, or null when the browser accepted something that isn't a real date (e.g. a 6-digit year). */
+export function localToIso(local: string): string | null {
+    const d = new Date(local);
+    return Number.isNaN(d.getTime()) || d.getFullYear() > 9999 ? null : d.toISOString();
+}
+
+// Keeps the browser's date picker to 4-digit years.
+export const DATE_INPUT_BOUNDS = { min: '1970-01-01T00:00', max: '9999-12-31T23:59' };
+
 export const fmtLocal = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'unknown');
 
 export function apiDetail(e: unknown): string {

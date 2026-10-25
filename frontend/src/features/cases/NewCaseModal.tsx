@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, ChevronLeft, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ArtifactForm from '../artifacts/ArtifactForm';
+import { localToIso } from './milestones';
 import { api } from '../../api/client';
 import type { PlaybookSummary } from '../../types';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
@@ -60,7 +61,7 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
             ...caseData,
             tags: tagsArray,
             artifacts,
-            ...(startTouched && incidentStart ? { first_seen_at: new Date(incidentStart).toISOString() } : {}),
+            ...(startTouched && incidentStart && localToIso(incidentStart) ? { first_seen_at: localToIso(incidentStart) as string } : {}),
         });
         handleClose();
     };
@@ -182,7 +183,7 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                                 <label htmlFor="new-case-incident-start" className={modalLabel}>
                                     Incident started <span className="text-muted font-normal">(defaults to now · move it back if it began earlier)</span>
                                 </label>
-                                <input id="new-case-incident-start" type="datetime-local" value={incidentStart} max={nowLocal()}
+                                <input id="new-case-incident-start" type="datetime-local" value={incidentStart} min="1970-01-01T00:00" max={nowLocal()}
                                     onChange={(e) => { setIncidentStart(e.target.value); setStartTouched(true); }}
                                     className={modalInput} />
                             </div>
