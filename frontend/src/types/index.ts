@@ -106,6 +106,30 @@ export interface CaseEvent {
 
 export type LoginMethod = 'password' | 'saml' | 'oidc';
 
+export interface AuthSessionInfo {
+    id: string;
+    kind: 'web' | 'oauth';
+    current: boolean;
+    client_name: string | null;
+    tenant_id: number | null;
+    tenant_name: string | null;
+    amr: string;
+    created_at: string;
+    last_used_at: string;
+    user_agent: string | null;
+    ip: string | null;
+}
+
+export interface TenantOAuthSession {
+    id: string;
+    client_name: string | null;
+    user_email: string;
+    amr: string;
+    created_at: string;
+    last_used_at: string;
+    ip: string | null;
+}
+
 export interface SSOConfig {
   member_login_method: LoginMethod;
   guest_login_method: LoginMethod;

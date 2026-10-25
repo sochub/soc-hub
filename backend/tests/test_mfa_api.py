@@ -246,7 +246,7 @@ def test_tenant_security_toggle():
     async def body(c, ids):
         adm = await _hdr(ids["admin"], ids["ta"])
         r = await c.get("/api/v1/tenants/current/security", headers=adm)
-        assert r.status_code == 200 and r.json() == {"require_mfa": False, "members_without_mfa": 3}
+        assert r.status_code == 200 and r.json() == {"require_mfa": False, "members_without_mfa": 3, "mcp_enabled": False}
         async with AsyncSessionLocal() as db:  # SSO-only accounts: the IdP handles two-factor, not counted
             await db.execute(update(User).where(User.id == ids["analyst"]).values(password_login_enabled=False))
             await db.commit()

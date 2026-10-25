@@ -3,9 +3,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
-import type { LoginMethod, SLAPolicyItem, SSOConfig, User } from '../../types';
+import type { TenantOAuthSession, LoginMethod, SLAPolicyItem, SSOConfig, User } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { formatDateTime } from '../../utils/datetime';
 import { mfaErrorMessage } from '../profile/mfaErrors';
 import GuestSettingsSection from '../guests/GuestSettingsSection';
 import ArtifactTypesSection from './ArtifactTypesSection';
@@ -161,6 +162,76 @@ function MfaRequirementSection() {
                     <p>Members who sign in through single sign-on are not affected; their identity provider handles two-factor.</p>
                 </div>
             </Modal>
+        </section>
+    );
+}
+
+function McpSection() {
+    const qc = useQueryClient();
+    const [error, setError] = useState<string | null>(null);
+    const { data, isLoading } = useQuery({
+        queryKey: ['tenant-security'],
+        queryFn: async () => (await api.get('/tenants/current/security')).data as { require_mfa: boolean; members_without_mfa: number; mcp_enabled: boolean },
+    });
+    const toggle = useMutation({
+        mutationFn: async (mcp_enabled: boolean) => (await api.put('/tenants/current/security', { mcp_enabled })).data,
+        onSuccess: (d) => { setError(null); qc.setQueryData(['tenant-security'], d); },
+        onError: (err) => setError(mfaErrorMessage(err, 'Could not update the setting.')),
+    });
+    const { data: apps } = useQuery({
+        queryKey: ['tenant-oauth-sessions'],
+        queryFn: async () => (await api.get('/tenants/current/oauth-sessions')).data as TenantOAuthSession[],
+    });
+    const revoke = useMutation({
+        mutationFn: async (id: string) => { await api.delete(`/tenants/current/oauth-sessions/${id}`); },
+        onSuccess: () => { setError(null); void qc.invalidateQueries({ queryKey: ['tenant-oauth-sessions'] }); },
+        onError: (err) => setError(mfaErrorMessage(err, 'Could not revoke the session.')),
+    });
+    return (
+        <section className="bg-panel border border-line">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-line">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <KeyRound size={15} className="text-accent" /> AI clients (MCP)
+                </h2>
+            </div>
+            {isLoading || !data ? (
+                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+            ) : (
+                <div className="p-4 space-y-3">
+                    <label className="flex items-center gap-2 text-sm text-fg cursor-pointer">
+                        <input type="checkbox" checked={data.mcp_enabled} disabled={toggle.isPending}
+                            onChange={(e) => toggle.mutate(e.target.checked)}
+                            className="border-line-strong text-accent focus:ring-accent" />
+                        Allow AI clients (MCP)
+                    </label>
+                    <p className="text-xs text-fg-3">Lets members connect AI clients that act with their own permissions in this organization.</p>
+                    {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+                    <h3 className="text-xs font-semibold text-fg-2 pt-2">Connected apps</h3>
+                    {!apps || apps.length === 0 ? <p className="text-xs text-fg-3">No connected apps.</p> : (
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="text-left text-xs text-fg-3 border-b border-line">
+                                    <th className="py-1 font-normal">App</th><th className="py-1 font-normal">Member</th>
+                                    <th className="py-1 font-normal">Last used</th><th />
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {apps.map((a) => (
+                                    <tr key={a.id} className="border-b border-line">
+                                        <td className="py-1.5 text-fg">{a.client_name ?? 'Unknown app'}</td>
+                                        <td className="py-1.5 text-fg-2">{a.user_email}</td>
+                                        <td className="py-1.5 text-fg-3">{formatDateTime(a.last_used_at)}</td>
+                                        <td className="py-1.5 text-right">
+                                            <button type="button" className={btnSecondary} disabled={revoke.isPending}
+                                                onClick={() => revoke.mutate(a.id)}>Revoke</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
         </section>
     );
 }
@@ -367,6 +438,7 @@ export default function Settings() {
             )}
 
             {isAdmin && <MfaRequirementSection />}
+            {isAdmin && <McpSection />}
             {isAdmin && <GuestSettingsSection />}
             {isAdmin && <SLAPoliciesSection />}
             {isAdmin && <ArtifactTypesSection />}

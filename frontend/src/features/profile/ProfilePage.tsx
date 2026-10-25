@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
-import { api } from '../../api/client';
+import { api, session } from '../../api/client';
 import { refreshSession } from '../../api/queryClient';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { btnDanger, btnPrimary, btnSecondary, modalInput, modalLabel } from '../../components/layout/Modal';
 import Avatar from '../../components/Avatar';
-import type { User } from '../../types';
+import type { AuthSessionInfo, User } from '../../types';
 import MfaSetupDialog from './MfaSetupDialog';
 import { mfaErrorMessage } from './mfaErrors';
 import { formatDateTime } from '../../utils/datetime';
@@ -256,6 +256,61 @@ function MfaCard({ me }: { me: User }) {
     );
 }
 
+function SessionsCard() {
+    const qc = useQueryClient();
+    const [error, setError] = useState<string | null>(null);
+    const { data, isLoading } = useQuery({
+        queryKey: ['my-sessions'],
+        queryFn: async () => (await api.get('/users/me/sessions')).data as AuthSessionInfo[],
+    });
+    const revoke = useMutation({
+        mutationFn: async (s: AuthSessionInfo) => { await api.delete(`/users/me/sessions/${s.id}`); return s; },
+        onSuccess: async (s) => {
+            setError(null);
+            if (s.current) {  // revoking this very session is a sign-out
+                try { await api.post('/auth/logout', null, { timeout: 2000 }); } catch { /* already gone */ }
+                session.clear();
+                window.location.assign('/login');
+                return;
+            }
+            void qc.invalidateQueries({ queryKey: ['my-sessions'] });
+        },
+        onError: (err) => setError(apiError(err, 'Could not revoke the session.')),
+    });
+    const rows = data ?? [];
+    return (
+        <section className={card}>
+            <h2 className={cardHead}>Sessions &amp; connected apps</h2>
+            <div className="p-4 space-y-3">
+                {isLoading ? <p className="font-mono text-xs text-muted">$ loading…</p>
+                    : rows.length === 0 ? <p className="text-sm text-fg-3">No active sessions.</p>
+                    : <ul className="divide-y divide-line">
+                        {rows.map((s) => (
+                            <li key={s.id} className="py-2 flex flex-wrap items-center justify-between gap-3">
+                                <div className="min-w-0 text-sm">
+                                    <p className="text-fg truncate">
+                                        {s.kind === 'oauth'
+                                            ? `${s.client_name ?? 'Connected app'}${s.tenant_name ? ` (${s.tenant_name})` : ''}`
+                                            : s.user_agent || 'Browser session'}
+                                        {s.current && <span className="ml-2 text-xs text-accent">This session</span>}
+                                    </p>
+                                    <p className="text-xs text-fg-3">
+                                        {s.kind === 'web' && s.ip ? `${s.ip} · ` : ''}Last used {formatDateTime(s.last_used_at)}
+                                    </p>
+                                </div>
+                                <button type="button" className={btnSecondary} disabled={revoke.isPending}
+                                    onClick={() => revoke.mutate(s)}>
+                                    {s.current ? 'Sign out' : 'Revoke'}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>}
+                {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+            </div>
+        </section>
+    );
+}
+
 export default function ProfilePage() {
     const { data: me, isLoading } = useQuery({
         queryKey: ['currentUser'],
@@ -270,6 +325,7 @@ export default function ProfilePage() {
                     <ProfileCard key={me.id} me={me} />
                     <PasswordCard me={me} />
                     <MfaCard me={me} />
+                    <SessionsCard />
                 </>}
         </PageContainer>
     );

@@ -277,10 +277,12 @@ async def mfa_reset(
 class SecurityOut(BaseModel):
     require_mfa: bool
     members_without_mfa: int
+    mcp_enabled: bool
 
 
 class SecurityIn(BaseModel):
-    require_mfa: bool
+    require_mfa: Optional[bool] = None
+    mcp_enabled: Optional[bool] = None
 
 
 async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
@@ -291,7 +293,8 @@ async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
         .where(TenantMembership.tenant_id == tenant.id, User.is_active.is_(True),
                User.mfa_enabled_at.is_(None), User.password_login_enabled.is_(True))
     )).scalar_one()
-    return SecurityOut(require_mfa=bool(tenant.require_mfa), members_without_mfa=int(n))
+    return SecurityOut(require_mfa=bool(tenant.require_mfa), members_without_mfa=int(n),
+                       mcp_enabled=bool(tenant.mcp_enabled))
 
 
 @security_router.get("/current/security", response_model=SecurityOut)
@@ -309,6 +312,7 @@ async def get_tenant_security(
 @security_router.put("/current/security", response_model=SecurityOut)
 async def update_tenant_security(
     *,
+    request: Request,
     body: SecurityIn,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.require_admin),
@@ -317,10 +321,20 @@ async def update_tenant_security(
     tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalars().first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    if bool(tenant.require_mfa) != body.require_mfa:
+    changed = False
+    if body.require_mfa is not None and bool(tenant.require_mfa) != body.require_mfa:
         tenant.require_mfa = body.require_mfa
         await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
                                action="require_mfa_changed", tenant_id=tenant.id,
                                user_id=current_user.id, changes={"require_mfa": body.require_mfa})
+        changed = True
+    mcp_changed = body.mcp_enabled is not None and bool(tenant.mcp_enabled) != body.mcp_enabled
+    if mcp_changed:
+        tenant.mcp_enabled = body.mcp_enabled
+        await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
+                               action="tenant.mcp_toggled", tenant_id=tenant.id,
+                               user_id=current_user.id, changes={"mcp_enabled": body.mcp_enabled})
+        changed = True
+    if changed:
         await db.commit()
     return await _security_out(db, tenant)
