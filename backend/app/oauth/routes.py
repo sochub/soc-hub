@@ -1,5 +1,8 @@
 """OAuth authorization server: metadata (RFC 8414), dynamic client registration (RFC 7591) and the
 authorization endpoint with its consent screen (authorization code + PKCE S256)."""
+import base64
+import hashlib
+import hmac
 import json
 import re
 import secrets
@@ -17,15 +20,18 @@ from sqlalchemy.future import select
 
 from app.api import deps
 from app.audit.events import audit_event
+from app.auth import sessions
 from app.auth.login_policy import AMR_PWD
 from app.auth.login_tenant import session_may_enter
 from app.core.config import settings
 from app.core.login_throttle import client_ip, get_login_throttle
 from app.models.membership import TenantMembership
+from app.models.auth_session import AuthSession
 from app.models.oauth_client import OAuthClient
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.oauth.resources import RESOURCES, Resource, issuer, resource_by_url
+from app.oauth.tokens import ACCESS_TOKEN_SECONDS, issue_oauth_access_token, tenant_role
 
 router = APIRouter()
 
@@ -336,3 +342,145 @@ async def authorize_decision(body: DecisionIn, request: Request, db: AsyncSessio
                       user_email=user.email, tenant_id=body.tenant_id,
                       changes={"client_id": v.client.id, "tenant_id": body.tenant_id})
     return {"redirect": _with_params(v.redirect_uri, {"code": code, "state": v.state})}
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Token endpoint (RFC 6749 §3.2, PKCE RFC 7636) and revocation (RFC 7009)
+# ---------------------------------------------------------------------------------------------------------
+
+_NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
+_SID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _token_err(error: str, description: str) -> JSONResponse:
+    status = 401 if error == "invalid_client" else 400
+    headers = {**_NO_STORE, **({"WWW-Authenticate": "Bearer"} if status == 401 else {})}
+    return JSONResponse({"error": error, "error_description": description}, status_code=status, headers=headers)
+
+
+def _form_str(form, key: str) -> Optional[str]:
+    v = form.get(key)
+    return v if isinstance(v, str) and v else None
+
+
+def _pkce_ok(verifier: str, challenge: str) -> bool:
+    if not _VERIFIER_RE.match(verifier) or not isinstance(challenge, str):
+        return False
+    computed = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode()
+    return hmac.compare_digest(computed, challenge)
+
+
+def _token_body(row: AuthSession, user: User, refresh_token: Optional[str]) -> JSONResponse:
+    body = {"access_token": issue_oauth_access_token(row, user), "token_type": "Bearer",
+            "expires_in": ACCESS_TOKEN_SECONDS, "scope": row.scope or ""}
+    if refresh_token is not None:  # None: benign concurrent refresh, the client keeps its current one
+        body["refresh_token"] = refresh_token
+    return JSONResponse(body, headers=_NO_STORE)
+
+
+async def _load_user(db: AsyncSession, user_id) -> Optional[User]:
+    return (await db.execute(select(User).where(User.id == user_id)
+                             .execution_options(populate_existing=True))).scalar_one_or_none()
+
+
+async def _exchange_code(request: Request, db: AsyncSession, form) -> JSONResponse:
+    code, redirect_uri = _form_str(form, "code"), _form_str(form, "redirect_uri")
+    client_id, verifier = _form_str(form, "client_id"), _form_str(form, "code_verifier")
+    if not (code and redirect_uri and client_id and verifier) or len(code) > 128:
+        return _token_err("invalid_request", "code, redirect_uri, client_id and code_verifier are required.")
+    raw = await _oauth_redis().getdel(f"oauth:code:{code}")  # single use: any attempt burns the code
+    if raw is None:
+        return _token_err("invalid_grant", "The authorization code is invalid or expired.")
+    try:
+        stored = json.loads(raw)
+    except (TypeError, ValueError):
+        return _token_err("invalid_grant", "The authorization code is invalid or expired.")
+    if (not hmac.compare_digest(str(stored.get("client_id", "")), client_id)
+            or stored.get("redirect_uri") != redirect_uri
+            or not _pkce_ok(verifier, stored.get("code_challenge"))):
+        return _token_err("invalid_grant", "The authorization code does not match this request.")
+    client = await db.get(OAuthClient, client_id)
+    if client is None:
+        return _token_err("invalid_client", "Unknown client.")
+    user = await _load_user(db, stored.get("user_id"))
+    amr, sso_tid, tenant_id = stored.get("amr") or AMR_PWD, stored.get("sso_tenant_id"), stored.get("tenant_id")
+    if user is None or await tenant_role(db, user, tenant_id=tenant_id, resource_url=stored.get("resource"),
+                                         amr=amr, sso_tenant_id=sso_tid) is None:
+        return _token_err("invalid_grant", "Access to this organization is no longer allowed.")
+    row, refresh_token = await sessions.create_session(
+        db, user, kind="oauth", amr=amr, sso_tenant_id=sso_tid, tenant_id=tenant_id, client_id=client_id,
+        resource=stored.get("resource"), scope=stored.get("scope"), request=request)
+    await db.commit()
+    await audit_event("security", "oauth.token_issued", request=request, user_id=user.id, user_email=user.email,
+                      tenant_id=tenant_id, changes={"client_id": client_id, "tenant_id": tenant_id})
+    return _token_body(row, user, refresh_token)
+
+
+async def _refresh(request: Request, db: AsyncSession, form) -> JSONResponse:
+    presented, client_id = _form_str(form, "refresh_token"), _form_str(form, "client_id")
+    if not presented or not client_id:
+        return _token_err("invalid_request", "refresh_token and client_id are required.")
+    sid = presented.partition(".")[0]
+    owner = (await db.execute(select(AuthSession.client_id).where(
+        AuthSession.id == sid, AuthSession.kind == "oauth"))).first() if _SID_RE.match(sid) else None
+    # A refresh token presented by another client is refused before it can rotate anything.
+    if owner is None or not hmac.compare_digest(str(owner[0] or ""), client_id):
+        return _token_err("invalid_grant", "The refresh token is invalid.")
+    try:
+        row, user, new_refresh = await sessions.rotate(db, presented, kind="oauth")
+    except sessions.RefreshError:
+        return _token_err("invalid_grant", "The refresh token is invalid, expired or revoked.")
+    if await tenant_role(db, user, tenant_id=row.tenant_id, resource_url=row.resource, amr=row.amr,
+                         sso_tenant_id=row.sso_tenant_id) is None:
+        await sessions.revoke(db, row.id, user_id=row.user_id)
+        await db.commit()
+        return _token_err("invalid_grant", "Access to this organization is no longer allowed.")
+    await db.commit()
+    return _token_body(row, user, new_refresh)
+
+
+@router.post("/token")
+async def token(request: Request, db: AsyncSession = Depends(deps.get_db)):
+    try:
+        form = await request.form()
+    except Exception:
+        return _token_err("invalid_request", "The request body must be form-encoded.")
+    grant_type = _form_str(form, "grant_type")
+    if grant_type is None:
+        return _token_err("invalid_request", "grant_type is required.")
+    if grant_type == "authorization_code":
+        return await _exchange_code(request, db, form)
+    if grant_type == "refresh_token":
+        return await _refresh(request, db, form)
+    return _token_err("unsupported_grant_type", "Only authorization_code and refresh_token are supported.")
+
+
+@router.post("/revoke")
+async def revoke(request: Request, db: AsyncSession = Depends(deps.get_db)):
+    """RFC 7009: always 200. Revokes the session only when the refresh token's secret and the client match."""
+    ok = JSONResponse({}, headers=_NO_STORE)
+    try:
+        form = await request.form()
+    except Exception:
+        return ok
+    presented, client_id = _form_str(form, "token"), _form_str(form, "client_id")
+    if not presented or not client_id:
+        return ok
+    sid, _, secret = presented.partition(".")
+    if not _SID_RE.match(sid) or not secret:
+        return ok
+    row = (await db.execute(select(AuthSession).where(
+        AuthSession.id == sid, AuthSession.kind == "oauth", AuthSession.revoked_at.is_(None)))).scalar_one_or_none()
+    if row is None or not hmac.compare_digest(str(row.client_id or ""), client_id):
+        return ok
+    h = sessions.hash_secret(secret)
+    if not (hmac.compare_digest(h, row.refresh_hash)
+            or (row.prev_refresh_hash is not None and hmac.compare_digest(h, row.prev_refresh_hash))):
+        return ok
+    user_id, tenant_id = row.user_id, row.tenant_id
+    if await sessions.revoke(db, sid, user_id=user_id):
+        await db.commit()
+        await audit_event("security", "oauth.token_revoked", request=request, user_id=user_id,
+                          tenant_id=tenant_id, changes={"client_id": client_id, "session_id": sid})
+    return ok
