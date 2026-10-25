@@ -78,6 +78,9 @@ def test_grant_checks():
             # an IdP vouches only for its own tenant
             assert (await cl.get(url(c.id), headers=session_headers(e, "sso", t_sso.id))).status_code == 404
             assert (await cl.get(url(c.id), headers=session_headers(e, "sso", t.id))).status_code == 200
+            # the session's protocol must match the tenant's guest method (no proto counts as saml)
+            assert (await cl.get(url(c_sso.id), headers=session_headers(e, "sso", t_sso.id, sso_proto="saml"))).status_code == 200
+            assert (await cl.get(url(c_sso.id), headers=session_headers(e, "sso", t_sso.id, sso_proto="oidc"))).status_code == 404
             # Review Focus 2: grant expires mid-session -> 404 with the same still-valid session
             async with AsyncSessionLocal() as db:
                 row = await db.get(CaseGuest, g.id)

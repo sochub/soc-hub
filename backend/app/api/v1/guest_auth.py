@@ -133,7 +133,7 @@ async def _link_login(request: Request, body: LinkIn, db: AsyncSession, known: d
         raise HTTPException(status_code=401, detail=BAD_LINK)
     grant, tenant = row
     known.update(email=grant.email, tenant_id=tenant.id)
-    if tenant.guest_require_sso:
+    if tenant.guest_login_method != "password":
         raise HTTPException(status_code=403, detail={"code": "sso_required", "slug": tenant.slug})
     if await _account_by_email(db, grant.email):  # a link must not bypass the account's password/MFA
         raise HTTPException(status_code=403, detail={"code": "account_login_required"})

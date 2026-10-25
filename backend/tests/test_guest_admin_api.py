@@ -107,22 +107,26 @@ def test_tenant_guest_settings_and_empty_allowlist_blocks():
             r = await cl.post(f"/api/v1/cases/{c.id}/guests", json={"email": ids.email("a"), "permission": "viewer"})
             assert r.status_code == 422
             r = await cl.put("/api/v1/tenants/current/guests",
-                             json={"domain_allowlist": [" Dept.Example ", "dept.example"], "require_sso": False})
-            assert r.status_code == 200 and r.json() == {"domain_allowlist": ["dept.example"], "require_sso": False,
-                                                         "sso_ready": False}
+                             json={"domain_allowlist": [" Dept.Example ", "dept.example"], "login_method": "password"})
+            assert r.status_code == 200 and r.json() == {"domain_allowlist": ["dept.example"], "login_method": "password",
+                                                         "sso_ready": False, "saml_ready": False, "oidc_ready": False}
             r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": ["not a domain"],
-                                                                     "require_sso": False})
+                                                                     "login_method": "password"})
             assert r.status_code == 422
-            r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "require_sso": True})
+            r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "login_method": "saml"})
             assert r.status_code == 422  # SSO not ready on this tenant
+            r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "login_method": "bogus"})
+            assert r.status_code == 422
             r = await cl.post(f"/api/v1/cases/{c.id}/guests", json={"email": ids.email("a"), "permission": "viewer"})
             assert r.status_code == 201
         _as(u, t_sso.id, role="admin")
         async with client() as cl:
-            r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "require_sso": True})
-            assert r.status_code == 200 and r.json()["require_sso"] is True
+            r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "login_method": "saml"})
+            assert r.status_code == 200 and r.json()["login_method"] == "saml"
+            r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "login_method": "oidc"})
+            assert r.status_code == 422  # OIDC not configured
         async with AsyncSessionLocal() as db:
-            assert (await db.get(Tenant, t_sso.id)).guest_require_sso is True
+            assert (await db.get(Tenant, t_sso.id)).guest_login_method == "saml"
     run(body)
 
 

@@ -21,10 +21,10 @@ def issue_link(grant_id: int) -> str:
 
 
 def issue_session(email: str, amr: str, *, sso_tenant_id: Optional[int] = None, gav: Optional[int] = None,
-                  link_tenant_id: Optional[int] = None) -> str:
+                  link_tenant_id: Optional[int] = None, sso_proto: Optional[str] = None) -> str:
     """`link_tenant_id`: a magic-link session only opens the cases of the tenant whose grant minted it."""
     return create_access_token({"sub": f"guest:{email}", "email": email, "purpose": SESSION, "amr": amr,
-                                "sso_tenant_id": sso_tenant_id, "link_tenant_id": link_tenant_id, "gav": gav},
+                                "sso_tenant_id": sso_tenant_id, "link_tenant_id": link_tenant_id, "gav": gav, "sso_proto": sso_proto},
                                expires_delta=SESSION_TTL)
 
 

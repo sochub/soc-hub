@@ -419,8 +419,10 @@ export interface CaseGuest {
 
 export interface GuestSettings {
   domain_allowlist: string[];
-  require_sso: boolean;
+  login_method: 'password' | 'saml' | 'oidc';
   sso_ready: boolean;
+  saml_ready: boolean;
+  oidc_ready: boolean;
 }
 
 export interface CaseAsset {

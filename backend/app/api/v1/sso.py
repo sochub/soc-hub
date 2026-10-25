@@ -96,6 +96,8 @@ def _guest_error_redirect(tenant: Optional[Tenant], message: str) -> RedirectRes
 async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: str) -> RedirectResponse:
     """The assertion proves `email`; issue a guest session only if it has an active grant in THIS tenant.
     Never touches users/memberships (no provisioning)."""
+    if tenant.guest_login_method != "saml":
+        return _guest_error_redirect(tenant, "This organization's guests sign in another way.")
     email = email.strip().lower()
     grants = (await db.execute(select(CaseGuest).join(Tenant, Tenant.id == CaseGuest.tenant_id).where(
         CaseGuest.tenant_id == tenant.id, CaseGuest.email == email, *GUEST_ACTIVE()))).scalars().all()
@@ -109,7 +111,7 @@ async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: 
                                tenant_id=tenant.id, changes={"actor": f"guest:{email}"})
     await db.commit()
     await audit_event("security", "guest.login.sso", request=request, actor=f"guest:{email}", tenant_id=tenant.id)
-    token = guest_tokens.issue_session(email, "sso", sso_tenant_id=tenant.id)
+    token = guest_tokens.issue_session(email, "sso", sso_tenant_id=tenant.id, sso_proto="saml")
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     return RedirectResponse(f"{base}/guest/sso#token={quote(token)}", status_code=303)
 

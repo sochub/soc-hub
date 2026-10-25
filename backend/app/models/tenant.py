@@ -18,7 +18,7 @@ class Tenant(Base):
     require_mfa = Column(Boolean, nullable=False, default=False, server_default=sa_false())
     guest_domain_allowlist = Column(JSON, nullable=False, default=list, server_default="[]")
     # superseded by guest_login_method (no longer read)
-    guest_require_sso = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    guest_require_sso = Column(Boolean, nullable=False, default=False, server_default=sa_false())  # superseded by guest_login_method
     # How members / external guests sign in: one of LOGIN_METHODS
     member_login_method = Column(String, nullable=False, default="password", server_default="password")
     guest_login_method = Column(String, nullable=False, default="password", server_default="password")
