@@ -325,3 +325,43 @@ def test_lists_clamp_and_ioc_case_isolation():
         who = await tools.whoami(db, p)
         assert who["tenant"]["id"] == t.id and who["role"] == "analyst" and who["client"] == "Test Client"
     _run(body)
+
+
+def test_get_workflow_run_truncates_step_output():
+    async def body(db, ids):
+        from app.models.workflow import WorkflowRunStep
+        t = await make_tenant(db, ids)
+        user = await _member(db, ids, t, role="viewer")
+        wf = Workflow(tenant_id=t.id, name="w", trigger_type="manual", graph={"nodes": [], "edges": []},
+                      enabled=True)
+        db.add(wf)
+        await db.commit()
+        run = WorkflowRun(tenant_id=t.id, workflow_id=wf.id, workflow_version=1, status="succeeded",
+                          graph_snapshot={"nodes": [], "edges": []})
+        db.add(run)
+        await db.commit()
+        db.add_all([WorkflowRunStep(run_id=run.id, node_id="big", status="succeeded", output={"blob": "B" * 30_000}),
+                    WorkflowRunStep(run_id=run.id, node_id="small", status="succeeded", output={"k": "v"})])
+        await db.commit()
+        r = await tools.get_workflow_run(db, _p(user, t, "viewer"), run_id=run.id)
+        big, small = r["steps"]
+        assert big["truncated"] is True and isinstance(big["output"], str)
+        assert len(big["output"]) == tools.PAYLOAD_MAX_CHARS
+        assert small["truncated"] is False and small["output"] == {"k": "v"}
+    _run(body)
+
+
+def test_promote_already_promoted_alert_refused(_no_side_effects):
+    async def body(db, ids):
+        t = await make_tenant(db, ids)
+        user = await _member(db, ids, t)
+        a = await _alert(db, ids, t)
+        p = _p(user, t)
+        r = await tools.promote_alert_to_case(db, p, alert_id=a.id)
+        ids.cases.append(r["id"])
+        with pytest.raises(ToolError) as e:
+            await tools.promote_alert_to_case(db, p, alert_id=a.id)
+        assert str(e.value) == f"Alert is already promoted to case {r['id']}"
+        n = (await db.execute(select(func.count()).select_from(Case).where(Case.tenant_id == t.id))).scalar()
+        assert n == 1
+    _run(body)
