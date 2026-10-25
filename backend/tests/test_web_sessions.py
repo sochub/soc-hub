@@ -505,9 +505,10 @@ def test_logout_cookie_without_csrf_header_403():
     _go(body)
 
 
-def test_logout_without_credentials_still_clears():
+def test_logout_without_credentials_sets_no_cookies():
+    """A credential-less POST (e.g. a cross-site form) must not be able to clear the cookies."""
     async def body(c, ids):
         r = await _call(c, "POST", LOGOUT)
         assert r.status_code == 204
-        _all_cleared(r)
+        assert "set-cookie" not in r.headers
     _go(body)

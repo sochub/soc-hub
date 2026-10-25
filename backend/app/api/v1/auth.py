@@ -247,8 +247,9 @@ async def logout(
     bearer: Optional[str] = Depends(deps.oauth2_scheme),
 ) -> Response:
     """Revoke this session server-side and drop both cookies. Deliberately needs no usable access token:
-    an expired or policy-refused session must still be able to sign out. Always 204 and clears both cookies,
-    even when nothing could be revoked."""
+    an expired or policy-refused session must still be able to sign out. Always 204; clears both cookies
+    whenever a credential was presented (even if nothing could be revoked), but never on a credential-less
+    request, so a cross-site form POST cannot sign the browser out."""
     if bearer:  # the header wins, as for every request: cookies are ignored
         refresh_token, access_token = None, bearer
     else:  # cookie-authenticated: CSRF header required before anything is revoked
@@ -263,8 +264,9 @@ async def logout(
             await audit_event("security", "logout", request=request, user_id=row.user_id, user_email=email,
                               tenant_id=row.tenant_id)
     out = Response(status_code=204)
-    session_cookie.clear_session(out)
-    session_cookie.clear_refresh(out)
+    if refresh_token or access_token:
+        session_cookie.clear_session(out)
+        session_cookie.clear_refresh(out)
     return out
 
 
