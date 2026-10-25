@@ -13,9 +13,12 @@ Each tenant picks a login method **per audience**:
 | `member_login_method` | Members (admins, analysts, viewers) | `password` \| `saml` \| `oidc` |
 | `guest_login_method` | [Case guests](../guests/README.md) | `password` \| `saml` \| `oidc` |
 
-Both default to `password`. Set them in **Settings → Single Sign-On** (admin only),
-or `PUT /api/v1/tenants/sso-config`. The save is refused (422) if a chosen protocol's
-configuration is incomplete: SAML needs the IdP entity ID, SSO URL and certificate;
+Both default to `password`. In **Settings** (admin only), set **Member sign-in** in the
+**Single Sign-On** section and **Guest sign-in** in the **Case guests** section. Over the API:
+`PUT /api/v1/tenants/sso-config` (`member_login_method`; it also accepts
+`guest_login_method`) and `PUT /api/v1/tenants/current/guests` (`login_method`; omit it to
+keep the current one). The save is refused (422) if a chosen protocol's configuration is
+incomplete: SAML needs the IdP entity ID, SSO URL and certificate;
 OIDC needs issuer, client ID and a stored client secret.
 
 Choosing SAML or OIDC for an audience **turns password sign-in off for that audience**.
@@ -28,8 +31,9 @@ So a broken IdP cannot lock a tenant out:
 - A tenant **admin** may still sign in with a password to an SSO tenant, but only with
   **MFA**. An admin who has not enrolled yet is taken through MFA enrolment first, then
   signed in.
-- Every such sign-in is audited as `sso.password_fallback` (platform audit log, with the
-  tenant's method).
+- Every such sign-in is audited as `sso.password_fallback` (platform audit log, category
+  `security`, with the tenant's method).
+- While signed in this way, the admin cannot turn off their own MFA.
 - **Super admins** keep password access to every tenant.
 - Analysts and viewers have no fallback.
 
@@ -81,7 +85,8 @@ Migration `3eda39884bf3` (additive):
    - **Scopes:** `openid email profile` (default). `openid` is required, and the ID token
      must carry an `email` claim.
 6. Optionally enable **auto-provision** and a **default role** (`analyst` or `viewer`).
-7. Set **Member login method** (and/or **Guest login method**) to `oidc` and save.
+7. Set **Member sign-in** to `OIDC` and save. For guests, set **Guest sign-in** to `OIDC`
+   in the **Case guests** section.
 8. Test in a private window: the login page's "Sign in with SSO" takes the tenant slug.
    Keep an admin session open until it works.
 

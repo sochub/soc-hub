@@ -130,8 +130,10 @@ a single case.
 
 - **Allowed email domains**: one per line (`example.com`). Only addresses in these domains can be invited.
   **Empty = guest access is off** for the whole tenant.
-- **Require SSO for guests**: only selectable once SSO (section 2) is configured and enabled. Guests then
-  sign in through your IdP and need a matching active invitation.
+- **Guest sign-in**: `Password`, `SAML` or `OIDC`. An SSO protocol is only selectable once it is configured
+  in section 2, and it turns password sign-in off for guests. Guests then sign in through your IdP and need a
+  matching active invitation. Members' method is set separately (**Member sign-in**, section 2); see
+  [Login methods and OIDC SSO](sso/oidc.md).
 - Click **Save**; a green **✓ Saved** confirms it. An invalid domain is reported as
   "Not a valid domain: …".
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound, ArrowLeft } from 'lucide-react';
-import { api, session } from '../../api/client';
+import { api, loginNotice, session, ssoLoginUrl } from '../../api/client';
 import { Button, Input, Label } from '../../components/ui';
 import MfaSetupDialog from '../profile/MfaSetupDialog';
 import { mfaErrorMessage } from '../profile/mfaErrors';
@@ -18,7 +18,9 @@ export default function Login() {
     const [code, setCode] = useState('');
     const navigate = useNavigate();
     const location = useLocation();
-    const notice = (location.state as { notice?: string } | null)?.notice;
+    const [storedNotice] = useState(loginNotice.peek);
+    const notice = (location.state as { notice?: string } | null)?.notice ?? storedNotice;
+    useEffect(() => { loginNotice.clear(); }, []);
 
     const resetChallenge = (msg = '') => {
         setChallenge(null);
@@ -43,7 +45,7 @@ export default function Login() {
     const handleSso = (e: React.FormEvent) => {
         e.preventDefault();
         const slug = ssoSlug.trim().toLowerCase();
-        if (slug) window.location.href = `/api/v1/auth/sso/${encodeURIComponent(slug)}/login`;
+        if (slug) window.location.href = ssoLoginUrl(slug);
     };
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -68,10 +70,10 @@ export default function Login() {
         } catch (err: any) {
             const d = err.response?.data?.detail;
             if (err.response?.status === 403 && d?.code === 'sso_required' && d.slug) {
-                window.location.href = `/api/v1/auth/sso/${encodeURIComponent(d.slug)}/login`;
-                return;
+                return; // the api interceptor sends the browser to the organization's SSO
             } else if (err.response?.status === 403 && d?.code === 'password_required') {
-                setError('Your organization requires SSO for this account. Use "Sign in with SSO".');
+                setError(loginNotice.peek() ?? 'Sign in with your password to open this organization.');
+                loginNotice.clear();
             } else if (err.response?.status === 401) {
                 setError('Invalid email or password.');
             } else if (err.response?.status === 429) {

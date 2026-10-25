@@ -211,7 +211,7 @@ export default function Settings() {
     });
 
     const [form, setForm] = useState({
-        member_login_method: 'password' as LoginMethod, guest_login_method: 'password' as LoginMethod,
+        member_login_method: 'password' as LoginMethod,
         idp_entity_id: '', idp_sso_url: '', idp_x509_cert: '',
         oidc_issuer: '', oidc_client_id: '', oidc_client_secret: '', oidc_scopes: 'openid email profile',
         auto_provision: false, default_role: 'viewer' as 'analyst' | 'viewer',
@@ -222,7 +222,6 @@ export default function Settings() {
         if (cfg) {
             setForm({
                 member_login_method: cfg.member_login_method,
-                guest_login_method: cfg.guest_login_method,
                 oidc_issuer: cfg.oidc_issuer ?? '',
                 oidc_client_id: cfg.oidc_client_id ?? '',
                 oidc_client_secret: '',
@@ -240,6 +239,7 @@ export default function Settings() {
         mutationFn: async () => (await api.put('/tenants/sso-config', form)).data as SSOConfig,
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['sso-config'] });
+            qc.invalidateQueries({ queryKey: ['tenant-guest-settings'] }); // guest SSO readiness depends on this config
             setSavedFlash(true);
             setTimeout(() => setSavedFlash(false), 2000);
         },
@@ -280,19 +280,18 @@ export default function Settings() {
                         <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
                             {/* IdP side */}
                             <div className="space-y-4">
-                                <div className="flex gap-4 flex-wrap">
-                                    {([['member sign-in', 'member_login_method'], ['guest sign-in', 'guest_login_method']] as const).map(([label, key]) => (
-                                        <label key={key} className="text-xs text-fg-2">
-                                            <span className="label-mono block mb-1">{label}</span>
-                                            <select value={form[key]} aria-label={label === 'member sign-in' ? 'Member sign-in' : 'Guest sign-in'}
-                                                onChange={e => setForm(f => ({ ...f, [key]: e.target.value as LoginMethod }))}
-                                                className="border border-line-strong bg-panel px-1.5 py-1.5 text-sm">
-                                                <option value="password">Password</option>
-                                                <option value="saml">SAML</option>
-                                                <option value="oidc">OIDC</option>
-                                            </select>
-                                        </label>
-                                    ))}
+                                <div>
+                                    <label className="text-xs text-fg-2">
+                                        <span className="label-mono block mb-1">member sign-in</span>
+                                        <select value={form.member_login_method} aria-label="Member sign-in"
+                                            onChange={e => setForm(f => ({ ...f, member_login_method: e.target.value as LoginMethod }))}
+                                            className="border border-line-strong bg-panel px-1.5 py-1.5 text-sm">
+                                            <option value="password">Password</option>
+                                            <option value="saml">SAML</option>
+                                            <option value="oidc">OIDC</option>
+                                        </select>
+                                    </label>
+                                    <p className="text-[11px] text-fg-3 mt-1">Guest sign-in is set in the Case guests section below.</p>
                                 </div>
                                 <p className="label-mono">// saml</p>
                                 <p className="label-mono">// identity provider (from your idp)</p>

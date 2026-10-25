@@ -23,6 +23,7 @@ export default function GuestSettingsSection() {
         })).data as GuestSettings,
         onSuccess: (d) => {
             setError(null); setDomains(null); setMethod(null); qc.setQueryData(['tenant-guest-settings'], d);
+            qc.invalidateQueries({ queryKey: ['sso-config'] }); // shows the guest method too
             setSaved(true); setTimeout(() => setSaved(false), 2500);
         },
         onError: (err) => {
@@ -43,7 +44,7 @@ export default function GuestSettingsSection() {
                     <textarea id="guest-domains" rows={4} value={domains} onChange={(e) => { setDomains(e.target.value); setSaved(false); }}
                         placeholder="company.com" className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg font-mono" />
                     <p className="text-xs text-fg-3">Leave empty to turn guest access off for this organization.</p>
-                    <label htmlFor="guest-method" className="block text-sm text-fg">Guest login method</label>
+                    <label htmlFor="guest-method" className="block text-sm text-fg">Guest sign-in</label>
                     <select id="guest-method" value={loginMethod}
                         onChange={(e) => { setMethod(e.target.value as GuestSettings['login_method']); setSaved(false); }}
                         className="bg-raised border border-line rounded-md p-2 text-sm text-fg">

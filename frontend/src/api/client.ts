@@ -29,14 +29,37 @@ export function onAuthExpired(callback: () => void) {
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, callback);
 }
 
-// Add response interceptor to handle 401 errors
+// One-shot message for the login page (e.g. why the session ended), survives the redirect only.
+const LOGIN_NOTICE = 'login_notice';
+export const loginNotice = {
+    peek: (): string | null => { try { return sessionStorage.getItem(LOGIN_NOTICE); } catch { return null; } },
+    clear: () => { try { sessionStorage.removeItem(LOGIN_NOTICE); } catch { /* private mode */ } },
+};
+
+export function ssoLoginUrl(slug: string) {
+    return `/api/v1/auth/sso/${encodeURIComponent(slug)}/login`;
+}
+
+// Session-wide auth outcomes. A request carrying an explicit token (e.g. the MFA setup challenge at login)
+// is not the browser session, so it never ends or redirects it.
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        // A request carrying an explicit token (e.g. the MFA setup challenge at login) must not end the session.
-        if (error.response?.status === 401 && !error.config?.headers?.Authorization) {
-            session.clear();
-            window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+        const status = error.response?.status;
+        if (!error.config?.headers?.Authorization) {
+            const d = error.response?.data?.detail;
+            if (status === 401) {
+                session.clear();
+                window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+            } else if (status === 403 && d?.code === 'sso_required' && d.slug) {
+                // The active organization signs in with SSO: go through its IdP.
+                window.location.assign(ssoLoginUrl(d.slug));
+            } else if (status === 403 && d?.code === 'password_required') {
+                // An SSO session may only open its own organization; this one needs a password sign-in.
+                try { sessionStorage.setItem(LOGIN_NOTICE, 'Sign in with your password to open this organization.'); } catch { /* private mode */ }
+                session.clear();
+                window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+            }
         }
         return Promise.reject(error);
     }
