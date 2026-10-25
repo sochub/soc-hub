@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.audit.events import audit_event
+from app.auth import login_tenant
 from app.auth.login_policy import sso_required_error
 from app.api.v1.users import _audit_tenant
 from app.core import security, session_cookie, totp
@@ -175,7 +176,7 @@ async def mfa_enable(
         raise HTTPException(status_code=401, detail=LOGIN_EXPIRED, headers={"WWW-Authenticate": "Bearer"})
     method = None
     if via_challenge:  # sign-in: same policy-filtered default tenant as login, MFA now satisfied
-        active, method, refused_slug = await deps.password_login_tenant(db, user, mfa_enabled=True)
+        active, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=True)
         if refused_slug is not None:
             raise sso_required_error(refused_slug)
     else:
@@ -189,7 +190,7 @@ async def mfa_enable(
     if via_challenge:  # MFA set up during sign-in: this issues the session's first access token
         await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                           tenant_id=active)
-        await deps.audit_if_password_fallback(request, user, active, method)
+        await login_tenant.audit_if_password_fallback(request, user, active, method)
     token = security.issue_access_token(user, active, amr=amr, sso_tenant_id=sso_tid)
     return session_cookie.issue(request, response, token)
 

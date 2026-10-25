@@ -13,6 +13,7 @@ from sqlalchemy.future import select
 from app.api import deps
 from app.audit.events import audit_event
 from app.audit.redact import email_domain
+from app.auth import login_tenant
 from app.auth.login_policy import AMR_PWD, sso_required_error
 from app.core import security, session_cookie
 from app.api.v1.mfa import LOGIN_EXPIRED, get_mfa_throttle, get_redis, spend_mfa_challenge, verify_user_code
@@ -114,10 +115,10 @@ async def login_access_token(
     await throttle.reset(email, ip)
     # Login-method policy runs BEFORE any MFA challenge, so a member who must use SSO never spends a TOTP.
     has_mfa = user.mfa_enabled_at is not None
-    active_tenant_id, method, refused_slug = await deps.password_login_tenant(db, user, mfa_enabled=has_mfa)
+    active_tenant_id, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=has_mfa)
     # Break-glass admin without MFA: enrol first; mfa_enable re-applies the policy and mints the session.
     enrol_first = (refused_slug is not None and not has_mfa
-                   and (await deps.password_login_tenant(db, user, mfa_enabled=True))[0] is not None)
+                   and (await login_tenant.password_login_tenant(db, user, mfa_enabled=True))[0] is not None)
     if refused_slug is not None and not enrol_first:
         await audit_event("security", "login.failed", request=request, outcome="denied", user_id=user.id,
                           user_email=user.email, tenant_id=await _default_active_tenant_id(db, user),
@@ -133,7 +134,7 @@ async def login_access_token(
         return {"mfa_setup_required": True, "mfa_token": security.issue_mfa_challenge(user)}
     await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=active_tenant_id)
-    await deps.audit_if_password_fallback(request, user, active_tenant_id, method)
+    await login_tenant.audit_if_password_fallback(request, user, active_tenant_id, method)
     token = security.issue_access_token(user, active_tenant_id, amr=AMR_PWD)
     return session_cookie.issue(request, response, token)
 
@@ -174,14 +175,14 @@ async def login_mfa(
         raise
     if not await spend_mfa_challenge(redis, payload.get("jti")):
         raise expired  # this challenge was already used to sign in
-    tid, method, refused_slug = await deps.password_login_tenant(db, user, mfa_enabled=True)
+    tid, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=True)
     if refused_slug is not None:  # the tenant's login method changed since the password step
         raise sso_required_error(refused_slug)
     await audit_event("security", "mfa.challenge_passed", request=request, user_id=user.id,
                       user_email=user.email, tenant_id=tid)
     await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=tid)
-    await deps.audit_if_password_fallback(request, user, tid, method)
+    await login_tenant.audit_if_password_fallback(request, user, tid, method)
     return session_cookie.issue(request, response, security.issue_access_token(user, tid, amr=AMR_PWD))
 
 
@@ -218,8 +219,8 @@ async def switch_tenant(
         if not res.scalars().first():
             raise HTTPException(status_code=403, detail="You are not a member of that tenant.")
 
-    if not deps.session_may_enter(current_user, target.id, target.member_login_method):
-        raise deps.method_refusal(current_user, target.id, target.member_login_method, target.slug)
+    if not login_tenant.session_may_enter(current_user, target.id, target.member_login_method):
+        raise login_tenant.method_refusal(current_user, target.id, target.member_login_method, target.slug)
 
     if (current_user.mfa_enabled_at is None
             and await deps.tenant_requires_mfa(db, current_user, body.tenant_id)):
@@ -229,7 +230,7 @@ async def switch_tenant(
                       user_email=current_user.email, tenant_id=body.tenant_id,
                       changes={"from_tenant_id": getattr(current_user, "_active_tenant_id", None)})
     amr = current_user._amr
-    await deps.audit_if_password_fallback(request, current_user, target.id, target.member_login_method, amr)
+    await login_tenant.audit_if_password_fallback(request, current_user, target.id, target.member_login_method, amr)
     token = security.issue_access_token(current_user, body.tenant_id, amr=amr,
                                         sso_tenant_id=current_user._sso_tenant_id)
     return session_cookie.issue(request, response, token)
