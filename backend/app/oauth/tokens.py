@@ -8,6 +8,7 @@ from typing import Optional
 import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth.login_policy import member_may_enter
 from app.core.config import settings
@@ -95,7 +96,8 @@ async def _verify(db: AsyncSession, token: str, resource_key: str) -> Optional[O
     if (claims.get("purpose") != PURPOSE or not isinstance(sid, str) or not isinstance(cid, str)
             or not isinstance(email, str) or not isinstance(tid, int) or isinstance(tid, bool)):
         return None
-    user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+    user = (await db.execute(select(User).options(selectinload(User.memberships))
+                             .where(User.email == email))).scalars().first()
     if user is None or not user.is_active or claims.get("tv") != int(user.token_version or 0):
         return None
     session = (await db.execute(select(AuthSession).where(
@@ -111,5 +113,10 @@ async def _verify(db: AsyncSession, token: str, resource_key: str) -> Optional[O
     if client is None:
         return None
     scopes = tuple(s for s in str(claims.get("scope") or "").split() if s in res.scopes)
+    # Same per-request shape as a ``get_current_user`` user, so shared helpers work on either.
+    user._active_tenant_id = tid
+    user._amr = session.amr
+    user._sso_tenant_id = session.sso_tenant_id
+    user._session_id = sid
     return OAuthPrincipal(user=user, tenant_id=tid, role=role, session_id=sid, client_id=cid,
                           client_name=client.client_name, scopes=scopes)

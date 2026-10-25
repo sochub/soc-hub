@@ -231,6 +231,19 @@ def test_verify_ok_returns_live_role():
     _wrap(body)
 
 
+def test_verify_principal_user_shape():
+    """The principal's user looks like a ``get_current_user`` user: memberships loaded (usable after the
+    session closes, no lazy load) and the per-request attributes set from the session."""
+    async def body(c, ids):
+        cid, u, t_ok, j = await _grant(c, ids)
+        p = await _verify(j["access_token"])  # the db session is closed by now
+        assert p is not None
+        assert t_ok.id in {m.tenant_id for m in p.user.memberships}
+        assert p.user._active_tenant_id == t_ok.id and p.user._amr == "pwd"
+        assert p.user._sso_tenant_id is None and p.user._session_id == await _sid(j["access_token"])
+    _wrap(body)
+
+
 def test_verify_rejects_web_token():
     async def body(c, ids):
         u, t_ok, _, _ = await _setup(ids)
