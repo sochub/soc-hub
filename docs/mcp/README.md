@@ -109,7 +109,8 @@ person whose role is no higher than the work needs.
   memory between calls), so several backend replicas can sit behind a load balancer with **no sticky
   sessions**. Each request is still authenticated and role-checked live.
 - Smoke check against a running stack (creates and removes its own test tenant, by explicit ids):
-  `docker exec case_management-backend-1 python -m app.scripts.mcp_smoke --base-url http://frontend:8080`.
+  `docker exec case_management-backend-1 python -m app.scripts.mcp_smoke --base-url http://frontend:8080 --allow-write`
+  (refused without `--allow-write` or when `ENVIRONMENT=production`).
   It skips the interactive consent step; see the script header.
 
 ## 8. Later: cross-app access

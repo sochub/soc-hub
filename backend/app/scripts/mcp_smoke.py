@@ -1,6 +1,10 @@
 """End-to-end smoke check of the MCP server over real HTTP (through nginx when --base-url points at it).
 
-    python -m app.scripts.mcp_smoke --base-url http://localhost
+    python -m app.scripts.mcp_smoke --base-url http://localhost --allow-write
+
+It WRITES to the configured database (a throw-away tenant, user, OAuth client, alert and their audit rows, all
+removed again by explicit id), so it refuses to run without ``--allow-write`` and when
+``ENVIRONMENT == "production"``.
 
 Steps: discovery (PRM named by the 401 header -> authorization server metadata) -> dynamic client registration ->
 MCP initialize -> tools/list -> whoami -> list_alerts -> cleanup.
@@ -23,7 +27,7 @@ import sys
 from urllib.parse import urlparse
 
 import httpx
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 
 from app.auth import sessions
 from app.core.config import settings
@@ -64,6 +68,8 @@ async def run(base: str) -> None:
     public_host = urlparse(settings.PUBLIC_BASE_URL).netloc
     h = secrets.token_hex(3)
     created = {"tenant": None, "user": None, "client": None, "alert": None}
+    async with AsyncSessionLocal() as db:  # audit rows of this run are the throw-away tenant's rows above this id
+        audit_floor = (await db.execute(select(func.max(AuditLog.id)))).scalar() or 0
     async with httpx.AsyncClient(base_url=base, headers={"Host": public_host}, timeout=30) as c:
         try:
             # 1. discovery
@@ -126,11 +132,11 @@ async def run(base: str) -> None:
             r = await post({"jsonrpc": "2.0", "id": n, "method": "initialize", "params": {
                 "protocolVersion": "2025-11-25", "capabilities": {},
                 "clientInfo": {"name": f"mcp-smoke-{h}", "version": "1"}}})
-            sid = r.headers.get("mcp-session-id")
-            if not report(r.status_code == 200 and sid is not None, "MCP initialize", f"status {r.status_code}"):
+            if not report(r.status_code == 200, "MCP initialize", f"status {r.status_code}"):
                 print(r.text[:300])
                 return
-            sess = {"Mcp-Session-Id": sid, "Mcp-Protocol-Version": "2025-11-25"}
+            report("mcp-session-id" not in r.headers, "stateless transport (no Mcp-Session-Id)")
+            sess = {"Mcp-Protocol-Version": "2025-11-25"}
             r = await post({"jsonrpc": "2.0", "method": "notifications/initialized"}, sess)
             report(r.status_code == 202, "notifications/initialized", f"status {r.status_code}")
 
@@ -172,7 +178,11 @@ async def run(base: str) -> None:
                         await db.execute(delete(AuthSession).where(AuthSession.client_id == created["client"]))
                         await db.execute(delete(OAuthClient).where(OAuthClient.id == created["client"]))
                     if tid:
-                        await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tid))
+                        audit_ids = (await db.execute(select(AuditLog.id).where(
+                            AuditLog.tenant_id == tid, AuditLog.id > audit_floor))).scalars().all()
+                        created["audit_rows"] = len(audit_ids)
+                        if audit_ids:
+                            await db.execute(delete(AuditLog).where(AuditLog.id.in_(audit_ids)))
                     if uid:
                         await db.execute(delete(User).where(User.id == uid))
                     if tid:
@@ -186,7 +196,15 @@ async def run(base: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="SOC Hub MCP end-to-end smoke check")
     ap.add_argument("--base-url", default="http://localhost", help="where the stack is reachable from here")
+    ap.add_argument("--allow-write", action="store_true",
+                    help="required: the check creates (and then deletes) rows in the configured database")
     args = ap.parse_args()
+    if not args.allow_write:
+        print("Refusing to run: this writes to the database. Pass --allow-write on a non-production stack.")
+        return 2
+    if settings.ENVIRONMENT == "production":
+        print("Refusing to run: ENVIRONMENT is production.")
+        return 2
 
     async def go():
         await run(args.base_url)
