@@ -79,7 +79,8 @@ export default function OAuthConsent() {
     }
 
     const d = info.data;
-    const tenantId = picked ?? d.tenants[0]?.id ?? null;
+    // Preselect only when there is no choice to make; otherwise the user must pick deliberately.
+    const tenantId = picked ?? (d.tenants.length === 1 ? d.tenants[0].id : null);
     const tenant = d.tenants.find(t => t.id === tenantId);
 
     const decide = async (approve: boolean) => {
@@ -123,6 +124,7 @@ export default function OAuthConsent() {
                     <select id="oauth-tenant" value={tenantId ?? ''} disabled={busy}
                         onChange={e => setPicked(Number(e.target.value))}
                         className="w-full rounded-md border border-line-strong bg-panel px-2 py-2 text-sm text-fg">
+                        {tenantId === null && <option value="" disabled>Choose an organization…</option>}
                         {d.tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
                     {tenant && (
