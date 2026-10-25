@@ -64,10 +64,11 @@ class ShareIn(BaseModel):
 
 class GuestSettings(BaseModel):
     domain_allowlist: List[str] = Field(default_factory=list, max_length=50)
-    login_method: str = "password"
+    login_method: Optional[str] = None  # omitted -> keep the current method
 
 
 class GuestSettingsOut(GuestSettings):
+    login_method: str
     sso_ready: bool        # any SSO method usable
     saml_ready: bool
     oidc_ready: bool
@@ -283,14 +284,17 @@ async def update_guest_settings(*, body: GuestSettings, db: AsyncSession = Depen
     bad = [d for d in domains if not _DOMAIN_RE.match(d)]
     if bad:
         raise HTTPException(status_code=422, detail=f"Not a valid domain: {bad[0][:100]}")
-    if body.login_method not in LOGIN_METHODS:
+    method = tenant.guest_login_method if body.login_method is None else body.login_method
+    if method not in LOGIN_METHODS:
         raise HTTPException(status_code=422, detail="Unknown login method")
-    cur = await _settings_out(db, tenant)
-    if body.login_method != "password" and not getattr(cur, f"{body.login_method}_ready"):
-        raise HTTPException(status_code=422, detail="Configure and enable that SSO method before requiring it for guests")
-    tenant.guest_domain_allowlist, tenant.guest_login_method = domains, body.login_method
+    if body.login_method is not None and method != "password":
+        cur = await _settings_out(db, tenant)
+        if not getattr(cur, f"{method}_ready"):
+            raise HTTPException(status_code=422,
+                                detail="Configure and enable that SSO method before requiring it for guests")
+    tenant.guest_domain_allowlist, tenant.guest_login_method = domains, method
     await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id, action="guest_settings_changed",
                            tenant_id=tenant.id, user_id=current_user.id,
-                           changes={"domain_allowlist": domains, "login_method": body.login_method})
+                           changes={"domain_allowlist": domains, "login_method": method})
     await db.commit()
     return await _settings_out(db, tenant)

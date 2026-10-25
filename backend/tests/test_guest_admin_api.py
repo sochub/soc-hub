@@ -123,6 +123,9 @@ def test_tenant_guest_settings_and_empty_allowlist_blocks():
         async with client() as cl:
             r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "login_method": "saml"})
             assert r.status_code == 200 and r.json()["login_method"] == "saml"
+            r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": ["dept.example"]})
+            assert r.status_code == 200 and r.json()["login_method"] == "saml"  # omitted -> kept
+            assert r.json()["domain_allowlist"] == ["dept.example"]
             r = await cl.put("/api/v1/tenants/current/guests", json={"domain_allowlist": [], "login_method": "oidc"})
             assert r.status_code == 422  # OIDC not configured
         async with AsyncSessionLocal() as db:
