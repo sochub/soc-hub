@@ -7,23 +7,20 @@ server {
 
     # Serve static files. index.html must never be cached: it names the hashed
     # bundles, and a stale copy would point at bundles a new build removed.
+    # Every SPA path (the OAuth consent screen included) is never framed: clickjacking on Approve.
     location / {
         add_header Cache-Control "no-cache" always;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # OAuth consent screen: never framed (clickjacking on Approve).
-    location = /oauth/consent {
-        add_header Cache-Control "no-cache" always;
-        add_header Content-Security-Policy "frame-ancestors 'none'" always;
         add_header X-Frame-Options "DENY" always;
-        try_files /index.html =404;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        try_files $uri $uri/ /index.html;
     }
 
     # Hashed build output: cache forever, and 404 for missing files instead of
     # falling back to index.html (HTML served as JS fails silently -> blank page).
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
         try_files $uri =404;
     }
 
@@ -71,6 +68,36 @@ server {
         proxy_set_header Host $host;
         # Overwrite (don't append to) client-supplied forwarding headers: the
         # backend trusts X-Real-IP for login rate limiting.
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # OAuth discovery documents (root-relative by spec, so outside /api/v1/).
+    location = /.well-known/oauth-authorization-server {
+        proxy_pass ${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /.well-known/oauth-protected-resource {
+        proxy_pass ${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # MCP server (streamable HTTP): long-lived, unbuffered responses.
+    location ^~ /mcp {
+        proxy_pass ${BACKEND_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;

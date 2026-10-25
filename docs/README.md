@@ -17,6 +17,7 @@ into the per-subsystem design notes.
 | [Workflows](workflows/README.md) | Automation engine and vendor integrations |
 | [Case guests](guests/README.md) | Inviting outside people to a single case |
 | [Audit log](audit/README.md) | What the platform audit log records |
+| [Sessions and OAuth](oauth/README.md) | Login sessions, refresh rotation, the OAuth authorization server, connected apps |
 
 ## Design notes
 
