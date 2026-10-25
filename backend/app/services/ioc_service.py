@@ -6,9 +6,11 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.enrichment.indicators import normalise
 from app.models.artifact import Artifact
 from app.models.case import Case
 from app.models.case_artifact import CaseArtifact
+from app.models.enrichment_result import EnrichmentResult
 from app.models.ioc import IOC
 from app.utils.audit import create_audit_log
 
@@ -63,3 +65,27 @@ async def promote_artifact(db: AsyncSession, *, artifact: Artifact, tenant_id: i
                            user_id=user_id, changes={"promoted_from_artifact": artifact.id})
     await db.flush()
     return ioc, True
+
+
+_RANK = {"malicious": 3, "suspicious": 2, "harmless": 1, "unknown": 0}
+
+
+async def enrichment_verdicts(db: AsyncSession, tenant_id: int, iocs) -> dict:
+    """Worst ok enrichment verdict per IOC id, from one query over the page's normalised indicators."""
+    pairs = {}
+    for ioc in iocs:
+        n = normalise(ioc.ioc_type, ioc.value)
+        if n:
+            pairs[ioc.id] = n
+    if not pairs:
+        return {}
+    rows = (await db.execute(select(
+        EnrichmentResult.indicator_type, EnrichmentResult.indicator_value, EnrichmentResult.verdict).where(
+        EnrichmentResult.tenant_id == tenant_id, EnrichmentResult.status == "ok",
+        EnrichmentResult.indicator_type.in_({t for t, _ in pairs.values()}),
+        EnrichmentResult.indicator_value.in_({v for _, v in pairs.values()})))).all()
+    worst = {}
+    for t, v, verdict in rows:
+        if verdict in _RANK and _RANK[verdict] > _RANK.get(worst.get((t, v)), -1):
+            worst[(t, v)] = verdict
+    return {ioc_id: worst.get(pair) for ioc_id, pair in pairs.items()}

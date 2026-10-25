@@ -1,7 +1,6 @@
 import json
 from typing import Any, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlalchemy import case as sql_case
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -64,12 +63,6 @@ async def ingest_alert(
         )
     )).scalars().one()
 
-_SEVERITY_RANK = sql_case(
-    {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}, value=Alert.severity, else_=0)
-_SORTS = {"-created_at": Alert.created_at.desc(), "created_at": Alert.created_at.asc(),
-          "severity": _SEVERITY_RANK.desc(), "-severity": _SEVERITY_RANK.asc()}
-
-
 @router.get("/", response_model=List[case_schema.Alert])
 async def read_alerts(
     db: AsyncSession = Depends(deps.get_db),
@@ -87,7 +80,7 @@ async def read_alerts(
     for col, val in ((Alert.status, status), (Alert.severity, severity), (Alert.source, source)):
         if val:
             q = q.where(col == val)
-    result = await db.execute(q.order_by(_SORTS[sort], Alert.id.desc()).offset(skip).limit(limit))
+    result = await db.execute(q.order_by(alert_service.SORTS[sort], Alert.id.desc()).offset(skip).limit(limit))
     return result.scalars().all()
 
 

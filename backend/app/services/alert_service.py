@@ -3,13 +3,19 @@
 All functions only flush; the caller commits (and emits workflow events after commit).
 """
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import case as sql_case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.case import Alert, Case
 from app.models.membership import TenantMembership
 from app.services.case_service import add_alert_artifacts
 from app.utils.audit import create_audit_log
+
+_SEVERITY_RANK = sql_case(
+    {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}, value=Alert.severity, else_=0)
+# Alert list orderings (REST ``sort`` and the MCP list_alerts tool).
+SORTS = {"-created_at": Alert.created_at.desc(), "created_at": Alert.created_at.asc(),
+         "severity": _SEVERITY_RANK.desc(), "-severity": _SEVERITY_RANK.asc()}
 
 
 async def is_tenant_member(db: AsyncSession, user_id: int, tenant_id: int) -> bool:

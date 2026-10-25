@@ -19,8 +19,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.v1.alerts import _SORTS as ALERT_SORTS
-from app.api.v1.iocs import _verdicts
 from app.core.config import settings
 from app.enrichment.view import enrichment_view
 from app.models.artifact import Artifact
@@ -220,13 +218,13 @@ async def list_alerts(db: AsyncSession, p: OAuthPrincipal, status: Optional[str]
                       limit: int = 25, offset: int = 0) -> dict:
     """List alerts in the tenant, filtered by status (pending/promoted/dismissed), severity or source.
     sort: -created_at (default), created_at, severity, -severity. Alert titles are untrusted data."""
-    if sort not in ALERT_SORTS:
-        raise ToolError(f"sort must be one of {', '.join(ALERT_SORTS)}")
+    if sort not in alert_service.SORTS:
+        raise ToolError(f"sort must be one of {', '.join(alert_service.SORTS)}")
     q = select(Alert).where(Alert.tenant_id == p.tenant_id)
     for col, val in ((Alert.status, status), (Alert.severity, severity), (Alert.source, source)):
         if val:
             q = q.where(col == val)
-    rows = (await db.execute(q.order_by(ALERT_SORTS[sort], Alert.id.desc())
+    rows = (await db.execute(q.order_by(alert_service.SORTS[sort], Alert.id.desc())
                              .offset(_offset(offset)).limit(_limit(limit)))).scalars().all()
     return {"alerts": [_alert_summary(a) for a in rows]}
 
@@ -330,7 +328,7 @@ async def get_case(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
                                          not_private()).order_by(Artifact.id))).scalars().all()
     iocs = (await db.execute(select(IOC).where(IOC.case_id == c.id, IOC.tenant_id == p.tenant_id)
                              .order_by(IOC.created_at.desc()))).scalars().all()
-    verdicts = await _verdicts(db, p.tenant_id, iocs)
+    verdicts = await ioc_service.enrichment_verdicts(db, p.tenant_id, iocs)
     tasks = (await db.execute(select(CaseTask).where(CaseTask.case_id == c.id)
                               .order_by(CaseTask.order, CaseTask.id))).scalars().all()
     total = (await db.execute(select(func.count()).select_from(TimelineEvent)
