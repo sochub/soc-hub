@@ -19,7 +19,7 @@ class Resource:
 
 
 RESOURCES: dict[str, Resource] = {
-    "mcp": Resource("mcp", f"{settings.PUBLIC_BASE_URL}/mcp", ("mcp",), lambda t: t.mcp_enabled),
+    "mcp": Resource("mcp", f"{issuer()}/mcp", ("mcp",), lambda t: t.mcp_enabled),
 }
 
 

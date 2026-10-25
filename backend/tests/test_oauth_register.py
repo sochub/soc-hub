@@ -43,15 +43,25 @@ def test_metadata_shape():
 
 
 @pytest.mark.parametrize("uri,ok", [
-    ("https://app.example.com/cb", True),
+    ("https://claude.ai/api/mcp/auth_callback", True),
+    ("http://127.0.0.1:53682/callback", True),
+    ("cursor://anysphere.cursor-retrieval/oauth/user-mcp/callback", True),
     ("http://localhost:33418/cb", True),
     ("http://[::1]:8080/cb", True),
-    ("http://example.com/cb", False),
-    ("javascript:alert(1)", False),
     ("com.example.app:/cb", True),
+    ("javascript:alert(1)", False),
+    ("data:text/html,x", False),
+    ("file:///etc/passwd", False),
+    ("http://evil.com/cb", False),
     ("https://x/cb#frag", False),
     ("https:///cb", False),
-    ("file:///etc/passwd", False),
+    ("http://evil.com\\@localhost/cb", False),
+    ("http://evil.com@localhost/cb", False),
+    (" https://x/cb", False),
+    ("https://x/cb\r\nSet-Cookie: a=b", False),
+    ("http://local\thost/cb", False),
+    ("http://localhost:99999/cb", False),
+    ("https://x/" + "a" * 2000, False),
 ])
 def test_redirect_uri_allowed(uri, ok):
     assert redirect_uri_allowed(uri) is ok
@@ -87,4 +97,12 @@ def test_register_rate_limited():
             ids.append(r.json()["client_id"])
         r = await c.post("/api/v1/oauth/register", json=BODY)
         assert r.status_code == 429
+    _run(body)
+
+
+@pytest.mark.parametrize("name", ["Evil\u202eApp", "App\nName", "A\u200bB", "A\x00B"])
+def test_register_rejects_spoofed_client_name(name):
+    async def body(c, ids):
+        r = await c.post("/api/v1/oauth/register", json={**BODY, "client_name": name})
+        assert r.status_code == 400 and r.json()["error"] == "invalid_client_metadata"
     _run(body)

@@ -2,6 +2,7 @@
 import re
 import secrets
 import time
+import unicodedata
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -30,12 +31,17 @@ def _oauth_redis():
 
 
 def redirect_uri_allowed(uri: str) -> bool:
+    if not isinstance(uri, str) or not uri or len(uri) > 2000:
+        return False
+    if "\\" in uri or "#" in uri or any(ord(c) < 0x21 or ord(c) == 0x7F for c in uri):
+        return False
     try:
         p = urlparse(uri)
         host = p.hostname
+        p.port  # noqa: B018 — raises ValueError on an invalid port
     except ValueError:
         return False
-    if p.fragment or "#" in uri:
+    if p.fragment or p.username is not None or p.password is not None:
         return False
     scheme = p.scheme.lower()
     if scheme == "https":
@@ -88,6 +94,8 @@ async def register(body: RegisterIn, request: Request, db: AsyncSession = Depend
     name = body.client_name
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
         return _err("invalid_client_metadata", "client_name is required (1-200 characters).")
+    if any(unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in name):
+        return _err("invalid_client_metadata", "client_name contains control or formatting characters.")
     uris = body.redirect_uris
     if not isinstance(uris, list) or not 1 <= len(uris) <= 10 or not all(isinstance(u, str) for u in uris):
         return _err("invalid_redirect_uri", "redirect_uris must be a list of 1-10 strings.")
