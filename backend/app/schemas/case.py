@@ -99,6 +99,8 @@ class TimelineEvent(TimelineEventBase):
     shared_with_guests: bool = False
     guest_id: Optional[int] = None
     guest_email: Optional[str] = None
+    via: Optional[str] = None
+    via_client: Optional[str] = None
 
     class Config:
         from_attributes = True

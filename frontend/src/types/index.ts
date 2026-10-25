@@ -251,6 +251,8 @@ export interface TimelineEvent {
   shared_with_guests?: boolean;
   guest_id?: number | null;
   guest_email?: string | null;
+  via?: string | null;
+  via_client?: string | null;
 }
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';

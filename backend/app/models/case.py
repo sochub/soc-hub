@@ -99,6 +99,8 @@ class TimelineEvent(Base):
     shared_with_guests = Column(Boolean, nullable=False, default=False, server_default="false")
     guest_id = Column(Integer, ForeignKey("case_guests.id", ondelete="SET NULL"), nullable=True)
     guest = relationship("CaseGuest", lazy="joined")
+    via = Column(String(16), nullable=True)  # set when an MCP client wrote this entry on behalf of user_id
+    via_client = Column(String(200), nullable=True)
 
     @property
     def guest_email(self):
@@ -118,3 +120,6 @@ class CaseLink(Base):
     url = Column(String)
 
     case = relationship("Case", back_populates="links")
+
+
+import app.audit.via  # noqa: E402,F401  registers the TimelineEvent before_insert listener

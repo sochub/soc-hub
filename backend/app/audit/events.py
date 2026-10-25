@@ -10,6 +10,7 @@ from fastapi import Request
 from app.audit.context import ctx_of, request_id_var
 from app.audit.middleware import _route_template, audit_ip, insert_row
 from app.audit.redact import scrub
+from app.audit.via import apply_via
 
 logger = logging.getLogger(__name__)
 _FROM_CTX: Any = object()  # tenant_id not passed: resolve from the request's audit context (effective_tenant)
@@ -22,6 +23,7 @@ async def audit_event(category: str, action: str, *, request: Optional[Request] 
                       changes: Optional[Dict[str, Any]] = None) -> None:
     try:
         from_ctx = tenant_id is _FROM_CTX
+        actor, changes = apply_via(actor, changes)  # captured now: queued rows are written after the context ends
         fields: Dict[str, Any] = dict(
             category=category, action=action, outcome=outcome, tenant_id=None if from_ctx else tenant_id,
             user_id=user_id,
