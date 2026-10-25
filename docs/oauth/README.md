@@ -76,7 +76,9 @@ audited (`oauth.consent_granted`, `oauth.consent_denied`).
   winner's secret), and the window cannot be extended by replaying. Reuse of that old secret inside the window
   is therefore undetectable by design.
 - **Reuse = revoke**: presenting any other non-current secret (or the old one after 10 s) revokes the whole session
-  and writes a `session.refresh_reuse` security audit event.
+  and writes a `session.refresh_reuse` security audit event. This is not always theft: a client that lost the
+  refresh response (e.g. a network drop) retries with the old secret, which also revokes the session, so the user
+  simply signs in again and the event is logged.
 - A refresh token presented by a different client than the one it was issued to is refused before it rotates.
 
 ### The `sid` caveat
