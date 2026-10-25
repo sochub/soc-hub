@@ -122,8 +122,9 @@ export default function Dashboard() {
     });
 
     const createCaseMutation = useMutation({
-        mutationFn: async (data: { title: string; description: string; severity: string; artifacts: any[]; playbook_template_id?: string }) => {
-            const response = await api.post('/cases/', { title: data.title, description: data.description, severity: data.severity });
+        mutationFn: async (data: { title: string; description: string; severity: string; artifacts: any[]; playbook_template_id?: string; first_seen_at?: string }) => {
+            const response = await api.post('/cases/', { title: data.title, description: data.description, severity: data.severity,
+                ...(data.first_seen_at ? { first_seen_at: data.first_seen_at } : {}) });
             if (data.artifacts?.length) {
                 await Promise.all(data.artifacts.map(a =>
                     api.post('/artifacts/', { case_id: response.data.id, artifact_type: a.type, value: a.value, isolated: a.isolated ?? false })));

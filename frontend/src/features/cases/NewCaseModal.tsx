@@ -10,7 +10,7 @@ import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../c
 interface NewCaseModalProps {
     show: boolean;
     onClose: () => void;
-    onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; artifacts: any[]; playbook_template_id?: string }) => void;
+    onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; artifacts: any[]; playbook_template_id?: string; first_seen_at?: string }) => void;
     isSubmitting: boolean;
 }
 
@@ -26,6 +26,10 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
         playbook_template_id: ''
     });
     const [artifacts, setArtifacts] = useState<Array<{ type: string; value: string; isolated: boolean; enrichment?: any }>>([]);
+    // "Incident started": pre-filled with now; only sent when the analyst moved it (else First seen stays computed).
+    const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const [incidentStart, setIncidentStart] = useState(nowLocal);
+    const [startTouched, setStartTouched] = useState(false);
 
     const { data: playbooks = [] } = useQuery({
         queryKey: ['playbooks', 'mine'],
@@ -45,6 +49,8 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
             playbook_template_id: ''
         });
         setArtifacts([]);
+        setIncidentStart(nowLocal());
+        setStartTouched(false);
         onClose();
     };
 
@@ -53,7 +59,8 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
         onSubmit({
             ...caseData,
             tags: tagsArray,
-            artifacts
+            artifacts,
+            ...(startTouched && incidentStart ? { first_seen_at: new Date(incidentStart).toISOString() } : {}),
         });
         handleClose();
     };
@@ -169,6 +176,15 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                                     <option value="high">High</option>
                                     <option value="critical">Critical</option>
                                 </select>
+                            </div>
+
+                            <div>
+                                <label htmlFor="new-case-incident-start" className={modalLabel}>
+                                    Incident started <span className="text-muted font-normal">(defaults to now · move it back if it began earlier)</span>
+                                </label>
+                                <input id="new-case-incident-start" type="datetime-local" value={incidentStart} max={nowLocal()}
+                                    onChange={(e) => { setIncidentStart(e.target.value); setStartTouched(true); }}
+                                    className={modalInput} />
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
