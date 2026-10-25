@@ -34,6 +34,7 @@ export interface PlaybookTemplate {
   is_system: boolean;
   source_template_id?: number | null;
   created_at: string;
+  status?: 'draft' | 'published';
   tasks?: PlaybookTaskTemplate[];
 }
 
@@ -46,6 +47,7 @@ export interface PlaybookSummary {
   is_system: boolean;
   source_template_id?: number | null;
   task_count: number;
+  status?: 'draft' | 'published';
   already_imported?: boolean;
 }
 

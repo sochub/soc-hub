@@ -20,7 +20,8 @@ async def apply_playbook_to_case(
     """
     res = await db.execute(
         select(PlaybookTemplate).options(selectinload(PlaybookTemplate.tasks))
-        .where(PlaybookTemplate.id == template_id, PlaybookTemplate.tenant_id == tenant_id)
+        .where(PlaybookTemplate.id == template_id, PlaybookTemplate.tenant_id == tenant_id,
+               PlaybookTemplate.status == "published")
     )
     template = res.scalars().first()
     if not template:
