@@ -161,7 +161,7 @@ async def bulk_alerts(
         if case:
             await alert_service.promote_alert(db, alert=alert, case=case, user_id=current_user.id)
         else:
-            await alert_service.dismiss_alert(db, alert=alert, user_id=current_user.id)
+            await alert_service.dismiss_alert(db, alert=alert, user_id=current_user.id, bulk=True)
     await db.commit()
     found = {a.id for a in alerts}
     ids = list(dict.fromkeys(body.ids))

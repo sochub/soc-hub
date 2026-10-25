@@ -32,11 +32,15 @@ async def update_alert(db: AsyncSession, *, alert: Alert, data: dict, tenant_id:
     return changes
 
 
-async def dismiss_alert(db: AsyncSession, *, alert: Alert, user_id: int, reason: str | None = None) -> None:
+async def dismiss_alert(db: AsyncSession, *, alert: Alert, user_id: int, reason: str | None = None,
+                        bulk: bool = False) -> None:
+    """Dismiss; without a reason an existing one is kept (re-dismissing never erases it)."""
     alert.status = "dismissed"
-    alert.dismiss_reason = reason
+    if reason is not None:
+        alert.dismiss_reason = reason
+    changes = {"reason": reason, "bulk": True} if bulk else {"reason": reason}
     await create_audit_log(db=db, entity_type="alert", entity_id=alert.id, action="alert_dismissed",
-                           tenant_id=alert.tenant_id, user_id=user_id, changes={"reason": reason})
+                           tenant_id=alert.tenant_id, user_id=user_id, changes=changes)
     await db.flush()
 
 

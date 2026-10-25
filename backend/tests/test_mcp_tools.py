@@ -365,3 +365,16 @@ def test_promote_already_promoted_alert_refused(_no_side_effects):
         n = (await db.execute(select(func.count()).select_from(Case).where(Case.tenant_id == t.id))).scalar()
         assert n == 1
     _run(body)
+
+
+def test_redismiss_keeps_reason():
+    async def body(db, ids):
+        t = await make_tenant(db, ids)
+        user = await _member(db, ids, t)
+        a = await _alert(db, ids, t)
+        p = _p(user, t)
+        await tools.dismiss_alert(db, p, alert_id=a.id, reason="known scanner")
+        await tools.dismiss_alert(db, p, alert_id=a.id)
+        r = await tools.get_alert(db, p, alert_id=a.id)
+        assert r["status"] == "dismissed" and r["dismiss_reason"] == "known scanner"
+    _run(body)
