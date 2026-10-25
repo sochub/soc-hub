@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -7,6 +9,8 @@ from app.api import deps
 from app.api.api import api_router
 from app.audit.middleware import AuditMiddleware
 from app.core.config import settings
+from app.mcp.server import mcp_asgi, mcp_exact_path, mcp_server
+from app.oauth.resources import RESOURCES, issuer
 from app.oauth.routes import metadata as oauth_metadata
 
 # Security headers applied to every response. These are cheap, defence-in-depth
@@ -30,7 +34,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # A mounted Starlette app's own lifespan never runs: the host app must run the MCP session manager.
+    async with mcp_server.session_manager.run():
+        yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="SICMS API",
     description="Security Incident Case Management System API",
     version="0.1.0",
@@ -67,6 +79,26 @@ async def openapi_schema():
 @app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
 async def oauth_authorization_server_metadata():
     return oauth_metadata()
+
+
+# RFC 9728 protected resource metadata. The MCP SDK names the root URL
+# `<base>/.well-known/oauth-protected-resource/mcp` in its 401 WWW-Authenticate header, but its own route lives
+# inside the /mcp mount, so the root documents are served here (nginx proxies /.well-known/oauth-protected-resource*).
+def _mcp_resource_metadata() -> dict:
+    res = RESOURCES["mcp"]
+    return {"resource": res.url, "authorization_servers": [issuer()], "scopes_supported": list(res.scopes),
+            "bearer_methods_supported": ["header"], "resource_name": "SOC Hub MCP"}
+
+
+@app.get("/.well-known/oauth-protected-resource", include_in_schema=False)
+@app.get("/.well-known/oauth-protected-resource/mcp", include_in_schema=False)
+async def oauth_protected_resource_metadata():
+    return _mcp_resource_metadata()
+
+
+# MCP over Streamable HTTP (OAuth-protected inside the SDK app). See app/mcp/server.py.
+app.add_route("/mcp", mcp_exact_path, include_in_schema=False)
+app.mount("/mcp", mcp_asgi)
 
 
 @app.get("/health")

@@ -11,7 +11,7 @@ Code: `backend/app/oauth/{resources,routes,tokens}.py`, `backend/app/auth/{sessi
 | Endpoint | Purpose |
 |---|---|
 | `GET /.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414) at the site root. `issuer` is `PUBLIC_BASE_URL`. |
-| `GET /.well-known/oauth-protected-resource` | Protected resource metadata, proxied to the backend (served by the resource itself). |
+| `GET /.well-known/oauth-protected-resource/mcp` (and `/.well-known/oauth-protected-resource`) | Protected resource metadata (RFC 9728) for the MCP server, served by the backend root (`app/main.py`): `resource` = `<PUBLIC_BASE_URL>/mcp`, `authorization_servers` = `[issuer]`, `scopes_supported` = `["mcp"]`. The MCP server's 401 names the `/mcp` form in `WWW-Authenticate: Bearer resource_metadata="..."`. |
 | `POST /api/v1/oauth/register` | Dynamic client registration (RFC 7591), public clients only. |
 | `GET /api/v1/oauth/authorize` | Validates the request, then redirects (303) to the consent screen `/oauth/consent`. |
 | `GET /api/v1/oauth/authorize/info` | Consent screen data: client name, redirect host, resource, scope, selectable tenants. |
@@ -19,7 +19,7 @@ Code: `backend/app/oauth/{resources,routes,tokens}.py`, `backend/app/auth/{sessi
 | `POST /api/v1/oauth/token` | `authorization_code` and `refresh_token` grants (form-encoded). |
 | `POST /api/v1/oauth/revoke` | Token revocation (RFC 7009); always answers 200. |
 
-nginx proxies the two `/.well-known/oauth-*` paths and `/mcp` to the backend (`frontend/nginx/default.conf.template`).
+nginx proxies the `/.well-known/oauth-*` paths, `/mcp` and `/mcp/...` to the backend (`frontend/nginx/default.conf.template`).
 The SPA pages, `/oauth/consent` included, are served with `X-Frame-Options: DENY` and
 `Content-Security-Policy: frame-ancestors 'none'`, so Approve can never be clickjacked.
 
