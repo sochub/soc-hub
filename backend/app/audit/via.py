@@ -5,6 +5,9 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 
 from sqlalchemy import event
 
+ACTOR_MAX = 128  # audit_log.actor column length
+VIA_CLIENT_MAX = 200  # timeline_events.via_client column length
+
 current_via: ContextVar[Optional[dict]] = ContextVar("current_via", default=None)
 
 
@@ -22,14 +25,14 @@ def apply_via(actor: Optional[str], changes: Optional[Dict[str, Any]]) -> Tuple[
     v = current_via.get()
     if not v:
         return actor, changes
-    return (actor or f"{v['via']}:{v['client_name']}",
+    return (actor or f"{v['via']}:{v['client_name']}"[:ACTOR_MAX],
             {**(changes or {}), "via": v["via"], "client_id": v["client_id"]})
 
 
 def _tag_timeline_event(mapper, connection, target) -> None:
     v = current_via.get()
     if v and target.via is None:
-        target.via, target.via_client = v["via"], v["client_name"]
+        target.via, target.via_client = v["via"], v["client_name"][:VIA_CLIENT_MAX]
 
 
 def _register() -> None:

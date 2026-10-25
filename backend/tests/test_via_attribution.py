@@ -77,3 +77,18 @@ def test_timeline_schema_exposes_via():
             tagged = [e for e in r.json()["timeline_events"] if e["content"] == "tagged"]
             assert tagged and tagged[0]["via"] == "mcp" and tagged[0]["via_client"] == "Claude"
     run(body)
+
+
+def test_long_client_name_is_capped():
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            u = await make_user(db, ids)
+            case = await make_case(db, ids, t)
+            with acting_via("mcp", "c1", "N" * 200):
+                row = await create_audit_log(db, "case", 1, "update", t.id, user_id=u.id)
+                ev = await case_service.add_timeline_note(db, case=case, content="long", user_id=u.id)
+            await db.commit()
+            assert len(row.actor) == 128
+            assert len(ev.via_client) <= 200
+    run(body)
