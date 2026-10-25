@@ -7,6 +7,7 @@ from app.api import deps
 from app.api.api import api_router
 from app.audit.middleware import AuditMiddleware
 from app.core.config import settings
+from app.oauth.routes import metadata as oauth_metadata
 
 # Security headers applied to every response. These are cheap, defence-in-depth
 # protections; the API serves JSON only, so a deny-all CSP is appropriate.
@@ -61,6 +62,11 @@ app.include_router(api_router, prefix="/api/v1")
 @app.get("/api/v1/openapi.json", include_in_schema=False, dependencies=[Depends(deps.get_current_active_user)])
 async def openapi_schema():
     return app.openapi()
+
+
+@app.get("/.well-known/oauth-authorization-server", include_in_schema=False)
+async def oauth_authorization_server_metadata():
+    return oauth_metadata()
 
 
 @app.get("/health")

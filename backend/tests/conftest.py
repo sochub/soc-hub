@@ -49,6 +49,15 @@ def _no_real_enrichment_enqueue(monkeypatch):
             self.keys.pop(k, None)
             return self.vals.pop(k, None)
 
+        async def incr(self, k):
+            self.vals[k] = int(self.vals.get(k, 0)) + 1
+            self.keys.setdefault(k, None)
+            return self.vals[k]
+
+        async def expire(self, k, seconds):
+            self.keys[k] = seconds
+            return True
+
         async def delete(self, k):
             had = k in self.keys
             self.keys.pop(k, None)
@@ -60,6 +69,10 @@ def _no_real_enrichment_enqueue(monkeypatch):
     # OIDC state store: its own per-test fake.
     oidc_fake = _AsyncRedis()
     monkeypatch.setattr(sso_mod, "_oidc_redis", lambda: oidc_fake, raising=False)
+    # OAuth registration rate limit: its own per-test fake.
+    import app.oauth.routes as oauth_routes
+    oauth_fake = _AsyncRedis()
+    monkeypatch.setattr(oauth_routes, "_oauth_redis", lambda: oauth_fake)
     yield calls
 
 
