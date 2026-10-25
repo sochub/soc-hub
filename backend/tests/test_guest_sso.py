@@ -142,3 +142,21 @@ def test_guest_saml_refused_when_method_is_oidc(monkeypatch):
             loc = r.headers["location"]
             assert r.status_code == 303 and "#sso_error=" in loc and "token=" not in loc
     run(body)
+
+
+def test_guest_acs_protocol_mismatch_is_audited(monkeypatch):
+    import asyncio
+    events = []
+
+    async def rec(category, action, **kw):
+        events.append((category, action, kw.get("outcome"), kw.get("changes")))
+    monkeypatch.setattr(sso_mod, "audit_event", rec)
+    t = Tenant(id=987654, slug="proto-mismatch", guest_login_method="saml")
+    r = asyncio.run(sso_mod._guest_acs(None, None, t, "x@example.com", proto="oidc"))
+    assert r.status_code == 303 and "/guest/login" in r.headers["location"]
+    assert events == [("security", "sso.failed", "denied", {"reason": "not_enabled"})]
+
+
+def test_sp_login_url_is_dispatcher(monkeypatch):
+    from app.services import saml_service
+    assert saml_service.sp_urls("acme")["login_url"].endswith("/api/v1/auth/sso/acme/login")
