@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound, ArrowLeft } from 'lucide-react';
 import { api, session } from '../../api/client';
 import { Button, Input, Label } from '../../components/ui';
@@ -17,6 +17,8 @@ export default function Login() {
     const [challenge, setChallenge] = useState<{ token: string; kind: 'code' | 'setup' } | null>(null);
     const [code, setCode] = useState('');
     const navigate = useNavigate();
+    const location = useLocation();
+    const notice = (location.state as { notice?: string } | null)?.notice;
 
     const resetChallenge = (msg = '') => {
         setChallenge(null);
@@ -41,7 +43,7 @@ export default function Login() {
     const handleSso = (e: React.FormEvent) => {
         e.preventDefault();
         const slug = ssoSlug.trim().toLowerCase();
-        if (slug) window.location.href = `/api/v1/auth/saml/${encodeURIComponent(slug)}/login`;
+        if (slug) window.location.href = `/api/v1/auth/sso/${encodeURIComponent(slug)}/login`;
     };
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -64,7 +66,13 @@ export default function Login() {
             session.mark();
             navigate('/');
         } catch (err: any) {
-            if (err.response?.status === 401) {
+            const d = err.response?.data?.detail;
+            if (err.response?.status === 403 && d?.code === 'sso_required' && d.slug) {
+                window.location.href = `/api/v1/auth/sso/${encodeURIComponent(d.slug)}/login`;
+                return;
+            } else if (err.response?.status === 403 && d?.code === 'password_required') {
+                setError('Your organization requires SSO for this account. Use "Sign in with SSO".');
+            } else if (err.response?.status === 401) {
                 setError('Invalid email or password.');
             } else if (err.response?.status === 429) {
                 setError(mfaErrorMessage(err));
@@ -112,6 +120,7 @@ export default function Login() {
                         <p className="text-fg-2">Enter your credentials to access</p>
                     </div>
 
+                    {notice && <p role="status" className="text-sm text-fg-2">{notice}</p>}
                     {challenge?.kind === 'code' ? (
                         <form onSubmit={handleCode} className="space-y-4" noValidate>
                             <div className="space-y-2">

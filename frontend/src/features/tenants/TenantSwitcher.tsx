@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Check, ChevronsUpDown, Building2, Loader2 } from 'lucide-react';
-import { api } from '../../api/client';
+import { api, session } from '../../api/client';
 import { switchTenant } from '../../api/auth';
 import type { User, Tenant } from '../../types';
 import { cn } from '../../lib/utils';
@@ -15,6 +15,7 @@ interface Option {
 
 export default function TenantSwitcher() {
     const qc = useQueryClient();
+    const navigate = useNavigate();
     const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [mfaBlocked, setMfaBlocked] = useState(false);
@@ -61,6 +62,18 @@ export default function TenantSwitcher() {
             await qc.invalidateQueries();
         } catch (err) {
             const e = err as { response?: { status?: number; data?: { detail?: unknown } } };
+            const code = (e.response?.data?.detail as { code?: string; slug?: string } | undefined);
+            if (e.response?.status === 403 && code?.code === 'sso_required' && code.slug) {
+                window.location.assign(`/api/v1/auth/sso/${encodeURIComponent(code.slug)}/login`);
+                return;
+            }
+            if (e.response?.status === 403 && code?.code === 'password_required') {
+                try { await api.post('/auth/logout'); } catch { /* session may already be gone */ }
+                session.clear();
+                qc.clear();
+                navigate('/login', { state: { notice: 'Sign in with your password to open this organization.' } });
+                return;
+            }
             if (e.response?.status === 403 && e.response.data?.detail === 'mfa_setup_required') {
                 setMfaBlocked(true);
             } else {

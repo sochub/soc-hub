@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
-import type { SLAPolicyItem, SSOConfig, User } from '../../types';
+import type { LoginMethod, SLAPolicyItem, SSOConfig, User } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import { mfaErrorMessage } from '../profile/mfaErrors';
@@ -202,7 +202,9 @@ export default function Settings() {
     });
 
     const [form, setForm] = useState({
-        enabled: false, idp_entity_id: '', idp_sso_url: '', idp_x509_cert: '',
+        member_login_method: 'password' as LoginMethod, guest_login_method: 'password' as LoginMethod,
+        idp_entity_id: '', idp_sso_url: '', idp_x509_cert: '',
+        oidc_issuer: '', oidc_client_id: '', oidc_client_secret: '', oidc_scopes: 'openid email profile',
         auto_provision: false, default_role: 'viewer' as 'analyst' | 'viewer',
     });
     const [savedFlash, setSavedFlash] = useState(false);
@@ -210,7 +212,12 @@ export default function Settings() {
     useEffect(() => {
         if (cfg) {
             setForm({
-                enabled: cfg.enabled,
+                member_login_method: cfg.member_login_method,
+                guest_login_method: cfg.guest_login_method,
+                oidc_issuer: cfg.oidc_issuer ?? '',
+                oidc_client_id: cfg.oidc_client_id ?? '',
+                oidc_client_secret: '',
+                oidc_scopes: cfg.oidc_scopes,
                 idp_entity_id: cfg.idp_entity_id ?? '',
                 idp_sso_url: cfg.idp_sso_url ?? '',
                 idp_x509_cert: cfg.idp_x509_cert ?? '',
@@ -229,10 +236,11 @@ export default function Settings() {
         },
     });
 
-    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url', placeholder: string) => (
+    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url' | 'oidc_issuer' | 'oidc_client_id' | 'oidc_client_secret' | 'oidc_scopes',
+        placeholder: string, type = 'text') => (
         <div>
             <label className="label-mono block mb-1">{label}</label>
-            <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+            <input type={type} autoComplete="off" value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                 placeholder={placeholder}
                 className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
         </div>
@@ -253,14 +261,8 @@ export default function Settings() {
                 <section className="bg-panel border border-line">
                     <div className="flex items-center justify-between px-4 h-11 border-b border-line">
                         <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
-                            <KeyRound size={15} className="text-accent" /> Single Sign-On (SAML)
+                            <KeyRound size={15} className="text-accent" /> Single Sign-On
                         </h2>
-                        <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
-                            <input type="checkbox" checked={form.enabled}
-                                onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))}
-                                className="border-line-strong text-accent focus:ring-accent" />
-                            enabled
-                        </label>
                     </div>
 
                     {isLoading ? (
@@ -269,6 +271,21 @@ export default function Settings() {
                         <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
                             {/* IdP side */}
                             <div className="space-y-4">
+                                <div className="flex gap-4 flex-wrap">
+                                    {([['member sign-in', 'member_login_method'], ['guest sign-in', 'guest_login_method']] as const).map(([label, key]) => (
+                                        <label key={key} className="text-xs text-fg-2">
+                                            <span className="label-mono block mb-1">{label}</span>
+                                            <select value={form[key]} aria-label={label === 'member sign-in' ? 'Member sign-in' : 'Guest sign-in'}
+                                                onChange={e => setForm(f => ({ ...f, [key]: e.target.value as LoginMethod }))}
+                                                className="border border-line-strong bg-panel px-1.5 py-1.5 text-sm">
+                                                <option value="password">Password</option>
+                                                <option value="saml">SAML</option>
+                                                <option value="oidc">OIDC</option>
+                                            </select>
+                                        </label>
+                                    ))}
+                                </div>
+                                <p className="label-mono">// saml</p>
                                 <p className="label-mono">// identity provider (from your idp)</p>
                                 {field('idp entity id', 'idp_entity_id', 'https://idp.example.com/entityid')}
                                 {field('idp sso url', 'idp_sso_url', 'https://idp.example.com/sso/saml')}
@@ -280,6 +297,11 @@ export default function Settings() {
                                         className="w-full bg-panel border border-line-strong px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent" />
                                     <p className="text-[11px] text-fg-3 mt-1">The IdP must sign the assertion (in Keycloak, enable “Sign assertions”).</p>
                                 </div>
+                                <p className="label-mono pt-2">// oidc</p>
+                                {field('issuer url', 'oidc_issuer', 'https://idp.example.com')}
+                                {field('client id', 'oidc_client_id', '')}
+                                {field('client secret', 'oidc_client_secret', cfg?.has_oidc_client_secret ? 'saved (leave blank to keep)' : '', 'password')}
+                                {field('scopes', 'oidc_scopes', 'openid email profile')}
                                 <div className="flex items-center gap-4 flex-wrap">
                                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                         <input type="checkbox" checked={form.auto_provision}
@@ -322,12 +344,13 @@ export default function Settings() {
                                         <CopyField label="acs url (single sign on url)" value={cfg.sp_acs_url} />
                                         <CopyField label="sp metadata url" value={cfg.sp_metadata_url} />
                                         <CopyField label="sso login url (for your users)" value={cfg.sp_login_url} />
+                                        <CopyField label="oidc redirect uri (give this to your idp)" value={cfg.oidc_redirect_uri} />
                                     </>
                                 )}
                                 <p className="text-[11px] text-muted leading-relaxed pt-1">
                                     Users sign in via “Sign in with SSO” on the login page using your tenant slug.
                                     Send the email as the NameID (format emailAddress) or an <code className="num">email</code> attribute,
-                                    and the full name as <code className="num">displayName</code>. Password login remains available.
+                                    and the full name as <code className="num">displayName</code>. Admins can always use the password form on the login page.
                                 </p>
                             </div>
                         </div>

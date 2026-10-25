@@ -104,8 +104,16 @@ export interface CaseEvent {
   updated_at: string | null;
 }
 
+export type LoginMethod = 'password' | 'saml' | 'oidc';
+
 export interface SSOConfig {
-  enabled: boolean;
+  member_login_method: LoginMethod;
+  guest_login_method: LoginMethod;
+  oidc_issuer: string | null;
+  oidc_client_id: string | null;
+  oidc_scopes: string;
+  has_oidc_client_secret: boolean;
+  oidc_redirect_uri: string;
   idp_entity_id: string | null;
   idp_sso_url: string | null;
   idp_x509_cert: string | null;
