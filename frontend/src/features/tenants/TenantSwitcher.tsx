@@ -61,6 +61,14 @@ export default function TenantSwitcher() {
             await qc.invalidateQueries();
         } catch (err) {
             const e = err as { response?: { status?: number; data?: { detail?: unknown } } };
+            const code = (e.response?.data?.detail as { code?: string; slug?: string } | undefined);
+            // The api interceptor redirects these: sso_required to the IdP, password_required to /login with a notice.
+            if (e.response?.status === 403 && code?.code === 'sso_required' && code.slug) return;
+            if (e.response?.status === 403 && code?.code === 'password_required') {
+                try { await api.post('/auth/logout'); } catch { /* session may already be gone */ }
+                qc.clear();
+                return;
+            }
             if (e.response?.status === 403 && e.response.data?.detail === 'mfa_setup_required') {
                 setMfaBlocked(true);
             } else {

@@ -26,6 +26,7 @@ class GuestSession:
     sso_tenant_id: Optional[int]
     account_id: Optional[int]
     link_tenant_id: Optional[int] = None
+    sso_proto: Optional[str] = None
 
 
 def ACTIVE():
@@ -40,11 +41,12 @@ def domain_allowed(tenant: Tenant, email: str) -> bool:
 def session_allowed(tenant: Tenant, s: GuestSession) -> bool:
     if s.amr == "link" and s.link_tenant_id != tenant.id:  # a forwarded invite opens one organization only
         return False
-    if s.amr == "sso":  # an IdP vouches only for its own tenant
-        return s.sso_tenant_id == tenant.id
-    if tenant.guest_require_sso:
-        return s.amr == "sso" and s.sso_tenant_id == tenant.id
-    return True
+    if s.amr == "sso":  # an IdP vouches only for its own tenant (sessions minted before OIDC are saml)
+        if s.sso_tenant_id != tenant.id:
+            return False
+        method = tenant.guest_login_method
+        return method == "password" or (s.sso_proto or "saml") == method
+    return tenant.guest_login_method == "password"
 
 
 async def get_current_guest(request: Request, db: AsyncSession = Depends(get_db), token: str = Depends(guest_scheme)) -> GuestSession:
@@ -67,7 +69,7 @@ async def get_current_guest(request: Request, db: AsyncSession = Depends(get_db)
             raise bad
         account_id = acct.id
     return GuestSession(email=email, amr=str(p.get("amr")), sso_tenant_id=p.get("sso_tenant_id"),
-                        account_id=account_id, link_tenant_id=p.get("link_tenant_id"))
+                        account_id=account_id, link_tenant_id=p.get("link_tenant_id"), sso_proto=p.get("sso_proto"))
 
 
 async def visible_grants(db: AsyncSession, s: GuestSession) -> list:

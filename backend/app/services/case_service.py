@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, Tuple
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from app.models.artifact_type_definition import ArtifactTypeDefinition
 from app.models.case import Case, CaseStatus, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.case_triage import CaseTriageResult
+from app.models.membership import TenantMembership
 from app.notifications import service as notify
 from app.notifications.mentions import canonicalize_mentions
 from app.services.artifact_types import payload_values, resolve_type
@@ -47,6 +49,21 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_plain(v) for v in value]
     return str(value)
+
+
+async def check_case_update(db: AsyncSession, *, case: Case, data: dict, tenant_id: int, role: str) -> None:
+    """Guards for analyst-driven case edits (REST/MCP); Slack/workflow/copilot paths skip them.
+
+    422 closing without an outcome, 403 guest_summary below analyst, 422 new owner not a tenant member."""
+    # ponytail: analysts must record an outcome to close; Slack/workflow/copilot paths can't supply one.
+    if data.get("status") == CaseStatus.CLOSED and data.get("outcome", case.outcome) is None:
+        raise HTTPException(status_code=422, detail="outcome is required to close a case")
+    if "guest_summary" in data and role not in ("super_admin", "admin", "analyst"):
+        raise HTTPException(status_code=403, detail="Only analysts can edit the guest summary")
+    owner_id = data.get("owner_id")
+    if owner_id is not None and owner_id != case.owner_id and not (await db.execute(select(TenantMembership.id).where(
+            TenantMembership.user_id == owner_id, TenantMembership.tenant_id == tenant_id))).first():
+        raise HTTPException(status_code=422, detail="Owner is not a member of this tenant")
 
 
 async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, user_id: Optional[int]) -> dict:

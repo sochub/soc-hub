@@ -35,6 +35,7 @@ backend and worker get `DATABASE_URL` / `REDIS_URL` built from them.
 | `SQL_ECHO` | Log every SQL statement (SQLAlchemy echo) | `false` |
 | `BACKEND_CORS_ORIGINS` | Comma-separated allowed origins. Empty = same-origin only | _(empty)_ |
 | `PUBLIC_BASE_URL` | Externally visible origin (behind nginx). Used to build SAML SP URLs and post-SSO redirects | `http://localhost` |
+| `OIDC_PRIVATE_HOSTS` | JSON list of hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an internal network). Exact match; see [sso/oidc.md](sso/oidc.md) | `[]` |
 
 ## AI provider
 
@@ -891,7 +892,7 @@ these changes.
   the alert's source name.
 - **Security headers** — CSP, `X-Frame-Options`, HSTS, etc. on every response.
 - **Audit log** — every mutation is recorded with tenant, actor, and change set.
-- **Per-tenant SSO** — see [sso/saml-design.md](sso/saml-design.md).
+- **Per-tenant SSO** — see [sso/saml-design.md](sso/saml-design.md) and [sso/oidc.md](sso/oidc.md) (login methods, OIDC).
 
 - **Network exposure** — only nginx (port 80) listens on all interfaces; db, redis,
   ollama and the backend are bound to `127.0.0.1`.

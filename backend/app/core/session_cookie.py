@@ -1,6 +1,8 @@
 """Browser sessions ride in an HttpOnly cookie, so page scripts (an XSS included) can never read the token.
 
 - API clients keep using `Authorization: Bearer`; the header wins when both are present.
+- The refresh token rides in its own HttpOnly cookie (`sochub_refresh`), scoped to the auth endpoints (refresh,
+  logout), so no data request ever carries it.
 - The SPA sends `X-Requested-With` on every call. A cookie-authenticated unsafe request without it is refused
   (CSRF defence on top of SameSite=Strict), and a response never puts the token in its body for the SPA or for
   a cookie-authenticated caller, so a script running in the page cannot mint itself a readable token.
@@ -12,6 +14,8 @@ from fastapi import HTTPException, Request, Response, status
 from app.core.config import settings
 
 COOKIE = "sochub_session"
+REFRESH_COOKIE = "sochub_refresh"
+REFRESH_PATH = "/api/v1/auth"  # refresh and logout (which revokes by it) only
 CSRF_HEADER = "x-requested-with"
 _SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -24,6 +28,24 @@ def set_session(response: Response, token: str) -> None:
 def clear_session(response: Response) -> None:
     response.delete_cookie(COOKIE, path="/api", httponly=True, samesite="strict",
                            secure=settings.PUBLIC_BASE_URL.startswith("https"))
+
+
+def _secure() -> bool:
+    return settings.PUBLIC_BASE_URL.startswith("https")
+
+
+def set_refresh(response: Response, refresh_token: str) -> None:
+    response.set_cookie(REFRESH_COOKIE, refresh_token, max_age=settings.REFRESH_IDLE_DAYS * 86400,
+                        path=REFRESH_PATH, httponly=True, samesite="strict", secure=_secure())
+
+
+def clear_refresh(response: Response) -> None:
+    response.delete_cookie(REFRESH_COOKIE, path=REFRESH_PATH, httponly=True, samesite="strict", secure=_secure())
+
+
+def is_api_client(request: Request) -> bool:
+    """Neither the SPA (CSRF header) nor a cookie-authenticated caller: tokens may go in the body."""
+    return getattr(request.state, "auth_via", None) != "cookie" and CSRF_HEADER not in request.headers
 
 
 def request_token(request: Request, header_token: Optional[str]) -> Optional[str]:
@@ -40,10 +62,15 @@ def request_token(request: Request, header_token: Optional[str]) -> Optional[str
     return token
 
 
-def issue(request: Request, response: Response, token: str) -> dict:
-    """Start or refresh the browser session; hand the token itself only to non-browser API clients."""
+def issue(request: Request, response: Response, token: str, refresh_token: Optional[str] = None) -> dict:
+    """Start or refresh the browser session; hand the tokens themselves only to non-browser API clients.
+    Without ``refresh_token`` the client's refresh cookie/secret is left as it is."""
     set_session(response, token)
+    if refresh_token:
+        set_refresh(response, refresh_token)
     body = {"token_type": "bearer"}
-    if getattr(request.state, "auth_via", None) != "cookie" and CSRF_HEADER not in request.headers:
+    if is_api_client(request):
         body["access_token"] = token
+        if refresh_token:
+            body["refresh_token"] = refresh_token
     return body

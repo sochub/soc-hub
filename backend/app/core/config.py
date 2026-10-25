@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sicms"
     SECRET_KEY: str = "changeme"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_IDLE_DAYS: int = 30
 
     # Security mode. The credential guard below is enforced ONLY in
     # "production" (the default, so a forgotten setting fails closed);
@@ -41,6 +42,10 @@ class Settings(BaseSettings):
     LOGIN_MAX_PER_IP: int = Field(20, ge=1)        # per client IP, failures only
 
     REDIS_URL: str = "redis://localhost:6379"
+
+    # Hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an
+    # internal network). Exact-match, like the workflow HTTP allowlist.
+    OIDC_PRIVATE_HOSTS: list[str] = []
 
     # CORS: comma-separated list of allowed origins. Empty = no cross-origin
     # access (frontend is served same-origin behind nginx). Stored as a raw

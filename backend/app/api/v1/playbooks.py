@@ -7,12 +7,17 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.models.playbook import PlaybookTemplate, PlaybookTaskTemplate
 from app.models.user import User
+from app.services import playbook_service
 from app.schemas.playbook import (
     PlaybookTemplateCreate, PlaybookTemplateUpdate, PlaybookTemplateOut,
     PlaybookTemplateSummary, PlaybookImportRequest, PlaybookImportResult,
 )
 
 router = APIRouter()
+
+
+def _is_admin(user: User) -> bool:
+    return deps._active_role(user) in ("super_admin", "admin")
 
 
 async def _task_counts(db: AsyncSession, template_ids: List[int]) -> dict:
@@ -45,7 +50,8 @@ async def list_marketplace(
     """Global marketplace catalog (read-only system templates)."""
     res = await db.execute(
         select(PlaybookTemplate).where(
-            PlaybookTemplate.tenant_id.is_(None), PlaybookTemplate.is_system == True  # noqa: E712
+            PlaybookTemplate.tenant_id.is_(None), PlaybookTemplate.is_system == True,  # noqa: E712
+            PlaybookTemplate.status == "published",
         ).order_by(PlaybookTemplate.category, PlaybookTemplate.name)
     )
     templates = res.scalars().all()
@@ -63,22 +69,23 @@ async def list_marketplace(
 
 @router.get("/", response_model=List[PlaybookTemplateSummary])
 async def list_tenant_templates(
+    include_drafts: bool = False,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """The tenant's own playbook templates."""
-    res = await db.execute(
-        select(PlaybookTemplate).where(PlaybookTemplate.tenant_id == tenant_id)
-        .order_by(PlaybookTemplate.category, PlaybookTemplate.name)
-    )
+    q = select(PlaybookTemplate).where(PlaybookTemplate.tenant_id == tenant_id)
+    if not (include_drafts and _is_admin(current_user)):
+        q = q.where(PlaybookTemplate.status == "published")
+    res = await db.execute(q.order_by(PlaybookTemplate.category, PlaybookTemplate.name))
     templates = res.scalars().all()
     counts = await _task_counts(db, [t.id for t in templates])
     return [
         PlaybookTemplateSummary(
             id=t.id, tenant_id=t.tenant_id, name=t.name, category=t.category,
             description=t.description, is_system=t.is_system,
-            source_template_id=t.source_template_id, task_count=counts.get(t.id, 0),
+            source_template_id=t.source_template_id, task_count=counts.get(t.id, 0), status=t.status,
         )
         for t in templates
     ]
@@ -99,6 +106,8 @@ async def get_template(
     )
     t = res.scalars().first()
     if not t or (t.tenant_id is not None and t.tenant_id != tenant_id):
+        raise HTTPException(status_code=404, detail="Template not found")
+    if t.status != "published" and not _is_admin(current_user):
         raise HTTPException(status_code=404, detail="Template not found")
     return t
 
@@ -121,7 +130,8 @@ async def import_templates(
         res = await db.execute(
             select(PlaybookTemplate).options(selectinload(PlaybookTemplate.tasks))
             .where(PlaybookTemplate.id == tid, PlaybookTemplate.tenant_id.is_(None),
-                   PlaybookTemplate.is_system == True)  # noqa: E712
+                   PlaybookTemplate.is_system == True,  # noqa: E712
+                   PlaybookTemplate.status == "published")
         )
         src = res.scalars().first()
         if not src:
@@ -153,22 +163,24 @@ async def create_template(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create a tenant playbook template from scratch."""
-    t = PlaybookTemplate(
-        tenant_id=tenant_id, name=body.name, category=body.category,
-        description=body.description, is_system=False,
-    )
-    db.add(t)
-    await db.flush()
-    for i, task in enumerate(body.tasks):
-        db.add(PlaybookTaskTemplate(
-            template_id=t.id, phase=task.phase, title=task.title,
-            description=task.description, order=task.order or i,
-        ))
-    await db.commit()
-    res = await db.execute(
-        select(PlaybookTemplate).options(selectinload(PlaybookTemplate.tasks)).where(PlaybookTemplate.id == t.id)
-    )
-    return res.scalars().first()
+    return await playbook_service.create_template(
+        db, tenant_id=tenant_id, data=body, user_id=current_user.id, status="published")
+
+
+@router.post("/{template_id}/publish", response_model=PlaybookTemplateOut)
+async def publish_template(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    template_id: int,
+    current_user: User = Depends(deps.require_admin),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Publish the tenant's own draft playbook (idempotent for published ones)."""
+    t = await playbook_service.publish_template(
+        db, tenant_id=tenant_id, template_id=template_id, user_id=current_user.id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return t
 
 
 @router.post("/marketplace", response_model=PlaybookTemplateOut)

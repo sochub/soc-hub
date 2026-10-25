@@ -88,7 +88,7 @@ export function GuestLoginPage() {
     return <GuestShell><Card title="Guest sign-in">
         {notice && <p role="status" className="text-sm text-fg-2">{notice}</p>}
         {slug && (
-            <a href={`/api/v1/auth/saml/${encodeURIComponent(slug)}/login?guest=1`}
+            <a href={`/api/v1/auth/sso/${encodeURIComponent(slug)}/login?guest=1`}
                 className="flex h-10 items-center justify-center rounded-lg border border-line text-sm hover:bg-raised/60">
                 Sign in with SSO
             </a>

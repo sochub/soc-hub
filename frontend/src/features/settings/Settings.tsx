@@ -3,9 +3,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
-import type { SLAPolicyItem, SSOConfig, User } from '../../types';
+import type { TenantOAuthSession, LoginMethod, SLAPolicyItem, SSOConfig, User } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { formatDateTime } from '../../utils/datetime';
 import { mfaErrorMessage } from '../profile/mfaErrors';
 import GuestSettingsSection from '../guests/GuestSettingsSection';
 import ArtifactTypesSection from './ArtifactTypesSection';
@@ -165,6 +166,85 @@ function MfaRequirementSection() {
     );
 }
 
+function McpSection() {
+    const qc = useQueryClient();
+    const [error, setError] = useState<string | null>(null);
+    const { data, isLoading } = useQuery({
+        queryKey: ['tenant-security'],
+        queryFn: async () => (await api.get('/tenants/current/security')).data as { require_mfa: boolean; members_without_mfa: number; mcp_enabled: boolean },
+    });
+    const toggle = useMutation({
+        mutationFn: async (mcp_enabled: boolean) => (await api.put('/tenants/current/security', { mcp_enabled })).data,
+        onSuccess: (d) => { setError(null); qc.setQueryData(['tenant-security'], d); },
+        onError: (err) => setError(mfaErrorMessage(err, 'Could not update the setting.')),
+    });
+    const { data: apps } = useQuery({
+        queryKey: ['tenant-oauth-sessions'],
+        queryFn: async () => (await api.get('/tenants/current/oauth-sessions')).data as TenantOAuthSession[],
+    });
+    const revoke = useMutation({
+        mutationFn: async (id: string) => { await api.delete(`/tenants/current/oauth-sessions/${id}`); },
+        onSuccess: () => { setError(null); void qc.invalidateQueries({ queryKey: ['tenant-oauth-sessions'] }); },
+        onError: (err) => setError(mfaErrorMessage(err, 'Could not revoke the session.')),
+    });
+    return (
+        <section className="bg-panel border border-line">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-line">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <KeyRound size={15} className="text-accent" /> AI clients (MCP)
+                </h2>
+            </div>
+            {isLoading || !data ? (
+                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+            ) : (
+                <div className="p-4 space-y-3">
+                    <label className="flex items-center gap-2 text-sm text-fg cursor-pointer">
+                        <input type="checkbox" checked={data.mcp_enabled} disabled={toggle.isPending}
+                            onChange={(e) => toggle.mutate(e.target.checked)}
+                            className="border-line-strong text-accent focus:ring-accent" />
+                        Allow AI clients (MCP)
+                    </label>
+                    <p className="text-xs text-fg-3">Lets members connect AI clients that act with their own permissions in this organization.</p>
+                    {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+                    <h3 className="text-xs font-semibold text-fg-2 pt-2">Connected apps</h3>
+                    {!apps || apps.length === 0 ? <p className="text-xs text-fg-3">No connected apps.</p> : (
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="text-left text-xs text-fg-3 border-b border-line">
+                                    <th className="py-1 font-normal">App</th><th className="py-1 font-normal">Member</th>
+                                    <th className="py-1 font-normal">Last used</th><th />
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {apps.map((a) => (
+                                    <tr key={a.id} className="border-b border-line">
+                                        <td className="py-1.5 text-fg">{a.client_name ?? 'Unknown app'}</td>
+                                        <td className="py-1.5 text-fg-2">{a.user_email}</td>
+                                        <td className="py-1.5 text-fg-3">{formatDateTime(a.last_used_at)}</td>
+                                        <td className="py-1.5 text-right">
+                                            <button type="button" className={btnSecondary} disabled={revoke.isPending}
+                                                onClick={() => revoke.mutate(a.id)}>Revoke</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+        </section>
+    );
+}
+
+function detailMessage(d: unknown): string {
+    if (typeof d === 'string') return d;
+    if (Array.isArray(d)) {
+        const m = d.map((x) => (x && typeof x === 'object' && typeof (x as { msg?: unknown }).msg === 'string' ? (x as { msg: string }).msg : '')).filter(Boolean);
+        if (m.length) return m.join('; ');
+    }
+    return 'Save failed';
+}
+
 function CopyField({ label, value }: { label: string; value: string }) {
     const [copied, setCopied] = useState(false);
     const copy = async () => {
@@ -202,7 +282,9 @@ export default function Settings() {
     });
 
     const [form, setForm] = useState({
-        enabled: false, idp_entity_id: '', idp_sso_url: '', idp_x509_cert: '',
+        member_login_method: 'password' as LoginMethod,
+        idp_entity_id: '', idp_sso_url: '', idp_x509_cert: '',
+        oidc_issuer: '', oidc_client_id: '', oidc_client_secret: '', oidc_scopes: 'openid email profile',
         auto_provision: false, default_role: 'viewer' as 'analyst' | 'viewer',
     });
     const [savedFlash, setSavedFlash] = useState(false);
@@ -210,7 +292,11 @@ export default function Settings() {
     useEffect(() => {
         if (cfg) {
             setForm({
-                enabled: cfg.enabled,
+                member_login_method: cfg.member_login_method,
+                oidc_issuer: cfg.oidc_issuer ?? '',
+                oidc_client_id: cfg.oidc_client_id ?? '',
+                oidc_client_secret: '',
+                oidc_scopes: cfg.oidc_scopes,
                 idp_entity_id: cfg.idp_entity_id ?? '',
                 idp_sso_url: cfg.idp_sso_url ?? '',
                 idp_x509_cert: cfg.idp_x509_cert ?? '',
@@ -224,15 +310,17 @@ export default function Settings() {
         mutationFn: async () => (await api.put('/tenants/sso-config', form)).data as SSOConfig,
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['sso-config'] });
+            qc.invalidateQueries({ queryKey: ['tenant-guest-settings'] }); // guest SSO readiness depends on this config
             setSavedFlash(true);
             setTimeout(() => setSavedFlash(false), 2000);
         },
     });
 
-    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url', placeholder: string) => (
+    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url' | 'oidc_issuer' | 'oidc_client_id' | 'oidc_client_secret' | 'oidc_scopes',
+        placeholder: string, type = 'text') => (
         <div>
             <label className="label-mono block mb-1">{label}</label>
-            <input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+            <input type={type} autoComplete="off" value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                 placeholder={placeholder}
                 className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
         </div>
@@ -253,14 +341,8 @@ export default function Settings() {
                 <section className="bg-panel border border-line">
                     <div className="flex items-center justify-between px-4 h-11 border-b border-line">
                         <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
-                            <KeyRound size={15} className="text-accent" /> Single Sign-On (SAML)
+                            <KeyRound size={15} className="text-accent" /> Single Sign-On
                         </h2>
-                        <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
-                            <input type="checkbox" checked={form.enabled}
-                                onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))}
-                                className="border-line-strong text-accent focus:ring-accent" />
-                            enabled
-                        </label>
                     </div>
 
                     {isLoading ? (
@@ -269,6 +351,20 @@ export default function Settings() {
                         <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
                             {/* IdP side */}
                             <div className="space-y-4">
+                                <div>
+                                    <label className="text-xs text-fg-2">
+                                        <span className="label-mono block mb-1">member sign-in</span>
+                                        <select value={form.member_login_method} aria-label="Member sign-in"
+                                            onChange={e => setForm(f => ({ ...f, member_login_method: e.target.value as LoginMethod }))}
+                                            className="border border-line-strong bg-panel px-1.5 py-1.5 text-sm">
+                                            <option value="password">Password</option>
+                                            <option value="saml">SAML</option>
+                                            <option value="oidc">OIDC</option>
+                                        </select>
+                                    </label>
+                                    <p className="text-[11px] text-fg-3 mt-1">Guest sign-in is set in the Case guests section below.</p>
+                                </div>
+                                <p className="label-mono">// saml</p>
                                 <p className="label-mono">// identity provider (from your idp)</p>
                                 {field('idp entity id', 'idp_entity_id', 'https://idp.example.com/entityid')}
                                 {field('idp sso url', 'idp_sso_url', 'https://idp.example.com/sso/saml')}
@@ -280,6 +376,11 @@ export default function Settings() {
                                         className="w-full bg-panel border border-line-strong px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent" />
                                     <p className="text-[11px] text-fg-3 mt-1">The IdP must sign the assertion (in Keycloak, enable “Sign assertions”).</p>
                                 </div>
+                                <p className="label-mono pt-2">// oidc</p>
+                                {field('issuer url', 'oidc_issuer', 'https://idp.example.com')}
+                                {field('client id', 'oidc_client_id', '')}
+                                {field('client secret', 'oidc_client_secret', cfg?.has_oidc_client_secret ? 'saved (leave blank to keep)' : '', 'password')}
+                                {field('scopes', 'oidc_scopes', 'openid email profile')}
                                 <div className="flex items-center gap-4 flex-wrap">
                                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                         <input type="checkbox" checked={form.auto_provision}
@@ -307,7 +408,7 @@ export default function Settings() {
                                     </button>
                                     {save.isError && (
                                         <span className="text-xs text-severity-critical">
-                                            {(save.error as any)?.response?.data?.detail ?? 'Save failed'}
+                                            {detailMessage((save.error as any)?.response?.data?.detail)}
                                         </span>
                                     )}
                                 </div>
@@ -322,12 +423,13 @@ export default function Settings() {
                                         <CopyField label="acs url (single sign on url)" value={cfg.sp_acs_url} />
                                         <CopyField label="sp metadata url" value={cfg.sp_metadata_url} />
                                         <CopyField label="sso login url (for your users)" value={cfg.sp_login_url} />
+                                        <CopyField label="oidc redirect uri (give this to your idp)" value={cfg.oidc_redirect_uri} />
                                     </>
                                 )}
                                 <p className="text-[11px] text-muted leading-relaxed pt-1">
                                     Users sign in via “Sign in with SSO” on the login page using your tenant slug.
                                     Send the email as the NameID (format emailAddress) or an <code className="num">email</code> attribute,
-                                    and the full name as <code className="num">displayName</code>. Password login remains available.
+                                    and the full name as <code className="num">displayName</code>. Admins can always use the password form on the login page.
                                 </p>
                             </div>
                         </div>
@@ -336,6 +438,7 @@ export default function Settings() {
             )}
 
             {isAdmin && <MfaRequirementSection />}
+            {isAdmin && <McpSection />}
             {isAdmin && <GuestSettingsSection />}
             {isAdmin && <SLAPoliciesSection />}
             {isAdmin && <ArtifactTypesSection />}

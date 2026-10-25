@@ -4,10 +4,11 @@ import httpx
 
 from app.main import app
 from app.db.session import AsyncSessionLocal
-from app.core.security import create_access_token, issue_access_token
+from app.core.security import create_access_token
 from app.guests import tokens
 from app.models.case_guest import CaseGuest
 from tests.guest_fixtures import client, make_case, make_user, make_grant, make_tenant, run, session_headers
+from tests.session_fixtures import make_web_token
 
 EXISTING = ["/api/v1/cases/", "/api/v1/alerts/", "/api/v1/iocs/", "/api/v1/users/me",
             "/api/v1/copilot/sessions/general", "/api/v1/stats/", "/api/v1/notifications/"]
@@ -37,7 +38,7 @@ def test_purpose_guard_rejects_token_for_real_user():
             for url in EXISTING:
                 r = await c.get(url, headers={"Authorization": f"Bearer {forged}"})
                 assert r.status_code == 401, f"{url} -> {r.status_code}"
-            ok = issue_access_token(u, t.id)  # positive control: same user, no purpose
+            ok = await make_web_token(None, u, t.id)  # positive control: same user, no purpose
             # fixture email (.test) fails UserMe serialisation -> 500, which still proves auth passed
             lenient = httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
                                         base_url="http://t")
@@ -78,6 +79,9 @@ def test_grant_checks():
             # an IdP vouches only for its own tenant
             assert (await cl.get(url(c.id), headers=session_headers(e, "sso", t_sso.id))).status_code == 404
             assert (await cl.get(url(c.id), headers=session_headers(e, "sso", t.id))).status_code == 200
+            # the session's protocol must match the tenant's guest method (no proto counts as saml)
+            assert (await cl.get(url(c_sso.id), headers=session_headers(e, "sso", t_sso.id, sso_proto="saml"))).status_code == 200
+            assert (await cl.get(url(c_sso.id), headers=session_headers(e, "sso", t_sso.id, sso_proto="oidc"))).status_code == 404
             # Review Focus 2: grant expires mid-session -> 404 with the same still-valid session
             async with AsyncSessionLocal() as db:
                 row = await db.get(CaseGuest, g.id)

@@ -17,6 +17,8 @@ into the per-subsystem design notes.
 | [Workflows](workflows/README.md) | Automation engine and vendor integrations |
 | [Case guests](guests/README.md) | Inviting outside people to a single case |
 | [Audit log](audit/README.md) | What the platform audit log records |
+| [Sessions and OAuth](oauth/README.md) | Login sessions, refresh rotation, the OAuth authorization server, connected apps |
+| [Connecting AI clients (MCP)](mcp/README.md) | MCP server for Claude Code, Claude Desktop and Cursor: setup, tools, roles, attribution, revoking |
 
 ## Design notes
 
@@ -27,7 +29,7 @@ just the "what"). They double as a changelog of how the product was built.
 |---|---|
 | **Copilot** | [Global widget](copilot/A-global-widget-design.md) · [Actions (propose→confirm)](copilot/B-actions-design.md) |
 | **Playbooks** | [Design](playbooks/A-playbooks-design.md) · [Plan](playbooks/A-playbooks-plan.md) |
-| **SSO** | [Per-tenant SAML](sso/saml-design.md) |
+| **SSO** | [Per-tenant SAML](sso/saml-design.md) · [Login methods and OIDC](sso/oidc.md) |
 | **Backlog** | [Index](backlog/README.md) — designed but unscheduled work |
 
 ## Conventions

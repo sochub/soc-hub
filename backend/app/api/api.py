@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, guest_portal, guest_auth, case_guests
+from app.oauth import routes as oauth
+
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -10,8 +12,10 @@ api_router.include_router(sso.sso_admin_router, prefix="/tenants", tags=["sso"])
 api_router.include_router(mfa.security_router, prefix="/tenants", tags=["mfa"])
 api_router.include_router(case_guests.router, prefix="/cases", tags=["guests"])
 api_router.include_router(case_guests.settings_router, prefix="/tenants", tags=["guests"])
+api_router.include_router(sessions.tenant_router, prefix="/tenants", tags=["sessions"])
 # /users/me/mfa/* must register before users.router (/{user_id}/... routes)
 api_router.include_router(mfa.router, prefix="/users", tags=["mfa"])
+api_router.include_router(sessions.router, prefix="/users", tags=["sessions"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(cases.router, prefix="/cases", tags=["cases"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
@@ -41,3 +45,4 @@ api_router.include_router(secrets.router, prefix="/secrets", tags=["secrets"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(guest_auth.router, prefix="/guest/auth", tags=["guest"])
 api_router.include_router(guest_portal.router, prefix="/guest", tags=["guest"])
+api_router.include_router(oauth.router, prefix="/oauth", tags=["oauth"])

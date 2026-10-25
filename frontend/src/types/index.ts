@@ -34,6 +34,7 @@ export interface PlaybookTemplate {
   is_system: boolean;
   source_template_id?: number | null;
   created_at: string;
+  status?: 'draft' | 'published';
   tasks?: PlaybookTaskTemplate[];
 }
 
@@ -46,6 +47,7 @@ export interface PlaybookSummary {
   is_system: boolean;
   source_template_id?: number | null;
   task_count: number;
+  status?: 'draft' | 'published';
   already_imported?: boolean;
 }
 
@@ -104,8 +106,40 @@ export interface CaseEvent {
   updated_at: string | null;
 }
 
+export type LoginMethod = 'password' | 'saml' | 'oidc';
+
+export interface AuthSessionInfo {
+    id: string;
+    kind: 'web' | 'oauth';
+    current: boolean;
+    client_name: string | null;
+    tenant_id: number | null;
+    tenant_name: string | null;
+    amr: string;
+    created_at: string;
+    last_used_at: string;
+    user_agent: string | null;
+    ip: string | null;
+}
+
+export interface TenantOAuthSession {
+    id: string;
+    client_name: string | null;
+    user_email: string;
+    amr: string;
+    created_at: string;
+    last_used_at: string;
+    ip: string | null;
+}
+
 export interface SSOConfig {
-  enabled: boolean;
+  member_login_method: LoginMethod;
+  guest_login_method: LoginMethod;
+  oidc_issuer: string | null;
+  oidc_client_id: string | null;
+  oidc_scopes: string;
+  has_oidc_client_secret: boolean;
+  oidc_redirect_uri: string;
   idp_entity_id: string | null;
   idp_sso_url: string | null;
   idp_x509_cert: string | null;
@@ -219,6 +253,8 @@ export interface TimelineEvent {
   shared_with_guests?: boolean;
   guest_id?: number | null;
   guest_email?: string | null;
+  via?: string | null;
+  via_client?: string | null;
 }
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';
@@ -419,8 +455,10 @@ export interface CaseGuest {
 
 export interface GuestSettings {
   domain_allowlist: string[];
-  require_sso: boolean;
+  login_method: 'password' | 'saml' | 'oidc';
   sso_ready: boolean;
+  saml_ready: boolean;
+  oidc_ready: boolean;
 }
 
 export interface CaseAsset {

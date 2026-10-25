@@ -12,10 +12,12 @@ from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.audit_log import AuditLog
+from app.models.auth_session import AuthSession
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.utils.crypto import encrypt
+from tests.session_fixtures import make_web_token
 
 PW = "Old-Password-12345"
 
@@ -81,7 +83,7 @@ async def _user(uid):
 
 async def _hdr(uid, tenant):
     u = await _user(uid)
-    return {"Authorization": f"Bearer {security.issue_access_token(u, tenant)}"}
+    return {"Authorization": f"Bearer {await make_web_token(None, u, tenant)}"}
 
 
 def _scenario(body):
@@ -230,6 +232,9 @@ def test_admin_reset_revokes_target():
         assert u.mfa_enabled_at is None and u.mfa_secret_enc is None
         assert (await c.get("/api/v1/users/me", headers=old)).status_code == 401
         async with AsyncSessionLocal() as db:
+            live = (await db.execute(select(AuthSession.id).where(
+                AuthSession.user_id == ids["member"], AuthSession.revoked_at.is_(None)))).all()
+            assert live == []
             rows = (await db.execute(select(AuditLog).where(
                 AuditLog.entity_id == ids["member"], AuditLog.action == "mfa_reset"))).scalars().all()
         assert len(rows) == 1 and rows[0].user_id == ids["admin"]
@@ -245,7 +250,7 @@ def test_tenant_security_toggle():
     async def body(c, ids):
         adm = await _hdr(ids["admin"], ids["ta"])
         r = await c.get("/api/v1/tenants/current/security", headers=adm)
-        assert r.status_code == 200 and r.json() == {"require_mfa": False, "members_without_mfa": 3}
+        assert r.status_code == 200 and r.json() == {"require_mfa": False, "members_without_mfa": 3, "mcp_enabled": False}
         async with AsyncSessionLocal() as db:  # SSO-only accounts: the IdP handles two-factor, not counted
             await db.execute(update(User).where(User.id == ids["analyst"]).values(password_login_enabled=False))
             await db.commit()
@@ -362,7 +367,7 @@ def test_enable_via_session_requires_current_password():
         assert (await _user(ids["member"])).mfa_enabled_at is None
         r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr,
                          json={"code": totp.totp_at(secret, now), "current_password": PW})
-        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "refresh_token", "token_type"}
     _scenario(body)
 
 
@@ -375,13 +380,13 @@ def test_enable_sso_only_needs_no_password_and_disable_shape():
         secret = (await c.post("/api/v1/users/me/mfa/setup", headers=hdr)).json()["secret"]
         r = await c.post("/api/v1/users/me/mfa/enable", headers=hdr,
                          json={"code": totp.totp_at(secret, time.time())})
-        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "refresh_token", "token_type"}
         # disable response is also just the token
         _, secret2, _, _, r2 = await _enable(c, ids)
         new = {"Authorization": f"Bearer {r2.json()['access_token']}"}
         r = await c.post("/api/v1/users/me/mfa/disable", headers=new,
                          json={"current_password": PW, "code": totp.totp_at(secret2, time.time() + 30)})
-        assert r.status_code == 200 and set(r.json()) == {"access_token", "token_type"}
+        assert r.status_code == 200 and set(r.json()) == {"access_token", "refresh_token", "token_type"}
     _scenario(body)
 
 

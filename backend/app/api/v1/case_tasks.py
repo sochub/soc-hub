@@ -1,17 +1,15 @@
 from typing import Any, List
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
-from app.models.case import Case, TimelineEvent
+from app.models.case import Case
 from app.models.case_task import CaseTask
-from app.models.playbook import PlaybookTemplate
 from app.models.user import User
 from app.schemas.case_task import CaseTaskCreate, CaseTaskUpdate, CaseTaskOut
 from app.utils.audit import create_audit_log
-from app.utils.playbooks import apply_playbook_to_case
+from app.services import task_service
 
 router = APIRouter()
 
@@ -86,35 +84,8 @@ async def update_task(
     task = res.scalars().first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    diff = {}
-    for field in ("phase", "title", "description", "status"):
-        value = getattr(body, field)
-        if value is None or value == getattr(task, field) or (field == "status" and value not in ("todo", "done")):
-            continue
-        diff[field] = {"from": getattr(task, field), "to": value}
-        setattr(task, field, value)
-    status_action = None
-    if "status" in diff:
-        if task.status == "done":
-            task.completed_at = datetime.now(timezone.utc)
-            task.completed_by = current_user.id
-            status_action = "task_completed"
-        else:
-            task.completed_at = None
-            task.completed_by = None
-            status_action = "task_reopened"
-        verb = "completed" if task.status == "done" else "reopened"
-        db.add(TimelineEvent(case_id=case_id, user_id=current_user.id, event_type="task",
-                             content=f"Task {verb}: **{task.title}** ({task.phase.replace('_', ' ')})"))
-    if not diff:
-        return task
-
-    await create_audit_log(
-        db=db, entity_type="case", entity_id=case_id,
-        action=status_action or "task_updated",
-        tenant_id=tenant_id, user_id=current_user.id,
-        changes={"task": task.title, **diff},
-    )
+    case = await _get_case(db, case_id, tenant_id)
+    await task_service.update_case_task(db, case=case, task=task, data=body.model_dump(), user_id=current_user.id)
     await db.commit()
     await db.refresh(task)
     return task
@@ -156,19 +127,8 @@ async def apply_playbook(
 ) -> Any:
     """Copy a tenant template's tasks onto the case (dedupe by phase+title)."""
     case = await _get_case(db, case_id, tenant_id)
-    n = await apply_playbook_to_case(db, case=case, template_id=template_id, tenant_id=tenant_id)
-
-    template_res = await db.execute(
-        select(PlaybookTemplate.name).where(PlaybookTemplate.id == template_id)
-    )
-    template_name = template_res.scalars().first() or "playbook"
-    await create_audit_log(
-        db=db, entity_type="case", entity_id=case_id, action="playbook_applied",
-        tenant_id=tenant_id, user_id=current_user.id,
-        changes={"playbook": template_name, "tasks_added": n},
-    )
-    db.add(TimelineEvent(case_id=case_id, user_id=current_user.id, event_type="task",
-                         content=f"Playbook applied: **{template_name}** ({n} tasks added)"))
+    await task_service.apply_playbook(db, case=case, template_id=template_id, tenant_id=tenant_id,
+                                      user_id=current_user.id)
     await db.commit()
 
     res = await db.execute(

@@ -5,6 +5,7 @@ from app.core import security
 from app.db.session import AsyncSessionLocal
 from app.models.membership import TenantMembership
 from tests.guest_fixtures import client, make_case, make_tenant, make_user, run
+from tests.session_fixtures import make_web_token
 
 WRITES = [
     ("POST", "/api/v1/cases/"),
@@ -30,7 +31,7 @@ def test_viewer_cannot_write_but_can_read():
             u = await make_user(db, ids)
             db.add(TenantMembership(user_id=u.id, tenant_id=t.id, role="viewer"))
             await db.commit()
-            h = {"Authorization": f"Bearer {security.issue_access_token(u, t.id)}"}
+            h = {"Authorization": f"Bearer {await make_web_token(None, u, t.id)}"}
         try:
             async with client() as cl:
                 for method, path in WRITES:

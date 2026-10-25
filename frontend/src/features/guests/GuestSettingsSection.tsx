@@ -8,7 +8,7 @@ import type { GuestSettings } from '../../types';
 export default function GuestSettingsSection() {
     const qc = useQueryClient();
     const [domainsDraft, setDomains] = useState<string | null>(null);
-    const [ssoDraft, setRequireSso] = useState<boolean | null>(null);
+    const [methodDraft, setMethod] = useState<GuestSettings['login_method'] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
     const { data, isLoading } = useQuery({
@@ -16,13 +16,14 @@ export default function GuestSettingsSection() {
         queryFn: async () => (await api.get('/tenants/current/guests')).data as GuestSettings,
     });
     const domains = domainsDraft ?? (data ? data.domain_allowlist.join('\n') : '');
-    const requireSso = ssoDraft ?? data?.require_sso ?? false;
+    const loginMethod = methodDraft ?? data?.login_method ?? 'password';
     const save = useMutation({
         mutationFn: async () => (await api.put('/tenants/current/guests', {
-            domain_allowlist: domains.split(/[\s,]+/).filter(Boolean), require_sso: requireSso,
+            domain_allowlist: domains.split(/[\s,]+/).filter(Boolean), login_method: loginMethod,
         })).data as GuestSettings,
         onSuccess: (d) => {
-            setError(null); setDomains(null); setRequireSso(null); qc.setQueryData(['tenant-guest-settings'], d);
+            setError(null); setDomains(null); setMethod(null); qc.setQueryData(['tenant-guest-settings'], d);
+            qc.invalidateQueries({ queryKey: ['sso-config'] }); // shows the guest method too
             setSaved(true); setTimeout(() => setSaved(false), 2500);
         },
         onError: (err) => {
@@ -43,12 +44,15 @@ export default function GuestSettingsSection() {
                     <textarea id="guest-domains" rows={4} value={domains} onChange={(e) => { setDomains(e.target.value); setSaved(false); }}
                         placeholder="company.com" className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg font-mono" />
                     <p className="text-xs text-fg-3">Leave empty to turn guest access off for this organization.</p>
-                    <label className="flex items-center gap-2 text-sm text-fg cursor-pointer">
-                        <input type="checkbox" checked={requireSso} disabled={!data.sso_ready}
-                            onChange={(e) => setRequireSso(e.target.checked)} className="border-line-strong text-accent focus:ring-accent" />
-                        Require SSO for guests
-                    </label>
-                    {!data.sso_ready && <p className="text-xs text-fg-3">Configure and enable SSO first.</p>}
+                    <label htmlFor="guest-method" className="block text-sm text-fg">Guest sign-in</label>
+                    <select id="guest-method" value={loginMethod}
+                        onChange={(e) => { setMethod(e.target.value as GuestSettings['login_method']); setSaved(false); }}
+                        className="bg-raised border border-line rounded-md p-2 text-sm text-fg">
+                        <option value="password">Password / email link</option>
+                        <option value="saml" disabled={!data.saml_ready && data.login_method !== 'saml'}>SAML SSO</option>
+                        <option value="oidc" disabled={!data.oidc_ready && data.login_method !== 'oidc'}>OIDC SSO</option>
+                    </select>
+                    {!data.sso_ready && <p className="text-xs text-fg-3">Configure and enable SSO first to require it for guests.</p>}
                     {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
                     <div className="flex items-center gap-3">
                         <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Save</Button>

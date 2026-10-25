@@ -15,8 +15,10 @@ from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.audit.events import audit_event
+from app.auth import login_tenant, sessions, web
+from app.auth.login_policy import is_password_fallback, sso_required_error
 from app.api.v1.users import _audit_tenant
-from app.core import security, session_cookie, totp
+from app.core import security, totp
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle, get_pwd_throttle
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -160,6 +162,8 @@ async def mfa_enable(
 ) -> Any:
     user, via_challenge = caller
     jti = getattr(user, "_mfa_challenge_jti", None)
+    sid = getattr(user, "_session_id", None)  # None on the forced-enrolment (challenge) path
+    amr, sso_tid = user._amr, user._sso_tenant_id  # re-issue keeps how this session signed in
     ip = client_ip(request)
     if not via_challenge and user.password_login_enabled:
         await _check_current_password(pwd_throttle, user, body.current_password, ip)
@@ -171,8 +175,13 @@ async def mfa_enable(
     await verify_user_code(db, redis, throttle, user, body.code, ip)
     if via_challenge and not await spend_mfa_challenge(redis, jti):
         raise HTTPException(status_code=401, detail=LOGIN_EXPIRED, headers={"WWW-Authenticate": "Bearer"})
-    active = (await deps.default_active_tenant_id(db, user) if via_challenge
-              else getattr(user, "_active_tenant_id", None))
+    method = None
+    if via_challenge:  # sign-in: same policy-filtered default tenant as login, MFA now satisfied
+        active, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=True)
+        if refused_slug is not None:
+            raise sso_required_error(refused_slug)
+    else:
+        active = getattr(user, "_active_tenant_id", None)
     user.mfa_enabled_at = datetime.now(timezone.utc)
     security.bump_token_version(user)
     await _audit(db, user, "mfa_enabled")
@@ -182,7 +191,9 @@ async def mfa_enable(
     if via_challenge:  # MFA set up during sign-in: this issues the session's first access token
         await audit_event("security", "login.success", request=request, user_id=user.id, user_email=user.email,
                           tenant_id=active)
-    return session_cookie.issue(request, response, security.issue_access_token(user, active))
+        await login_tenant.audit_if_password_fallback(request, user, active, method)
+        return await web.start_web_session(db, request, response, user, active, amr=amr, sso_tenant_id=sso_tid)
+    return await web.reissue_for_session(db, request, response, user, sid=sid)
 
 
 @router.post("/me/mfa/disable", response_model=Token, response_model_exclude_unset=True)
@@ -200,15 +211,21 @@ async def mfa_disable(
     if not user.password_login_enabled:
         raise HTTPException(status_code=400,
                             detail="Two-factor for SSO-only accounts can only be reset by an admin")
+    sid = user._session_id
     user = await _lock_user(db, user.id)
     if user.mfa_enabled_at is None:
         raise HTTPException(status_code=400, detail="Two-factor authentication is not enabled")
     if await deps.tenant_requires_mfa(db, user):  # super admins: any tenant
         raise HTTPException(status_code=403, detail="Your organization requires two-factor authentication")
+    active = getattr(user, "_active_tenant_id", None)
+    if active is not None and not user.is_super_admin:  # break-glass password session needs MFA
+        method = (await db.execute(select(Tenant.member_login_method).where(Tenant.id == active))).scalar()
+        if method and is_password_fallback(method, user._amr):
+            raise HTTPException(status_code=403, detail=(
+                "Two-factor authentication is required for password sign-in at this organization."))
     ip = client_ip(request)
     await _check_current_password(pwd_throttle, user, body.current_password, ip)
     await verify_user_code(db, redis, throttle, user, body.code, ip)
-    active = getattr(user, "_active_tenant_id", None)
     user.mfa_secret_enc = None
     user.mfa_enabled_at = None
     security.bump_token_version(user)
@@ -216,7 +233,7 @@ async def mfa_disable(
     await db.commit()
     await audit_event("security", "mfa.disabled", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=active)
-    return session_cookie.issue(request, response, security.issue_access_token(user, active))
+    return await web.reissue_for_session(db, request, response, user, sid=sid)
 
 
 @router.post("/{user_id}/mfa/reset", status_code=204)
@@ -250,6 +267,7 @@ async def mfa_reset(
     target.mfa_secret_enc = None
     target.mfa_enabled_at = None
     security.bump_token_version(target)
+    await sessions.revoke_all_for_user(db, target.id)
     await _audit(db, actor, "mfa_reset", entity_id=target.id, tenant_id=audit_tid, actor_id=actor.id)
     await db.commit()
     await audit_event("security", "mfa.reset", request=request, user_id=actor.id, user_email=actor.email,
@@ -260,10 +278,12 @@ async def mfa_reset(
 class SecurityOut(BaseModel):
     require_mfa: bool
     members_without_mfa: int
+    mcp_enabled: bool
 
 
 class SecurityIn(BaseModel):
-    require_mfa: bool
+    require_mfa: Optional[bool] = None
+    mcp_enabled: Optional[bool] = None
 
 
 async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
@@ -274,7 +294,8 @@ async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
         .where(TenantMembership.tenant_id == tenant.id, User.is_active.is_(True),
                User.mfa_enabled_at.is_(None), User.password_login_enabled.is_(True))
     )).scalar_one()
-    return SecurityOut(require_mfa=bool(tenant.require_mfa), members_without_mfa=int(n))
+    return SecurityOut(require_mfa=bool(tenant.require_mfa), members_without_mfa=int(n),
+                       mcp_enabled=bool(tenant.mcp_enabled))
 
 
 @security_router.get("/current/security", response_model=SecurityOut)
@@ -292,6 +313,7 @@ async def get_tenant_security(
 @security_router.put("/current/security", response_model=SecurityOut)
 async def update_tenant_security(
     *,
+    request: Request,
     body: SecurityIn,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.require_admin),
@@ -300,10 +322,20 @@ async def update_tenant_security(
     tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalars().first()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    if bool(tenant.require_mfa) != body.require_mfa:
+    changed = False
+    if body.require_mfa is not None and bool(tenant.require_mfa) != body.require_mfa:
         tenant.require_mfa = body.require_mfa
         await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
                                action="require_mfa_changed", tenant_id=tenant.id,
                                user_id=current_user.id, changes={"require_mfa": body.require_mfa})
+        changed = True
+    mcp_changed = body.mcp_enabled is not None and bool(tenant.mcp_enabled) != body.mcp_enabled
+    if mcp_changed:
+        tenant.mcp_enabled = body.mcp_enabled
+        await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
+                               action="tenant.mcp_toggled", tenant_id=tenant.id,
+                               user_id=current_user.id, changes={"mcp_enabled": body.mcp_enabled})
+        changed = True
+    if changed:
         await db.commit()
     return await _security_out(db, tenant)

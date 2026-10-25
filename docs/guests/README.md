@@ -22,9 +22,11 @@ In **Settings**, use the guest access section (admins only):
 
 - **Domain allowlist.** Guests can only be invited from these email domains. An empty list disables guests for
   the tenant. Removing a domain cuts off existing guests from that domain immediately.
-- **Require SSO for guests.** Guests must sign in through the tenant's SAML IdP. This option is only available
-  once tenant SSO is configured. **The IdP needs no changes.** Guest sign-in uses the same ACS URL, marked with
-  `RelayState=guest`, and never creates or provisions a `User`.
+- **Guest sign-in.** How guests sign in: `Password / email link`, `SAML` or `OIDC`. Choosing an
+  SSO protocol turns password sign-in off for guests; it is only selectable once that protocol is configured in
+  the Single Sign-On section. **The IdP needs no changes.** Guest SAML sign-in uses the same ACS URL, marked with
+  `RelayState=guest`, and guest sign-in never creates or provisions a `User`. Member and guest methods are set
+  separately; see [Login methods and OIDC SSO](../sso/oidc.md).
 
 ## Analyst workflow
 

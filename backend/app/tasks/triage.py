@@ -50,7 +50,8 @@ async def _match_playbook(db: AsyncSession, tenant_id: int, case: Case) -> Optio
         return None
     res = await db.execute(
         select(PlaybookTemplate.id)
-        .where(PlaybookTemplate.tenant_id == tenant_id, PlaybookTemplate.category == category)
+        .where(PlaybookTemplate.tenant_id == tenant_id, PlaybookTemplate.category == category,
+               PlaybookTemplate.status == "published")
         .limit(1)
     )
     return res.scalars().first()

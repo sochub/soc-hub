@@ -8,6 +8,7 @@ PyJWT==2.15.1
 cryptography==50.0.2
 passlib[argon2]==1.7.4
 httpx==0.28.1
+mcp==2.3.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
 redis==8.1.0

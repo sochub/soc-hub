@@ -59,6 +59,9 @@ class AlertUpdate(BaseModel):
 
     _sev = field_validator("severity")(_check_alert_severity)
 
+class AlertDismiss(BaseModel):
+    reason: Optional[str] = Field(None, max_length=1000)
+
 class AlertBulk(BaseModel):
     ids: List[int] = Field(..., min_length=1, max_length=500)
     action: Literal["dismiss", "promote"]
@@ -96,6 +99,8 @@ class TimelineEvent(TimelineEventBase):
     shared_with_guests: bool = False
     guest_id: Optional[int] = None
     guest_email: Optional[str] = None
+    via: Optional[str] = None
+    via_client: Optional[str] = None
 
     class Config:
         from_attributes = True

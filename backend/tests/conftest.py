@@ -32,17 +32,47 @@ def _no_real_enrichment_enqueue(monkeypatch):
     import app.api.v1.sso as sso_mod
 
     class _AsyncRedis:
+        """keys: key -> TTL given to SET (no expiry is simulated); vals: key -> value."""
         def __init__(self):
-            self.keys = {}
+            self.keys, self.vals = {}, {}
 
         async def set(self, k, v, nx=False, ex=None):
             if nx and k in self.keys:
                 return None
-            self.keys[k] = ex
+            self.keys[k], self.vals[k] = ex, v
             return True
+
+        async def get(self, k):
+            return self.vals.get(k)
+
+        async def getdel(self, k):
+            self.keys.pop(k, None)
+            return self.vals.pop(k, None)
+
+        async def incr(self, k):
+            self.vals[k] = int(self.vals.get(k, 0)) + 1
+            self.keys.setdefault(k, None)
+            return self.vals[k]
+
+        async def expire(self, k, seconds):
+            self.keys[k] = seconds
+            return True
+
+        async def delete(self, k):
+            had = k in self.keys
+            self.keys.pop(k, None)
+            self.vals.pop(k, None)
+            return int(had)
 
     saml_fake = _AsyncRedis()
     monkeypatch.setattr(sso_mod, "_saml_redis", lambda: saml_fake)
+    # OIDC state store: its own per-test fake.
+    oidc_fake = _AsyncRedis()
+    monkeypatch.setattr(sso_mod, "_oidc_redis", lambda: oidc_fake, raising=False)
+    # OAuth registration rate limit: its own per-test fake.
+    import app.oauth.routes as oauth_routes
+    oauth_fake = _AsyncRedis()
+    monkeypatch.setattr(oauth_routes, "_oauth_redis", lambda: oauth_fake)
     yield calls
 
 

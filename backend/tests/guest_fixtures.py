@@ -38,12 +38,12 @@ class Ids:
 
 async def make_tenant(db, ids: Ids, *, allow=(DOMAIN,), require_sso=False, sso=False) -> Tenant:
     t = Tenant(name="wf-test", slug=f"wf-test-{ids.h}-g{len(ids.tenants)}",
-               guest_domain_allowlist=list(allow), guest_require_sso=require_sso)
+               guest_domain_allowlist=list(allow), guest_login_method="saml" if require_sso else "password")
     db.add(t)
     await db.flush()
     ids.tenants.append(int(t.id))
     if sso:
-        db.add(TenantSSOConfig(tenant_id=t.id, enabled=True, idp_entity_id="https://idp.example/e",
+        db.add(TenantSSOConfig(tenant_id=t.id, idp_entity_id="https://idp.example/e",
                                idp_sso_url="https://idp.example/sso", idp_x509_cert="MIIB"))
     await db.commit()
     return t
@@ -83,9 +83,10 @@ async def make_account(db, email: str, *, password=PW) -> GuestAccount:
     return a
 
 
-def session_headers(email: str, amr="link", sso_tenant_id=None, gav=None, link_tenant_id=None) -> dict:
+def session_headers(email: str, amr="link", sso_tenant_id=None, gav=None, link_tenant_id=None, sso_proto=None) -> dict:
     from app.guests import tokens
-    tok = tokens.issue_session(email, amr, sso_tenant_id=sso_tenant_id, gav=gav, link_tenant_id=link_tenant_id)
+    tok = tokens.issue_session(email, amr, sso_tenant_id=sso_tenant_id, gav=gav, link_tenant_id=link_tenant_id,
+                               sso_proto=sso_proto)
     return {"Authorization": f"Bearer {tok}"}
 
 

@@ -20,7 +20,8 @@ import httpx
 from sqlalchemy import select
 
 import app.db.base  # noqa: F401 — register models
-from app.core.security import create_access_token, get_password_hash
+from app.auth import sessions
+from app.core.security import get_password_hash, issue_access_token
 from app.db.session import AsyncSessionLocal
 from app.main import app
 from app.models.case import Alert, Case, TimelineEvent
@@ -108,7 +109,11 @@ async def setup() -> tuple[int, str]:
         for i, alert in enumerate((await db.execute(select(Alert).where(Alert.tenant_id == tid).order_by(Alert.id))).scalars()):
             alert.title = CASES[(i * 2 + 1) % len(CASES)][0]
         await db.commit()
-    return tid, create_access_token({"sub": PEOPLE[0][1], "active_tenant_id": tid, "tv": 0})
+        # The API only accepts tokens of a live server-side session.
+        owner = (await db.execute(select(User).where(User.email == PEOPLE[0][1]))).scalars().one()
+        row, _refresh = await sessions.create_session(db, owner, kind="web", amr="pwd", tenant_id=tid)
+        await db.commit()
+    return tid, issue_access_token(owner, tid, sid=row.id)
 
 
 async def story(c: httpx.AsyncClient, tid: int) -> list[int]:

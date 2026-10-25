@@ -155,12 +155,22 @@ authenticator-app two-factor sign-in. Tenant admins can require two-factor for t
 tenant and reset a member's two-factor if they lose their device. See
 [configuration.md](configuration.md#profile-and-two-factor-authentication).
 
-## Single Sign-On (SAML)
+## Single Sign-On (SAML and OIDC)
 
-Tenant admins configure their own IdP (Okta, Entra ID, Google, …) under
-**Settings → Single Sign-On**, with optional **JIT provisioning** (auto-create
-users on first SSO login with a default role). Users sign in via "Sign in with SSO"
-using their tenant slug. Password login remains available. A tenant's SSO only signs
-in accounts that belong to that tenant alone — super admins and members of other
-tenants must use their password. See
+Tenant admins configure their own IdP (Okta, Entra ID, Google, …) over SAML or
+OpenID Connect under **Settings → Single Sign-On**, with optional **JIT provisioning**
+(auto-create users on first SSO login with a default role). Each tenant picks a login
+method per audience: **Member sign-in** and **Guest sign-in** (`Password`, `SAML` or
+`OIDC`). Choosing SSO turns password sign-in off for that audience, except a break-glass
+password fallback for admins with MFA (audited). Users sign in via "Sign in with SSO"
+using their tenant slug. An SSO session opens only the tenant whose IdP issued it, and
+super admins never sign in through a tenant IdP. See [sso/oidc.md](sso/oidc.md) and
 [sso/saml-design.md](sso/saml-design.md).
+
+## AI clients (MCP)
+
+Tenant admins can switch on **Settings -> AI clients (MCP)** so members connect Claude Code, Claude Desktop or
+Cursor to `<PUBLIC_BASE_URL>/mcp`. After a browser sign-in and consent (with a tenant picker), the client gets 26
+tools to read alerts and cases, add notes, artifacts and IOCs, promote alerts, apply playbooks and run manual
+workflows, always with the signed-in person's live role. Writes show "via MCP" in the case Activity tab and as
+`mcp.<tool>` audit entries; users and admins can revoke connected apps. See [mcp/README.md](mcp/README.md).

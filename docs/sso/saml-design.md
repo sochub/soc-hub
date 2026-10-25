@@ -2,6 +2,9 @@
 
 **Status:** Approved 2026-06-10, building.
 
+> Updated 2026-10-24: enforcement is now the per-audience login method and a tenant's IdP may also sign in
+> members who belong to other tenants. See [oidc.md](oidc.md). Rules below describe the original v1.
+
 ## Decisions (locked)
 | Fork | Decision |
 |---|---|

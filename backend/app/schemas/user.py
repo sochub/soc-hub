@@ -10,6 +10,7 @@ from app.schemas.membership import MembershipOut
 
 class Token(BaseModel):
     access_token: Optional[str] = None
+    refresh_token: Optional[str] = None  # API clients only; the browser app's is an HttpOnly cookie
     token_type: Optional[str] = None
     mfa_required: bool = False
     mfa_setup_required: bool = False
@@ -95,6 +96,7 @@ class PasswordChange(BaseModel):
 
 class TokenOnly(BaseModel):
     access_token: Optional[str] = None  # absent for the browser app: its session is an HttpOnly cookie
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
 
 

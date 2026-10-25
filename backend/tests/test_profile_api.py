@@ -12,6 +12,7 @@ from app.models.audit_log import AuditLog
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
+from tests.session_fixtures import make_web_token
 
 OLD_PW = "Old-Password-12345"
 NEW_PW = "New-Password-67890"
@@ -60,7 +61,7 @@ def _scenario(body, **kw):
             app.dependency_overrides[login_throttle.get_login_throttle] = lambda: _FakeThrottle()
             app.dependency_overrides[login_throttle.get_pwd_throttle] = lambda: _FakeThrottle()
             u = await _user(ids["u"])
-            hdr = {"Authorization": f"Bearer {security.issue_access_token(u, ids['t'])}"}
+            hdr = {"Authorization": f"Bearer {await make_web_token(None, u, ids['t'])}"}
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
                 await body(c, ids, hdr)
         finally:

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import request_id_var
 from app.audit.redact import scrub
+from app.audit.via import apply_via
 from app.models.audit_log import AuditLog
 
 
@@ -19,6 +20,7 @@ async def create_audit_log(
     actor: Optional[str] = None,
 ) -> AuditLog:
     """Add a `change` row in the caller's transaction (the caller commits). `changes` is scrubbed."""
+    actor, changes = apply_via(actor, changes)
     audit_log = AuditLog(
         category="change", entity_type=entity_type, entity_id=entity_id, action=action, tenant_id=tenant_id,
         user_id=user_id, actor=actor, changes=scrub(changes), request_id=request_id_var.get(),

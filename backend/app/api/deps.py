@@ -9,6 +9,9 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.audit.context import ctx_of
+from app.auth import sessions
+from app.auth.login_policy import AMR_PWD
+from app.auth.login_tenant import method_refusal, session_may_enter
 from app.core import session_cookie
 from app.core.config import settings
 from app.db.session import get_db
@@ -37,7 +40,10 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
-        if email is None or payload.get("purpose"):
+        sid = payload.get("sid")
+        # Every member token belongs to a server-side session: tokens without one (minted before
+        # sessions existed) are refused, so everyone signs in once after the upgrade.
+        if email is None or payload.get("purpose") or not isinstance(sid, str) or not sid:
             raise credentials_exception
         token_data = user_schema.TokenData(
             email=email, active_tenant_id=payload.get("active_tenant_id")
@@ -51,6 +57,14 @@ async def get_current_user(
     user = result.scalars().first()
     if user is None or payload.get("tv", 0) != (user.token_version or 0):
         raise credentials_exception
+    # Revocation (logout, credential change, admin) is checked on every request.
+    session = await sessions.is_live(db, sid)
+    if session is None or session.kind != "web" or session.user_id != user.id:
+        raise credentials_exception
+    # is_live may have bumped last_used_at (row lock): commit now so no other request or refresh of this
+    # session waits on this request's transaction.
+    await db.commit()
+    user._session_id = sid
     # Transient, request-scoped: the active tenant chosen for this token.
     user._active_tenant_id = token_data.active_tenant_id
     ctx = ctx_of(request)
@@ -60,6 +74,17 @@ async def get_current_user(
         # stay tenant-less (NULL) so tenant admins never see them. get_effective_tenant_id refines it.
         if any(m.tenant_id == token_data.active_tenant_id for m in user.memberships):
             ctx.tenant_id = token_data.active_tenant_id
+    # How this session authenticated. Tokens minted before amr existed count as password sessions.
+    user._amr = payload.get("amr") or AMR_PWD
+    user._sso_tenant_id = payload.get("sso_tid")
+    active = token_data.active_tenant_id
+    if active is not None:  # re-checked every request, so a login-method change cuts live sessions
+        row = (await db.execute(
+            select(Tenant.member_login_method, Tenant.slug).where(Tenant.id == active))).first()
+        if row is not None:
+            method, slug = row
+            if not session_may_enter(user, active, method):
+                raise method_refusal(user, active, method, slug)
     return user
 
 
@@ -285,5 +310,6 @@ async def get_user_for_mfa_setup(
             or user.mfa_enabled_at is not None):
         raise bad
     user._active_tenant_id = None
+    user._amr, user._sso_tenant_id = AMR_PWD, None  # a challenge only follows a password sign-in
     user._mfa_challenge_jti = payload.get("jti")
     return user, True

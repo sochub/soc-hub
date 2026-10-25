@@ -13,10 +13,17 @@ class TenantSSOConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"),
                        nullable=False, unique=True, index=True)
+    # superseded by tenants.member_login_method (no longer read)
     enabled = Column(Boolean, nullable=False, default=False)
     idp_entity_id = Column(String, nullable=True)
     idp_sso_url = Column(String, nullable=True)
     idp_x509_cert = Column(Text, nullable=True)
+    # OIDC (authorization-code + PKCE). Client secret is encrypted with app.utils.crypto.
+    oidc_issuer = Column(String, nullable=True)
+    oidc_client_id = Column(String, nullable=True)
+    oidc_client_secret_enc = Column(Text, nullable=True)
+    oidc_scopes = Column(String, nullable=False, default="openid email profile",
+                         server_default="openid email profile")
     # JIT provisioning: create unknown users (with a membership here) on first
     # SSO login with `default_role` (analyst|viewer — never admin). Existing
     # users are never attached to a tenant by SSO (see sso._resolve_sso_user).

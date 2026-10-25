@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
+from app.auth import sessions
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
+from app.models.auth_session import AuthSession
 from app.models.user import User
 from app.scripts import reset_mfa
 from app.utils.crypto import encrypt
@@ -37,14 +39,32 @@ def test_reset_mfa_script(capsys):
             await db.commit()
         await engine.dispose()
 
+    async def open_session(uid):
+        async with AsyncSessionLocal() as db:
+            u = (await db.execute(select(User).where(User.id == uid))).scalars().one()
+            row, _ = await sessions.create_session(db, u, kind="web", amr="pwd")
+            await db.commit()
+            sid = row.id
+        await engine.dispose()
+        return sid
+
+    async def live_sessions(uid):
+        async with AsyncSessionLocal() as db:
+            out = (await db.execute(select(AuthSession.id).where(
+                AuthSession.user_id == uid, AuthSession.revoked_at.is_(None)))).all()
+        await engine.dispose()
+        return out
+
     uid, email = asyncio.run(setup())
     try:
+        asyncio.run(open_session(uid))
         # main() runs its own event loop, like the CLI
         assert reset_mfa.main(["--email", email.upper()]) == 0
         out = capsys.readouterr().out
         assert out.strip() == f"MFA reset for user id {uid}" and email not in out
         u = asyncio.run(load(uid))
         assert u.mfa_secret_enc is None and u.mfa_enabled_at is None and u.token_version == 4
+        assert asyncio.run(live_sessions(uid)) == []
         assert reset_mfa.main(["--email", "wf-test-nobody-xyz@example.com"]) == 1
     finally:
         asyncio.run(cleanup(uid))

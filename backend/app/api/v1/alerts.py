@@ -1,20 +1,17 @@
 import json
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import case as sql_case
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
 from app.models.case import Alert, Case
-from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
-from app.services.case_service import add_alert_artifacts
-from app.utils.audit import create_audit_log
+from app.services import alert_service
 from app.utils.copilot_heuristics import detect_indicators
 from app.workflows.events import emit_event
 
@@ -66,12 +63,6 @@ async def ingest_alert(
         )
     )).scalars().one()
 
-_SEVERITY_RANK = sql_case(
-    {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}, value=Alert.severity, else_=0)
-_SORTS = {"-created_at": Alert.created_at.desc(), "created_at": Alert.created_at.asc(),
-          "severity": _SEVERITY_RANK.desc(), "-severity": _SEVERITY_RANK.asc()}
-
-
 @router.get("/", response_model=List[case_schema.Alert])
 async def read_alerts(
     db: AsyncSession = Depends(deps.get_db),
@@ -89,7 +80,7 @@ async def read_alerts(
     for col, val in ((Alert.status, status), (Alert.severity, severity), (Alert.source, source)):
         if val:
             q = q.where(col == val)
-    result = await db.execute(q.order_by(_SORTS[sort], Alert.id.desc()).offset(skip).limit(limit))
+    result = await db.execute(q.order_by(alert_service.SORTS[sort], Alert.id.desc()).offset(skip).limit(limit))
     return result.scalars().all()
 
 
@@ -116,16 +107,8 @@ async def update_alert(
 ) -> Any:
     """Set an alert's severity and/or owner (owner must be a member of the tenant)."""
     alert = await _get_alert(db, alert_id, tenant_id)
-    changes = body.model_dump(exclude_unset=True)
-    if changes.get("severity") is None:
-        changes.pop("severity", None)  # severity is NOT NULL; null means "leave as is"
-    if changes.get("owner_id") is not None and not (await db.execute(select(TenantMembership.id).where(
-            TenantMembership.user_id == changes["owner_id"], TenantMembership.tenant_id == tenant_id))).first():
-        raise HTTPException(status_code=400, detail="Owner is not a member of this tenant")
-    for k, v in changes.items():
-        setattr(alert, k, v)
-    await create_audit_log(db=db, entity_type="alert", entity_id=alert.id, action="alert_updated",
-                           tenant_id=tenant_id, user_id=current_user.id, changes=changes)
+    await alert_service.update_alert(db, alert=alert, data=body.model_dump(exclude_unset=True),
+                                     tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
     await db.refresh(alert)
     return alert
@@ -169,14 +152,9 @@ async def bulk_alerts(
         Alert.id.in_(body.ids), Alert.tenant_id == tenant_id))).scalars().all()
     for alert in alerts:
         if case:
-            alert.case_id = case.id
-            alert.status = "promoted"
-            await add_alert_artifacts(db, case=case, alert=alert, user_id=current_user.id)
+            await alert_service.promote_alert(db, alert=alert, case=case, user_id=current_user.id)
         else:
-            alert.status = "dismissed"
-        await create_audit_log(db=db, entity_type="alert", entity_id=alert.id, action=f"alert_bulk_{body.action}",
-                               tenant_id=tenant_id, user_id=current_user.id,
-                               changes={"case_id": case.id} if case else {})
+            await alert_service.dismiss_alert(db, alert=alert, user_id=current_user.id, bulk=True)
     await db.commit()
     found = {a.id for a in alerts}
     ids = list(dict.fromkeys(body.ids))
@@ -193,13 +171,7 @@ async def promote_alert_to_case(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Link an alert to a case (promote). Both must belong to tenant."""
-    result = await db.execute(
-        select(Alert).where(Alert.id == alert_id, Alert.tenant_id == tenant_id)
-    )
-    alert = result.scalars().first()
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-
+    alert = await _get_alert(db, alert_id, tenant_id)
     result_case = await db.execute(
         select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
     )
@@ -207,9 +179,7 @@ async def promote_alert_to_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    alert.case_id = case.id
-    alert.status = "promoted"
-    await add_alert_artifacts(db, case=case, alert=alert, user_id=current_user.id)
+    await alert_service.promote_alert(db, alert=alert, case=case, user_id=current_user.id)
     await db.commit()
     await db.refresh(alert)
     return alert
@@ -219,17 +189,13 @@ async def dismiss_alert(
     *,
     db: AsyncSession = Depends(deps.get_db),
     alert_id: int,
+    body: Optional[case_schema.AlertDismiss] = Body(None),
     current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """Mark an alert as dismissed. Tenant-scoped."""
-    result = await db.execute(
-        select(Alert).where(Alert.id == alert_id, Alert.tenant_id == tenant_id)
-    )
-    alert = result.scalars().first()
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    alert.status = "dismissed"
+    """Mark an alert as dismissed, with an optional reason. Tenant-scoped."""
+    alert = await _get_alert(db, alert_id, tenant_id)
+    await alert_service.dismiss_alert(db, alert=alert, user_id=current_user.id, reason=body.reason if body else None)
     await db.commit()
     await db.refresh(alert)
     return alert

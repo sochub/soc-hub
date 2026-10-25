@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from app.api.v1 import sso as sso_mod
 from app.db.session import AsyncSessionLocal
 from app.guests import tokens
+from app.models.tenant import Tenant
 from app.models.user import User
 from tests.guest_fixtures import client, make_case, make_grant, make_tenant, run
 
@@ -59,7 +60,7 @@ def test_guest_sso(monkeypatch):
             loc = r.headers["location"]
             assert r.status_code == 303 and "/guest/sso#token=" in loc, loc
             p = tokens.decode(unquote(loc.split("#token=", 1)[1]), tokens.SESSION)
-            assert p["amr"] == "sso" and p["sso_tenant_id"] == t.id and p["email"] == e
+            assert p["amr"] == "sso" and p["sso_tenant_id"] == t.id and p["email"] == e and p["sso_proto"] == "saml"
             tok = unquote(loc.split("#token=", 1)[1])
             assert (await cl.get(f"/api/v1/guest/cases/{c.id}",
                                  headers={"Authorization": f"Bearer {tok}"})).status_code == 200
@@ -105,3 +106,57 @@ def test_unknown_tenant_error_has_no_request_supplied_slug():
             r = await c.post("/api/v1/auth/saml/no-such-tenant/acs", data={"SAMLResponse": "x", "RelayState": "guest"})
             assert r.status_code == 303 and "?t=" not in r.headers["location"]
     run(body)
+
+
+def _set_method(ids, tid, method):
+    async def go():
+        async with AsyncSessionLocal() as db:
+            t = await db.get(Tenant, tid)
+            t.guest_login_method = method
+            await db.commit()
+    return go()
+
+
+def test_guest_link_refused_when_method_is_oidc():
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            g = await make_grant(db, await make_case(db, ids, t), ids.email("lnk"))
+        await _set_method(ids, t.id, "oidc")
+        async with client() as cl:
+            r = await cl.post("/api/v1/guest/auth/link", json={"token": tokens.issue_link(g.id)})
+            assert r.status_code == 403 and r.json()["detail"]["code"] == "sso_required"
+    run(body)
+
+
+def test_guest_saml_refused_when_method_is_oidc(monkeypatch):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            e = ids.email("oidc")
+            await make_grant(db, await make_case(db, ids, t), e)
+        await _set_method(ids, t.id, "oidc")
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: FakeAuth(e))
+        async with client() as cl:
+            r = await cl.post(f"/api/v1/auth/saml/{t.slug}/acs", data={"SAMLResponse": "x", "RelayState": "guest"})
+            loc = r.headers["location"]
+            assert r.status_code == 303 and "#sso_error=" in loc and "token=" not in loc
+    run(body)
+
+
+def test_guest_acs_protocol_mismatch_is_audited(monkeypatch):
+    import asyncio
+    events = []
+
+    async def rec(category, action, **kw):
+        events.append((category, action, kw.get("outcome"), kw.get("changes")))
+    monkeypatch.setattr(sso_mod, "audit_event", rec)
+    t = Tenant(id=987654, slug="proto-mismatch", guest_login_method="saml")
+    r = asyncio.run(sso_mod._guest_acs(None, None, t, "x@example.com", proto="oidc"))
+    assert r.status_code == 303 and "/guest/login" in r.headers["location"]
+    assert events == [("security", "sso.failed", "denied", {"reason": "not_enabled"})]
+
+
+def test_sp_login_url_is_dispatcher(monkeypatch):
+    from app.services import saml_service
+    assert saml_service.sp_urls("acme")["login_url"].endswith("/api/v1/auth/sso/acme/login")

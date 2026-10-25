@@ -19,6 +19,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.tenant_secret import TenantSecret
 from app.models.user import User
+from tests.session_fixtures import make_web_token
 
 PW = "Audit-Passw0rd!x"
 
@@ -61,10 +62,10 @@ async def _setup() -> World:
         w.users = {k: int(v.id) for k, v in users.items()}
         w.emails = {k: v.email for k, v in users.items()}
         w.tokens = {
-            "admin": security.issue_access_token(users["admin"], ta.id),
-            "analyst": security.issue_access_token(users["analyst"], ta.id),
-            "admin_b": security.issue_access_token(users["admin_b"], tb.id),
-            "root": security.issue_access_token(users["root"], ta.id),
+            "admin": await make_web_token(None, users["admin"], ta.id),
+            "analyst": await make_web_token(None, users["analyst"], ta.id),
+            "admin_b": await make_web_token(None, users["admin_b"], tb.id),
+            "root": await make_web_token(None, users["root"], ta.id),
         }
     w.ua = f"audit-test-{w.h}"  # every request this run sends carries it (see client())
     w.first_id = await _max_id()

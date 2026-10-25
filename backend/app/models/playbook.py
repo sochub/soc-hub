@@ -24,6 +24,9 @@ class PlaybookTemplate(Base):
     is_system = Column(Boolean, nullable=False, default=False)
     source_template_id = Column(Integer, ForeignKey("playbook_templates.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # 'draft' (admins only, never applied/offered) | 'published'. Drafts are always tenant-scoped.
+    status = Column(String(16), nullable=False, default="published", server_default="published")
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     tasks = relationship(
         "PlaybookTaskTemplate",

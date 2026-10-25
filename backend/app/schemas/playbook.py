@@ -40,6 +40,7 @@ class PlaybookTemplateOut(BaseModel):
     is_system: bool
     source_template_id: Optional[int] = None
     created_at: datetime
+    status: str = "published"
     tasks: List[TaskTemplateOut] = []
 
     class Config:
@@ -56,6 +57,7 @@ class PlaybookTemplateSummary(BaseModel):
     is_system: bool
     source_template_id: Optional[int] = None
     task_count: int = 0
+    status: str = "published"
     already_imported: bool = False
 
 

@@ -4,11 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
-from app.enrichment.indicators import normalise
-from app.models.enrichment_result import EnrichmentResult
 from app.models.ioc import IOC
 from app.models.user import User
 from app.schemas import ioc as ioc_schema
+from app.services import ioc_service
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
@@ -37,33 +36,9 @@ async def read_iocs(
     query = query.offset(skip).limit(limit).order_by(IOC.created_at.desc())
     result = await db.execute(query)
     iocs = result.scalars().all()
-    verdicts = await _verdicts(db, tenant_id, iocs)
+    verdicts = await ioc_service.enrichment_verdicts(db, tenant_id, iocs)
     return [{**ioc_schema.IOC.model_validate(i).model_dump(), "enrichment_verdict": verdicts.get(i.id)}
             for i in iocs]
-
-
-_RANK = {"malicious": 3, "suspicious": 2, "harmless": 1, "unknown": 0}
-
-
-async def _verdicts(db: AsyncSession, tenant_id: int, iocs) -> dict:
-    """Worst ok enrichment verdict per IOC id, from one query over the page's normalised indicators."""
-    pairs = {}
-    for ioc in iocs:
-        n = normalise(ioc.ioc_type, ioc.value)
-        if n:
-            pairs[ioc.id] = n
-    if not pairs:
-        return {}
-    rows = (await db.execute(select(
-        EnrichmentResult.indicator_type, EnrichmentResult.indicator_value, EnrichmentResult.verdict).where(
-        EnrichmentResult.tenant_id == tenant_id, EnrichmentResult.status == "ok",
-        EnrichmentResult.indicator_type.in_({t for t, _ in pairs.values()}),
-        EnrichmentResult.indicator_value.in_({v for _, v in pairs.values()})))).all()
-    worst = {}
-    for t, v, verdict in rows:
-        if verdict in _RANK and _RANK[verdict] > _RANK.get(worst.get((t, v)), -1):
-            worst[(t, v)] = verdict
-    return {ioc_id: worst.get(pair) for ioc_id, pair in pairs.items()}
 
 
 @router.post("/", response_model=ioc_schema.IOC)
@@ -75,21 +50,7 @@ async def create_ioc(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create a new IOC."""
-    ioc = IOC(
-        **ioc_in.model_dump(),
-        tenant_id=tenant_id,
-        created_by=current_user.id,
-    )
-    db.add(ioc)
-    await db.flush()
-    await create_audit_log(
-        db=db,
-        entity_type="ioc",
-        entity_id=ioc.id,
-        action="create",
-        tenant_id=tenant_id,
-        user_id=current_user.id,
-    )
+    ioc = await ioc_service.create_ioc(db, tenant_id=tenant_id, data=ioc_in.model_dump(), user_id=current_user.id)
     await db.commit()
     await db.refresh(ioc)
     return ioc
@@ -135,6 +96,8 @@ async def update_ioc(
         raise HTTPException(status_code=404, detail="IOC not found")
 
     update_data = ioc_in.model_dump(exclude_unset=True)
+    if "case_id" in update_data:
+        await ioc_service.ensure_case_in_tenant(db, tenant_id=tenant_id, case_id=update_data["case_id"])
     changes = {}
     for field, value in update_data.items():
         old_value = getattr(ioc, field)

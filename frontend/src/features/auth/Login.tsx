@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound, ArrowLeft } from 'lucide-react';
-import { api, session } from '../../api/client';
+import { api, loginNotice, session, ssoLoginUrl } from '../../api/client';
 import { Button, Input, Label } from '../../components/ui';
 import MfaSetupDialog from '../profile/MfaSetupDialog';
 import { mfaErrorMessage } from '../profile/mfaErrors';
+import { takeReturnTo } from './returnTo';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -17,6 +18,10 @@ export default function Login() {
     const [challenge, setChallenge] = useState<{ token: string; kind: 'code' | 'setup' } | null>(null);
     const [code, setCode] = useState('');
     const navigate = useNavigate();
+    const location = useLocation();
+    const [storedNotice] = useState(loginNotice.peek);
+    const notice = (location.state as { notice?: string } | null)?.notice ?? storedNotice;
+    useEffect(() => { loginNotice.clear(); }, []);
 
     const resetChallenge = (msg = '') => {
         setChallenge(null);
@@ -31,7 +36,7 @@ export default function Login() {
         if (hash === '#sso=ok') {
             window.history.replaceState(null, '', window.location.pathname);
             session.mark();
-            navigate('/');
+            navigate(takeReturnTo());
         } else if (hash.startsWith('#sso_error=')) {
             setError(decodeURIComponent(hash.slice('#sso_error='.length)));
             window.history.replaceState(null, '', window.location.pathname);
@@ -41,7 +46,7 @@ export default function Login() {
     const handleSso = (e: React.FormEvent) => {
         e.preventDefault();
         const slug = ssoSlug.trim().toLowerCase();
-        if (slug) window.location.href = `/api/v1/auth/saml/${encodeURIComponent(slug)}/login`;
+        if (slug) window.location.href = ssoLoginUrl(slug);
     };
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -62,9 +67,15 @@ export default function Login() {
                 return;
             }
             session.mark();
-            navigate('/');
+            navigate(takeReturnTo());
         } catch (err: any) {
-            if (err.response?.status === 401) {
+            const d = err.response?.data?.detail;
+            if (err.response?.status === 403 && d?.code === 'sso_required' && d.slug) {
+                return; // the api interceptor sends the browser to the organization's SSO
+            } else if (err.response?.status === 403 && d?.code === 'password_required') {
+                setError(loginNotice.peek() ?? 'Sign in with your password to open this organization.');
+                loginNotice.clear();
+            } else if (err.response?.status === 401) {
                 setError('Invalid email or password.');
             } else if (err.response?.status === 429) {
                 setError(mfaErrorMessage(err));
@@ -86,7 +97,7 @@ export default function Login() {
         try {
             await api.post('/auth/login/mfa', { mfa_token: challenge.token, code });
             session.mark();
-            navigate('/');
+            navigate(takeReturnTo());
         } catch (err) {
             if ((err as { response?: { status?: number } }).response?.status === 401) {
                 resetChallenge('Your sign-in expired — please sign in again');
@@ -112,6 +123,7 @@ export default function Login() {
                         <p className="text-fg-2">Enter your credentials to access</p>
                     </div>
 
+                    {notice && <p role="status" className="text-sm text-fg-2">{notice}</p>}
                     {challenge?.kind === 'code' ? (
                         <form onSubmit={handleCode} className="space-y-4" noValidate>
                             <div className="space-y-2">
@@ -158,7 +170,7 @@ export default function Login() {
                                 onEnabled={() => {
                                     session.mark();
                                     setChallenge(null);
-                                    navigate('/');
+                                    navigate(takeReturnTo());
                                 }}
                             />
                             <button type="button" onClick={() => resetChallenge()}

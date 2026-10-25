@@ -479,6 +479,10 @@ export default function CaseDetail() {
                                                             <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300"
                                                                 title="Written by an external guest — treat attachments as untrusted">Guest · {event.guest_email}</span>
                                                         )}
+                                                        {event.via === 'mcp' && (
+                                                            <span className="text-[10px] font-mono text-muted bg-raised px-1.5 py-0.5 rounded-sm"
+                                                                title="Written by an MCP client acting for this user">via MCP{event.via_client ? ` · ${event.via_client}` : ''}</span>
+                                                        )}
                                                         {event.event_type !== 'guest_invited' && (isAdmin || me?.role === 'analyst') && (
                                                             <button type="button" onClick={() => shareEvent.mutate({ eventId: event.id, shared: !event.shared_with_guests })}
                                                                 aria-pressed={!!event.shared_with_guests}

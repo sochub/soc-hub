@@ -12,7 +12,8 @@ from sqlalchemy.future import select
 
 from app.api import deps
 from app.audit.events import audit_event
-from app.core import security, session_cookie
+from app.auth import sessions, web
+from app.core import security
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
@@ -327,7 +328,7 @@ async def change_password(
     await db.commit()
     await audit_event("security", "password.changed", request=request, user_id=current_user.id,
                       user_email=current_user.email, tenant_id=active)
-    return session_cookie.issue(request, response, security.issue_access_token(current_user, active))
+    return await web.reissue_for_session(db, request, response, current_user, sid=current_user._session_id)
 
 
 async def _membership_in_tenant(db: AsyncSession, user_id: int, tenant_id: int) -> TenantMembership:
@@ -407,6 +408,7 @@ async def deactivate_user(
     user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     user.is_active = False
     security.bump_token_version(user)
+    await sessions.revoke_all_for_user(db, user.id)
     await db.commit()
     return UserSchema(
         id=user.id, email=user.email, full_name=user.full_name,
