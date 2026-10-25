@@ -194,6 +194,25 @@ def test_idle_expiry():
     _with_session(t)
 
 
+def test_idle_expired_stale_secret_reports_expired_not_reuse():
+    """A stale token for an idle-expired session is just expired: no reuse alarm, no revocation."""
+    async def t(sid, token, ids, u, sids):
+        async with AsyncSessionLocal() as db:
+            _row2, _u, newer = await sessions.rotate(db, token, kind="web")
+            await db.commit()
+        await _age_rotation(sid, 3600)  # outside the grace window
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(AuthSession).where(AuthSession.id == sid).values(
+                last_used_at=datetime.now(timezone.utc) - timedelta(days=31)))
+            await db.commit()
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RefreshError) as ei:
+                await sessions.rotate(db, token, kind="web")  # the pre-rotation (stale) secret
+        assert ei.value.code == "expired"
+        assert (await _row(sid)).revoked_at is None
+    _with_session(t)
+
+
 def test_tv_bump_refused():
     async def t(sid, token, ids, u, sids):
         async with AsyncSessionLocal() as db:

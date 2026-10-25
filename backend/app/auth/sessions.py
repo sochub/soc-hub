@@ -108,6 +108,9 @@ async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, Use
         raise RefreshError("revoked")
 
     now = _now()
+    # Idle expiry first: a stale token for a session that is dead anyway is "expired", not a reuse alarm.
+    if now - row.last_used_at > timedelta(days=settings.REFRESH_IDLE_DAYS):
+        raise RefreshError("expired")
     presented = hash_secret(secret)
     if hmac.compare_digest(presented, row.refresh_hash):
         grace = False
@@ -123,8 +126,6 @@ async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, Use
                           outcome="denied", changes={"session_id": sid})
         raise RefreshError("reuse")
 
-    if now - row.last_used_at > timedelta(days=settings.REFRESH_IDLE_DAYS):
-        raise RefreshError("expired")
     user = (await db.execute(select(User).where(User.id == row.user_id))).scalar_one_or_none()
     if user is None or not user.is_active or int(user.token_version or 0) != row.tv:
         await _revoke_and_raise(db, row, "revoked")
