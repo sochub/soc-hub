@@ -332,7 +332,7 @@ def test_dpop_token_nonce_retry_only_once(monkeypatch):
         base._install(monkeypatch, handler)
         with pytest.raises(NodeError) as ei:
             await http_node.run_http(nctx, DCFG)
-        assert str(ei.value) == "token request failed: HTTP 400" and len(seen) == 2
+        assert str(ei.value) == "token request failed: HTTP 400 (use_dpop_nonce)" and len(seen) == 2
 
     _run(monkeypatch, HOSTS, body)
 

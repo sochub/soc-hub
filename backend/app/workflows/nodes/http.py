@@ -266,7 +266,7 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
             _log_secret_use(nctx.run.tenant_id, names, host, outcome)
     token = resp["body"].get("access_token") if isinstance(resp["body"], dict) else None
     if not 200 <= resp["status"] < 300 or not isinstance(token, str) or not token:  # CrowdStrike answers 201
-        raise NodeError(f"token request failed: HTTP {resp['status']}")  # never echo the body
+        raise NodeError(f"token request failed: HTTP {resp['status']}{_oauth_error(resp, hide)}")
     if any(c in token for c in "\r\n") or not token.isascii():
         raise NodeError("token request failed: unusable access_token")
     if dpop_key is not None and str(resp["body"].get("token_type") or "").lower() != "dpop":
@@ -280,6 +280,15 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
     if ttl > 0:
         _TOKENS[key] = (token, time.monotonic() + ttl, dpop_binding)
     return token, dpop_binding, key
+
+
+def _oauth_error(resp: dict, hide: dict) -> str:
+    """" (code: description)" from the RFC 6749 error fields only (no other body field), single-line, capped and
+    redacted: it is what tells the admin why the token was refused (e.g. Okta's invalid_client reasons)."""
+    body = resp.get("body") if isinstance(resp.get("body"), dict) else {}
+    parts = [body.get(k) for k in ("error", "error_description")]
+    parts = [" ".join(p.split()) for p in parts if isinstance(p, str) and p.strip()]
+    return f" ({redact_text(': '.join(parts), hide)[:200]})" if parts else ""  # redact before cutting
 
 
 def _header(resp: dict, name: str) -> str:

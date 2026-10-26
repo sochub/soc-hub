@@ -117,8 +117,25 @@ def test_token_401_error_hides_body(monkeypatch):
         _install(monkeypatch, handler)
         with pytest.raises(NodeError) as ei:
             await http_node.run_http(nctx, CFG)
-        assert str(ei.value) == "token request failed: HTTP 401"
+        assert str(ei.value) == "token request failed: HTTP 401 (invalid_client)"  # standard code only, no "echo"
         assert len(seen) == 1  # no API call
+
+    asyncio.run(_with_secret(["api.example.com", "login.example.com"], body))
+
+
+def test_token_error_description_shown_but_redacted(monkeypatch):
+    """RFC 6749 error/error_description say why the token was refused; a secret quoted in them is still masked."""
+    def handler(req):
+        return httpx.Response(401, json={"error": "invalid_client",
+                                         "error_description": f"bad client {CS}\r\n" + "x" * 500})
+
+    async def body(nctx):
+        _install(monkeypatch, handler)
+        with pytest.raises(NodeError) as ei:
+            await http_node.run_http(nctx, CFG)
+        msg = str(ei.value)
+        assert msg.startswith("token request failed: HTTP 401 (invalid_client: bad client ")
+        assert CS not in msg and "\r" not in msg and "\n" not in msg and len(msg) < 300
 
     asyncio.run(_with_secret(["api.example.com", "login.example.com"], body))
 
