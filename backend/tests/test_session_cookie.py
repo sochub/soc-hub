@@ -88,3 +88,28 @@ def test_browser_session_cookie():
                 await db.execute(delete(TenantMembership).where(TenantMembership.user_id == u.id))
                 await db.commit()
     run(body)
+
+
+def _req_with_cookie(value):
+    from starlette.requests import Request
+    hdrs = [(b"cookie", f"{REFRESH_COOKIE}={value}".encode())] if value is not None else []
+    return Request({"type": "http", "method": "POST", "path": "/api/v1/auth/refresh", "headers": hdrs})
+
+
+def test_refresh_cookie_is_sealed_and_round_trips():
+    """The refresh cookie never holds the raw token (it is encrypted with the server key); reading it back works."""
+    from starlette.responses import Response
+    from app.core.session_cookie import read_refresh, set_refresh
+    resp = Response()
+    set_refresh(resp, "raw-refresh-TOKEN-123")
+    c = SimpleCookie()
+    c.load(resp.headers["set-cookie"])
+    sealed = c[REFRESH_COOKIE].value
+    assert "raw-refresh-TOKEN-123" not in sealed
+    assert read_refresh(_req_with_cookie(sealed)) == "raw-refresh-TOKEN-123"
+
+
+def test_refresh_cookie_tampered_or_missing_reads_as_none():
+    from app.core.session_cookie import read_refresh
+    assert read_refresh(_req_with_cookie("not-a-sealed-value")) is None
+    assert read_refresh(_req_with_cookie(None)) is None
