@@ -28,8 +28,8 @@ async def test_promote_maps_payload_to_custom_types_and_context_exposes_attribut
         db.add(t)
         await db.flush()
         db.add_all([
-            ArtifactTypeDefinition(tenant_id=t.id, key="username", label="Username", payload_key="user_name"),
-            ArtifactTypeDefinition(tenant_id=t.id, key="hostname", label="Host", payload_key="host.name"),
+            ArtifactTypeDefinition(tenant_id=t.id, key="login_name", label="Username", payload_key="user_name"),
+            ArtifactTypeDefinition(tenant_id=t.id, key="host_label", label="Host", payload_key="host.name"),
             ArtifactTypeDefinition(tenant_id=t.id, key="port", label="Port", payload_key="port", private=True),
             ArtifactTypeDefinition(tenant_id=t.id, key="unused", label="Unused", payload_key="nothing_here"),
             ArtifactTypeDefinition(tenant_id=t.id, key="vip_mail", label="VIP", payload_key="vip.mail", private=True),
@@ -52,18 +52,18 @@ async def test_promote_maps_payload_to_custom_types_and_context_exposes_attribut
             ctx = await build_context(db, manual)
             timeline = (await db.execute(select(TimelineEvent.content).where(TimelineEvent.case_id == case_id))).scalars().all()
         c = ctx["case"]
-        assert c["attributes"]["username"] == "bob"
-        assert c["attributes"]["hostname"] == "web-01"
+        assert c["attributes"]["login_name"] == "bob"
+        assert c["attributes"]["host_label"] == "web-01"
         assert c["attributes"]["port"] == "22"          # private types are visible to workflows
         assert c["attributes"]["ip"] == "1.2.3.4"       # built-ins too
         assert "unused" not in c["attributes"]
-        assert c["attributes_all"]["username"] == ["bob"]
+        assert c["attributes_all"]["login_name"] == ["bob"]
         assert c["attributes"]["vip_mail"] == "ceo@corp.example"
         # a value mapped to a private type must not also become a public IOC artifact
         assert "ceo@corp.example" not in c["attributes_all"].get("email", [])
-        assert {"type": "username", "value": "bob"} in c["artifacts"]
+        assert {"type": "login_name", "value": "bob"} in c["artifacts"]
         assert not any("(port)" in (x or "") for x in timeline), timeline
-        assert str(render("{{ case.attributes.username }}", ctx)) == "bob"
+        assert str(render("{{ case.attributes.login_name }}", ctx)) == "bob"
         assert str(render("{{ case.attributes.get('nope', '') }}", ctx)) == ""
         with pytest.raises(TemplateError):
             render("{{ case.attributes.nope }}", ctx)

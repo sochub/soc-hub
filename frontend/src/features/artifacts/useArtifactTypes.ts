@@ -16,6 +16,8 @@ export const BUILTIN_TYPES = [
     { value: 'domain', label: 'Domain' },
     { value: 'url', label: 'URL' },
     { value: 'email', label: 'Email Address' },
+    { value: 'hostname', label: 'Hostname' },
+    { value: 'username', label: 'Username' },
     { value: 'other', label: 'Other' },
 ];
 

@@ -2,7 +2,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff, ShieldAlert, CheckSquare } from 'lucide-react';
+import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Monitor, User as UserIcon, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff, ShieldAlert, CheckSquare } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useState, useEffect, useRef } from 'react';
@@ -37,6 +37,8 @@ const ARTIFACT_ICONS: Record<string, any> = {
     domain: Globe,
     url: Globe,
     email: Mail,
+    hostname: Monitor,
+    username: UserIcon,
 };
 
 // status_change/severity_change/task are written by the system when the case or a task actually changes.

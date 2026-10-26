@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link } from 'react-router-dom';
-import { FileText, Globe, Mail, Server, Database, ArrowRight, Calendar, Hash, Link2, Pencil, Trash2, Check, X } from 'lucide-react';
+import { FileText, Globe, Mail, Server, Monitor, User, Database, ArrowRight, Calendar, Hash, Link2, Pencil, Trash2, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageContainer from '../../components/layout/PageContainer';
 import { useArtifactTypes } from './useArtifactTypes';
@@ -15,6 +15,8 @@ const ARTIFACT_ICONS: Record<string, any> = {
     domain: Globe,
     url: Globe,
     email: Mail,
+    hostname: Monitor,
+    username: User,
 };
 
 export default function ArtifactsList() {

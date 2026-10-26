@@ -106,7 +106,7 @@ NOT emit an action block.
 
 Supported actions and their params:
 - create_case — {"title": str, "severity": "critical|high|medium|low|info", "description": str}
-- add_artifact — {"value": str, "artifact_type": "ip|domain|url|file_hash|email|other", "description": str}  (applies to the current case)
+- add_artifact — {"value": str, "artifact_type": "ip|domain|url|file_hash|email|hostname|username|other", "description": str}  (applies to the current case)
 - add_timeline_note — {"content": str}  (current case)
 - update_case — {"status": "new|open|in_progress|pending|resolved|closed", "severity": "critical|high|medium|low|info"}  (current case; include only fields to change)
 - find_related — {"value": str}  (omit value to correlate the current case's IOCs/artifacts across other cases)
@@ -476,7 +476,7 @@ class AIService:
             "You convert a SOC analyst's request into exactly ONE action as strict JSON.\n"
             "Action types and params:\n"
             '- create_case {"title","severity","description"}\n'
-            '- add_artifact {"value","artifact_type","description"}  (ip|domain|url|file_hash|email|other)\n'
+            '- add_artifact {"value","artifact_type","description"}  (ip|domain|url|file_hash|email|hostname|username|other)\n'
             '- add_timeline_note {"content"}\n'
             '- update_case {"status","severity"}\n'
             '- find_related {"value"}\n'

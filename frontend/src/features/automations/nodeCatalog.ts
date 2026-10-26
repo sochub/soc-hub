@@ -91,7 +91,7 @@ export const NODE_DEFS: NodeDef[] = [
     {
         type: 'case_add_artifact', label: 'Add artifact', category: 'Cases', icon: Database, sideEffect: true,
         fields: [
-            { key: 'artifact_type', label: 'Type', kind: 'select', options: ['ip', 'domain', 'url', 'file_hash', 'email', 'other'], required: true },
+            { key: 'artifact_type', label: 'Type', kind: 'select', options: ['ip', 'domain', 'url', 'file_hash', 'email', 'hostname', 'username', 'other'], required: true },
             { key: 'value', label: 'Value', kind: 'text', required: true },
             { key: 'description', label: 'Description', kind: 'text' },
             CASE_ID,
