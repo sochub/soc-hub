@@ -23,7 +23,7 @@ from app.secrets.hosts import host_allowed
 from app.secrets.refs import placeholder_re
 from app.secrets.resolve import redact, redact_text, resolve_for_request
 from app.workflows.nodes import NodeContext, NodeError, RetryableNodeError, executor
-from app.workflows.ssrf import SSRFError, assert_url_allowed
+from app.workflows.ssrf import HTTPS_ONLY, SSRFError, assert_url_allowed
 
 MAX_BODY = 1_000_000
 AUTH_TYPES = ("oauth2_client_credentials", "oauth2_private_key_jwt", "basic", "aws_sigv4", "google_service_account")
@@ -79,6 +79,8 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
         if not isinstance(auth, dict) or auth.get("type") not in AUTH_TYPES:
             raise NodeError("auth.type must be oauth2_client_credentials, oauth2_private_key_jwt, basic, aws_sigv4 or google_service_account")
         headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}  # auth wins
+        if urlsplit(url).scheme.lower() != "https":  # credentials of any kind (the SSRF check parsed url already)
+            raise NodeError(HTTPS_ONLY)
     body = config.get("body")
 
     # Secrets are substituted only now, after the SSRF check (a secret can never be in the host).
@@ -94,8 +96,7 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             raise NodeError("invalid URL") from None
         try:
             url, headers, body, used = await resolve_for_request(
-                nctx.db, nctx.run.tenant_id, url, headers, body, host, nonce, issued,
-                tenant.workflow_http_allowlist or [])
+                nctx.db, nctx.run.tenant_id, url, headers, body, host, nonce, issued)
         except NodeError:
             names = {n for x in [url, *headers.keys(), *headers.values(), *_strings(body)] for n in rx.findall(x)}
             _log_secret_use(nctx.run.tenant_id, names, host, "blocked")
@@ -201,7 +202,7 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
     nonce, issued = nctx.secret_nonce, set(nctx.secret_names or ())
     try:
         token_url, _, form, used = await resolve_for_request(
-            nctx.db, nctx.run.tenant_id, token_url, {}, form, host, nonce, issued, allowlist)
+            nctx.db, nctx.run.tenant_id, token_url, {}, form, host, nonce, issued)
     except NodeError:
         rx = placeholder_re(nonce, issued) if nonce else None
         names = {n for x in [token_url, *form.values()] for n in rx.findall(x)} if rx else set()
@@ -381,7 +382,7 @@ async def _auth_creds(nctx: NodeContext, tenant, auth: dict, url: str, host: str
     nonce, issued = nctx.secret_nonce, set(nctx.secret_names or ())
     try:
         _, _, creds, used = await resolve_for_request(
-            nctx.db, nctx.run.tenant_id, url, {}, creds, host, nonce, issued, tenant.workflow_http_allowlist or [])
+            nctx.db, nctx.run.tenant_id, url, {}, creds, host, nonce, issued)
     except NodeError:
         rx = placeholder_re(nonce, issued) if nonce else None
         names = {n for x in creds.values() for n in rx.findall(x)} if rx else set()
@@ -431,6 +432,8 @@ async def _send(url, method, headers, body, pinned_ip, secret=False) -> dict:
             target = parsed.copy_with(host=pinned_ip)
     except httpx.InvalidURL as e:
         raise NodeError("invalid URL" if secret else f"invalid URL: {e}")
+    if secret and parsed.scheme != "https":  # last line of defence: nothing secret over plain http
+        raise NodeError(HTTPS_ONLY)
     if pinned_ip:
         headers = {k: v for k, v in headers.items() if k.lower() != "host"}
         headers["Host"] = parsed.netloc.decode("ascii")

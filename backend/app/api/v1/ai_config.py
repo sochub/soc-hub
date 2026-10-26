@@ -6,6 +6,7 @@ import json
 import logging
 import secrets as pysecrets
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import select
@@ -24,7 +25,7 @@ from app.models.user import User
 from app.schemas.ai_config import AIConfigIn
 from app.utils.audit import create_audit_log
 from app.utils.crypto import encrypt
-from app.workflows.ssrf import SSRFError, assert_url_allowed
+from app.workflows.ssrf import HTTPS_ONLY, SSRFError, assert_url_allowed
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -102,6 +103,8 @@ async def _validate(db, cfg: ProviderConfig, tenant_id: int, *, allow_incomplete
             await asyncio.to_thread(assert_url_allowed, cfg.api_base, await tenant_allowlist(db, tenant_id))
         except SSRFError as e:
             raise HTTPException(status_code=400, detail=f"api_base rejected: {e}")
+        if any((cfg.secrets or {}).values()) and urlparse(cfg.api_base).scheme.lower() != "https":
+            raise HTTPException(status_code=400, detail=f"api_base rejected: {HTTPS_ONLY}")
     missing = [m for m in missing_fields(cfg) if not (allow_incomplete_role and m == "role_arn")]
     if missing:
         raise HTTPException(status_code=422, detail="missing " + ", ".join(missing))

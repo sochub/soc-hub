@@ -15,7 +15,7 @@ from app.secrets.hosts import host_allowed
 from app.secrets.refs import placeholder_re
 from app.utils.crypto import decrypt
 from app.workflows.errors import NodeError
-from app.workflows.ssrf import host_on_allowlist
+from app.workflows.ssrf import HTTPS_ONLY
 
 MASK = "••••"
 _MARK_RE = re.compile("\ue000(\\d+)\ue001")
@@ -56,10 +56,10 @@ def _walk(obj, fn):
     return obj
 
 
-async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce, names, allowlist=()):
+async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce, names):
     """Substitute this render's placeholders. `names`: the names the render's SecretsNamespace handed
-    out (R10) — placeholders for any other name stay inert text. `allowlist`: the tenant HTTP allowlist;
-    secrets go over plain http only to hosts on it (R11)."""
+    out (R10) — placeholders for any other name stay inert text. Secrets are only sent over https (R11):
+    the tenant HTTP allowlist does not relax that."""
     if nonce is None:
         return url, headers, body, {}
     rx = placeholder_re(nonce, names or ())
@@ -108,8 +108,8 @@ async def resolve_for_request(db, tenant_id, url, headers, body, host, nonce, na
         return urlunsplit((scheme, netloc, path, query, "")), headers, body, {}
     if scheme.lower() not in ("http", "https") or not netloc:
         raise NodeError(_URL_ERR)
-    if scheme.lower() == "http" and not host_on_allowlist(host, allowlist):
-        raise NodeError(f"Secret {names[0]} can only be sent over HTTPS unless the host is on the tenant HTTP allowlist")
+    if scheme.lower() != "https":
+        raise NodeError(HTTPS_ONLY)
 
     rows = {r.name: r for r in (await db.execute(
         select(TenantSecret).where(TenantSecret.tenant_id == tenant_id, TenantSecret.name.in_(names)))).scalars()}

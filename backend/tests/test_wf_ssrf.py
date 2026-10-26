@@ -1,6 +1,7 @@
 import socket
 import pytest
 
+from app.core.config import settings
 from app.workflows.ssrf import assert_url_allowed, SSRFError
 
 
@@ -16,6 +17,7 @@ R = fake_resolver({
     "api.example.com": ["93.184.216.34"],
     "sneaky.example.com": ["10.0.0.5"],
     "internal.corp": ["10.1.2.3"],
+    "internal.corp.": ["10.1.2.3"],
     "127.0.0.1": ["127.0.0.1"],
     "10.0.0.1": ["10.0.0.1"],
     "169.254.169.254": ["169.254.169.254"],
@@ -45,9 +47,20 @@ def test_private_targets_blocked(url):
         assert_url_allowed(url, [], resolve=R)
 
 
-def test_allowlisted_host_passes():
-    # allowlisted hosts are trusted as named: nothing to pin
-    assert assert_url_allowed("http://internal.corp/hook", ["INTERNAL.corp"], resolve=R) is None
+@pytest.fixture
+def private_allowlist(monkeypatch):
+    monkeypatch.setattr(settings, "WORKFLOW_ALLOW_PRIVATE_ALLOWLIST", True)
+
+
+def test_allowlisted_private_host_needs_platform_setting(monkeypatch):
+    monkeypatch.setattr(settings, "WORKFLOW_ALLOW_PRIVATE_ALLOWLIST", False)
+    with pytest.raises(SSRFError, match="WORKFLOW_ALLOW_PRIVATE_ALLOWLIST"):
+        assert_url_allowed("http://internal.corp/hook", ["INTERNAL.corp"], resolve=R)
+
+
+def test_allowlisted_host_passes(private_allowlist):
+    # allowlisted hosts are still resolved and checked; the vetted address is returned for pinning
+    assert assert_url_allowed("http://internal.corp/hook", ["INTERNAL.corp"], resolve=R) == "10.1.2.3"
 
 
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "gopher://x", "ftp://api.example.com", "http:///nohost"])
@@ -74,11 +87,11 @@ def test_overlong_label_raises_ssrferror():
         assert_url_allowed(f"http://{overlong_host}/", [], resolve=socket.getaddrinfo)
 
 
-def test_allowlist_normalization_trailing_dot():
+def test_allowlist_normalization_trailing_dot(private_allowlist):
     """Allowlist entry with trailing dot should match hostname without it."""
     assert_url_allowed("http://internal.corp./hook", ["internal.corp"], resolve=R)
 
 
-def test_allowlist_normalization_whitespace():
+def test_allowlist_normalization_whitespace(private_allowlist):
     """Allowlist entry with whitespace should match after normalization."""
     assert_url_allowed("http://internal.corp/hook", [" internal.corp "], resolve=R)

@@ -97,7 +97,14 @@ Cases created by an automation emit `case.created` at depth + 1, and updates lik
 
 ## HTTP allowlist and SSRF
 
-`http_request` allows only `http`/`https`. The host is resolved and rejected if any address is loopback, private (RFC1918, ULA), link-local (including `169.254.169.254`), shared/CGNAT (`100.64.0.0/10`), reserved, unspecified, or multicast, unless the hostname is on the tenant's HTTP allowlist (Workflows settings, admin only). The request then connects to the vetted address itself, so a second DNS answer cannot rebind it to an internal host; the hostname is still sent as `Host` and used for TLS SNI and certificate verification. Allowlisted hosts are trusted by name and resolved normally. Redirects are not followed and the response body is capped at 1 MB.
+`http_request` allows only `http`/`https`. The host is resolved and rejected if any address is loopback, private (RFC1918, ULA), link-local (including `169.254.169.254`), shared/CGNAT (`100.64.0.0/10`), reserved, unspecified, or multicast (allowlisted private hosts excepted, see below). The request then connects to the vetted address itself, so a second DNS answer cannot rebind it to an internal host; the hostname is still sent as `Host` and used for TLS SNI and certificate verification. Redirects are not followed and the response body is capped at 1 MB.
+
+The tenant **HTTP allowlist** (Integrations, tenant admin) lists hostnames that may resolve to a private address (RFC 1918, ULA `fc00::/7`, CGNAT `100.64.0.0/10`), e.g. an on-prem SOAR. It applies to the HTTP node, OAuth `token_url`s and the tenant AI `api_base`:
+
+- Entries are DNS hostnames with at least two labels (`soar.corp.example.com`) or wildcards (`*.corp.example.com`, subdomains only). IP addresses, single-label names (`redis`, `db`, `localhost`), schemes, ports and paths are rejected with `422`; at most 100 entries.
+- Allowlisted hosts are still resolved, checked and pinned. Loopback, link-local (including `169.254.169.254` and `fd00:ec2::254`), unspecified, multicast and reserved addresses, and their IPv4-mapped/compatible forms, are refused for every host.
+- Private addresses are reachable through the allowlist **only if the platform operator sets `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST=true`** (env, default `false`). With it off, the allowlist has no effect on address checks; keep it off on a shared multi-tenant deployment.
+- A request that carries a secret must use `https://`, allowlisted or not ("secrets are only sent over https").
 
 ## Worked example: group EDR alerts into one case
 

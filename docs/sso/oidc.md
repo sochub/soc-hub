@@ -122,6 +122,7 @@ message; details are in the backend log (`OIDC sign-in failed tenant=... code=..
   (private/loopback/link-local addresses refused, no redirects followed, 10 s timeout).
   For a **self-hosted IdP on an internal network**, list its hostname in
   `OIDC_PRIVATE_HOSTS` (exact match, a JSON list, e.g. `["idp.corp.internal"]`).
+  Loopback, link-local and cloud metadata addresses are refused even for listed hosts.
   Resolution is checked and then connected, so a DNS-rebinding window remains for a hostile
   name; only allowlist hosts you trust.
 - **Secrets.** The client secret is encrypted with the app key and never returned.

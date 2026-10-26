@@ -44,8 +44,14 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # Hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an
-    # internal network). Exact-match, like the workflow HTTP allowlist.
+    # internal network). Exact-match, operator-controlled.
     OIDC_PRIVATE_HOSTS: list[str] = []
+
+    # Platform-level switch: may a host on a tenant's HTTP allowlist (workflow HTTP node, OAuth token URL,
+    # tenant AI api_base) resolve to a private address (RFC 1918, CGNAT 100.64/10, ULA fc00::/7)? Off by
+    # default: tenant admins must not reach the platform's internal network. Loopback, link-local and cloud
+    # metadata addresses are blocked regardless.
+    WORKFLOW_ALLOW_PRIVATE_ALLOWLIST: bool = False
 
     # CORS: comma-separated list of allowed origins. Empty = no cross-origin
     # access (frontend is served same-origin behind nginx). Stored as a raw

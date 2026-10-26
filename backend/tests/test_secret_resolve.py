@@ -115,7 +115,7 @@ def _err(msg_part, **kw):
             await db.commit()
         with pytest.raises(NodeError) as e:
             await resolve_for_request(db, tid, kw.get("url", "https://api.example.com/"),
-                                      kw.get("headers", {}), kw.get("body"), kw.get("host", H), N, ALL, kw.get("allow", ()))
+                                      kw.get("headers", {}), kw.get("body"), kw.get("host", H), N, ALL)
         assert str(e.value) == msg_part
     run(body)
 
@@ -196,16 +196,18 @@ def test_only_issued_names_resolve():
     run(body)
 
 
-def test_plain_http_needs_allowlisted_host():
-    # R11
-    msg = "Secret TOK can only be sent over HTTPS unless the host is on the tenant HTTP allowlist"
+def test_plain_http_never_carries_secrets():
+    # R11: https only, the tenant HTTP allowlist no longer relaxes it
+    msg = "secrets are only sent over https"
     _err(msg, url="http://api.example.com/", headers={"A": P_TOK})
-    _err(msg, url="HTTP://api.example.com/x?k=" + P_TOK, allow=["other.example.com"])
+    _err(msg, url="HTTP://api.example.com/x?k=" + P_TOK)
+    _err(msg, url="http://api.example.com/", body={"k": P_TOK})
 
     async def body(db, tid, rows):
+        # no secret in the request: plain http is untouched
         url, hd, _, used = await resolve_for_request(
-            db, tid, "http://api.example.com/", {"A": P_TOK}, None, H, N, ALL, ["API.example.com."])
-        assert hd == {"A": TOK_V} and used == {"TOK": TOK_V}
+            db, tid, "http://api.example.com/", {"A": "plain"}, None, H, N, ALL)
+        assert url == "http://api.example.com/" and hd == {"A": "plain"} and used == {}
     run(body)
 
 

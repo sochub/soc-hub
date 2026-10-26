@@ -36,6 +36,7 @@ backend and worker get `DATABASE_URL` / `REDIS_URL` built from them.
 | `BACKEND_CORS_ORIGINS` | Comma-separated allowed origins. Empty = same-origin only | _(empty)_ |
 | `PUBLIC_BASE_URL` | Externally visible origin (behind nginx). Used to build SAML SP URLs and post-SSO redirects | `http://localhost` |
 | `OIDC_PRIVATE_HOSTS` | JSON list of hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an internal network). Exact match; see [sso/oidc.md](sso/oidc.md) | `[]` |
+| `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST` | Platform switch (operator only): may a host on a tenant's **HTTP allowlist** resolve to a private address (RFC 1918, CGNAT `100.64.0.0/10`, ULA `fc00::/7`)? Needed for workflows / tenant AI endpoints that call on-prem tools. Leave `false` on a shared multi-tenant platform: with it on, any tenant admin can reach the platform's internal network. Loopback, link-local and cloud metadata addresses stay blocked either way. See [workflows/README.md](workflows/README.md#http-allowlist-and-ssrf) | `false` |
 
 ## AI provider
 
@@ -256,10 +257,13 @@ expire.
 For tenant `ollama` and `openai_compatible` configs, `api_base` goes through the
 same outbound guard as workflow HTTP nodes, both when it is saved and on every
 call. A host that resolves to a private, loopback, link-local, CGNAT or reserved
-address is rejected unless it is on the tenant's **HTTP allowlist**
-(Integrations). Allowlisted hosts are trusted by name.
+address is rejected. A host on the tenant's **HTTP allowlist** (Integrations) may
+resolve to a private address only when the platform sets
+`WORKFLOW_ALLOW_PRIVATE_ALLOWLIST=true`; loopback, link-local and metadata
+addresses are refused even for allowlisted hosts. An `api_base` that carries an
+API key must be `https://` ("secrets are only sent over https").
 
-For a non-allowlisted `http://` URL, the call connects to the IP that was vetted,
+For an `http://` URL, the call connects to the IP that was vetted,
 so a second DNS answer can't rebind it to an internal address. `https://` keeps
 its hostname, because TLS certificate verification already defeats rebinding.
 The deployment default (env vars) is trusted and is not checked.
@@ -546,17 +550,17 @@ list of workflows, unless you pass `?force=true`.
 50 entries). An entry is either an exact hostname (`api.example.com`) or a
 wildcard `*.example.com`, which matches subdomains but not `example.com` itself.
 Patterns are lowercase, with no port, scheme or path. A bare single-label or IP
-entry is accepted only if it is already on the tenant's HTTP allowlist. That rule
+entry is accepted only if it is already on the tenant's HTTP allowlist (only
+possible for allowlists saved before allowlist entries were validated). That rule
 applies when an entry is added: when you edit a secret, entries that were already
 in its list are kept even if they have since left the allowlist. The check runs at
 send time against the final hostname and fails closed on anything malformed. A
 secret with an empty list is never sent anywhere. The SSRF guard and the tenant
 HTTP allowlist still apply on top.
 
-**HTTPS only.** A request that carries a secret must use `https://`. Plain
-`http://` is allowed only when the request host is on the tenant HTTP allowlist
-(for internal APIs). Otherwise the step fails with "Secret NAME can only be sent
-over HTTPS unless the host is on the tenant HTTP allowlist".
+**HTTPS only.** A request that carries a secret (in the URL, headers, body, or
+via `auth`), and every OAuth token request, must use `https://`, allowlisted host
+or not. Otherwise the step fails with "secrets are only sent over https".
 
 **Using a secret.** Write `{{ secrets.NAME }}`, for example the header
 `Authorization: Bearer {{ secrets.VT_API_KEY }}`. The node editor has an
