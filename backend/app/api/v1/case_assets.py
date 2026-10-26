@@ -9,7 +9,7 @@ from app.models.case import Case
 from app.models.case_asset import CaseAsset
 from app.models.user import User
 from app.schemas.case_asset import CaseAssetCreate, CaseAssetOut, CaseAssetUpdate
-from app.utils.audit import create_audit_log
+from app.services import case_records
 
 router = APIRouter()
 
@@ -55,12 +55,8 @@ async def add_asset(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     await _get_case(db, case_id, tenant_id)
-    asset = CaseAsset(case_id=case_id, tenant_id=tenant_id, created_by=current_user.id, **body.model_dump())
-    db.add(asset)
-    await db.flush()
-    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="asset_added",
-                           tenant_id=tenant_id, user_id=current_user.id,
-                           changes={"name": asset.name, "asset_type": asset.asset_type})
+    asset = await case_records.add_case_asset(db, case_id=case_id, tenant_id=tenant_id, user_id=current_user.id,
+                                              body=body)
     await db.commit()
     await db.refresh(asset)
     return asset
@@ -77,12 +73,8 @@ async def update_asset(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     asset = await _get_asset(db, case_id, asset_id, tenant_id)
-    data = body.model_dump(exclude_unset=True)
-    for k, v in data.items():
-        setattr(asset, k, v)
-    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="asset_updated",
-                           tenant_id=tenant_id, user_id=current_user.id,
-                           changes={"id": asset.id, "fields": sorted(data)})
+    await case_records.update_case_asset(db, asset=asset, data=body.model_dump(exclude_unset=True),
+                                         tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
     await db.refresh(asset)
     return asset
@@ -98,7 +90,5 @@ async def delete_asset(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> None:
     asset = await _get_asset(db, case_id, asset_id, tenant_id)
-    await db.delete(asset)
-    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="asset_deleted",
-                           tenant_id=tenant_id, user_id=current_user.id, changes={"id": asset_id, "name": asset.name})
+    await case_records.delete_case_asset(db, asset=asset, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()

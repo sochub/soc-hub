@@ -6,15 +6,16 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
-from app.models.case import Alert, Case
+from app.models.case import Case
 from app.models.tenant import Tenant
-from app.models.tenant_secret import TenantSecret
 from app.models.user import User
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.schemas.workflow import (AllowlistIn, DryRunIn, ManualRunIn, RunDetail, RunSummary,
                                   TemplateInstallIn, WorkflowIn, WorkflowOut, WorkflowSummary)
+from app.services import workflow_service
+from app.services.workflow_service import save_workflow, secret_names as _secret_names  # noqa: F401 (secrets.py)
 from app.utils.audit import create_audit_log
-from app.workflows.runtime import cancel_run, create_run, flush_withdrawals, start_manual_run
+from app.workflows.runtime import cancel_run, flush_withdrawals, start_manual_run
 from app.workflows import templates as wf_templates
 from app.workflows.ssrf import AllowlistError, normalize_allowlist, stored_allowlist
 from app.workflows.validation import workflow_errors
@@ -45,23 +46,6 @@ async def _run_stats(db, workflow_ids: List[int]) -> dict:
     return {wid: {"run_count": counts.get(wid, 0),
                   "last_run_status": last[wid].status if wid in last else None,
                   "last_run_at": last[wid].started_at if wid in last else None} for wid in workflow_ids}
-
-
-async def _secret_names(db, tenant_id: int) -> set:
-    return set((await db.execute(select(TenantSecret.name).where(TenantSecret.tenant_id == tenant_id))).scalars())
-
-
-async def save_workflow(db, wf: Workflow, *, name, description, trigger_type, trigger_filter, graph, names: set,
-                        tenant_id: int, user_id: int) -> None:
-    """Shared by PUT /workflows/{id} and secret conversion: validate (only when enabled), bump version, audit. No commit."""
-    if wf.enabled:
-        errors = workflow_errors(graph, trigger_type, trigger_filter, names)
-        if errors:
-            raise HTTPException(status_code=422, detail={"errors": errors, "message": "Disable the workflow to save an invalid graph"})
-    wf.name, wf.description, wf.trigger_type = name, description, trigger_type
-    wf.trigger_filter, wf.graph, wf.version = trigger_filter, graph, wf.version + 1
-    await create_audit_log(db=db, entity_type="workflow", entity_id=wf.id, action="update", tenant_id=tenant_id,
-                           user_id=user_id, changes={"version": wf.version})
 
 
 def _summary(wf: Workflow, stats: dict) -> dict:
@@ -141,11 +125,7 @@ async def list_workflows(db: AsyncSession = Depends(deps.get_db), current_user: 
 async def create_workflow(body: WorkflowIn, db: AsyncSession = Depends(deps.get_db),
                           current_user: User = Depends(deps.require_admin),
                           tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
-    wf = Workflow(tenant_id=tenant_id, name=body.name, description=body.description, trigger_type=body.trigger_type,
-                  trigger_filter=body.trigger_filter, graph=body.graph, enabled=False, version=1, created_by=current_user.id)
-    db.add(wf)
-    await db.flush()
-    await create_audit_log(db=db, entity_type="workflow", entity_id=wf.id, action="create", tenant_id=tenant_id, user_id=current_user.id)
+    wf = await workflow_service.create_workflow(db, tenant_id=tenant_id, user_id=current_user.id, body=body)
     await db.commit()
     return _out(wf, {}, await _secret_names(db, tenant_id))
 
@@ -252,23 +232,7 @@ async def dry_run(workflow_id: int, body: DryRunIn, db: AsyncSession = Depends(d
                   tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     from app.tasks.workflows import advance_run_task
     wf = await _get_workflow(db, workflow_id, tenant_id)
-    errors = workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter, await _secret_names(db, tenant_id))
-    if errors:
-        raise HTTPException(status_code=422, detail={"errors": errors})
-    case_id = alert_id = None
-    if body.case_id is not None:
-        if not (await db.execute(select(Case.id).where(Case.id == body.case_id, Case.tenant_id == tenant_id))).first():
-            raise HTTPException(status_code=404, detail="Case not found")
-        case_id = body.case_id
-    if body.alert_id is not None:
-        alert = (await db.execute(select(Alert).where(Alert.id == body.alert_id, Alert.tenant_id == tenant_id))).scalars().first()
-        if not alert:
-            raise HTTPException(status_code=404, detail="Alert not found")
-        alert_id, case_id = alert.id, case_id or alert.case_id
-    payload = body.payload or {"event": wf.trigger_type, "case_id": case_id, "alert_id": alert_id, "changes": {}}
-    run = await create_run(db, wf, trigger_payload=payload, case_id=case_id, alert_id=alert_id, is_dry_run=True,
-                           dry_run_mocks={"mocks": body.mocks, "ask_user_answers": body.ask_user_answers},
-                           user_id=current_user.id)
+    run = await workflow_service.start_dry_run(db, wf, body=body, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
     advance_run_task.delay(run.id)
     return {"run_id": run.id}
@@ -329,11 +293,7 @@ async def cancel(run_id: int, db: AsyncSession = Depends(deps.get_db),
                  tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     # row lock: a concurrent advance_run/execute_step/handle_answer can't overwrite the cancel
     run = await _get_run(db, run_id, tenant_id, lock=True)
-    await cancel_run(db, run)
-    await create_audit_log(db=db, entity_type="workflow_run", entity_id=run.id, action="cancel", tenant_id=tenant_id, user_id=current_user.id)
+    await workflow_service.cancel_run_by_user(db, run, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
-    flush_withdrawals(db)
-    if run.parent_step_id:  # a cancelled loop child must wake its parent for_each
-        from app.tasks.workflows import loop_tick_task
-        loop_tick_task.delay(run.parent_step_id)
+    workflow_service.after_cancel_commit(db, run)
     return run

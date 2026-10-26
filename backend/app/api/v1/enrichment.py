@@ -3,7 +3,6 @@
 API keys are write-only: responses, audit rows and log lines only ever say which keys are set."""
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
@@ -12,22 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.errors import scrub
 from app.api import deps
-from app.core.config import settings
-from app.enrichment import hooks
-from app.enrichment.config import DEFAULTS, KEY_FIELDS, decrypt_keys, load_settings, runnable_sources
-from app.enrichment.indicators import normalise
+from app.enrichment.config import DEFAULTS, KEY_FIELDS, decrypt_keys, load_settings
 from app.enrichment.sources import REGISTRY
-from app.enrichment.view import enrichment_view, load_target, result_dict
+from app.enrichment.view import enrichment_view
 from app.models.tenant_enrichment_config import TenantEnrichmentConfig
 from app.models.user import User
 from app.schemas.enrichment import EnrichmentConfigIn, RunIn
-from app.tasks.enrichment import upsert_result
+from app.services import enrichment_service
 from app.utils.audit import create_audit_log
 from app.utils.crypto import encrypt
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-_CONFIRM = "This sends the value to external threat-intel services (TLP:{tlp}). Confirm to continue."
 _PLAIN = ("auto_max_tlp", "artifact_tlp", "cache_ttl_hours", "sources", "vt_per_minute", "vt_per_day",
           "internal_domains")
 _CLEAR = {"virustotal_api_key": "clear_virustotal", "abusech_auth_key": "clear_abusech"}
@@ -52,13 +47,6 @@ def _out(row, keys) -> dict:
     base["credentials_set"] = {"virustotal": bool(keys.get("virustotal_api_key")),
                                "abusech": bool(keys.get("abusech_auth_key"))}
     return base
-
-
-async def _target(db, kind, obj_id, tid):
-    target = await load_target(db, kind, obj_id, tid)
-    if target is None:
-        raise HTTPException(status_code=404, detail="Not found")
-    return target
 
 
 # ---------------------------------------------------------------- config (admin)
@@ -172,24 +160,7 @@ async def run(kind: str, obj_id: int, body: Optional[RunIn] = Body(None),
               db: AsyncSession = Depends(deps.get_db),
               current_user: User = Depends(deps.require_analyst_or_above),
               tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Response:
-    obj, raw_type = await _target(db, kind, obj_id, tenant_id)
-    if not settings.ENRICHMENT_ENABLED:  # kill switch: nothing is queued and no pending rows are written
-        raise HTTPException(status_code=503, detail="Threat-intel enrichment is disabled")
-    value = obj.value
-    s = await load_settings(db, tenant_id)
-    tlp = obj.tlp if kind == "ioc" else s.artifact_tlp
-    norm = normalise(raw_type, value)
-    if norm is None:
-        raise HTTPException(status_code=422, detail="This value can't be enriched")
-    # Anything but white/green (incl. a missing or unrecognised label) needs explicit confirmation.
-    if tlp not in ("white", "green") and not (body and body.confirm):
-        raise HTTPException(status_code=409, detail=_CONFIRM.format(tlp=tlp or "unknown"))
-    itype, v = norm
-    now = datetime.now(timezone.utc)
-    rows = []
-    for name in runnable_sources(s):
-        if name in REGISTRY and itype in REGISTRY[name].TYPES:
-            rows.append(await upsert_result(db, tenant_id, itype, v, name, status="pending", error=None))
-    hooks.enqueue(tenant_id, raw_type, value, tlp, force=True)
+    results = await enrichment_service.request_run(db, kind=kind, obj_id=obj_id, tenant_id=tenant_id,
+                                                   confirm=bool(body and body.confirm))
     return Response(status_code=202, media_type="application/json",
-                    content=json.dumps({"results": [result_dict(r, now) for r in rows]}))
+                    content=json.dumps({"results": results}))

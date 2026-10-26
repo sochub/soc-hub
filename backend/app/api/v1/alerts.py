@@ -1,4 +1,3 @@
-import json
 from typing import Any, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.dialects.postgresql import insert
@@ -12,7 +11,6 @@ from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
 from app.services import alert_service
-from app.utils.copilot_heuristics import detect_indicators
 from app.workflows.events import emit_event
 
 router = APIRouter()
@@ -92,10 +90,6 @@ async def _get_alert(db: AsyncSession, alert_id: int, tenant_id: int) -> Alert:
     return alert
 
 
-def _indicators(alert: Alert) -> set:
-    return {i["value"] for i in detect_indicators(json.dumps(alert.payload or {}, default=str), limit=20)}
-
-
 @router.patch("/{alert_id}", response_model=case_schema.Alert)
 async def update_alert(
     *,
@@ -124,13 +118,7 @@ async def similar_alerts(
 ) -> Any:
     """Other tenant alerts sharing at least one indicator (ip/domain/hash/...) with this one."""
     alert = await _get_alert(db, alert_id, tenant_id)
-    mine = _indicators(alert)
-    if not mine:
-        return []
-    # ponytail: in-memory compare over the newest 500 alerts; add an alert_indicators table if tenants exceed that.
-    others = (await db.execute(select(Alert).where(Alert.tenant_id == tenant_id, Alert.id != alert.id)
-                               .order_by(Alert.created_at.desc()).limit(500))).scalars().all()
-    return [a for a in others if mine & _indicators(a)][:10]
+    return await alert_service.similar_alerts(db, alert=alert, tenant_id=tenant_id)
 
 
 @router.post("/bulk")

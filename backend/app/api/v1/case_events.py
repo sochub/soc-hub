@@ -13,8 +13,7 @@ from app.models.case_event import CaseEvent
 from app.models.user import User
 from app.schemas.case_event import (CaseEventCreate, CaseEventOut, CaseEventUpdate, EventSuggestRequest,
                                    EventSuggestResponse)
-from app.services import timeline_suggest
-from app.utils.audit import create_audit_log
+from app.services import case_records, timeline_suggest
 
 router = APIRouter()
 
@@ -34,19 +33,6 @@ async def _get_event(db: AsyncSession, case_id: int, event_id: int, tenant_id: i
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
     return ev
-
-
-async def _case_artifacts(db: AsyncSession, case_id: int, tenant_id: int, ids: List[int]) -> List[Artifact]:
-    """Only artifacts already attached to this case (and tenant) may be linked; anything else is a 400."""
-    if not ids:
-        return []
-    res = await db.execute(
-        select(Artifact).join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
-        .where(CaseArtifact.case_id == case_id, Artifact.tenant_id == tenant_id, Artifact.id.in_(set(ids))))
-    found = res.scalars().unique().all()
-    if len(found) != len(set(ids)):
-        raise HTTPException(status_code=400, detail="artifact_ids must belong to this case")
-    return list(found)
 
 
 @router.get("/{case_id}/events", response_model=List[CaseEventOut])
@@ -74,14 +60,8 @@ async def add_event(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     await _get_case(db, case_id, tenant_id)
-    data = body.model_dump(exclude={"artifact_ids"})
-    ev = CaseEvent(case_id=case_id, tenant_id=tenant_id, user_id=current_user.id, **data)
-    ev.artifacts = await _case_artifacts(db, case_id, tenant_id, body.artifact_ids)
-    db.add(ev)
-    await db.flush()
-    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="event_added",
-                           tenant_id=tenant_id, user_id=current_user.id,
-                           changes={"title": ev.title, "event_date": ev.event_date.isoformat()})
+    ev = await case_records.add_case_event(db, case_id=case_id, tenant_id=tenant_id, user_id=current_user.id,
+                                           body=body)
     await db.commit()
     await db.refresh(ev)
     return ev
@@ -98,15 +78,8 @@ async def update_event(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     ev = await _get_event(db, case_id, event_id, tenant_id)
-    data = body.model_dump(exclude_unset=True)
-    ids = data.pop("artifact_ids", None)
-    for k, v in data.items():
-        setattr(ev, k, v)
-    if ids is not None:
-        ev.artifacts = await _case_artifacts(db, case_id, tenant_id, ids)
-    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="event_updated",
-                           tenant_id=tenant_id, user_id=current_user.id,
-                           changes={"id": ev.id, "fields": sorted(data) + (["artifact_ids"] if ids is not None else [])})
+    await case_records.update_case_event(db, ev=ev, data=body.model_dump(exclude_unset=True), tenant_id=tenant_id,
+                                         user_id=current_user.id)
     await db.commit()
     await db.refresh(ev)
     return ev
@@ -122,9 +95,7 @@ async def delete_event(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> None:
     ev = await _get_event(db, case_id, event_id, tenant_id)
-    await db.delete(ev)
-    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="event_deleted",
-                           tenant_id=tenant_id, user_id=current_user.id, changes={"id": event_id, "title": ev.title})
+    await case_records.delete_case_event(db, ev=ev, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
 
 

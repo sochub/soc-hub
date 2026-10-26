@@ -38,6 +38,41 @@ async def create_ioc(db: AsyncSession, *, tenant_id: int, data: dict, user_id: i
     return ioc
 
 
+# Explicit nulls on these would break IOC list serialisation for the whole tenant.
+NOT_NULL = {"ioc_type", "value", "threat_level", "confidence", "status", "tlp", "tags"}
+
+
+def null_fields(data: dict) -> list:
+    """Sorted fields of an ``IOCUpdate`` dump (exclude_unset) explicitly set to null that must never be null."""
+    return sorted(k for k, v in data.items() if v is None and k in NOT_NULL)
+
+
+async def update_ioc(db: AsyncSession, *, ioc: IOC, data: dict, tenant_id: int, user_id: int) -> dict:
+    """Apply ``IOCUpdate.model_dump(exclude_unset=True)`` (callers reject ``null_fields`` first); audit the diff.
+    A new ``case_id`` must be a case of the tenant (404). Returns the changes."""
+    if "case_id" in data:
+        await ensure_case_in_tenant(db, tenant_id=tenant_id, case_id=data["case_id"])
+    changes = {}
+    for field, value in data.items():
+        old_value = getattr(ioc, field)
+        if old_value != value:
+            changes[field] = {"from": str(old_value) if old_value is not None else None,
+                              "to": str(value) if value is not None else None}
+        setattr(ioc, field, value)
+    if changes:
+        await create_audit_log(db=db, entity_type="ioc", entity_id=ioc.id, action="update", tenant_id=tenant_id,
+                               user_id=user_id, changes=changes)
+    await db.flush()
+    return changes
+
+
+async def delete_ioc(db: AsyncSession, *, ioc: IOC, tenant_id: int, user_id: int) -> None:
+    await create_audit_log(db=db, entity_type="ioc", entity_id=ioc.id, action="delete", tenant_id=tenant_id,
+                           user_id=user_id)
+    await db.delete(ioc)
+    await db.flush()
+
+
 async def promote_artifact(db: AsyncSession, *, artifact: Artifact, tenant_id: int, case_id: int | None,
                            user_id: int) -> tuple[IOC, bool]:
     """Promote an artifact to a tenant IOC; idempotent on (value, ioc_type). Returns (ioc, created).

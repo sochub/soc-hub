@@ -1,6 +1,6 @@
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -8,7 +8,6 @@ from app.models.case import Case
 from app.models.case_task import CaseTask
 from app.models.user import User
 from app.schemas.case_task import CaseTaskCreate, CaseTaskUpdate, CaseTaskOut
-from app.utils.audit import create_audit_log
 from app.services import task_service
 
 router = APIRouter()
@@ -47,21 +46,9 @@ async def add_task(
     current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    await _get_case(db, case_id, tenant_id)
-    max_order = (await db.execute(
-        select(func.max(CaseTask.order)).where(CaseTask.case_id == case_id)
-    )).scalar() or 0
-    task = CaseTask(
-        case_id=case_id, tenant_id=tenant_id, phase=body.phase,
-        title=body.title, description=body.description, status="todo", order=max_order + 1,
-    )
-    db.add(task)
-    await db.flush()
-    await create_audit_log(
-        db=db, entity_type="case", entity_id=case_id, action="task_added",
-        tenant_id=tenant_id, user_id=current_user.id,
-        changes={"title": task.title, "phase": task.phase},
-    )
+    case = await _get_case(db, case_id, tenant_id)
+    task = await task_service.add_case_task(db, case=case, phase=body.phase, title=body.title,
+                                            description=body.description, user_id=current_user.id)
     await db.commit()
     await db.refresh(task)
     return task
@@ -107,12 +94,7 @@ async def delete_task(
     task = res.scalars().first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    task_title = task.title
-    await db.delete(task)
-    await create_audit_log(
-        db=db, entity_type="case", entity_id=case_id, action="task_removed",
-        tenant_id=tenant_id, user_id=current_user.id, changes={"title": task_title},
-    )
+    await task_service.delete_case_task(db, task=task, user_id=current_user.id)
     await db.commit()
 
 

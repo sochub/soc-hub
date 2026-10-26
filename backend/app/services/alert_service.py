@@ -2,6 +2,8 @@
 
 All functions only flush; the caller commits (and emits workflow events after commit).
 """
+import json
+
 from fastapi import HTTPException
 from sqlalchemy import case as sql_case, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,12 +12,28 @@ from app.models.case import Alert, Case
 from app.models.membership import TenantMembership
 from app.services.case_service import add_alert_artifacts
 from app.utils.audit import create_audit_log
+from app.utils.copilot_heuristics import detect_indicators
 
 _SEVERITY_RANK = sql_case(
     {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}, value=Alert.severity, else_=0)
 # Alert list orderings (REST ``sort`` and the MCP list_alerts tool).
 SORTS = {"-created_at": Alert.created_at.desc(), "created_at": Alert.created_at.asc(),
          "severity": _SEVERITY_RANK.desc(), "-severity": _SEVERITY_RANK.asc()}
+
+
+def indicators(alert: Alert) -> set:
+    return {i["value"] for i in detect_indicators(json.dumps(alert.payload or {}, default=str), limit=20)}
+
+
+async def similar_alerts(db: AsyncSession, *, alert: Alert, tenant_id: int, limit: int = 10) -> list:
+    """Other tenant alerts sharing at least one indicator (ip/domain/hash/...) with this one."""
+    mine = indicators(alert)
+    if not mine:
+        return []
+    # ponytail: in-memory compare over the newest 500 alerts; add an alert_indicators table if tenants exceed that.
+    others = (await db.execute(select(Alert).where(Alert.tenant_id == tenant_id, Alert.id != alert.id)
+                               .order_by(Alert.created_at.desc()).limit(500))).scalars().all()
+    return [a for a in others if mine & indicators(a)][:limit]
 
 
 async def is_tenant_member(db: AsyncSession, user_id: int, tenant_id: int) -> bool:

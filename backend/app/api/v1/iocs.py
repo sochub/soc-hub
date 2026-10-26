@@ -8,10 +8,8 @@ from app.models.ioc import IOC
 from app.models.user import User
 from app.schemas import ioc as ioc_schema
 from app.services import ioc_service
-from app.utils.audit import create_audit_log
 
 router = APIRouter()
-_NOT_NULL = {"ioc_type", "value", "threat_level", "confidence", "status", "tlp", "tags"}
 
 
 @router.get("/", response_model=List[ioc_schema.IOC])
@@ -84,8 +82,7 @@ async def update_ioc(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update an IOC (tenant-scoped)."""
-    # Explicit nulls on non-nullable fields would break IOC list serialisation for the whole tenant.
-    bad = sorted(k for k, v in ioc_in.model_dump(exclude_unset=True).items() if v is None and k in _NOT_NULL)
+    bad = ioc_service.null_fields(ioc_in.model_dump(exclude_unset=True))
     if bad:
         raise HTTPException(status_code=422, detail=f"{', '.join(bad)} cannot be null")
     result = await db.execute(
@@ -95,27 +92,8 @@ async def update_ioc(
     if not ioc:
         raise HTTPException(status_code=404, detail="IOC not found")
 
-    update_data = ioc_in.model_dump(exclude_unset=True)
-    if "case_id" in update_data:
-        await ioc_service.ensure_case_in_tenant(db, tenant_id=tenant_id, case_id=update_data["case_id"])
-    changes = {}
-    for field, value in update_data.items():
-        old_value = getattr(ioc, field)
-        if old_value != value:
-            changes[field] = {"from": str(old_value) if old_value is not None else None, "to": str(value) if value is not None else None}
-        setattr(ioc, field, value)
-
-    if changes:
-        await create_audit_log(
-            db=db,
-            entity_type="ioc",
-            entity_id=ioc.id,
-            action="update",
-            tenant_id=tenant_id,
-            user_id=current_user.id,
-            changes=changes,
-        )
-
+    await ioc_service.update_ioc(db, ioc=ioc, data=ioc_in.model_dump(exclude_unset=True), tenant_id=tenant_id,
+                                 user_id=current_user.id)
     await db.commit()
     await db.refresh(ioc)
     return ioc
@@ -137,14 +115,6 @@ async def delete_ioc(
     if not ioc:
         raise HTTPException(status_code=404, detail="IOC not found")
 
-    await create_audit_log(
-        db=db,
-        entity_type="ioc",
-        entity_id=ioc.id,
-        action="delete",
-        tenant_id=tenant_id,
-        user_id=current_user.id,
-    )
-    await db.delete(ioc)
+    await ioc_service.delete_ioc(db, ioc=ioc, tenant_id=tenant_id, user_id=current_user.id)
     await db.commit()
     return {"ok": True}
