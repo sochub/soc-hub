@@ -14,6 +14,7 @@ from app.core import login_throttle, security, totp
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.core.session_cookie import COOKIE, REFRESH_COOKIE
+from app.utils.crypto import decrypt, encrypt
 from app.db.session import AsyncSessionLocal
 from app.main import app
 from app.models.auth_session import AuthSession
@@ -139,7 +140,7 @@ def test_login_sets_refresh_cookie():
         assert acc["httponly"] and acc["samesite"].lower() == "strict" and acc["path"] == "/api"
         assert acc["max-age"] == "3600" and bool(acc["secure"]) == secure
         sid = _claims(acc.value)["sid"]
-        assert ref.value.startswith(sid + ".")
+        assert decrypt(ref.value).startswith(sid + ".")  # the cookie is sealed; the token inside names the session
         row = await _row(sid)
         assert row.kind == "web" and row.amr == "pwd" and row.tenant_id == t.id and row.user_id == u.id
     _go(body)
@@ -329,7 +330,7 @@ def test_refresh_cookie_wins_over_body():
                         json={"refresh_token": body_refresh})
         assert r.status_code == 200, r.text
         assert "access_token" not in r.json() and "refresh_token" not in r.json()
-        assert _claims(_cookies(r)[COOKIE].value)["sid"] == cookie_refresh.split(".")[0]
+        assert _claims(_cookies(r)[COOKIE].value)["sid"] == decrypt(cookie_refresh).split(".")[0]
         # the body's token was ignored: still current (not rotated, not revoked)
         b = await _call(c, "POST", REFRESH, json={"refresh_token": body_refresh})
         assert b.status_code == 200 and b.json()["refresh_token"]
@@ -480,7 +481,7 @@ def test_logout_forged_refresh_does_not_revoke():
             other = await _user(db, ids, "b", [(t, "analyst")])
         access, _ = await _spa_login(c, u.email)
         sid = _claims(access)["sid"]
-        r = await _call(c, "POST", LOGOUT, refresh=f"{sid}.forged-secret", headers=XRW)
+        r = await _call(c, "POST", LOGOUT, refresh=encrypt(f"{sid}.forged-secret"), headers=XRW)
         assert r.status_code == 204, r.text
         _all_cleared(r)
         assert (await _row(sid)).revoked_at is None
@@ -511,4 +512,23 @@ def test_logout_without_credentials_sets_no_cookies():
         r = await _call(c, "POST", LOGOUT)
         assert r.status_code == 204
         assert "set-cookie" not in r.headers
+    _go(body)
+
+
+def test_unreadable_refresh_cookie_is_refused_and_cleared():
+    """A refresh cookie that can't be unsealed (tampered, or set before sealing) still wins over a body token:
+    the refresh is refused with both cookies cleared, so the browser signs in again."""
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            u = await _user(db, ids, "a", [(t, "analyst")])
+        _, body_refresh = await _api_login(c, u.email)
+        r = await _call(c, "POST", REFRESH, refresh="pre-sealing-raw-token", headers=XRW,
+                        json={"refresh_token": body_refresh})
+        assert r.status_code == 401
+        ck = _cookies(r)
+        assert ck[COOKIE]["max-age"] == "0" and ck[REFRESH_COOKIE]["max-age"] == "0"
+        # logout with only an unreadable refresh cookie still clears cookies (a credential was presented)
+        out = await _call(c, "POST", LOGOUT, refresh="pre-sealing-raw-token", headers=XRW)
+        assert out.status_code == 204 and _cookies(out)[REFRESH_COOKIE]["max-age"] == "0"
     _go(body)

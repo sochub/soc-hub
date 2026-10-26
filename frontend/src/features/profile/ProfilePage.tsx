@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
 import { api, session } from '../../api/client';
@@ -31,10 +31,8 @@ function ProfileCard({ me }: { me: User }) {
     const [tz, setTz] = useState(me.timezone ?? '');
     const [tzFilter, setTzFilter] = useState('');
     const [now] = useState(() => new Date()); // sample instant for the timezone preview
-    const [preview, setPreview] = useState<string | null>(null);
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-    useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
     const zones = useMemo(() => {
         try { return Intl.supportedValuesOf('timeZone'); } catch { return ['UTC']; }
@@ -57,8 +55,8 @@ function ProfileCard({ me }: { me: User }) {
             fd.append('file', file);
             return (await api.put('/users/me/avatar', fd, { headers: { 'Content-Type': 'multipart/form-data' } })).data;
         },
-        onSuccess: () => { setPreview(null); qc.removeQueries({ queryKey: ['avatar', me.id] }); void qc.invalidateQueries({ queryKey: ['currentUser'] }); },
-        onError: (e) => { setPreview(null); setMsg({ ok: false, text: apiError(e, 'Could not upload image.') }); },
+        onSuccess: () => { qc.removeQueries({ queryKey: ['avatar', me.id] }); void qc.invalidateQueries({ queryKey: ['currentUser'] }); },
+        onError: (e) => setMsg({ ok: false, text: apiError(e, 'Could not upload image.') }),
     });
 
     const remove = useMutation({
@@ -69,10 +67,9 @@ function ProfileCard({ me }: { me: User }) {
 
     const onFile = (file?: File) => {
         if (!file) return;
-        // The preview is a blob: URL in <img>; only ever show the image types the server accepts.
+        // No local preview: the picked file never reaches the DOM; the avatar reloads from the server once stored.
         if (file.size > MAX_AVATAR || !AVATAR_TYPES.includes(file.type)) { setMsg({ ok: false, text: 'Image must be PNG, JPEG or WebP up to 2 MB' }); return; }
         setMsg(null);
-        setPreview(URL.createObjectURL(file));
         upload.mutate(file);
         if (fileRef.current) fileRef.current.value = '';
     };
@@ -82,9 +79,14 @@ function ProfileCard({ me }: { me: User }) {
             <h2 className={cardHead}>Profile</h2>
             <div className="p-4 space-y-5">
                 <div className="flex items-center gap-4">
-                    {preview
-                        ? <img src={preview} alt="" className="w-16 h-16 object-cover" />
-                        : <Avatar userId={me.id} name={me.full_name || me.email} hasAvatar={me.has_avatar} version={me.avatar_version} size={64} />}
+                    <div className="relative">
+                        <Avatar userId={me.id} name={me.full_name || me.email} hasAvatar={me.has_avatar} version={me.avatar_version} size={64} />
+                        {upload.isPending && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-canvas/60" aria-label="Uploading photo">
+                                <Loader2 size={20} className="animate-spin text-fg" />
+                            </div>
+                        )}
+                    </div>
                     <div className="flex flex-wrap gap-2">
                         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
                             aria-label="Choose avatar image" onChange={(e) => onFile(e.target.files?.[0])} />

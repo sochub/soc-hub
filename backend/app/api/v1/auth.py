@@ -253,9 +253,10 @@ async def logout(
     if bearer:  # the header wins, as for every request: cookies are ignored
         refresh_token, access_token = None, bearer
     else:  # cookie-authenticated: CSRF header required before anything is revoked
-        refresh_token = request.cookies.get(session_cookie.REFRESH_COOKIE)
+        sent_refresh = request.cookies.get(session_cookie.REFRESH_COOKIE)  # sent, even if it can't be unsealed
+        refresh_token = session_cookie.read_refresh(request)
         access_token = request.cookies.get(session_cookie.COOKIE)
-        if (refresh_token or access_token) and session_cookie.CSRF_HEADER not in request.headers:
+        if (sent_refresh or access_token) and session_cookie.CSRF_HEADER not in request.headers:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing X-Requested-With header")
     for row in await web.logout_targets(db, refresh_token, access_token):
         if await sessions.revoke(db, row.id, user_id=row.user_id):
@@ -264,7 +265,7 @@ async def logout(
             await audit_event("security", "logout", request=request, user_id=row.user_id, user_email=email,
                               tenant_id=row.tenant_id)
     out = Response(status_code=204)
-    if refresh_token or access_token:
+    if refresh_token or access_token or (not bearer and sent_refresh):
         session_cookie.clear_session(out)
         session_cookie.clear_refresh(out)
     return out
@@ -294,11 +295,11 @@ async def refresh(
 
     Browser: the HttpOnly ``sochub_refresh`` cookie plus the CSRF header; it wins over a JSON body and the
     response never carries tokens. API clients: ``{"refresh_token": ...}``, tokens in the response body."""
-    presented = request.cookies.get(session_cookie.REFRESH_COOKIE)
-    if presented:
+    if request.cookies.get(session_cookie.REFRESH_COOKIE):  # the cookie wins over a body, even if unreadable
         if session_cookie.CSRF_HEADER not in request.headers:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing X-Requested-With header")
         request.state.auth_via = "cookie"
+        presented = session_cookie.read_refresh(request)  # None (tampered / pre-sealing) → refused, cookies cleared
     else:
         presented = body.refresh_token if body else None
     if not presented:

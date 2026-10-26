@@ -9,9 +9,12 @@
 """
 from typing import Optional
 
+from cryptography.fernet import InvalidToken
+
 from fastapi import HTTPException, Request, Response, status
 
 from app.core.config import settings
+from app.utils.crypto import decrypt, encrypt
 
 COOKIE = "sochub_session"
 REFRESH_COOKIE = "sochub_refresh"
@@ -35,8 +38,21 @@ def _secure() -> bool:
 
 
 def set_refresh(response: Response, refresh_token: str) -> None:
-    response.set_cookie(REFRESH_COOKIE, refresh_token, max_age=settings.REFRESH_IDLE_DAYS * 86400,
+    # Sealed with the server key: the cookie (browser profile, proxies, crash dumps) never holds the raw token.
+    response.set_cookie(REFRESH_COOKIE, encrypt(refresh_token), max_age=settings.REFRESH_IDLE_DAYS * 86400,
                         path=REFRESH_PATH, httponly=True, samesite="strict", secure=_secure())
+
+
+def read_refresh(request: Request) -> Optional[str]:
+    """The refresh token from its sealed cookie; a missing, tampered or pre-sealing cookie reads as None
+    (the browser then signs in again)."""
+    sealed = request.cookies.get(REFRESH_COOKIE)
+    if not sealed:
+        return None
+    try:
+        return decrypt(sealed)
+    except (InvalidToken, ValueError):
+        return None
 
 
 def clear_refresh(response: Response) -> None:
