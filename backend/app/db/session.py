@@ -21,6 +21,10 @@ from app.notifications.delivery import register_after_commit_hook  # noqa: E402
 
 register_after_commit_hook()
 
+from app.services.war_room_events import register_war_room_hook  # noqa: E402
+
+register_war_room_hook()
+
 from app.guests.notify import register_guest_digest_hook  # noqa: E402
 
 register_guest_digest_hook()
