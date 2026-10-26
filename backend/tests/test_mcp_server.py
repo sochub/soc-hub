@@ -267,3 +267,34 @@ def test_refused_principal_is_not_audited_as_success(monkeypatch):
                                                             AuditLog.user_id == user.id))).scalars().all()
         assert len(rows) == 1 and rows[0].outcome == "denied"
     _go(body)
+
+
+def test_new_tools_role_gates_and_disabled_workflow():
+    async def body(c, ids):
+        t, _, _, viewer_token = await _setup(ids, role="viewer")
+        _, _, _, analyst_token = await _setup(ids, role="analyst")
+        at, _, _, admin_token = await _setup(ids, role="admin")
+        async with AsyncSessionLocal() as db:
+            case = await make_case(db, ids, t)
+        viewer = await Mcp(c, viewer_token).init()
+        r = await viewer.call("add_case_event", case_id=case.id, event_date="2026-10-01T08:30:00Z", title="x")
+        assert r["error"] and "analyst role" in r["text"]
+        assert not (await viewer.call("list_case_events", case_id=case.id))["error"]
+        graph = {"nodes": [{"id": "start", "type": "trigger", "config": {}}], "edges": []}
+        analyst = await Mcp(c, analyst_token).init()
+        for name, args in (("create_workflow", {"name": "w", "trigger_type": "manual", "graph": graph}),
+                           ("publish_playbook", {"playbook_id": 1})):
+            r = await analyst.call(name, **args)
+            assert r["error"] and "admin role" in r["text"]
+        admin = await Mcp(c, admin_token).init()
+        r = await admin.call("create_workflow", name="w", trigger_type="manual", graph=graph)
+        assert not r["error"], r["text"]
+        assert r["data"]["enabled"] is False
+        async with AsyncSessionLocal() as db:
+            from app.models.workflow import Workflow
+            wf = (await db.execute(select(Workflow).where(Workflow.id == r["data"]["id"]))).scalars().one()
+            assert wf.enabled is False and wf.tenant_id == at.id
+        listed = (await admin.rpc("tools/list"))["result"]["tools"]
+        assert next(x for x in listed if x["name"] == "create_workflow")["annotations"]["readOnlyHint"] is False
+        assert "enable_workflow" not in {x["name"] for x in listed}
+    _go(body)

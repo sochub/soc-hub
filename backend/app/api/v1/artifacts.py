@@ -1,6 +1,5 @@
 from typing import Any, List
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
-from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -11,9 +10,9 @@ from app.models.case_artifact import CaseArtifact
 from app.models.user import User
 from app.schemas import ioc as ioc_schema
 from app.schemas import artifact as artifact_schema
-from app.services.artifact_types import UnknownArtifactType, not_private, resolve_type
+from app.services.artifact_types import UnknownArtifactType, not_private
+from app.services import case_service, ioc_service
 from app.services.case_service import add_artifact_by_key
-from app.services import ioc_service
 
 router = APIRouter()
 
@@ -172,16 +171,10 @@ async def update_artifact(
     if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
-    update_data = artifact_in.model_dump(exclude_unset=True)
-    if "artifact_type" in update_data:
-        try:
-            atype, custom = await resolve_type(db, tenant_id, update_data.pop("artifact_type"))
-        except UnknownArtifactType as e:
-            raise HTTPException(status_code=422, detail=f"Unknown artifact type '{e}'")
-        artifact.artifact_type, artifact.custom_type_id, artifact.custom_type = atype, (custom.id if custom else None), custom
-    for field, value in update_data.items():
-        setattr(artifact, field, value)
-
+    try:
+        await case_service.update_artifact(db, artifact=artifact, data=artifact_in.model_dump(exclude_unset=True))
+    except UnknownArtifactType as e:
+        raise HTTPException(status_code=422, detail=f"Unknown artifact type '{e}'")
     await db.commit()
     await db.refresh(artifact)
     return _artifact_with_cases(artifact, [])
@@ -242,23 +235,7 @@ async def delete_artifact(
     if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
-    # Get linked cases to create timeline events
-    result = await db.execute(
-        select(CaseArtifact.case_id).where(CaseArtifact.artifact_id == artifact_id)
-    )
-    linked_case_ids = [row[0] for row in result.all()]
-
-    if not artifact.is_private:  # private values never reach the timeline
-        for cid in linked_case_ids:
-            db.add(TimelineEvent(
-                case_id=cid,
-                user_id=current_user.id,
-                event_type="artifact_removed",
-                content=f"Deleted artifact: {artifact.value} ({artifact.type_key})"
-            ))
-
-    # cascade will remove junction records via relationship
-    await db.delete(artifact)
+    await case_service.delete_artifact(db, artifact=artifact, user_id=current_user.id)
     await db.commit()
     return {"detail": "Artifact deleted"}
 
@@ -287,48 +264,7 @@ async def remove_artifact_from_case(
     if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
 
-    # Find and remove the junction record
-    result = await db.execute(
-        select(CaseArtifact).where(
-            CaseArtifact.case_id == case_id,
-            CaseArtifact.artifact_id == artifact_id,
-        )
-    )
-    junction = result.scalars().first()
-    if not junction:
-        raise HTTPException(status_code=404, detail="Artifact is not linked to this case")
-
-    await db.delete(junction)
-
-    if not artifact.is_private:  # private values never reach the timeline
-        db.add(TimelineEvent(
-            case_id=case_id,
-            user_id=current_user.id,
-            event_type="artifact_removed",
-            content=f"Removed artifact: {artifact.value} ({artifact.type_key})"
-        ))
-
-    # If isolated and orphaned, delete the artifact itself
-    if artifact.isolated:
-        result = await db.execute(
-            select(sa_func.count()).select_from(CaseArtifact).where(
-                CaseArtifact.artifact_id == artifact_id
-            )
-        )
-        remaining = result.scalar()
-        # remaining includes the one we just deleted (not yet committed),
-        # but since we called db.delete() it's marked for deletion.
-        # After flush, count should be accurate. Let's flush first.
-        await db.flush()
-        result = await db.execute(
-            select(sa_func.count()).select_from(CaseArtifact).where(
-                CaseArtifact.artifact_id == artifact_id
-            )
-        )
-        remaining = result.scalar()
-        if remaining == 0:
-            await db.delete(artifact)
-
+    await case_service.unlink_artifact(db, artifact=artifact, case_id=case_id, user_id=current_user.id)
     await db.commit()
     return {"detail": "Artifact removed from case"}
 

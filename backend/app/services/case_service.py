@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.guests import notify as guest_notify
@@ -184,6 +184,50 @@ async def add_artifact_by_key(db: AsyncSession, *, case: Case, key: str, value: 
     atype, custom = await resolve_type(db, case.tenant_id, key)
     return await add_artifact_to_case(db, case=case, artifact_type=atype, value=value, description=description,
                                       user_id=user_id, isolated=isolated, custom_type=custom)
+
+
+async def update_artifact(db: AsyncSession, *, artifact: Artifact, data: dict) -> Artifact:
+    """Apply ``ArtifactUpdate.model_dump(exclude_unset=True)``; ``artifact_type`` is a type key. Raises
+    UnknownArtifactType."""
+    data = dict(data)
+    if "artifact_type" in data:
+        atype, custom = await resolve_type(db, artifact.tenant_id, data.pop("artifact_type"))
+        artifact.artifact_type, artifact.custom_type_id, artifact.custom_type = atype, (custom.id if custom else None), custom
+    for field, value in data.items():
+        setattr(artifact, field, value)
+    await db.flush()
+    return artifact
+
+
+async def delete_artifact(db: AsyncSession, *, artifact: Artifact, user_id: Optional[int]) -> None:
+    """Delete the artifact and all its case links; each linked case gets an ``artifact_removed`` entry."""
+    linked_case_ids = (await db.execute(
+        select(CaseArtifact.case_id).where(CaseArtifact.artifact_id == artifact.id))).scalars().all()
+    if not artifact.is_private:  # private values never reach the timeline
+        for cid in linked_case_ids:
+            db.add(TimelineEvent(case_id=cid, user_id=user_id, event_type="artifact_removed",
+                                 content=f"Deleted artifact: {artifact.value} ({artifact.type_key})"))
+    await db.delete(artifact)  # cascade removes the junction rows
+    await db.flush()
+
+
+async def unlink_artifact(db: AsyncSession, *, artifact: Artifact, case_id: int, user_id: Optional[int]) -> None:
+    """Unlink the artifact from one case (404 when not linked); an isolated artifact left with no case is deleted."""
+    junction = (await db.execute(select(CaseArtifact).where(
+        CaseArtifact.case_id == case_id, CaseArtifact.artifact_id == artifact.id))).scalars().first()
+    if not junction:
+        raise HTTPException(status_code=404, detail="Artifact is not linked to this case")
+    await db.delete(junction)
+    if not artifact.is_private:  # private values never reach the timeline
+        db.add(TimelineEvent(case_id=case_id, user_id=user_id, event_type="artifact_removed",
+                             content=f"Removed artifact: {artifact.value} ({artifact.type_key})"))
+    await db.flush()
+    if artifact.isolated:
+        remaining = (await db.execute(select(func.count()).select_from(CaseArtifact).where(
+            CaseArtifact.artifact_id == artifact.id))).scalar()
+        if remaining == 0:
+            await db.delete(artifact)
+            await db.flush()
 
 
 def _drop_path(obj, path: str) -> None:

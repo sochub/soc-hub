@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.playbook import PlaybookTemplate, PlaybookTaskTemplate
-from app.schemas.playbook import PlaybookTemplateCreate
+from app.schemas.playbook import PlaybookTemplateCreate, PlaybookTemplateUpdate
 from app.utils.audit import create_audit_log
 
 
@@ -52,3 +52,37 @@ async def publish_template(
         await db.commit()
         t = await _load(db, template_id)
     return t
+
+
+async def tenant_template(db: AsyncSession, *, tenant_id: int, template_id: int) -> Optional[PlaybookTemplate]:
+    """The tenant's own (non-system) template with its tasks, or None."""
+    t = await _load(db, template_id)
+    return t if t is not None and t.tenant_id == tenant_id and not t.is_system else None
+
+
+async def update_template(db: AsyncSession, *, template: PlaybookTemplate, data: PlaybookTemplateUpdate) -> PlaybookTemplate:
+    """Set the given fields; ``tasks`` (when not None) replaces every task. Commits. The caller checks ownership."""
+    t = template
+    if data.name is not None:
+        t.name = data.name
+    if data.category is not None:
+        t.category = data.category
+    if data.description is not None:
+        t.description = data.description
+    if data.tasks is not None:
+        for task in list(t.tasks):
+            await db.delete(task)
+        await db.flush()
+        for i, task in enumerate(data.tasks):
+            db.add(PlaybookTaskTemplate(
+                template_id=t.id, phase=task.phase, title=task.title,
+                description=task.description, order=task.order or i,
+            ))
+    await db.commit()
+    return await _load(db, t.id)
+
+
+async def delete_template(db: AsyncSession, *, template: PlaybookTemplate) -> None:
+    """Delete the template and its tasks. Commits. The caller checks ownership."""
+    await db.delete(template)
+    await db.commit()

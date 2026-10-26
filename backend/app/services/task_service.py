@@ -15,6 +15,26 @@ from app.services.war_room_events import queue_card
 from app.utils.playbooks import apply_playbook_to_case
 
 
+async def add_case_task(db: AsyncSession, *, case: Case, phase: str, title: str, description, user_id: int) -> CaseTask:
+    """Append a 'todo' task at the end of the case's task order; audit ``task_added``."""
+    max_order = (await db.execute(select(func.max(CaseTask.order)).where(CaseTask.case_id == case.id))).scalar() or 0
+    task = CaseTask(case_id=case.id, tenant_id=case.tenant_id, phase=phase, title=title, description=description,
+                    status="todo", order=max_order + 1)
+    db.add(task)
+    await db.flush()
+    await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="task_added",
+                           tenant_id=case.tenant_id, user_id=user_id, changes={"title": task.title, "phase": task.phase})
+    return task
+
+
+async def delete_case_task(db: AsyncSession, *, task: CaseTask, user_id: int) -> None:
+    case_id, tenant_id, title = task.case_id, task.tenant_id, task.title
+    await db.delete(task)
+    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="task_removed",
+                           tenant_id=tenant_id, user_id=user_id, changes={"title": title})
+    await db.flush()
+
+
 async def update_case_task(db: AsyncSession, *, case: Case, task: CaseTask, data: dict, user_id: int) -> CaseTask:
     """Apply phase/title/description/status changes (status only 'todo'/'done'; None = leave as is).
 

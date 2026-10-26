@@ -236,26 +236,7 @@ async def update_template(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     t = await _get_editable_template(db, template_id, tenant_id, current_user)
-    if body.name is not None:
-        t.name = body.name
-    if body.category is not None:
-        t.category = body.category
-    if body.description is not None:
-        t.description = body.description
-    if body.tasks is not None:
-        for task in list(t.tasks):
-            await db.delete(task)
-        await db.flush()
-        for i, task in enumerate(body.tasks):
-            db.add(PlaybookTaskTemplate(
-                template_id=t.id, phase=task.phase, title=task.title,
-                description=task.description, order=task.order or i,
-            ))
-    await db.commit()
-    res = await db.execute(
-        select(PlaybookTemplate).options(selectinload(PlaybookTemplate.tasks)).where(PlaybookTemplate.id == t.id)
-    )
-    return res.scalars().first()
+    return await playbook_service.update_template(db, template=t, data=body)
 
 
 @router.delete("/{template_id}", status_code=204)
@@ -267,5 +248,4 @@ async def delete_template(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> None:
     t = await _get_editable_template(db, template_id, tenant_id, current_user)
-    await db.delete(t)
-    await db.commit()
+    await playbook_service.delete_template(db, template=t)
