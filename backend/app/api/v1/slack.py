@@ -74,6 +74,16 @@ async def get_config(db: AsyncSession = Depends(deps.get_db), current_user: User
     return _public(await _get(db, tenant_id), await _socket_seen(tenant_id))
 
 
+@router.get("/war-room-settings")
+async def get_war_room_settings(db: AsyncSession = Depends(deps.get_db),
+                                current_user: User = Depends(deps.require_analyst_or_above),
+                                tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    """Minimal, analyst-readable view for the case page (no team, channels or secrets)."""
+    integ = await _get(db, tenant_id)
+    return {"configured": integ is not None,
+            "war_room_name_template": integ.war_room_name_template if integ else None}
+
+
 @router.put("/config")
 async def put_config(body: SlackConfigIn, db: AsyncSession = Depends(deps.get_db),
                      current_user: User = Depends(deps.require_admin),

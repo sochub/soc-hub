@@ -128,10 +128,9 @@ export default function CaseDetail() {
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
     const canWarRoom = isAdmin || me?.role === 'analyst';
     const [showWarRoom, setShowWarRoom] = useState(false);
-    // The Slack config endpoint is admin-only; a 403 simply hides the Open button.
-    const { data: slackCfg } = useQuery({
-        queryKey: ['slack-config'],
-        queryFn: async () => (await api.get('/slack/config')).data as { configured: boolean; war_room_name_template: string | null },
+        const { data: slackCfg } = useQuery({
+        queryKey: ['war-room-settings'],
+        queryFn: async () => (await api.get('/slack/war-room-settings')).data as { configured: boolean; war_room_name_template: string | null },
         enabled: canWarRoom, retry: false,
     });
     // Viewers can't list guests (the API returns 403), so they don't get the tab.
