@@ -10,6 +10,8 @@ class ArtifactType(str, enum.Enum):
     URL = "url"
     FILE_HASH = "file_hash"
     EMAIL = "email"
+    HOSTNAME = "hostname"
+    USERNAME = "username"
     OTHER = "other"
 
 class Artifact(Base):

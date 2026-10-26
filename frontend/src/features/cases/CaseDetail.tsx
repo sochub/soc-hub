@@ -2,7 +2,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff, ShieldAlert, CheckSquare } from 'lucide-react';
+import { Shield, Database, MessageSquare, ArrowLeft, Hash, Calendar, Plus, X, Globe, FileText, Mail, Server, Monitor, User as UserIcon, Edit, Trash2, Check, Pencil, Link2, Unlink, Eye, EyeOff, ShieldAlert, CheckSquare } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useState, useEffect, useRef } from 'react';
@@ -17,12 +17,15 @@ import CaseEvidence from './CaseEvidence';
 import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
 import FollowButton from './FollowButton';
+import WarRoomPill from './WarRoomPill';
+import OpenWarRoomModal from './OpenWarRoomModal';
+import WarRoomSuggestions from './WarRoomSuggestions';
 import MentionTextarea from './MentionTextarea';
 import { stripMentions } from './mentionChips';
 import { Markdown, MarkdownField } from '../../components/Markdown';
 import IncidentOverview from './IncidentOverview';
 import GuestsPanel from '../guests/GuestsPanel';
-import type { User } from '../../types';
+import type { User, CaseEditPayload } from '../../types';
 import { formatDateTime } from '../../utils/datetime';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
@@ -37,6 +40,8 @@ const ARTIFACT_ICONS: Record<string, any> = {
     domain: Globe,
     url: Globe,
     email: Mail,
+    hostname: Monitor,
+    username: UserIcon,
 };
 
 // status_change/severity_change/task are written by the system when the case or a task actually changes.
@@ -80,7 +85,7 @@ export default function CaseDetail() {
     const [editEventData, setEditEventData] = useState({ event_type: '', content: '' });
 
     const updateCaseMutation = useMutation({
-        mutationFn: async (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; outcome: string | null; closing_note: string | null }) => {
+        mutationFn: async (data: CaseEditPayload) => {
             if (!id) return;
             const response = await api.put(`/cases/${id}`, data);
             return response.data;
@@ -121,6 +126,13 @@ export default function CaseDetail() {
         staleTime: 300_000,
     });
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
+    const canWarRoom = isAdmin || me?.role === 'analyst';
+    const [showWarRoom, setShowWarRoom] = useState(false);
+    const { data: slackCfg } = useQuery({
+        queryKey: ['war-room-settings'],
+        queryFn: async () => (await api.get('/slack/war-room-settings')).data as { configured: boolean; war_room_name_template: string | null },
+        enabled: canWarRoom, retry: false,
+    });
     // Viewers can't list guests (the API returns 403), so they don't get the tab.
     const canSeeGuests = isAdmin || me?.role === 'analyst';
     // Mirrors the backend rule for editing/deleting timeline entries: admin, or the analyst who wrote it.
@@ -290,6 +302,13 @@ export default function CaseDetail() {
                                 )}>
                                     {caseData.severity}
                                 </span>
+                                {caseData.slack_channel_id && <WarRoomPill caseData={caseData} canEdit={canWarRoom} />}
+                                {!caseData.slack_channel_id && canWarRoom && slackCfg?.configured && (
+                                    <button type="button" onClick={() => setShowWarRoom(true)}
+                                        className="inline-flex items-center gap-1 rounded-sm border border-line-strong px-2.5 py-0.5 text-xs text-fg-2 hover:bg-raised">
+                                        <Hash size={12} /> Open war room
+                                    </button>
+                                )}
                                 {caseData.outcome && (
                                     <span className="px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border border-line text-fg-2 tracking-wider">
                                         {caseData.outcome.replace(/_/g, ' ')}
@@ -328,6 +347,8 @@ export default function CaseDetail() {
                         <p className="text-fg-2 leading-relaxed text-sm">{caseData.description}</p>
                     </div>
 
+                    {id && canWarRoom && caseData.slack_channel_id && <WarRoomSuggestions caseId={parseInt(id)} />}
+                    {id && <OpenWarRoomModal open={showWarRoom} onClose={() => setShowWarRoom(false)} caseId={parseInt(id)} title={caseData.title} template={slackCfg?.war_room_name_template ?? null} />}
                     {id && <TriagePanel caseId={parseInt(id)} />}
                     <SLAPanel caseData={caseData} />
 

@@ -260,6 +260,12 @@ export interface TimelineEvent {
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';
 
+/** PUT /cases/{id} body from the edit modal; `reason` is only sent when status or severity changed. */
+export interface CaseEditPayload {
+  title: string; description: string; severity: string; status: string; tags: string[]; source: string;
+  outcome: string | null; closing_note: string | null; reason?: string;
+}
+
 export interface Case {
   id: number;
   title: string;
@@ -276,6 +282,11 @@ export interface Case {
   outcome?: string | null;
   closing_note?: string | null;
   milestones?: ReportMilestones | null;
+  slack_channel_id?: string | null;
+  slack_channel_name?: string | null;
+  slack_listen?: boolean;
+  war_room_url?: string | null;
+  war_room_silent?: boolean;
 
   sla_response_target_minutes?: number | null;
   sla_response_status?: SLAStatus | null;
@@ -462,4 +473,13 @@ export interface GuestSettings {
 export interface CaseAsset {
     id: number; case_id: number; name: string; asset_type: string; ip?: string | null; domain?: string | null;
     description?: string | null; compromise_status: string; tags: string[]; created_at: string; updated_at?: string | null;
+}
+
+export interface WarRoomSuggestion {
+  id: number;
+  kind: 'artifact' | 'milestone';
+  payload: { type?: string; value?: string; key?: string; at?: string };
+  status: string;
+  permalink: string | null;
+  created_at: string;
 }

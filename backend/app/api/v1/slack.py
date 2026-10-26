@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import secrets
@@ -17,6 +18,7 @@ from app.models.slack_integration import SlackIntegration
 from app.models.user import User
 from app.services.slack_service import SlackError, slack_call, verify_signature
 from app.utils.audit import create_audit_log
+from app.services.war_room_naming import validate_template
 from app.utils.crypto import decrypt, encrypt
 
 router = APIRouter()
@@ -31,6 +33,8 @@ class SlackConfigIn(BaseModel):
     alert_channel: Optional[str] = None
     # "" turns responder alerts off
     alert_min_severity: Optional[Literal["", "critical", "high", "medium", "low", "info"]] = None
+    # "" restores the default template
+    war_room_name_template: Optional[str] = None
 
 
 async def _get(db, tenant_id: int) -> Optional[SlackIntegration]:
@@ -40,11 +44,12 @@ async def _get(db, tenant_id: int) -> Optional[SlackIntegration]:
 def _public(integ: Optional[SlackIntegration], socket_seen: Optional[int] = None) -> dict:
     if not integ:
         return {"configured": False, "team_id": None, "default_channel": None, "has_bot_token": False,
-                "has_signing_secret": False, "alert_channel": None, "alert_min_severity": None,
+                "has_signing_secret": False, "alert_channel": None, "alert_min_severity": None, "war_room_name_template": None,
                 "socket_mode": False, "socket_connected": False}
     return {"configured": True, "team_id": integ.team_id, "default_channel": integ.default_channel,
             "has_bot_token": True, "has_signing_secret": True, "alert_channel": integ.alert_channel,
-            "alert_min_severity": integ.alert_min_severity, "socket_mode": integ.app_token_enc is not None,
+            "alert_min_severity": integ.alert_min_severity,
+            "war_room_name_template": integ.war_room_name_template, "socket_mode": integ.app_token_enc is not None,
             "socket_connected": bool(socket_seen)}
 
 
@@ -69,10 +74,23 @@ async def get_config(db: AsyncSession = Depends(deps.get_db), current_user: User
     return _public(await _get(db, tenant_id), await _socket_seen(tenant_id))
 
 
+@router.get("/war-room-settings")
+async def get_war_room_settings(db: AsyncSession = Depends(deps.get_db),
+                                current_user: User = Depends(deps.require_analyst_or_above),
+                                tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    """Minimal, analyst-readable view for the case page (no team, channels or secrets)."""
+    integ = await _get(db, tenant_id)
+    return {"configured": integ is not None,
+            "war_room_name_template": integ.war_room_name_template if integ else None}
+
+
 @router.put("/config")
 async def put_config(body: SlackConfigIn, db: AsyncSession = Depends(deps.get_db),
                      current_user: User = Depends(deps.require_admin),
                      tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    template = (body.war_room_name_template or "").strip()
+    if template and (err := validate_template(template)):
+        raise HTTPException(status_code=422, detail=err)
     integ = await _get(db, tenant_id)
     token, secret = (body.bot_token or "").strip(), (body.signing_secret or "").strip()
     socket = (body.app_token or "").strip() not in ("", "-")
@@ -102,12 +120,15 @@ async def put_config(body: SlackConfigIn, db: AsyncSession = Depends(deps.get_db
         integ.alert_channel = body.alert_channel.strip() or None
     if body.alert_min_severity is not None:
         integ.alert_min_severity = body.alert_min_severity or None
+    if body.war_room_name_template is not None:
+        integ.war_room_name_template = template or None
     await db.flush()
     await create_audit_log(db=db, entity_type="slack_integration", entity_id=integ.id, action="update",
                            tenant_id=tenant_id, user_id=current_user.id,
                            changes={"token_changed": bool(token), "secret_changed": bool(secret),
                                     "app_token_changed": bool(app_token),
-                                    "alert_channel": integ.alert_channel, "alert_min_severity": integ.alert_min_severity})
+                                    "alert_channel": integ.alert_channel, "alert_min_severity": integ.alert_min_severity,
+                                    "war_room_name_template": integ.war_room_name_template})
     await db.commit()
     return _public(integ)
 
@@ -228,5 +249,5 @@ async def events(request: Request, db: AsyncSession = Depends(deps.get_db)) -> R
             raise HTTPException(status_code=401, detail="invalid signature")
         return JSONResponse({"challenge": str(payload.get("challenge", ""))[:200]})
     match = await _verified(request, db, body, payload.get("team_id"))
-    slack_bot.dispatch_event(match, payload)
+    await asyncio.to_thread(slack_bot.dispatch_event, match, payload)  # Celery .delay blocks on the broker
     return Response(status_code=200)

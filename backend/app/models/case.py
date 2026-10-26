@@ -1,6 +1,6 @@
 from sqlalchemy import Boolean, Column, Integer, String, Enum, ForeignKey, DateTime, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import expression, func
 from app.db.base_class import Base
 import enum
 import datetime
@@ -42,7 +42,11 @@ class Case(Base):
     outcome = Column(String, nullable=True)
     closing_note = Column(Text, nullable=True)
     # Slack: the case's war-room channel and the live alert card (updated in place on changes).
-    slack_channel_id = Column(String, nullable=True)
+    slack_channel_id = Column(String, nullable=True, index=True)
+    slack_channel_name = Column(String, nullable=True)
+    slack_channel_created_at = Column(DateTime(timezone=True), nullable=True)
+    # SOC-bot listens to this case's war-room channel for artifact/milestone suggestions.
+    slack_listen = Column(Boolean, nullable=False, default=False, server_default=expression.false())
     slack_card_channel = Column(String, nullable=True)
     slack_card_ts = Column(String, nullable=True)
     guest_summary = Column(Text, nullable=True)  # analyst-written; the only description guests see

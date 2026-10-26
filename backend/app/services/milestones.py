@@ -1,9 +1,13 @@
 """Case-level incident milestones: declared columns on the case override the computed defaults."""
+from typing import Optional
+
 from sqlalchemy import select
 
 from app.models.case import Alert
 from app.models.case_task import CaseTask
 from app.models.ioc import IOC
+from app.utils.audit import create_audit_log
+from app.services.war_room_events import queue_card
 from app.reports import milestones as calc
 
 KEYS = calc.KEYS
@@ -38,3 +42,28 @@ def introduced_inversions(effective: dict, changed: set) -> list:
 
 def inversion_message(pair) -> str:
     return f"{_NAMES[pair[0]]} must not be after {_NAMES[pair[1]]}"
+
+
+class MilestoneConflict(Exception):
+    """A patch would introduce an out-of-order milestone pair; str(e) is the user-facing message."""
+
+
+async def set_milestones(db, case, patch: dict, user_id: Optional[int]) -> dict:
+    """Apply a milestone patch (column names), audit it, queue the containment card. Does not commit."""
+    old = {k: getattr(case, k) for k in patch}
+    for k, v in patch.items():
+        setattr(case, k, v)
+    ms = await case_milestones(db, case)
+    bad = introduced_inversions({k: ms[k]["at"] for k in KEYS}, {k[:-3] for k in patch})
+    if bad:
+        for k, v in old.items():
+            setattr(case, k, v)
+        raise MilestoneConflict(inversion_message(bad[0]))
+    iso = lambda d: {k: (v.isoformat() if v is not None else None) for k, v in d.items()}  # noqa: E731
+    await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="milestones_changed",
+                           tenant_id=case.tenant_id, user_id=user_id, changes={"old": iso(old), "new": iso(patch)})
+    new_c = patch.get("contained_at")
+    if new_c is not None and new_c != old.get("contained_at"):
+        queue_card(db, case.tenant_id, "containment.confirmed", case.id,
+                   {"at": new_c.isoformat(), "user_id": user_id})
+    return ms

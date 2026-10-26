@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 TLP_ORDER = ("white", "green", "amber", "red")
+# hostname / username artifact types are deliberately absent: they are never sent to threat-intel sources.
 _TYPE_MAP = {"ip_address": "ip", "ip": "ip", "domain": "domain", "url": "url", "file_hash": "file_hash"}
 _DOMAIN_RX = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$")
 _HASH_RX = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$")

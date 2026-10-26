@@ -4,13 +4,14 @@ All functions only flush; the caller commits.
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.case import Case, TimelineEvent
 from app.models.case_task import CaseTask
 from app.models.playbook import PlaybookTemplate
 from app.utils.audit import create_audit_log
+from app.services.war_room_events import queue_card
 from app.utils.playbooks import apply_playbook_to_case
 
 
@@ -43,6 +44,11 @@ async def update_case_task(db: AsyncSession, *, case: Case, task: CaseTask, data
     await create_audit_log(db=db, entity_type="case", entity_id=case.id, action=status_action or "task_updated",
                            tenant_id=case.tenant_id, user_id=user_id, changes={"task": task.title, **diff})
     await db.flush()
+    if status_action == "task_completed":
+        total, done = (await db.execute(select(func.count(CaseTask.id), func.count(CaseTask.id).filter(CaseTask.status == "done"))
+                                        .where(CaseTask.case_id == case.id))).one()
+        queue_card(db, case.tenant_id, "task.completed", case.id,
+                   {"title": task.title, "phase": task.phase, "done": done, "total": total, "user_id": user_id})
     return task
 
 

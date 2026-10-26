@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.oauth import routes as oauth
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -30,6 +30,7 @@ api_router.include_router(iocs.router, prefix="/iocs", tags=["iocs"])
 api_router.include_router(stats.router, prefix="/stats", tags=["stats"])
 api_router.include_router(playbooks.router, prefix="/playbooks", tags=["playbooks"])
 api_router.include_router(case_tasks.router, prefix="/cases", tags=["case-tasks"])
+api_router.include_router(war_room.router, prefix="/cases", tags=["war-room"])
 api_router.include_router(case_events.router, prefix="/cases", tags=["case-events"])
 api_router.include_router(case_assets.router, prefix="/cases", tags=["case-assets"])
 api_router.include_router(case_triage.router, prefix="/cases", tags=["triage"])

@@ -1,5 +1,5 @@
 """Slack bot background work: responder alerts / live cards and App Home."""
-from app.tasks.workflows import _run_async
+from app.tasks.runner import _run_async
 from app.worker import celery_app
 
 

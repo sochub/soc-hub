@@ -1,22 +1,9 @@
-import asyncio
 import logging
 
+from app.tasks.runner import _run_async
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async(coro):
-    """Run a coroutine in a fresh loop, then dispose pooled connections bound to it
-    (same reason as app/tasks/triage.py)."""
-    from app.db.session import engine
-
-    async def wrapper():
-        try:
-            return await coro
-        finally:
-            await engine.dispose()
-    return asyncio.run(wrapper())
 
 
 @celery_app.task(acks_late=True)

@@ -8,6 +8,7 @@ from typing import List, Optional
 from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
+from app.models.case import Case
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.secrets.refs import SecretsNamespace
 from app.utils.audit import create_audit_log
@@ -176,6 +177,46 @@ async def run_due_schedules(now: datetime) -> List[int]:
     return run_ids
 
 
+async def _queue_finished_card(db, run: WorkflowRun) -> None:
+    """Queue the war-room 'workflow finished' card (DB-only; secrets redacted before anything leaves the process)."""
+    if not run.case_id or run.is_dry_run or run.parent_run_id:
+        return
+    from app.models.tenant_secret import TenantSecret
+    from app.secrets.resolve import redact_text
+    from app.services.war_room_events import queue_card
+    from app.utils.crypto import decrypt
+    from app.workflows.validation import secret_names_in_graph
+
+    if not (await db.execute(select(Case.slack_channel_id).where(
+            Case.id == run.case_id, Case.tenant_id == run.tenant_id))).scalar():
+        return  # no war room: nothing to post
+    steps = []
+    for s in (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id)
+                               .order_by(WorkflowRunStep.id))).scalars().all():
+        item = {"node_id": s.node_id, "status": s.status}
+        out = s.output
+        if isinstance(out, dict) and "headers" in out and isinstance(out.get("status"), int):
+            item["http_status"] = out["status"]
+        steps.append(item)
+    wf = await db.get(Workflow, run.workflow_id)
+    error = run.error
+    if error:
+        graph = run.graph_snapshot or (wf.graph if wf else None)
+        names = secret_names_in_graph(graph)
+        used = {}
+        if names:
+            for row in (await db.execute(select(TenantSecret).where(
+                    TenantSecret.tenant_id == run.tenant_id, TenantSecret.name.in_(names)))).scalars():
+                try:
+                    used[row.name] = decrypt(row.value_enc)
+                except Exception:
+                    continue
+        error = redact_text(error, used)[:300]
+    queue_card(db, run.tenant_id, "workflow.finished", run.case_id,
+               {"run_id": run.id, "workflow_name": wf.name if wf else None, "status": run.status,
+                "steps": steps, "error": error or None})
+
+
 async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] = None) -> None:
     run.status = status
     run.error = error
@@ -190,6 +231,10 @@ async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] =
     # No Slack I/O here (caller's transaction/locks are open): queue for flush_withdrawals() after commit.
     db.sync_session.info.setdefault("slack_withdraw", []).extend(t for t in targets if t[1] and t[2])
     await db.flush()
+    try:
+        await _queue_finished_card(db, run)
+    except Exception as e:  # the card is best-effort; never log a traceback (locals may hold decrypted secrets)
+        logger.warning("workflow card not queued run=%s err=%s", run.id, type(e).__name__)
     # a dead run must not leave loop children queued or executing (cancel_run -> finalize_run recurses)
     for child in (await db.execute(select(WorkflowRun).where(
             WorkflowRun.parent_run_id == run.id, WorkflowRun.status.notin_(_TERMINAL_RUN)))).scalars().all():

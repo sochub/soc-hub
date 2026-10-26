@@ -3,10 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessageSquare } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
+import { DEFAULT_TEMPLATE, previewName } from './warRoomName';
 
 interface SlackConfig {
     configured: boolean; team_id: string | null; default_channel: string | null;
-    alert_channel: string | null; alert_min_severity: string | null;
+    alert_channel: string | null; alert_min_severity: string | null; war_room_name_template: string | null;
     socket_mode: boolean; socket_connected: boolean;
 }
 
@@ -26,14 +27,16 @@ export default function SlackCard() {
     const alertChannel = alertEdit ?? data?.alert_channel ?? '';
     const [minEdit, setMin] = useState<string | null>(null);
     const minSeverity = minEdit ?? data?.alert_min_severity ?? '';
+    const [tplEdit, setTpl] = useState<string | null>(null);
+    const template = tplEdit ?? data?.war_room_name_template ?? '';
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
     const save = useMutation({
         mutationFn: async () => (await api.put('/slack/config', {
             bot_token: token || null, signing_secret: secret || null, app_token: appToken || null, default_channel: channel,
-            alert_channel: alertChannel, alert_min_severity: minSeverity,
+            alert_channel: alertChannel, alert_min_severity: minSeverity, war_room_name_template: template,
         })).data,
-        onSuccess: () => { setToken(''); setSecret(''); setAppToken(''); setChannel(null); setAlert(null); setMin(null); setMsg({ ok: true, text: 'Saved — now click Test' }); qc.invalidateQueries({ queryKey: ['slack-config'] }); },
+        onSuccess: () => { setToken(''); setSecret(''); setAppToken(''); setChannel(null); setAlert(null); setMin(null); setTpl(null); setMsg({ ok: true, text: 'Saved — now click Test' }); qc.invalidateQueries({ queryKey: ['slack-config'] }); },
         onError: (e) => setMsg({ ok: false, text: detail(e, 'Save failed') }),
     });
     const test = useMutation({
@@ -52,6 +55,7 @@ export default function SlackCard() {
             </div>
             <div className="text-xs text-fg-3 space-y-1">
                 <p>Create a Slack app from <code className="font-mono">docs/slack/slack-app-manifest.yml</code> (Socket Mode: no public URL needed), then paste the bot token and an app-level token with <code className="font-mono">connections:write</code>.</p>
+                <p>After updating the manifest, reinstall the app to the workspace so new scopes take effect. Existing tenants must do this to open war rooms from a case and to let SOC-bot listen in them.</p>
                 <p>In Slack: <code className="font-mono">/sochub new</code>, <code className="font-mono">/sochub case 42</code>, the message menu's “Create sochub case”, and the app's Home tab.</p>
             </div>
             <label className="block"><span className="label-mono">bot token</span>
@@ -82,6 +86,12 @@ export default function SlackCard() {
                         {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select></label>
                 <p className="sm:col-span-2 text-xs text-fg-3">Cases at or above this severity are posted as a live card when they're created, escalated into it or breach SLA; later updates thread under the card. Owners also get a DM on escalation and SLA breach.</p>
+            </div>
+            <div className="border-t border-line pt-3 space-y-1">
+                <label className="block"><span className="label-mono">war room channel name</span>
+                    <input className={input} value={template} placeholder={DEFAULT_TEMPLATE} onChange={(e) => setTpl(e.target.value)} /></label>
+                <p className="text-xs text-fg-3">Placeholders: <code className="font-mono">{'{id}'}</code> (required), <code className="font-mono">{'{title}'}</code>, <code className="font-mono">{'{date}'}</code>. Names are lower-cased and capped at 80 characters.</p>
+                <p className="text-xs text-fg-3">Preview: <code className="font-mono text-fg">#{previewName(template, 42, 'Phishing on finance')}</code></p>
             </div>
             <div className="flex items-center gap-2">
                 <button onClick={() => save.mutate()} disabled={save.isPending} className="h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50">Save</button>

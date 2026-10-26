@@ -33,6 +33,11 @@ def case_url(case_id: int) -> str:
     return f"{base}/cases/{case_id}" if base else ""
 
 
+def run_url(run_id: int) -> str:
+    base = (settings.FRONTEND_URL or "").rstrip("/")
+    return f"{base}/workflows/runs/{run_id}" if base else ""
+
+
 def _btn(text: str, tenant_id: int, case_id: int, action: str, style: Optional[str] = None) -> dict:
     b = {"type": "button", "text": {"type": "plain_text", "text": text}, "action_id": f"case_{action}",
          "value": f"case:{tenant_id}:{case_id}:{action}"}
@@ -167,3 +172,157 @@ HELP = ("*sochub commands*\n"
         "• `/sochub mine`: your open cases\n"
         "• Message menu (⋯) → *Create sochub case*: turn any message into a case\n"
         "• The *Home* tab of this app lists your queue")
+
+
+# ---- SOC-bot war-room suggestions ---------------------------------------------
+
+SOC_BOT_QUIPS = (
+    ":satellite: _I sense a disturbance in the logs\u2026_",
+    ":robot_face: _These IPs look suspicious. Not the droids you're looking for, though._",
+    ":milky_way: _A long time ago, in a subnet far, far away\u2026_",
+    ":crossed_swords: _Your containment skills are strong, padawan._",
+    ":shield: _Shields up. Ready to add it to the case?_",
+    ":dizzy: _The Force is strong with this indicator._",
+    ":rocket: _Making the Kessel Run through your artifacts in under 12 parsecs._",
+    ":new_moon: _Even the Death Star had an exposed port. Let's log this one._",
+)
+
+# artifact type -> (emoji, noun)
+_ART_STYLE = {"ip": (":globe_with_meridians:", "IP"), "domain": (":link:", "domain"), "url": (":link:", "URL"),
+              "file_hash": (":dna:", "file hash"), "email": (":email:", "email address"),
+              "hostname": (":desktop_computer:", "host"), "username": (":bust_in_silhouette:", "user")}
+# milestone key -> (emoji, phrase)
+_MS_STYLE = {"first_seen": (":eyes:", "the first-seen time"), "detected": (":rotating_light:", "the detection time"),
+             "contained": (":shield:", "the containment time"), "recovered": (":white_check_mark:", "the recovery time")}
+
+
+def _at_label(iso: str) -> str:
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return str(iso)
+    return f"{dt.strftime('%a %d %b %H:%M')} {dt.tzname() or ''}".strip()
+
+
+def _art_parts(p: dict):
+    t = str(p.get("type", ""))
+    emoji, noun = _ART_STYLE.get(t, (":mag:", slack_escape(t.title())))
+    value = slack_escape(str(p.get("value", "")).replace("`", "\u02cb"))  # no backtick may close the code span
+    return emoji, noun, value
+
+
+def _ms_title(p: dict) -> str:
+    return slack_escape(str(p.get("key", "")).replace("_", " ").title())
+
+
+def _suggestion_text(s) -> str:
+    p = s.payload or {}
+    if s.kind == "milestone":
+        emoji, phrase = _MS_STYLE.get(p.get("key"), (":mag:", "a milestone time"))
+        return (f"{emoji} This sounds like {phrase}. Should I set the case's *{_ms_title(p)}* milestone "
+                f"to {slack_escape(_at_label(p.get('at')))}?")
+    emoji, noun, value = _art_parts(p)
+    return f"{emoji} Should I add the {noun} `{value}` to the case artifacts? It isn't on the case yet."
+
+
+def _resolved_line(s, names: dict) -> str:
+    p = s.payload or {}
+    who = names.get(s.resolved_by_user_id)
+    who = slack_escape(who) if who else None
+    if s.status == "accepted":
+        if s.kind == "milestone":
+            return f":white_check_mark: {who + ' set' if who else 'Set'} *{_ms_title(p)}* to {slack_escape(_at_label(p.get('at')))}."
+        _, noun, value = _art_parts(p)
+        return f":white_check_mark: {who + ' added' if who else 'Added'} the {noun} `{value}` to the case."
+    if s.status == "conflict":
+        return (f":warning: Not set: that time would put *{_ms_title(p)}* out of order with the other milestones. "
+                "Adjust it on the case.")
+    by = f" by {who}" if who else ""
+    return f":no_entry_sign: Dismissed{by} \u2014 it won't be suggested again for this case."
+
+
+def suggestions_reply(suggestions: list, tenant_id: int, names: Optional[dict] = None) -> List[dict]:
+    """Thread reply listing SOC-bot suggestions; pending ones get Add/Set + Dismiss buttons.
+    names maps resolved_by_user_id to a display name."""
+    names = names or {}
+    blocks: List[dict] = []
+    if suggestions:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text":
+                       f":robot_face: *SOC-bot spotted something new for case #{suggestions[0].case_id}:*"}})
+        if any(s.status == "pending" for s in suggestions):
+            quip = SOC_BOT_QUIPS[min(s.id for s in suggestions) % len(SOC_BOT_QUIPS)]
+            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": quip}]})
+    for s in suggestions:
+        if s.status != "pending":
+            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _resolved_line(s, names)}]})
+            continue
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _suggestion_text(s)}})
+        blocks.append({"type": "actions", "block_id": f"wrs_{s.id}", "elements": [
+            {"type": "button", "action_id": "wrs_accept", "style": "primary", "value": f"wrs:{tenant_id}:{s.id}:a",
+             "text": {"type": "plain_text", "text": "Set milestone" if s.kind == "milestone" else "Add to case"}},
+            {"type": "button", "action_id": "wrs_dismiss", "value": f"wrs:{tenant_id}:{s.id}:d",
+             "text": {"type": "plain_text", "text": "Dismiss"}}]})
+    return blocks
+
+
+# --- war-room cards (colour-barred attachments) ---
+
+RED, GREEN, BLUE, YELLOW = "#e01e5a", "#2eb67d", "#36c5f0", "#ecb22e"
+
+
+def _pretty(v) -> str:
+    return str(_val(v) or "none").replace("_", " ").capitalize()
+
+
+def war_room_card(event_type: str, case, payload: dict, *, actor: Optional[str]) -> dict:
+    """One colour-barred war-room card. Returns {"text": fallback, "attachments": [{"color", "blocks"}]}."""
+    payload = payload or {}
+    color, title, detail = YELLOW, event_type, None
+    if event_type == "status.changed":
+        title = f"Status: {_pretty(payload.get('from'))} → {_pretty(payload.get('to'))}"
+    elif event_type == "severity.changed":
+        title = f"Severity: {_pretty(payload.get('from'))} → {_pretty(payload.get('to'))}"
+        if severity_rank(payload.get("to")) > severity_rank(payload.get("from")):
+            color = RED
+    elif event_type == "owner.changed":
+        title = f"Owner: {payload.get('from') or 'unassigned'} → {payload.get('to') or 'unassigned'}"
+    elif event_type == "sla.breached":
+        color, title = RED, f"SLA breached: {payload.get('label') or 'SLA'}"
+    elif event_type == "task.completed":
+        color, title = BLUE, f"Task completed: {payload.get('title') or ''}".rstrip(": ")
+        detail = f"{payload.get('done', 0)} of {payload.get('total', 0)} done"
+        if payload.get("phase"):
+            detail += f"  ·  {_pretty(payload.get('phase'))} phase"
+    elif event_type == "workflow.finished":
+        ok = payload.get("status") == "succeeded"
+        color = BLUE if ok else RED
+        title = f"Workflow {'succeeded' if ok else _pretty(payload.get('status')).lower()}: {payload.get('workflow_name') or ''}".rstrip(": ")
+        lines = []
+        for st in (payload.get("steps") or [])[:20]:
+            http = f" (HTTP {st['http_status']})" if st.get("http_status") else ""
+            lines.append(f"• {slack_escape(str(st.get('node_id')))}: {slack_escape(str(st.get('status')))}{http}")
+        if len(payload.get("steps") or []) > 20:
+            lines.append(f"…and {len(payload['steps']) - 20} more")
+        if payload.get("error"):
+            lines.append(f"Error: {slack_escape(str(payload['error'])[:300])}")
+        if payload.get("run_id") and run_url(payload["run_id"]):
+            lines.append(f"<{run_url(payload['run_id'])}|View run>")
+        detail = "\n".join(lines) or None
+    elif event_type == "containment.confirmed":
+        color, title = GREEN, "Containment confirmed"
+        if payload.get("after_workflow"):
+            detail = f"after workflow *{slack_escape(str(payload['after_workflow']))}* succeeded"
+    reason = payload.get("reason")
+    url = case_url(case.id)
+    ref = f"#{case.id:04d} {slack_escape((case.title or '')[:150])}"
+    link = f"<{url}|{ref}>" if url else ref
+    blocks: List[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{slack_escape(title)}*"}}]
+    if detail:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": detail}})
+    if reason:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"“{slack_escape(str(reason))}”"}})
+    ctx = f"{link}" + (f"  ·  by {slack_escape(actor)}" if actor else "")
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": ctx}]})
+    fallback = f"{title} — #{case.id:04d} {(case.title or '')[:150]}"
+    return {"text": slack_escape(fallback), "attachments": [{"color": color, "blocks": blocks}]}

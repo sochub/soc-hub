@@ -8,7 +8,9 @@ active analyst/admin of the tenant the workspace is connected to.
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 
@@ -18,6 +20,7 @@ from app.models.notification import CaseFollower
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
 from app.services import slack_blocks as ui
+from app.services import war_room_naming as wr_naming
 from app.services.case_service import add_timeline_note, apply_case_update, create_case_record
 from app.services.slack_actions import _platform_user, _slack_email
 from app.services.slack_service import SlackError, load_integration, slack_call
@@ -230,43 +233,62 @@ async def _slack_id(token: str, email: Optional[str]) -> Optional[str]:
 
 # --- war room (Celery) ---
 
-def channel_name(case) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", (case.title or "").lower()).strip("-")[:50].strip("-")
-    return f"inc-{case.id:04d}" + (f"-{slug}" if slug else "")
-
-
-async def open_war_room(db, tenant_id: int, case: Case, user: User, clicker_slack_id: str) -> str:
-    """Create (or reuse) the case's channel, invite responders, post the card. Returns the channel id."""
-    _, token = await load_integration(db, tenant_id)
+async def open_war_room(db, tenant_id: int, case: Case, user: User, clicker_slack_id: Optional[str] = None, *,
+                        name: Optional[str] = None, listen: bool = False) -> str:
+    """Create (or reuse) the case's private channel, invite responders, post the card. Returns the channel id."""
+    integ, token = await load_integration(db, tenant_id)
     if case.slack_channel_id:
         return case.slack_channel_id
-    name = channel_name(case)
+    now = datetime.now(timezone.utc)
     try:
-        channel = (await slack_call(token, "conversations.create", name=name))["channel"]["id"]
-    except SlackError as e:
-        if e.code != "name_taken":
-            raise
-        channel = (await slack_call(token, "conversations.create", name=f"{name[:70]}-{case.tenant_id}"))["channel"]["id"]
+        created = now.astimezone(ZoneInfo(user.timezone)) if user.timezone else now
+    except (ZoneInfoNotFoundError, ValueError):
+        created = now
+    if name is not None and name.strip():
+        name = wr_naming.sanitise(name)[: wr_naming.MAX_LEN].strip("-")
+        if not name:
+            raise SlackError("The war room name has no usable characters; use letters, numbers, hyphens or underscores")
+    else:
+        name = wr_naming.render_channel_name(integ.war_room_name_template, case_id=case.id, title=case.title, created=created)
+    base, attempt = name, 1
+    while True:
+        try:
+            channel = (await slack_call(token, "conversations.create", name=name, is_private=True))["channel"]["id"]
+            break
+        except SlackError as e:
+            attempt += 1
+            if e.code != "name_taken" or attempt > 9:
+                raise
+            name = wr_naming.collision_name(base, attempt)
     followers = (await db.execute(select(User.email).join(CaseFollower, CaseFollower.user_id == User.id)
                                   .where(CaseFollower.case_id == case.id, User.is_active.is_(True)))).scalars().all()
     owner = await db.get(User, case.owner_id) if case.owner_id else None
-    ids = {clicker_slack_id}
+    ids = {clicker_slack_id} if clicker_slack_id else set()
+    if not ids:  # no Slack click to identify the opener (opened from the case page): look them up
+        opener = await _slack_id(token, user.email)
+        if opener:
+            ids.add(opener)
     for email in set(followers) | ({owner.email} if owner else set()):
         sid = await _slack_id(token, email)
         if sid:
             ids.add(sid)
     try:
-        await slack_call(token, "conversations.invite", channel=channel, users=",".join(sorted(ids)))
+        if ids:
+            await slack_call(token, "conversations.invite", channel=channel, users=",".join(sorted(ids)))
     except SlackError as e:
         if e.code not in ("already_in_channel", "cant_invite_self"):
             logger.warning("war room invite failed for case %s: %s", case.id, e.code)
     case.slack_channel_id = channel
+    case.slack_channel_name = name
+    case.slack_channel_created_at = now
+    case.slack_listen = bool(listen)
     db.add(TimelineEvent(case_id=case.id, user_id=user.id, event_type="other",
                          content=f"Slack war room opened: #{name}"))
     await db.commit()
     names = await _names(db, [case.owner_id])
-    await slack_call(token, "chat.postMessage", channel=channel, text=ui.card_text(case),
-                     blocks=ui.case_card(case, names.get(case.owner_id), note=f"War room for case #{case.id:04d}"))
+    # the room exists and is committed: the intro card is best-effort
+    await _safe(slack_call(token, "chat.postMessage", channel=channel, text=ui.card_text(case),
+                           blocks=ui.case_card(case, names.get(case.owner_id), note=f"War room for case #{case.id:04d}")))
     return channel
 
 
@@ -282,12 +304,31 @@ def should_alert(min_severity: Optional[str], severity, *, previous=None) -> boo
     return previous is None or ui.severity_rank(previous) < floor
 
 
+async def _rerender_suggestions(db, token: str, tenant_id: int, changes: dict) -> None:
+    """Redraw a SOC-bot suggestions thread reply from the current DB state."""
+    from app.models.war_room_suggestion import WarRoomSuggestion
+    channel, ts = changes.get("channel"), changes.get("reply_ts")
+    if not channel or not ts:
+        return
+    rows = (await db.execute(select(WarRoomSuggestion).where(
+        WarRoomSuggestion.tenant_id == tenant_id, WarRoomSuggestion.slack_channel == channel,
+        WarRoomSuggestion.reply_ts == ts).order_by(WarRoomSuggestion.id))).scalars().all()
+    if not rows:
+        return
+    names = await _names(db, [r.resolved_by_user_id for r in rows])
+    await _safe(slack_call(token, "chat.update", channel=channel, ts=ts, text="SOC-bot suggestions",
+                           blocks=ui.suggestions_reply(rows, tenant_id, names)))
+
+
 async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: dict) -> None:
     async with AsyncSessionLocal() as db:
         try:
             integ, token = await load_integration(db, tenant_id)
         except SlackError:
             return  # Slack not configured for this tenant
+        if event_type == "war_room.rerender":
+            await _rerender_suggestions(db, token, tenant_id, changes or {})
+            return
         case = await _case(db, tenant_id, case_id)
         if not case:
             return
@@ -320,13 +361,34 @@ async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: 
             await _safe(slack_call(token, "chat.update", channel=case.slack_card_channel, ts=case.slack_card_ts,
                                    text=ui.card_text(case), blocks=ui.case_card(case, owner)))
 
-        # 2. War room: a one-line update for each meaningful change.
+        # 2. War room: one card per meaningful change.
         if case.slack_channel_id and event_type in ("case.updated", "sla_breach"):
-            parts = [f"{k.replace('_id', '')}: {v.get('from')} → {v.get('to')}" for k, v in (changes or {}).items()
-                     if k in ("status", "severity", "owner_id") and isinstance(v, dict)]
-            line = note or (" · ".join(parts) if parts else None)
-            if line:
-                await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id, text=line))
+            cards = []
+            if event_type == "sla_breach":
+                cards.append(("sla.breached", {"label": (changes or {}).get("label", "SLA")}, None))
+            else:
+                for key, ev in (("status", "status.changed"), ("severity", "severity.changed"),
+                                ("owner_id", "owner.changed")):
+                    ch = (changes or {}).get(key)
+                    if isinstance(ch, dict):
+                        cards.append((ev, dict(ch), ch.get("by")))
+            if cards:
+                ids = [c[2] for c in cards] + [c[1].get(k) for c in cards if c[0] == "owner.changed" for k in ("from", "to")]
+                who = await _names(db, [i for i in ids if isinstance(i, int)])
+                for ev, payload, by in cards:
+                    if ev == "owner.changed":
+                        payload = {"from": who.get(payload.get("from")), "to": who.get(payload.get("to"))}
+                    msg = ui.war_room_card(ev, case, payload, actor=who.get(by))
+                    await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id,
+                                           text=msg["text"], attachments=msg["attachments"]))
+
+        if case.slack_channel_id and event_type in ("task.completed", "workflow.finished", "containment.confirmed"):
+            payload = dict(changes or {})
+            if event_type == "containment.confirmed":
+                payload["after_workflow"] = await _recent_workflow_name(db, tenant_id, case_id, payload.get("at"))
+            msg = ui.war_room_card(event_type, case, payload, actor=(await _names(db, [payload.get("user_id")])).get(payload.get("user_id")))
+            await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id,
+                                   text=msg["text"], attachments=msg["attachments"]))
 
         # 3. Owner DM on escalation (assignment and SLA breach DMs come from notifications delivery).
         if event_type == "case.updated" and sev_change and ui.severity_rank(sev_change.get("to")) > ui.severity_rank(sev_change.get("from")):
@@ -335,6 +397,24 @@ async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: 
             if sid:
                 await _dm(token, sid, ui.card_text(case), ui.case_card(
                     case, owner, note=f"Severity raised on your case: {sev_change.get('from')} → {sev_change.get('to')}"))
+
+
+async def _recent_workflow_name(db, tenant_id: int, case_id: int, at) -> Optional[str]:
+    """Name of a workflow that succeeded on the case at most 10 minutes before `at` (containment time)."""
+    from datetime import datetime, timedelta
+    from app.models.workflow import Workflow, WorkflowRun
+    try:
+        when = datetime.fromisoformat(str(at))
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    row = (await db.execute(
+        select(Workflow.name).join(WorkflowRun, WorkflowRun.workflow_id == Workflow.id).where(
+            WorkflowRun.tenant_id == tenant_id, WorkflowRun.case_id == case_id, WorkflowRun.status == "succeeded",
+            WorkflowRun.is_dry_run.is_(False), WorkflowRun.finished_at <= when,
+            WorkflowRun.finished_at >= when - timedelta(minutes=10)).order_by(WorkflowRun.finished_at.desc()).limit(1))).first()
+    return row[0] if row else None
 
 
 async def _safe(coro):
@@ -391,9 +471,19 @@ async def dispatch_command(db, integ: SlackIntegration, form: dict) -> dict:
         return _ephemeral("Something went wrong talking to Slack. Try again.")
 
 
+def _is_listenable_message(event: dict) -> bool:
+    """A human-authored plain message (or thread broadcast); edits, joins and bot posts never count."""
+    return (event.get("type") == "message" and not event.get("bot_id")
+            and event.get("subtype") in (None, "thread_broadcast")
+            and bool(event.get("user") and event.get("channel") and event.get("ts") and event.get("text")))
+
+
 def dispatch_event(integ: SlackIntegration, payload: dict) -> None:
     from app.tasks.slack import slack_home_task
 
     event = payload.get("event") or {}
     if event.get("type") == "app_home_opened" and event.get("tab") == "home" and event.get("user"):
         slack_home_task.delay(integ.tenant_id, event["user"])
+    elif _is_listenable_message(event):
+        from app.tasks.war_room import war_room_message_task
+        war_room_message_task.delay(integ.tenant_id, {k: event.get(k) for k in ("channel", "ts", "thread_ts", "user", "text")})

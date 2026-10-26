@@ -18,6 +18,7 @@ SLACK_API = "https://slack.com/api/"
 _CASE_ACTIONS = {"ack", "assign", "close", "warroom"}  # note/severity open modals inline (slack_bot)
 _WF_RE = re.compile(r"wf:([A-Za-z0-9_\-]{1,64}):([0-9]{1,2})")
 _CASE_RE = re.compile(r"case:([0-9]{1,10}):([0-9]{1,10}):([a-z]{1,10})")
+_WRS_RE = re.compile(r"wrs:([0-9]{1,10}):([0-9]{1,10}):([ad])")
 
 
 class SlackError(Exception):
@@ -74,6 +75,9 @@ def parse_action_value(value: str) -> Optional[Tuple]:
     m = _CASE_RE.fullmatch(value or "")
     if m and m.group(3) in _CASE_ACTIONS:
         return ("case", int(m.group(1)), int(m.group(2)), m.group(3))
+    m = _WRS_RE.fullmatch(value or "")
+    if m:
+        return ("wrs", int(m.group(1)), int(m.group(2)), "accept" if m.group(3) == "a" else "dismiss")
     return None
 
 

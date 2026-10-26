@@ -34,15 +34,15 @@ async def test_resolve_type_builtin_custom_unknown_and_tenant_scoped():
         t1, t2 = Tenant(name=slug, slug=slug), Tenant(name=slug + "b", slug=slug + "b")
         db.add_all([t1, t2])
         await db.flush()
-        d = ArtifactTypeDefinition(tenant_id=t1.id, key="username", label="Username")
+        d = ArtifactTypeDefinition(tenant_id=t1.id, key="user_login", label="Username")
         db.add(d)
         await db.commit()
         try:
             assert await resolve_type(db, t1.id, "ip") == (ArtifactType.IP, None)
-            atype, got = await resolve_type(db, t1.id, "username")
+            atype, got = await resolve_type(db, t1.id, "user_login")
             assert atype == ArtifactType.OTHER and got.id == d.id
             with pytest.raises(UnknownArtifactType):
-                await resolve_type(db, t2.id, "username")  # other tenant's key
+                await resolve_type(db, t2.id, "user_login")  # other tenant's key
             with pytest.raises(UnknownArtifactType):
                 await resolve_type(db, t1.id, "nope")
         finally:
