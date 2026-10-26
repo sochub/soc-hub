@@ -105,7 +105,7 @@
           "y": 480
         },
         "config": {
-          "content": "Okta containment skipped: user {{ (case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim }} not found in Okta (HTTP {{ steps.lookup.output.status }})."
+          "content": "Okta containment skipped: user {{ (case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim }} {{ 'not found in Okta' if steps.lookup.output.status == 404 else 'could not be looked up in Okta' }} (HTTP {{ steps.lookup.output.status }})."
         }
       },
       {

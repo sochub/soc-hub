@@ -60,7 +60,7 @@ def test_no_ssws_left():
             assert bad not in text, (t["key"], bad)
 
 
-async def _scenario(queue, key, urls_expected, value="olack@adatum.com"):
+async def _scenario(queue, key, urls_expected, value="olack@adatum.com", lookup=None):
     h = secrets.token_hex(3)
     ids = {"wf": [], "case": None, "art": None, "sec": []}
     async with AsyncSessionLocal() as db:
@@ -93,7 +93,7 @@ async def _scenario(queue, key, urls_expected, value="olack@adatum.com"):
                 ids["wf"].append(d["workflow"]["id"])
                 assert d["workflow"]["validation_errors"] in (None, []), d["workflow"]
                 assert d["missing_secrets"] == []
-                lookup = {"status": 200, "headers": {}, "body": {"id": "00u1abcd", "status": "ACTIVE"}}
+                lookup = lookup or {"status": 200, "headers": {}, "body": {"id": "00u1abcd", "status": "ACTIVE"}}
                 r = await c.post(f"/api/v1/workflows/{d['workflow']['id']}/dry-run",
                                  json={"case_id": ids["case"], "mocks": {"lookup": lookup}})
                 assert r.status_code == 200, r.text
@@ -123,14 +123,14 @@ async def _scenario(queue, key, urls_expected, value="olack@adatum.com"):
             await db.commit()
 
 
-def _run(monkeypatch, key, urls, check, value="olack@adatum.com"):
+def _run(monkeypatch, key, urls, check, value="olack@adatum.com", lookup=None):
     import app.tasks.workflows as tw
     queue = []
     monkeypatch.setattr(tw.advance_run_task, "delay", lambda rid: queue.append(("advance", rid)))
     monkeypatch.setattr(tw.execute_step_task, "delay", lambda sid: queue.append(("step", sid)))
     monkeypatch.setattr(tw.loop_tick_task, "delay", lambda sid: queue.append(("tick", sid)))
     try:
-        steps = asyncio.run(_scenario(queue, key, urls, value))
+        steps = asyncio.run(_scenario(queue, key, urls, value, lookup))
     finally:
         asyncio.run(engine.dispose())
     check(steps)
@@ -157,3 +157,16 @@ def test_okta_lookup_url_encodes_slash(monkeypatch):
     _run(monkeypatch, "okta-suspend-user",
          {"lookup": ("GET", "/api/v1/users/a%2Fb%40adatum.com"),
           "suspend": ("POST", "/api/v1/users/00u1abcd/lifecycle/suspend")}, lambda steps: None, value="a/b@adatum.com")
+
+
+def test_okta_lookup_failure_is_not_called_not_found(monkeypatch):
+    """Only a 404 means "not found"; a 400 (e.g. a rejected DPoP proof) must not be reported as a missing user."""
+    def note(status):
+        def check(steps):
+            got.append(steps["not_found"][0][1]["would_do"]["content"])
+        got = []
+        _run(monkeypatch, "okta-suspend-user", {}, check, lookup={"status": status, "headers": {}, "body": ""})
+        return got[0]
+    assert "not found in Okta (HTTP 404)" in note(404)
+    n = note(400)
+    assert "not found" not in n and "could not be looked up in Okta (HTTP 400)" in n
