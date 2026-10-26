@@ -292,6 +292,16 @@ async def _tenant_case(db, tenant_id: int, case_id: int) -> Case:
     return case
 
 
+_WAR_ROOM_ERRORS = {
+    "missing_scope": ("The Slack app is missing a scope needed for war rooms (groups:write to create and invite to "
+                      "private channels). Add the scopes from the current app manifest and reinstall the app to "
+                      "the workspace."),
+    "not_in_channel": "The Slack bot is not in the channel. Invite the bot to the channel and try again.",
+    "restricted_action": ("Your Slack workspace settings do not allow the bot to create channels or invite people. "
+                          "Ask a workspace admin to allow it, then try again."),
+}
+
+
 @router.post("/{case_id}/war-room")
 async def open_case_war_room(
     *,
@@ -310,8 +320,7 @@ async def open_case_war_room(
         await open_war_room(db, tenant_id, case, current_user, None, name=body.name, listen=body.listen)
     except SlackError as e:
         await db.rollback()
-        detail = (f"The Slack app is missing the groups:write scope needed to create private channels; "
-                  f"add it and reinstall the app" if e.code == "missing_scope" else str(e) or e.code or "Slack error")
+        detail = _WAR_ROOM_ERRORS.get(e.code or "") or str(e) or e.code or "Slack error"
         raise HTTPException(status_code=400, detail=detail)
     await create_audit_log(db, "case", case.id, "war_room_opened", tenant_id, user_id=current_user.id,
                            changes={"channel": case.slack_channel_name, "listen": bool(case.slack_listen)})

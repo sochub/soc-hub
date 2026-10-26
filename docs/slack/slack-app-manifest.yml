@@ -1,7 +1,8 @@
 # Slack app manifest for sochub (Socket Mode: Slack talks to sochub over an outbound WebSocket,
 # so no public URL is needed).
 # 1. Slack: Create New App > From an app manifest > paste this > Create > Install to Workspace.
-#    Existing app: App Manifest > paste > Save, then Reinstall to Workspace.
+#    Existing app: App Manifest > paste > Save, then Reinstall to Workspace
+#    (required: new scopes only take effect after reinstalling).
 # 2. Basic Information > App-Level Tokens > Generate, scope connections:write -> xapp-... token.
 # 3. sochub > Settings > Integrations > Slack: paste the bot token (xoxb-) and the app-level token (xapp-).
 # Prefer HTTP request URLs instead? See docs/slack/setup.md ("HTTP mode").
@@ -39,11 +40,17 @@ oauth_config:
       - users:read          # resolve who clicked
       - users:read.email    # link Slack users to sochub users by email
       - commands            # /sochub
-      - channels:manage     # create war-room channels and invite responders
+      - channels:manage     # public war rooms created before private rooms (legacy)
+      - groups:write        # create private war-room channels and invite responders
+      - groups:read         # look up private war-room channels
+      - groups:history      # SOC-bot reads human messages in private war rooms
+      - channels:history    # same, for war rooms created as public channels
 settings:
   event_subscriptions:
     bot_events:
       - app_home_opened
+      - message.groups      # human messages in private war rooms (SOC-bot listening)
+      - message.channels    # same, for legacy public war rooms
   interactivity:
     is_enabled: true
   org_deploy_enabled: false

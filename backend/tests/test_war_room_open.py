@@ -151,7 +151,18 @@ def test_missing_scope_names_groups_write(monkeypatch):
     async def go():
         async with world(monkeypatch, create_errors=[SlackError("x", code="missing_scope")]) as w:
             r = await w["client"].post(f"/api/v1/cases/{w['case_id']}/war-room", json={"listen": False})
-            assert r.status_code == 400 and "groups:write" in r.json()["detail"]
+            d = r.json()["detail"]
+            assert r.status_code == 400 and "groups:write" in d and "reinstall" in d.lower()
+    asyncio.run(go())
+
+
+def test_not_in_channel_and_restricted_action_readable(monkeypatch):
+    async def go():
+        for code, word in (("not_in_channel", "invite"), ("restricted_action", "workspace")):
+            async with world(monkeypatch, create_errors=[SlackError("x", code=code)]) as w:
+                r = await w["client"].post(f"/api/v1/cases/{w['case_id']}/war-room", json={"listen": False})
+                d = r.json()["detail"]
+                assert r.status_code == 400 and word in d.lower() and d != "x", d
     asyncio.run(go())
 
 

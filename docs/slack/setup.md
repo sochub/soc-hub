@@ -6,6 +6,7 @@ rule is needed. Messages sochub sends (cards, alerts, DMs) are normal HTTPS call
 
 1. Go to https://api.slack.com/apps, click **Create New App**, then **From a manifest**, and paste `slack-app-manifest.yml` from this folder.
    Already have the app? Open **App Manifest**, paste the new manifest, **Save**, then **Reinstall to Workspace**.
+   **Reinstall the app after updating the manifest:** new scopes only take effect after a reinstall. War rooms opened from the case page and SOC-bot listening need `groups:write`, `groups:read`, `groups:history`, `channels:history` and the `message.groups` / `message.channels` events, so existing tenants must update and reinstall once. If you reinstall, copy the new bot token into sochub if it changed.
 2. Click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-...`, under OAuth & Permissions).
 3. Under **Basic Information > App-Level Tokens**, click **Generate Token and Scopes**, add the scope `connections:write`, and copy the `xapp-...` token.
 4. In sochub, open **Integrations > Slack**. Paste the bot token and the app-level token, a default channel (for example `#soc-alerts`), click **Save**, then **Test**. Test stores the workspace `team_id`, checks both tokens and posts a message in the channel. Within ~30 seconds the card shows **socket connected**.
@@ -43,9 +44,10 @@ analyst or admin of the tenant the workspace is connected to. Unlinked users get
 | Symptom | Cause |
 |---|---|
 | `not_in_channel` | Invite the bot to the channel. |
+| `restricted_action` | Workspace settings block the bot from creating channels or inviting people: ask a workspace admin. |
 | `users_not_found` | The email is not a member of the workspace. |
 | `invalid_auth` | Wrong bot token. |
-| `missing_scope` on war rooms or `/sochub` | The app was created from an older manifest: re-apply this one and reinstall. |
+| `missing_scope` on war rooms or `/sochub` | The app was created from an older manifest: re-apply this one and reinstall the app to the workspace. War rooms need `groups:write`. |
 | `/sochub` says "dispatch_failed" | Socket Mode: the `slack-socket` service is down. HTTP mode: the commands URL is not reachable. |
 | Card says **socket not connected** | The `slack-socket` service isn't running, or the app-level token is wrong/revoked (`docker compose logs slack-socket`). |
 | Buttons or commands do nothing | Socket Mode: see above. HTTP mode: the URLs are not reachable, the signing secret is wrong (check backend logs for 401s), or **Test** was never clicked so `team_id` is not stored. |
