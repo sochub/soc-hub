@@ -16,12 +16,12 @@ STALL = timedelta(minutes=10)
 
 
 async def load_target(db: AsyncSession, kind: str, obj_id: int, tenant_id: int):
-    """(obj, raw_type) for a tenant IOC or artifact, or None when the kind or id is unknown."""
+    """(obj, raw_type) for a tenant IOC or non-private artifact, or None when the kind or id is unknown."""
     model = IOC if kind == "ioc" else Artifact if kind == "artifact" else None
     if model is None:
         return None
     obj = (await db.execute(select(model).where(model.id == obj_id, model.tenant_id == tenant_id))).scalars().first()
-    if obj is None:
+    if obj is None or (kind == "artifact" and obj.is_private):  # private types are workflow-only: never sent out
         return None
     raw_type = obj.ioc_type if kind == "ioc" else getattr(obj.artifact_type, "value", obj.artifact_type)
     return obj, raw_type

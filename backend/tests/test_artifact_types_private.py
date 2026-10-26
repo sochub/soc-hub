@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 import app.db.base  # noqa: F401
 from app.api.v1.copilot import _case_indicator_values
 from app.db.session import AsyncSessionLocal, engine
+from app.enrichment.view import load_target
 from app.models.artifact import Artifact, ArtifactType
 from app.models.artifact_type_definition import ArtifactTypeDefinition
 from app.models.case import Case, TimelineEvent
@@ -16,7 +17,7 @@ from app.tasks.triage import _indicator_values
 
 
 @pytest.mark.asyncio
-async def test_private_artifacts_hidden_from_copilot_indicators():
+async def test_private_artifacts_hidden_from_copilot_indicators_and_enrichment():
     slug = f"at-test-{uuid.uuid4().hex[:8]}"
     async with AsyncSessionLocal() as db:
         t = Tenant(name=slug, slug=slug)
@@ -34,6 +35,9 @@ async def test_private_artifacts_hidden_from_copilot_indicators():
         try:
             assert await _case_indicator_values(db, cid, tid) == {"1.2.3.4"}
             assert await _indicator_values(db, tid, cid) == ["1.2.3.4"]  # AI triage input
+            arts = (await db.execute(select(Artifact).join(CaseArtifact).where(CaseArtifact.case_id == cid))).scalars().all()
+            for a in arts:  # enrichment (view + run) never loads a private value
+                assert (await load_target(db, "artifact", a.id, tid) is None) == a.is_private
         finally:
             art_ids = (await db.execute(select(CaseArtifact.artifact_id).where(CaseArtifact.case_id == cid))).scalars().all()
             await db.execute(delete(CaseArtifact).where(CaseArtifact.case_id == cid))
