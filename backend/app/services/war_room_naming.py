@@ -14,6 +14,9 @@ def _sanitise(s: str) -> str:
     return re.sub(r"-{2,}", "-", s).strip("-")
 
 
+sanitise = _sanitise
+
+
 def validate_template(t: str) -> Optional[str]:
     """An error message, or None when the template is usable."""
     t = (t or "").strip()

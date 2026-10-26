@@ -39,9 +39,11 @@ def test_should_alert_threshold_and_crossing():
 
 
 def test_channel_name_is_slack_safe():
-    c = SimpleNamespace(id=42, title="Phishing: \"Your shrimp boat insurance\" EXPIRED!!")
-    assert slack_bot.channel_name(c) == "inc-0042-phishing-your-shrimp-boat-insurance-expired"
-    assert slack_bot.channel_name(SimpleNamespace(id=7, title="¡¡!!")) == "inc-0007"
+    from datetime import datetime
+    from app.services.war_room_naming import render_channel_name as r
+    d = datetime(2026, 1, 1)
+    assert r(None, case_id=42, title="Phishing: \"Your shrimp boat insurance\" EXPIRED!!", created=d) == "inc-0042-phishing-your-shrimp-boat-insurance-expired"
+    assert r(None, case_id=7, title="¡¡!!", created=d) == "inc-0007"
 
 
 def test_card_escapes_user_text():

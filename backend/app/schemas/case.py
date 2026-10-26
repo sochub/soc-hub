@@ -219,6 +219,12 @@ class Case(CaseBase):
     sla_overall_status: Optional[str] = None
     # Detail endpoint only (app.services.milestones.case_milestones).
     milestones: Optional[dict] = None
+    # War room: columns, plus url/silent computed by the endpoint (cases._attach_war_room).
+    slack_channel_id: Optional[str] = None
+    slack_channel_name: Optional[str] = None
+    slack_listen: Optional[bool] = False
+    war_room_url: Optional[str] = None
+    war_room_silent: bool = False
 
     class Config:
         from_attributes = True

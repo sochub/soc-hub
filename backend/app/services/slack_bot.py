@@ -8,7 +8,9 @@ active analyst/admin of the tenant the workspace is connected to.
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 
@@ -18,6 +20,7 @@ from app.models.notification import CaseFollower
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
 from app.services import slack_blocks as ui
+from app.services import war_room_naming as wr_naming
 from app.services.case_service import add_timeline_note, apply_case_update, create_case_record
 from app.services.slack_actions import _platform_user, _slack_email
 from app.services.slack_service import SlackError, load_integration, slack_call
@@ -230,37 +233,55 @@ async def _slack_id(token: str, email: Optional[str]) -> Optional[str]:
 
 # --- war room (Celery) ---
 
-def channel_name(case) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", (case.title or "").lower()).strip("-")[:50].strip("-")
-    return f"inc-{case.id:04d}" + (f"-{slug}" if slug else "")
-
-
-async def open_war_room(db, tenant_id: int, case: Case, user: User, clicker_slack_id: str) -> str:
-    """Create (or reuse) the case's channel, invite responders, post the card. Returns the channel id."""
-    _, token = await load_integration(db, tenant_id)
+async def open_war_room(db, tenant_id: int, case: Case, user: User, clicker_slack_id: Optional[str] = None, *,
+                        name: Optional[str] = None, listen: bool = False) -> str:
+    """Create (or reuse) the case's private channel, invite responders, post the card. Returns the channel id."""
+    integ, token = await load_integration(db, tenant_id)
     if case.slack_channel_id:
         return case.slack_channel_id
-    name = channel_name(case)
+    now = datetime.now(timezone.utc)
     try:
-        channel = (await slack_call(token, "conversations.create", name=name))["channel"]["id"]
-    except SlackError as e:
-        if e.code != "name_taken":
-            raise
-        channel = (await slack_call(token, "conversations.create", name=f"{name[:70]}-{case.tenant_id}"))["channel"]["id"]
+        created = now.astimezone(ZoneInfo(user.timezone)) if user.timezone else now
+    except (ZoneInfoNotFoundError, ValueError):
+        created = now
+    if name is not None and name.strip():
+        name = wr_naming.sanitise(name)[: wr_naming.MAX_LEN].strip("-")
+        if not name:
+            raise SlackError("The war room name has no usable characters; use letters, numbers, hyphens or underscores")
+    else:
+        name = wr_naming.render_channel_name(integ.war_room_name_template, case_id=case.id, title=case.title, created=created)
+    base, attempt = name, 1
+    while True:
+        try:
+            channel = (await slack_call(token, "conversations.create", name=name, is_private=True))["channel"]["id"]
+            break
+        except SlackError as e:
+            attempt += 1
+            if e.code != "name_taken" or attempt > 9:
+                raise
+            name = wr_naming.collision_name(base, attempt)
     followers = (await db.execute(select(User.email).join(CaseFollower, CaseFollower.user_id == User.id)
                                   .where(CaseFollower.case_id == case.id, User.is_active.is_(True)))).scalars().all()
     owner = await db.get(User, case.owner_id) if case.owner_id else None
-    ids = {clicker_slack_id}
+    ids = {clicker_slack_id} if clicker_slack_id else set()
+    if not ids:  # no Slack click to identify the opener (opened from the case page): look them up
+        opener = await _slack_id(token, user.email)
+        if opener:
+            ids.add(opener)
     for email in set(followers) | ({owner.email} if owner else set()):
         sid = await _slack_id(token, email)
         if sid:
             ids.add(sid)
     try:
-        await slack_call(token, "conversations.invite", channel=channel, users=",".join(sorted(ids)))
+        if ids:
+            await slack_call(token, "conversations.invite", channel=channel, users=",".join(sorted(ids)))
     except SlackError as e:
         if e.code not in ("already_in_channel", "cant_invite_self"):
             logger.warning("war room invite failed for case %s: %s", case.id, e.code)
     case.slack_channel_id = channel
+    case.slack_channel_name = name
+    case.slack_channel_created_at = now
+    case.slack_listen = bool(listen)
     db.add(TimelineEvent(case_id=case.id, user_id=user.id, event_type="other",
                          content=f"Slack war room opened: #{name}"))
     await db.commit()

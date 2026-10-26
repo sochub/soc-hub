@@ -1,5 +1,7 @@
-from typing import Any, List
+from datetime import datetime, timedelta, timezone
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -7,7 +9,9 @@ from sqlalchemy.orm import selectinload
 from app.audit.context import audit_read
 from app.api import deps
 from app.models.case import Case, TimelineEvent
+from app.models.slack_integration import SlackIntegration
 from app.models.user import User
+from app.services.slack_service import SlackError, load_integration
 from app.schemas import case as case_schema
 from app.services.case_service import (
     add_timeline_note, apply_case_update, check_case_update, create_case_record, edit_timeline_note,
@@ -39,7 +43,29 @@ async def _attach_sla(db: AsyncSession, tenant_id: int, cases: List[Case]) -> Li
         case.sla_resolution_status = state["resolution_status"]
         case.sla_resolution_due_at = state["resolution_due_at"]
         case.sla_overall_status = state["overall_status"]
+    await _attach_war_room(db, tenant_id, cases)
     return cases
+
+
+SILENT_AFTER = timedelta(minutes=10)
+
+
+def war_room_url(team_id: Optional[str], channel_id: str) -> Optional[str]:
+    return f"https://app.slack.com/client/{team_id}/{channel_id}" if team_id else None
+
+
+async def _attach_war_room(db: AsyncSession, tenant_id: int, cases: List[Case]) -> None:
+    """Set war_room_url / war_room_silent. Silent = listening, room older than 10 min, and no message
+    event seen from Slack since the room was created."""
+    rooms = [c for c in cases if c.slack_channel_id]
+    if not rooms:
+        return
+    integ = (await db.execute(select(SlackIntegration).where(SlackIntegration.tenant_id == tenant_id))).scalars().first()
+    now = datetime.now(timezone.utc)
+    for c in rooms:
+        c.war_room_url = war_room_url(integ.team_id if integ else None, c.slack_channel_id)
+        made, last = c.slack_channel_created_at, integ.last_message_event_at if integ else None
+        c.war_room_silent = bool(c.slack_listen and made and now - made > SILENT_AFTER and (last is None or last < made))
 
 
 @router.get("/", response_model=List[case_schema.Case])
@@ -246,6 +272,79 @@ async def update_case(
     await _attach_sla(db, tenant_id, [case])
 
     return case
+
+
+# ── Slack war room ───────────────────────────────────────────────
+
+class WarRoomOpen(BaseModel):
+    name: Optional[str] = None
+    listen: bool = True
+
+
+class WarRoomListen(BaseModel):
+    listen: bool
+
+
+async def _war_room_body(db, tenant_id: int, case: Case) -> dict:
+    integ = (await db.execute(select(SlackIntegration).where(SlackIntegration.tenant_id == tenant_id))).scalars().first()
+    return {"channel_id": case.slack_channel_id, "channel_name": case.slack_channel_name,
+            "listen": bool(case.slack_listen),
+            "url": war_room_url(integ.team_id if integ else None, case.slack_channel_id)}
+
+
+async def _tenant_case(db, tenant_id: int, case_id: int) -> Case:
+    case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@router.post("/{case_id}/war-room")
+async def open_case_war_room(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    body: WarRoomOpen,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Open a private Slack channel for the case, optionally with SOC-bot listening."""
+    from app.services.slack_bot import open_war_room
+    case = await _tenant_case(db, tenant_id, case_id)
+    if case.slack_channel_id:
+        raise HTTPException(status_code=409, detail="This case already has a war room")
+    try:
+        await open_war_room(db, tenant_id, case, current_user, None, name=body.name, listen=body.listen)
+    except SlackError as e:
+        await db.rollback()
+        detail = (f"The Slack app is missing the groups:write scope needed to create private channels; "
+                  f"add it and reinstall the app" if e.code == "missing_scope" else str(e) or e.code or "Slack error")
+        raise HTTPException(status_code=400, detail=detail)
+    await create_audit_log(db, "case", case.id, "war_room_opened", tenant_id, user_id=current_user.id,
+                           changes={"channel": case.slack_channel_name, "listen": bool(case.slack_listen)})
+    await db.commit()
+    return await _war_room_body(db, tenant_id, case)
+
+
+@router.patch("/{case_id}/war-room")
+async def set_war_room_listen(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    body: WarRoomListen,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    case = await _tenant_case(db, tenant_id, case_id)
+    if not case.slack_channel_id:
+        raise HTTPException(status_code=409, detail="This case has no war room")
+    old = bool(case.slack_listen)
+    if old != body.listen:
+        case.slack_listen = body.listen
+        await create_audit_log(db, "case", case.id, "war_room_listen_changed", tenant_id, user_id=current_user.id,
+                               changes={"listen": {"old": old, "new": body.listen}})
+        await db.commit()
+    return await _war_room_body(db, tenant_id, case)
 
 
 # ── Timeline Events CRUD ──────────────────────────────────────────
