@@ -3,7 +3,7 @@ import copy
 import logging
 import secrets as _stdlib_secrets
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
@@ -364,7 +364,7 @@ async def execute_step(step_id: int) -> None:
             await _cancel_deactivated(run_id)
             return
         step.status = "running"
-        step.started_at = step.started_at or _now()
+        step.started_at = _now()  # start of the latest attempt (the reaper measures from it)
         await db.commit()
 
         node = _node(run.graph_snapshot, step.node_id)
@@ -477,20 +477,23 @@ def step_hard_limit_seconds() -> int:
     return int(execute_step_task.time_limit or celery_app.conf.task_time_limit or 0)
 
 
-async def reap_stuck_steps() -> List[int]:
+async def reap_stuck_steps(step_ids: Optional[Iterable[int]] = None) -> List[int]:
     """Beat sweep: a hard kill / worker crash leaves a step `running` forever (the task is acked, never
     redelivered). Fail steps running longer than the hard limit + margin and advance their runs through the
     normal failure path (error branches, finalize_run, loop slot release). `waiting` steps are not touched.
-    Returns the reaped step ids."""
+    Returns the reaped step ids. `step_ids` restricts the sweep (tests only; beat passes None)."""
     from app.tasks.workflows import advance_run_task
 
     cutoff = _now() - timedelta(seconds=step_hard_limit_seconds() + REAP_MARGIN_SECONDS)
+    only = list(step_ids) if step_ids is not None else None
     reaped, run_ids = [], []
     for _ in range(_REAP_MAX_BATCHES):
         async with AsyncSessionLocal() as db:
+            q = select(WorkflowRunStep).where(WorkflowRunStep.status == "running", WorkflowRunStep.started_at < cutoff)
+            if only is not None:
+                q = q.where(WorkflowRunStep.id.in_(only))
             steps = (await db.execute(
-                select(WorkflowRunStep)
-                .where(WorkflowRunStep.status == "running", WorkflowRunStep.started_at < cutoff)
+                q
                 .order_by(WorkflowRunStep.id).limit(_REAP_BATCH)
                 .with_for_update(skip_locked=True)
             )).scalars().all()
@@ -503,7 +506,10 @@ async def reap_stuck_steps() -> List[int]:
                     run_ids.append(step.run_id)
             await db.commit()
     for run_id in run_ids:
-        advance_run_task.delay(run_id)
+        try:
+            advance_run_task.delay(run_id)
+        except Exception as e:  # broker outage: the step is already failed; the next advance of this run picks it up
+            logger.warning("could not queue advance for reaped run=%s err=%s", run_id, type(e).__name__)
     if reaped:
         logger.warning("reaped %d stuck workflow steps (runs=%s steps=%s)", len(reaped), run_ids, reaped)
     return reaped

@@ -105,7 +105,7 @@ async def test_stuck_running_step_failed_and_run_finalized(ids, monkeypatch):
         r, s = await run_with_step(db, ids, t, w, "running", limit() + 60)
         await db.commit()
         rid, sid = r.id, s.id
-    assert await runtime.reap_stuck_steps() == [sid]
+    assert await runtime.reap_stuck_steps([sid]) == [sid]
     st = await get(WorkflowRunStep, sid)
     assert st.status == "failed" and st.error == REASON and st.finished_at is not None
     assert sent["advance"] == [rid]
@@ -127,7 +127,7 @@ async def test_loop_child_slot_released(ids, monkeypatch):
         c1, _ = await run_with_step(db, ids, t, w, "pending", 0, parent_step_id=pstep.id, loop_index=1, run_status="queued")
         await db.commit()
         pstep_id, c0id, c1id, s0id = pstep.id, c0.id, c1.id, s0.id
-    assert await runtime.reap_stuck_steps() == [s0id]
+    assert await runtime.reap_stuck_steps([s0id]) == [s0id]
     await runtime.advance_run(c0id)
     assert (await get(WorkflowRun, c0id)).status == "failed"
     assert sent["tick"] == [pstep_id]
@@ -145,10 +145,39 @@ async def test_recent_running_and_waiting_untouched(ids, monkeypatch):
         r2, waiting = await run_with_step(db, ids, t, w, "waiting", limit() + 600)
         await db.commit()
         rec_id, wait_id = recent.id, waiting.id
-    assert await runtime.reap_stuck_steps() == []
+    assert await runtime.reap_stuck_steps([rec_id, wait_id]) == []
     assert (await get(WorkflowRunStep, rec_id)).status == "running"
     assert (await get(WorkflowRunStep, wait_id)).status == "waiting"
     assert sent["advance"] == []
+
+
+@scenario
+async def test_retried_step_measured_from_latest_attempt(ids, monkeypatch):
+    from app.workflows import runtime
+    capture(monkeypatch)
+    async with AsyncSessionLocal() as db:
+        t, w = await setup(db, ids)
+        r, s = await run_with_step(db, ids, t, w, "running", 5)  # fresh started_at of the latest attempt
+        s.attempt = 2
+        await db.commit()
+        sid = s.id
+    assert await runtime.reap_stuck_steps([sid]) == []
+    assert (await get(WorkflowRunStep, sid)).status == "running"
+
+
+@scenario
+async def test_deactivated_tenant_run_ends_cancelled(ids, monkeypatch):
+    from app.workflows import runtime
+    capture(monkeypatch)
+    async with AsyncSessionLocal() as db:
+        t, w = await setup(db, ids)
+        t.is_active = False
+        r, s = await run_with_step(db, ids, t, w, "running", limit() + 60)
+        await db.commit()
+        rid, sid = r.id, s.id
+    assert await runtime.reap_stuck_steps([sid]) == [sid]
+    await runtime.advance_run(rid)
+    assert (await get(WorkflowRun, rid)).status == "cancelled"
 
 
 @scenario
@@ -160,9 +189,9 @@ async def test_reaper_idempotent(ids, monkeypatch):
         r, s = await run_with_step(db, ids, t, w, "running", limit() + 60)
         await db.commit()
         sid = s.id
-    assert await runtime.reap_stuck_steps() == [sid]
+    assert await runtime.reap_stuck_steps([sid]) == [sid]
     first = await get(WorkflowRunStep, sid)
-    assert await runtime.reap_stuck_steps() == []
+    assert await runtime.reap_stuck_steps([sid]) == []
     second = await get(WorkflowRunStep, sid)
     assert (second.status, second.error, second.finished_at) == (first.status, first.error, first.finished_at)
     assert len(sent["advance"]) == 1
