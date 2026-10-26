@@ -310,6 +310,8 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             if (not isinstance(sec, str) or len(sec) > 200
                     or not re.fullmatch(r"\{\{\s*secrets\.[A-Z][A-Z0-9_]{1,63}\s*\}\}", sec.strip())):
                 _err(errors, nid, f"auth.{secret_key} must be a secret reference like {{{{ secrets.NAME }}}}")
+            if "dpop" in auth and not isinstance(auth["dpop"], bool):
+                _err(errors, nid, "auth.dpop must be true or false")
             for k in ("region", "service") if auth.get("type") == "aws_sigv4" else ():
                 v = auth.get(k)
                 if isinstance(v, str) and "{{" not in v and not re.fullmatch(r"[a-z0-9-]{2,32}", v):

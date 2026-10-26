@@ -30,10 +30,12 @@ AUTH_TYPES = ("oauth2_client_credentials", "oauth2_private_key_jwt", "basic", "a
 TOKEN_AUTH_TYPES = ("oauth2_client_credentials", "oauth2_private_key_jwt", "google_service_account")
 CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 _BAD_KEY = "auth.private_key is not a valid PEM or JWK private key"
+_NOT_DPOP = "token is not DPoP-bound — enable Require DPoP on the app or set dpop: false"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # fixed: the key JSON's token_uri is ignored
 _AWS_NAME = re.compile(r"[a-z0-9-]{2,32}")
 # ponytail: per-process cache; move to Redis if workers multiply.
-_TOKENS: dict = {}  # sha256(tenant, token_url, form before signing) -> (access_token, expires_at monotonic)
+# sha256(tenant, token_url, form before signing, dpop) -> (access_token, expires_at monotonic, DPoP key or None)
+_TOKENS: dict = {}
 logger = logging.getLogger(__name__)
 # httpx logs every request URL at INFO ("HTTP Request: GET https://...?key=<secret>"), botocore.auth logs the
 # SigV4 signature at DEBUG: never let that through.
@@ -70,6 +72,7 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
         raise NodeError(str(e))
 
     method = str(config.get("method", "GET")).upper()
+    dpop_key = None
     headers = {str(k): str(v) for k, v in (config.get("headers") or {}).items()}
     auth = config.get("auth")
     if auth not in (None, ""):
@@ -104,8 +107,12 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
         except ValueError:
             raise NodeError("invalid URL") from None
         if auth["type"] in TOKEN_AUTH_TYPES:
-            token = await _oauth_token(nctx, tenant, auth, api_host)
-            headers["Authorization"] = f"Bearer {token}"
+            token, dpop_key, token_key = await _oauth_token(nctx, tenant, auth, api_host)
+            if dpop_key is not None:
+                headers = {k: v for k, v in headers.items() if k.lower() != "dpop"}  # auth wins
+                headers["Authorization"] = f"DPoP {token}"
+            else:
+                headers["Authorization"] = f"Bearer {token}"
             hidden = {**used, "": token}  # "" never reaches _log_secret_use (that logs `used` names only)
         else:
             # Basic/SigV4 credentials go to the request host itself, so normal resolution enforces binding.
@@ -125,7 +132,19 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             hidden = {**used, "": derived}  # "" never reaches _log_secret_use
     outcome = "error"  # also for CancelledError/BaseException: only a completed request is "ok"
     try:
-        out = redact(await _send(url, method, headers, body, pinned_ip, bool(hidden)), hidden)
+        if dpop_key is None:
+            resp = await _send(url, method, headers, body, pinned_ip, bool(hidden))
+        else:
+            # One proof per request. hidden is a fresh dict here (it holds the token), never `used`.
+            hidden["dpop:0"] = headers["DPoP"] = _dpop_proof(dpop_key, method, url, token=token)
+            resp = await _send(url, method, headers, body, pinned_ip, True)
+            nonce_hdr = _header(resp, "dpop-nonce")
+            if resp["status"] == 401 and "use_dpop_nonce" in _header(resp, "www-authenticate") and nonce_hdr:
+                hidden["dpop:1"] = headers["DPoP"] = _dpop_proof(dpop_key, method, url, nonce=nonce_hdr, token=token)
+                resp = await _send(url, method, headers, body, pinned_ip, True)  # exactly one retry
+            if resp["status"] == 401 and "invalid_token" in _header(resp, "www-authenticate"):
+                _TOKENS.pop(token_key, None)  # the next run mints a fresh token
+        out = redact(resp, hidden)
         outcome = "ok"
         return out
     except NodeError as e:
@@ -139,13 +158,14 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             _log_secret_use(nctx.run.tenant_id, used, host, outcome)
 
 
-async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> str:
-    """Client-credentials grant. Same SSRF guard and secret host binding as the main request, checked
-    against the token host. The minted token is a derived credential, so it is bound to the same hosts as
-    the client secret: `api_host` must be allowed by every secret used here. The token is returned to the
-    caller only; never logged or put in output."""
+async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> tuple[str, object, str]:
+    """Client-credentials grant -> (token, DPoP key or None, cache key). Same SSRF guard and secret host
+    binding as the main request, checked against the token host. The minted token is a derived credential,
+    so it is bound to the same hosts as the client secret: `api_host` must be allowed by every secret used
+    here. The token and DPoP key are returned to the caller only; never logged or put in output."""
     google = auth["type"] == "google_service_account"
     pkjwt = auth["type"] == "oauth2_private_key_jwt"
+    dpop = pkjwt and auth.get("dpop") is True  # a real bool only: "false" must not turn it on
     if google:  # JWT-bearer grant, signed below once the key is resolved
         token_url, secret_field, auth_field = GOOGLE_TOKEN_URL, "key", "service_account_key"
         form = {"key": str(auth.get("service_account_key") or ""), "subject": str(auth.get("subject") or ""),
@@ -198,27 +218,45 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
                             "(an OAuth token is bound to the same hosts as its client secret)")
     # Keyed before signing: a signed form is unique per call (iat/jti). scope is in the form; dpop changes the
     # token kind, so it is part of the key too.
-    key = hashlib.sha256(json.dumps([nctx.run.tenant_id, token_url, form, bool(auth.get("dpop", False))],
+    key = hashlib.sha256(json.dumps([nctx.run.tenant_id, token_url, form, dpop],
                                     sort_keys=True).encode()).hexdigest()
     cached = _TOKENS.get(key)
     if cached and cached[1] > time.monotonic():
-        return cached[0]
+        return cached[0], cached[2], key
     if google:
         form = _google_assertion(form)
         used = {**used, "": form["assertion"]}  # redaction only; "" is dropped before _log_secret_use
     elif pkjwt:
-        assertion = _client_assertion(form["client_id"], token_url, form["private_key"], form["key_id"] or None)
+        client_id, private_key, key_id = form["client_id"], form["private_key"], form["key_id"] or None
+        assertion = _client_assertion(client_id, token_url, private_key, key_id)
         form = {"grant_type": "client_credentials", "scope": form["scope"],
                 "client_assertion_type": CLIENT_ASSERTION_TYPE, "client_assertion": assertion}
         used = {**used, "": assertion}  # redaction only; "" is dropped before _log_secret_use
 
+    # Redaction only (assertion and proofs); `used` names are what _log_secret_use logs.
+    hide = dict(used)
+    dpop_key = ec.generate_private_key(ec.SECP256R1()) if dpop else None  # in memory, cached with the token
+
+    async def post(nonce=None):
+        headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
+        if dpop_key is not None:
+            hide[f"dpop:{len(hide)}"] = headers["DPoP"] = _dpop_proof(dpop_key, "POST", token_url, nonce=nonce)
+        return await _send(token_url, "POST", headers, urlencode(form), pinned_ip, True)
+
     outcome = "error"
     try:
-        resp = await _send(token_url, "POST", {"Content-Type": "application/x-www-form-urlencoded",
-                                               "Accept": "application/json"}, urlencode(form), pinned_ip, True)
+        resp = await post()
+        nonce_hdr = _header(resp, "dpop-nonce")
+        if (dpop_key is not None and resp["status"] == 400 and isinstance(resp["body"], dict)
+                and resp["body"].get("error") == "use_dpop_nonce" and nonce_hdr):
+            if pkjwt:  # a fresh assertion: some servers reject a replayed jti
+                form = {**form, "client_assertion": _client_assertion(
+                    client_id, token_url, private_key, key_id)}
+                hide[f"assertion:{len(hide)}"] = form["client_assertion"]
+            resp = await post(nonce_hdr)  # exactly one retry
         outcome = "ok"
     except NodeError as e:
-        raise type(e)(f"token request failed: {redact_text(str(e), used)}") from None
+        raise type(e)(f"token request failed: {redact_text(str(e), hide)}") from None
     except Exception as e:
         raise NodeError(f"token request failed: {type(e).__name__}") from None
     finally:
@@ -230,13 +268,49 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
         raise NodeError(f"token request failed: HTTP {resp['status']}")  # never echo the body
     if any(c in token for c in "\r\n") or not token.isascii():
         raise NodeError("token request failed: unusable access_token")
+    if dpop_key is not None and str(resp["body"].get("token_type") or "").lower() != "dpop":
+        raise NodeError(_NOT_DPOP)
     try:
         ttl = int(resp["body"].get("expires_in") or 0) - 60
     except (TypeError, ValueError):
         ttl = 0
     if ttl > 0:
-        _TOKENS[key] = (token, time.monotonic() + ttl)
-    return token
+        _TOKENS[key] = (token, time.monotonic() + ttl, dpop_key)
+    return token, dpop_key, key
+
+
+def _header(resp: dict, name: str) -> str:
+    """A response header value, matched case-insensitively ("" when absent)."""
+    for k, v in (resp.get("headers") or {}).items():
+        if k.lower() == name:
+            return str(v)
+    return ""
+
+
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _htu(url: str) -> str:
+    """DPoP htu: scheme://host[:port]/path, without userinfo, query or fragment."""
+    parts = urlsplit(url)
+    return f"{parts.scheme.lower()}://{parts.netloc.rpartition('@')[2].lower()}{parts.path or '/'}"
+
+
+def _dpop_proof(key, method: str, url: str, *, nonce: str | None = None, token: str | None = None) -> str:
+    """ES256 DPoP proof (RFC 9449 section 4). The header jwk carries the public key only."""
+    nums = key.public_key().public_numbers()
+    jwk = {"kty": "EC", "crv": "P-256", "x": _b64url(nums.x.to_bytes(32, "big")),
+           "y": _b64url(nums.y.to_bytes(32, "big"))}
+    claims = {"htm": method.upper(), "htu": _htu(url), "iat": int(time.time()), "jti": token_urlsafe(24)}
+    if nonce:
+        claims["nonce"] = nonce
+    if token:
+        claims["ath"] = _b64url(hashlib.sha256(token.encode()).digest())
+    try:
+        return jwt.encode(claims, key, algorithm="ES256", headers={"typ": "dpop+jwt", "jwk": jwk})
+    except Exception:  # never echo library text
+        raise NodeError("DPoP proof signing failed") from None
 
 
 def _google_assertion(form: dict) -> dict:
