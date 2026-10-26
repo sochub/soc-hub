@@ -108,7 +108,7 @@ async def _scenario(queue):
         await db.flush()
         tid, uid = t.id, u.id
         try:
-            for name, hosts in (("OKTA_API_TOKEN", [OKTA]), ("OKTA_RESPONSE_API_TOKEN", [OKTA]),
+            for name, hosts in (("OKTA_READ_PRIVATE_KEY", [OKTA]), ("OKTA_RESPONSE_PRIVATE_KEY", [OKTA]),
                                 ("MS_CLIENT_ID", GRAPH_HOSTS), ("MS_CLIENT_SECRET", GRAPH_HOSTS),
                                 ("ENTRA_RESPONSE_CLIENT_ID", GRAPH_HOSTS), ("ENTRA_RESPONSE_CLIENT_SECRET", GRAPH_HOSTS)):
                 s = TenantSecret(tenant_id=tid, name=name, value_enc=encrypt("x-" + secrets.token_hex(4)), allowed_hosts=hosts)
@@ -153,13 +153,14 @@ async def _scenario(queue):
                          "case_id": None, "alert_id": None, "changes": {}}
 
                 # Okta System Log
-                steps, d = await install_and_run("okta-system-log-pull", {"OKTA_DOMAIN": OKTA},
+                steps, d = await install_and_run("okta-system-log-pull", {"OKTA_DOMAIN": OKTA, "OKTA_CLIENT_ID": "0oaTEST"},
                                                  {"payload": since, "mocks": {"pull": {"status": 200, "headers": {}, "body": OKTA_EVENTS}}})
-                assert d["secret_hosts"] == {"OKTA_API_TOKEN": [OKTA]}
+                assert d["secret_hosts"] == {"OKTA_READ_PRIVATE_KEY": [OKTA]}
                 url = steps["pull"][0][1]["would_do"]["url"]
                 assert url.startswith(f"https://{OKTA}/api/v1/logs?since=2026-10-18T10%3A00%3A00Z&sortOrder=ASCENDING&limit=200&filter=")
                 assert "eventType%20eq%20%22security.threat.detected%22%20or%20" in url and " " not in url and '"' not in url
-                assert "⟦secret:OKTA_API_TOKEN#" in steps["pull"][0][1]["would_do"]["headers"]["Authorization"]
+                assert "Authorization" not in steps["pull"][0][1]["would_do"]["headers"]
+                assert "⟦secret:OKTA_READ_PRIVATE_KEY#" in steps["pull"][0][1]["would_do"]["auth"]["private_key"]
                 got = sorted((o["would_do"]["source"], o["would_do"]["external_id"], o["would_do"]["title"], o["would_do"]["severity"])
                              for _, o in steps["create"])
                 assert got == [
@@ -168,7 +169,7 @@ async def _scenario(queue):
                 ], got
 
                 # Okta: a failed pull writes nothing and fails the run with the status only (never the body)
-                steps, _ = await install_and_run("okta-system-log-pull", {"OKTA_DOMAIN": OKTA},
+                steps, _ = await install_and_run("okta-system-log-pull", {"OKTA_DOMAIN": OKTA, "OKTA_CLIENT_ID": "0oaTEST"},
                                                  {"payload": since, "mocks": {"pull": {"status": 401, "headers": {},
                                                                                        "body": {"errorCode": "E0000011", "errorSummary": "Invalid token provided"}}}},
                                                  expect="failed")
@@ -223,7 +224,7 @@ async def _scenario(queue):
                 # Okta containment
                 lookup = {"status": 200, "headers": {}, "body": {"id": "00u1abcd", "status": "ACTIVE",
                                                                  "profile": {"login": "olack@adatum.com"}}}
-                steps, _ = await install_and_run("okta-contain-user", {"OKTA_DOMAIN": OKTA},
+                steps, _ = await install_and_run("okta-contain-user", {"OKTA_DOMAIN": OKTA, "OKTA_CLIENT_ID": "0oaTEST"},
                                                  {"case_id": ids["case"], "mocks": {"lookup": lookup}})
                 assert steps["lookup"][0][1]["would_do"]["url"] == f"https://{OKTA}/api/v1/users/olack%40adatum.com"
                 assert steps["suspend"][0][1]["would_do"]["method"] == "POST"

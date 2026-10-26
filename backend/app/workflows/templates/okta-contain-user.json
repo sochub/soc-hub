@@ -11,19 +11,25 @@
       "key": "OKTA_DOMAIN",
       "label": "Okta domain",
       "placeholder": "acme.okta.com",
-      "help": "Your Okta org host name, without https://."
+      "help": "Your Okta org host name, without https://. A custom domain works too."
+    },
+    {
+      "key": "OKTA_CLIENT_ID",
+      "label": "API Services app client ID",
+      "placeholder": "0oa1b2c3d4e5f6g7h8i9",
+      "help": "Client ID of the Okta API Services app integration (General > Client Credentials)."
     }
   ],
   "secrets": [
     {
-      "name": "OKTA_RESPONSE_API_TOKEN",
-      "description": "Okta API token created by an admin allowed to suspend users and clear sessions (Organization Administrator, or Group Administrator for the groups you protect).",
+      "name": "OKTA_RESPONSE_PRIVATE_KEY",
+      "description": "Private key of the Okta API Services app (JWK JSON or PEM). The app needs the Help Desk Administrator or Organization Administrator admin role.",
       "hosts": [
         "%%OKTA_DOMAIN%%"
       ]
     }
   ],
-  "setup": "### Okta side\n1. Use a dedicated admin account with **Organization Administrator** (or **Group Administrator** scoped to the groups this may act on). Read-Only Administrator cannot suspend users or clear sessions. Super administrators can only be acted on by a super administrator.\n2. As that admin: Security > API > Tokens > **Create token**.\n\n### Here\n1. Settings > Secrets: add `OKTA_RESPONSE_API_TOKEN` with allowed host = your Okta domain. It is a separate secret from the read-only pull token on purpose.\n2. Install with `OKTA_DOMAIN`, enable, then use **Run workflow** on a case.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact. With no target it only writes a note.\n1. `GET /api/v1/users/<login>` (accepts an ID, login or unambiguous short name) to get the user ID; not found → note, nothing else.\n2. `POST /api/v1/users/<id>/lifecycle/suspend` (only works on ACTIVE users; a 400 means it was not active).\n3. `DELETE /api/v1/users/<id>/sessions?oauthTokens=true` (revokes Okta sessions plus OIDC/OAuth tokens; sessions inside downstream apps are not cleared).\n4. Note with both HTTP statuses (200 and 204 are success). Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.\n\nDocs: [Users lifecycle](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserLifecycle/#tag/UserLifecycle/operation/suspendUser), [Revoke user sessions](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserSessions/#tag/UserSessions/operation/revokeUserSessions), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm).",
+  "setup": "### Okta side\n1. Applications > Create App Integration > **API Services**.\n2. General > Client Credentials > Client authentication **Public key / Private key**. Keep **Require Demonstrating Proof of Possession (DPoP) header in token requests** ON. Add key > **Generate new key**, and copy the private key (JSON or PEM) and its `kid`.\n3. **Okta API Scopes** > Grant `okta.users.manage`.\n4. **Admin roles** > assign the role: **Help Desk Administrator** or **Organization Administrator** (a Help Desk admin can't act on admins).\n\n### Here\n1. Settings > Secrets: add `OKTA_RESPONSE_PRIVATE_KEY` (paste the private key; allowed host = your Okta domain).\n2. Install with `OKTA_DOMAIN` and `OKTA_CLIENT_ID`. Paste the private key as a JWK (it includes the `kid`); a PEM key has no `kid`, so also set `key_id` in the auth block of each HTTP step.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact. With no target it only writes a note.\n1. `GET /api/v1/users/<login>` (accepts an ID, login or unambiguous short name) to get the user ID; not found > note, nothing else.\n2. `POST /api/v1/users/<id>/lifecycle/suspend` (only works on ACTIVE users; a 400 means it was not active).\n3. `DELETE /api/v1/users/<id>/sessions?oauthTokens=true` (revokes Okta sessions plus OIDC/OAuth tokens; sessions inside downstream apps are not cleared).\n4. Note with both HTTP statuses (200 and 204 are success). Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.\n\nDocs: [Users lifecycle](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserLifecycle/#tag/UserLifecycle/operation/suspendUser), [Revoke user sessions](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserSessions/#tag/UserSessions/operation/revokeUserSessions), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm).",
   "graph": {
     "nodes": [
       {
@@ -68,8 +74,15 @@
           "method": "GET",
           "url": "https://%%OKTA_DOMAIN%%/api/v1/users/{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) | urlencode }}",
           "headers": {
-            "Authorization": "SSWS {{ secrets.OKTA_RESPONSE_API_TOKEN }}",
             "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_private_key_jwt",
+            "token_url": "https://%%OKTA_DOMAIN%%/oauth2/v1/token",
+            "client_id": "%%OKTA_CLIENT_ID%%",
+            "private_key": "{{ secrets.OKTA_RESPONSE_PRIVATE_KEY }}",
+            "scope": "okta.users.manage",
+            "dpop": true
           }
         }
       },
@@ -106,8 +119,15 @@
           "method": "POST",
           "url": "https://%%OKTA_DOMAIN%%/api/v1/users/{{ steps.lookup.output.body.id | urlencode }}/lifecycle/suspend",
           "headers": {
-            "Authorization": "SSWS {{ secrets.OKTA_RESPONSE_API_TOKEN }}",
             "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_private_key_jwt",
+            "token_url": "https://%%OKTA_DOMAIN%%/oauth2/v1/token",
+            "client_id": "%%OKTA_CLIENT_ID%%",
+            "private_key": "{{ secrets.OKTA_RESPONSE_PRIVATE_KEY }}",
+            "scope": "okta.users.manage",
+            "dpop": true
           }
         }
       },
@@ -122,8 +142,15 @@
           "method": "DELETE",
           "url": "https://%%OKTA_DOMAIN%%/api/v1/users/{{ steps.lookup.output.body.id | urlencode }}/sessions?oauthTokens=true",
           "headers": {
-            "Authorization": "SSWS {{ secrets.OKTA_RESPONSE_API_TOKEN }}",
             "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_private_key_jwt",
+            "token_url": "https://%%OKTA_DOMAIN%%/oauth2/v1/token",
+            "client_id": "%%OKTA_CLIENT_ID%%",
+            "private_key": "{{ secrets.OKTA_RESPONSE_PRIVATE_KEY }}",
+            "scope": "okta.users.manage",
+            "dpop": true
           }
         }
       },
