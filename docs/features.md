@@ -6,6 +6,20 @@ Create and work security cases with severity/status, tags, a description, an
 activity **timeline**, attached **artifacts** and **IOCs**, and an **audit trail**.
 Cases gain a **Tasks** tab when a playbook is applied.
 
+**Incident milestones.** Every case has four milestones: **First seen**, **Detected**, **Contained** and
+**Recovered**. Each is computed from case data (earliest IOC or alert, case creation, last completed containment
+task, resolution) until an analyst declares an exact time. Declare them from **Edit milestones** on the glance,
+the report's Milestones panel, a Timeline event's **Set as…** menu, or the **Incident started** field when
+creating a case (it is only used if you change it from "now"). The glance, the report and the TTD/TTC/TTR
+durations all read the same values. Saving a time that would put milestones out of order is refused; an
+inconsistency that already existed in the computed values never blocks an unrelated edit.
+
+**Incident at a glance** (Activity tab) shows the incident on one time axis: milestone markers, status phases and
+only the items you chose. Status and severity changes always appear; investigation events appear when pinned
+(the flag on the event); activity entries appear when pinned from the **Timeline** tab. A declared First seen
+earlier than the case adds a "before case" phase. The **Timeline** tab lists investigation events and activity
+entries together, filterable by **All / Investigation / Activity** and **Pinned**.
+
 ## Multi-tenancy
 
 One account can belong to **many tenants** with a **different role per tenant**.

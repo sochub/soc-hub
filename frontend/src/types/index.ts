@@ -255,6 +255,7 @@ export interface TimelineEvent {
   guest_email?: string | null;
   via?: string | null;
   via_client?: string | null;
+  pinned?: boolean;
 }
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';
@@ -274,6 +275,7 @@ export interface Case {
   guest_summary?: string | null;
   outcome?: string | null;
   closing_note?: string | null;
+  milestones?: ReportMilestones | null;
 
   sla_response_target_minutes?: number | null;
   sla_response_status?: SLAStatus | null;
@@ -351,7 +353,7 @@ export type MilestoneKey = 'first_seen' | 'detected' | 'contained' | 'recovered'
 
 export interface ReportMilestone {
   at: string | null;
-  source: 'override' | 'computed' | 'unknown';
+  source: 'declared' | 'computed' | 'unknown';
 }
 
 export type ReportMilestones = Record<MilestoneKey, ReportMilestone> & {
@@ -366,10 +368,6 @@ export interface CaseReportFields {
   impact: string | null;
   lessons_learned: string | null;
   tlp: TLPLevel;
-  first_seen_at: string | null;
-  detected_at: string | null;
-  contained_at: string | null;
-  recovered_at: string | null;
   updated_by_email: string | null;
   updated_at: string | null;
 }
