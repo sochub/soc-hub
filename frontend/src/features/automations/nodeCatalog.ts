@@ -72,7 +72,7 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'url', label: 'URL', kind: 'text', required: true, placeholder: 'https://hooks.example.com/{{ case.id }}' },
             { key: 'headers', label: 'Headers (JSON)', kind: 'json', placeholder: '{"Authorization": "Bearer ..."}' },
             { key: 'body', label: 'Body (JSON or text)', kind: 'json' },
-            { key: 'auth', label: 'Auth (JSON, optional)', kind: 'json', placeholder: '{"type": "oauth2_client_credentials", "token_url": "https://login.example.com/oauth2/token", "client_id": "...", "client_secret": "{{ secrets.CLIENT_SECRET }}", "scope": "..."}', help: 'type: oauth2_client_credentials (token_url, client_id, client_secret, scope?), basic (username, password) aws_sigv4 (access_key_id, secret_access_key, session_token?, region, service) or google_service_account (service_account_key, scopes, subject?). The secret field must be {{ secrets.NAME }}; tokens, headers and signatures never reach output' },
+            { key: 'auth', label: 'Auth (JSON, optional)', kind: 'json', placeholder: '{"type": "oauth2_client_credentials", "token_url": "https://login.example.com/oauth2/token", "client_id": "...", "client_secret": "{{ secrets.CLIENT_SECRET }}", "scope": "..."}', help: 'type: oauth2_client_credentials (token_url, client_id, client_secret, scope?), basic (username, password) aws_sigv4 (access_key_id, secret_access_key, session_token?, region, service), google_service_account (service_account_key, scopes, subject?) or oauth2_private_key_jwt (token_url, client_id, private_key, scope, key_id?, dpop?). The secret field must be {{ secrets.NAME }}; tokens, headers and signatures never reach output' },
         ],
     },
     {

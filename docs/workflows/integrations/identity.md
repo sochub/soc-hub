@@ -84,6 +84,22 @@ workflow only writes a note. Steps: `GET /api/v1/users/<login>` to resolve the u
 `DELETE /api/v1/users/<id>/sessions?oauthTokens=true` (204; also revokes OIDC/OAuth tokens, but not sessions held
 by downstream apps); then a note with both HTTP statuses. Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.
 
+### Response: `okta-suspend-user`
+
+Same target and user lookup as `okta-contain-user`, but only `POST /api/v1/users/<id>/lifecycle/suspend`, then a note
+with the HTTP status. Sessions and tokens are not revoked. Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.
+
+### Response: `okta-reset-authenticators`
+
+Same target and lookup; `POST /api/v1/users/<id>/lifecycle/reset_factors` removes every enrolled authenticator, so
+the user must re-enroll. Sessions are not revoked (use `okta-contain-user` for that). There is no undo.
+
+### Notes
+
+- If a user lookup returns 403, also grant the app `okta.users.read`.
+- Workflows installed earlier with an API token (SSWS) keep working until they are reinstalled; reinstalling uses the
+  API Services app described above.
+
 ### Rate limits and ceilings
 
 - `limit=200` per run (Okta allows 0-1000; default 100).
