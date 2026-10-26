@@ -57,11 +57,12 @@ def test_contained_set_queues_card_after_commit(delays):
         async with AsyncSessionLocal() as db:
             t = await make_tenant(db, ids)
             c = await make_case(db, ids, t)
+            u, _ = await _member(db, ids, t)
             case = await db.get(Case, c.id)
-            await set_milestones(db, case, {"contained_at": AT}, 7)
+            await set_milestones(db, case, {"contained_at": AT}, u.id)
             assert delays == []
             await db.commit()
-        assert delays == [(t.id, "containment.confirmed", c.id, {"at": AT.isoformat(), "user_id": 7})]
+        assert delays == [(t.id, "containment.confirmed", c.id, {"at": AT.isoformat(), "user_id": u.id})]
     run(body)
 
 
@@ -70,8 +71,9 @@ def test_rollback_drops_queued_card(delays):
         async with AsyncSessionLocal() as db:
             t = await make_tenant(db, ids)
             c = await make_case(db, ids, t)
+            u, _ = await _member(db, ids, t)
             case = await db.get(Case, c.id)
-            await set_milestones(db, case, {"contained_at": AT}, 7)
+            await set_milestones(db, case, {"contained_at": AT}, u.id)
             await db.rollback()
             await db.commit()
         assert delays == []
@@ -82,8 +84,9 @@ async def _set_twice(ids, first, second):
     async with AsyncSessionLocal() as db:
         t = await make_tenant(db, ids)
         c = await make_case(db, ids, t, **({"contained_at": first} if first else {}))
+        u, _ = await _member(db, ids, t)  # a real user: the audit row's user_id is a foreign key
         case = await db.get(Case, c.id)
-        await set_milestones(db, case, {"contained_at": second}, 7)
+        await set_milestones(db, case, {"contained_at": second}, u.id)
         await db.commit()
 
 
