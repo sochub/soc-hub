@@ -2,7 +2,7 @@ import { useState } from 'react';
 import QRCode from 'qrcode';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Input, Label } from '../../components/ui';
-import { guestApi, guestError, guestToken } from './guestApi';
+import { guestApi, guestError, guestSession } from './guestApi';
 
 interface GuestMe { email: string; has_account: boolean; mfa_enabled: boolean; amr: string }
 interface Setup { otpauth_uri: string; secret: string; qr: string | null }
@@ -11,7 +11,7 @@ interface Setup { otpauth_uri: string; secret: string; qr: string | null }
 export default function GuestSecurityPanel() {
     const { data: me } = useQuery({
         queryKey: ['guest-me'], queryFn: async () => (await guestApi.get('/me')).data as GuestMe,
-        enabled: !!guestToken.get(),
+        enabled: guestSession.active(),
     });
     const [open, setOpen] = useState(false);
     const [setup, setSetup] = useState<Setup | null>(null);
@@ -35,12 +35,12 @@ export default function GuestSecurityPanel() {
         setSetup({ otpauth_uri: data.otpauth_uri, secret: data.secret, qr });
     }, 'Could not start two-factor setup.');
     const enable = (e: React.FormEvent) => { e.preventDefault(); void run(async () => {
-        const { data } = await guestApi.post('/auth/mfa/enable', { password, code });
-        reset(); guestToken.set(data.access_token); setNotice('Two-factor authentication is on.');
+        await guestApi.post('/auth/mfa/enable', { password, code });
+        reset(); guestSession.mark(); setNotice('Two-factor authentication is on.');
     }, 'Could not enable two-factor authentication.'); };
     const disable = (e: React.FormEvent) => { e.preventDefault(); void run(async () => {
-        const { data } = await guestApi.post('/auth/mfa/disable', { password, code });
-        reset(); guestToken.set(data.access_token); setNotice('Two-factor authentication is off.');
+        await guestApi.post('/auth/mfa/disable', { password, code });
+        reset(); guestSession.mark(); setNotice('Two-factor authentication is off.');
     }, 'Could not turn off two-factor authentication.'); };
 
     const creds = (

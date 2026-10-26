@@ -16,7 +16,7 @@ from app.api import deps
 from app.api.v1.auth import _safe_domain
 from app.audit.events import audit_event
 from app.api.v1.mfa import LOGIN_EXPIRED, get_mfa_throttle, get_redis, spend_mfa_challenge, verify_totp
-from app.core import security, totp
+from app.core import security, session_cookie, totp
 from app.core.config import settings
 from app.core.login_throttle import LoginThrottle, client_ip, get_login_throttle
 from app.core.passwords import validate_password_strength
@@ -72,8 +72,13 @@ class PasswordCodeIn(BaseModel):
     code: str = Field(max_length=16)
 
 
-def _token(tok: str) -> dict:
-    return {"access_token": tok, "token_type": "bearer"}
+def _issue(request: Request, response: Response, tok: str) -> dict:
+    """Start the browser guest session as an HttpOnly cookie; only non-browser API clients get the token."""
+    session_cookie.set_guest(response, tok, int(tokens.SESSION_TTL.total_seconds()))
+    body = {"token_type": "bearer"}
+    if session_cookie.is_api_client(request):
+        body["access_token"] = tok
+    return body
 
 
 def _check_password(pw: str) -> None:
@@ -113,16 +118,16 @@ async def _login_event(request: Request, amr: str, email: Optional[str] = None, 
 
 
 @router.post("/link")
-async def link_login(request: Request, body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
+async def link_login(request: Request, response: Response, body: LinkIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
     known: dict = {}  # grant email / tenant once the link resolves to a grant
     try:
-        return await _link_login(request, body, db, known)
+        return await _link_login(request, response, body, db, known)
     except HTTPException:
         await _login_event(request, "link", known.get("email"), tenant_id=known.get("tenant_id"), ok=False)
         raise
 
 
-async def _link_login(request: Request, body: LinkIn, db: AsyncSession, known: dict) -> Any:
+async def _link_login(request: Request, response: Response, body: LinkIn, db: AsyncSession, known: dict) -> Any:
     try:
         grant_id = int(tokens.decode(body.token, tokens.LINK)["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
@@ -141,7 +146,20 @@ async def _link_login(request: Request, body: LinkIn, db: AsyncSession, known: d
                            tenant_id=tenant.id, changes={"actor": f"guest:{grant.email}"})
     await db.commit()
     await _login_event(request, "link", grant.email, tenant_id=tenant.id)
-    return _token(tokens.issue_session(grant.email, "link", link_tenant_id=tenant.id))
+    return _issue(request, response, tokens.issue_session(grant.email, "link", link_tenant_id=tenant.id))
+
+
+@router.post("/logout", status_code=204)
+async def logout(request: Request) -> Response:
+    """Drop the guest session cookie. Guest sessions have no server-side row, so this ends the browser session
+    only. Needs the CSRF header when a cookie is presented; a credential-less (cross-site) POST changes nothing."""
+    present = session_cookie.GUEST_COOKIE in request.cookies
+    if present and session_cookie.CSRF_HEADER not in request.headers:
+        raise HTTPException(status_code=403, detail="Missing X-Requested-With header")
+    out = Response(status_code=204)
+    if present:
+        session_cookie.clear_guest(out)
+    return out
 
 
 @router.post("/register", status_code=202)
@@ -160,16 +178,16 @@ async def register(request: Request, background_tasks: BackgroundTasks, db: Asyn
 
 
 @router.post("/register/confirm")
-async def register_confirm(request: Request, body: ResetIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
+async def register_confirm(request: Request, response: Response, body: ResetIn, db: AsyncSession = Depends(deps.get_db)) -> Any:
     known: dict = {}
     try:
-        return await _register_confirm(request, body, db, known)
+        return await _register_confirm(request, response, body, db, known)
     except HTTPException:
         await _login_event(request, "register", known.get("email"), ok=False)
         raise
 
 
-async def _register_confirm(request: Request, body: ResetIn, db: AsyncSession, known: dict) -> Any:
+async def _register_confirm(request: Request, response: Response, body: ResetIn, db: AsyncSession, known: dict) -> Any:
     bad = HTTPException(status_code=400, detail=BAD_LINK)
     try:
         email = normalize_email(tokens.decode(body.token, tokens.REGISTER)["sub"])
@@ -192,20 +210,20 @@ async def _register_confirm(request: Request, body: ResetIn, db: AsyncSession, k
     await _audit_grants(db, email, "guest_account_created")
     await db.commit()
     await _login_event(request, "register", email)
-    return _token(tokens.issue_session(email, "password", gav=acct.token_version or 0))
+    return _issue(request, response, tokens.issue_session(email, "password", gav=acct.token_version or 0))
 
 
 @router.post("/login")
-async def login(request: Request, body: LoginIn, db: AsyncSession = Depends(deps.get_db),
+async def login(request: Request, response: Response, body: LoginIn, db: AsyncSession = Depends(deps.get_db),
                 throttle: LoginThrottle = Depends(get_guest_throttle)) -> Any:
     try:
-        return await _login(request, body, db, throttle)
+        return await _login(request, response, body, db, throttle)
     except HTTPException:
         await _login_event(request, "password", normalize_email(body.email), ok=False)
         raise
 
 
-async def _login(request: Request, body: LoginIn, db: AsyncSession, throttle: LoginThrottle) -> Any:
+async def _login(request: Request, response: Response, body: LoginIn, db: AsyncSession, throttle: LoginThrottle) -> Any:
     email, ip = normalize_email(body.email), client_ip(request)
     bad = HTTPException(status_code=401, detail=BAD_LOGIN)
     if len(email) > 320 or not _EMAIL_RE.match(email):
@@ -225,21 +243,21 @@ async def _login(request: Request, body: LoginIn, db: AsyncSession, throttle: Lo
     await _audit_grants(db, email, "guest_password_login")
     await db.commit()
     await _login_event(request, "password", email)
-    return _token(tokens.issue_session(email, "password", gav=acct.token_version or 0))
+    return _issue(request, response, tokens.issue_session(email, "password", gav=acct.token_version or 0))
 
 
 @router.post("/login/mfa")
-async def login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession = Depends(deps.get_db),
+async def login_mfa(request: Request, response: Response, body: MfaLoginIn, db: AsyncSession = Depends(deps.get_db),
                     redis=Depends(get_redis), throttle: LoginThrottle = Depends(get_mfa_throttle)) -> Any:
     known: dict = {}
     try:
-        return await _login_mfa(request, body, db, redis, throttle, known)
+        return await _login_mfa(request, response, body, db, redis, throttle, known)
     except HTTPException:
         await _login_event(request, "mfa", known.get("email"), ok=False)
         raise
 
 
-async def _login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession, redis, throttle: LoginThrottle,
+async def _login_mfa(request: Request, response: Response, body: MfaLoginIn, db: AsyncSession, redis, throttle: LoginThrottle,
                      known: dict) -> Any:
     expired = HTTPException(status_code=401, detail=LOGIN_EXPIRED)
     try:
@@ -256,7 +274,7 @@ async def _login_mfa(request: Request, body: MfaLoginIn, db: AsyncSession, redis
     await _audit_grants(db, acct.email, "guest_mfa_login")
     await db.commit()
     await _login_event(request, "mfa", acct.email)
-    return _token(tokens.issue_session(acct.email, "password", gav=acct.token_version or 0))
+    return _issue(request, response, tokens.issue_session(acct.email, "password", gav=acct.token_version or 0))
 
 
 @router.post("/forgot", status_code=202)
@@ -314,7 +332,7 @@ async def mfa_setup(db: AsyncSession = Depends(deps.get_db), s: GuestSession = D
 
 
 @router.post("/mfa/enable")
-async def mfa_enable(request: Request, body: PasswordCodeIn, db: AsyncSession = Depends(deps.get_db),
+async def mfa_enable(request: Request, response: Response, body: PasswordCodeIn, db: AsyncSession = Depends(deps.get_db),
                      s: GuestSession = Depends(get_current_guest), redis=Depends(get_redis),
                      throttle: LoginThrottle = Depends(get_mfa_throttle),
                      pw_throttle: LoginThrottle = Depends(get_guest_throttle)) -> Any:
@@ -330,11 +348,11 @@ async def mfa_enable(request: Request, body: PasswordCodeIn, db: AsyncSession = 
     acct.token_version = (acct.token_version or 0) + 1
     await _audit_grants(db, acct.email, "guest_mfa_enabled")
     await db.commit()
-    return _token(tokens.issue_session(acct.email, "password", gav=acct.token_version))
+    return _issue(request, response, tokens.issue_session(acct.email, "password", gav=acct.token_version))
 
 
 @router.post("/mfa/disable")
-async def mfa_disable(request: Request, body: PasswordCodeIn, db: AsyncSession = Depends(deps.get_db),
+async def mfa_disable(request: Request, response: Response, body: PasswordCodeIn, db: AsyncSession = Depends(deps.get_db),
                       s: GuestSession = Depends(get_current_guest), redis=Depends(get_redis),
                       throttle: LoginThrottle = Depends(get_mfa_throttle),
                       pw_throttle: LoginThrottle = Depends(get_guest_throttle)) -> Any:
@@ -347,4 +365,4 @@ async def mfa_disable(request: Request, body: PasswordCodeIn, db: AsyncSession =
     acct.token_version = (acct.token_version or 0) + 1
     await _audit_grants(db, acct.email, "guest_mfa_disabled")
     await db.commit()
-    return _token(tokens.issue_session(acct.email, "password", gav=acct.token_version))
+    return _issue(request, response, tokens.issue_session(acct.email, "password", gav=acct.token_version))

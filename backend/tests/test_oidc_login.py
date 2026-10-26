@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select
 from app.api import deps
 from app.api.v1 import sso as sso_mod
 from app.core.config import settings
-from app.core.session_cookie import COOKIE
+from app.core.session_cookie import COOKIE, GUEST_COOKIE
 from app.db.session import AsyncSessionLocal
 from app.guests import tokens
 from app.main import app
@@ -381,8 +381,8 @@ def test_oidc_guest_login(monkeypatch):
         assert r.headers["location"].endswith(f"/auth/oidc/{t.slug}/login?guest=1")
         r = await _flow(c, idp, t.slug, guest=True)
         loc = r.headers["location"]
-        assert r.status_code == 303 and "/guest/sso#token=" in loc, loc
-        tok = unquote(loc.split("#token=", 1)[1])
+        assert r.status_code == 303 and loc.endswith("/guest/sso"), loc  # the session is the HttpOnly cookie
+        tok = r.cookies[GUEST_COOKIE]
         p = tokens.decode(tok, tokens.SESSION)
         assert p["amr"] == "sso" and p["sso_tenant_id"] == t.id and p["sso_proto"] == "oidc" and p["email"] == e
         assert (await c.get(f"/api/v1/guest/cases/{case.id}", headers={"Authorization": f"Bearer {tok}"})

@@ -17,7 +17,7 @@ from app.api.v1.auth import _safe_domain
 from app.audit.events import audit_event
 from app.auth import web
 from app.auth.login_policy import AMR_OIDC, AMR_SAML
-from app.core import security
+from app.core import security, session_cookie
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
 from app.guests import tokens as guest_tokens
@@ -123,7 +123,9 @@ async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: 
     await audit_event("security", "guest.login.sso", request=request, actor=f"guest:{email}", tenant_id=tenant.id)
     token = guest_tokens.issue_session(email, "sso", sso_tenant_id=tenant.id, sso_proto=proto)
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    return RedirectResponse(f"{base}/guest/sso#token={quote(token)}", status_code=303)
+    out = RedirectResponse(f"{base}/guest/sso", status_code=303)  # the token rides only in the HttpOnly cookie
+    session_cookie.set_guest(out, token, int(guest_tokens.SESSION_TTL.total_seconds()))
+    return out
 
 
 async def _tenant_and_config(db: AsyncSession, slug: str):

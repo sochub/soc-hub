@@ -17,6 +17,10 @@ COOKIE = "sochub_session"
 REFRESH_COOKIE = "sochub_refresh"
 REFRESH_PATH = "/api/v1/auth"  # refresh and logout (which revokes by it) only
 CSRF_HEADER = "x-requested-with"
+# Guest-portal sessions: their own cookie, sent only to the guest API, so a guest credential never reaches a
+# member route and the member cookie is never read by a guest route (the JWT purpose claim is checked too).
+GUEST_COOKIE = "sochub_guest"
+GUEST_PATH = "/api/v1/guest"
 _SAFE = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
@@ -43,17 +47,26 @@ def clear_refresh(response: Response) -> None:
     response.delete_cookie(REFRESH_COOKIE, path=REFRESH_PATH, httponly=True, samesite="strict", secure=_secure())
 
 
+def set_guest(response: Response, token: str, max_age: int) -> None:
+    response.set_cookie(GUEST_COOKIE, token, max_age=max_age, path=GUEST_PATH,
+                        httponly=True, samesite="strict", secure=_secure())
+
+
+def clear_guest(response: Response) -> None:
+    response.delete_cookie(GUEST_COOKIE, path=GUEST_PATH, httponly=True, samesite="strict", secure=_secure())
+
+
 def is_api_client(request: Request) -> bool:
     """Neither the SPA (CSRF header) nor a cookie-authenticated caller: tokens may go in the body."""
     return getattr(request.state, "auth_via", None) != "cookie" and CSRF_HEADER not in request.headers
 
 
-def request_token(request: Request, header_token: Optional[str]) -> Optional[str]:
+def request_token(request: Request, header_token: Optional[str], cookie: str = COOKIE) -> Optional[str]:
     """The bearer header if sent, else the session cookie (enforcing the CSRF header on unsafe methods)."""
     if header_token:
         request.state.auth_via = "bearer"
         return header_token
-    token = request.cookies.get(COOKIE)
+    token = request.cookies.get(cookie)
     if not token:
         return None
     if request.method not in _SAFE and CSRF_HEADER not in request.headers:
