@@ -47,6 +47,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.workflows.expire_waits_task",
         "schedule": 60.0,
     },
+    "reap-stuck-workflow-steps": {
+        "task": "app.tasks.workflows.reap_stuck_steps_task",
+        "schedule": 300.0,
+    },
     "run-workflow-schedules": {
         "task": "app.tasks.workflows.run_schedules_task",
         "schedule": 60.0,

@@ -51,6 +51,12 @@ def expire_waits_task():
 
 
 @celery_app.task(acks_late=True)
+def reap_stuck_steps_task():
+    from app.workflows.runtime import reap_stuck_steps
+    _run_async(reap_stuck_steps())
+
+
+@celery_app.task(acks_late=True)
 def withdraw_messages_task(targets):
     from app.workflows.runtime import withdraw_messages
     _run_async(withdraw_messages(targets))

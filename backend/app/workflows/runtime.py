@@ -31,6 +31,10 @@ _ACTIVE_STEP = {"pending", "running", "waiting"}
 _TERMINAL_RUN = {"succeeded", "failed", "cancelled"}
 _BACKOFF = [10, 60]
 STEP_TIMED_OUT = "step timed out"
+STEP_REAPED = "step did not finish (worker limit or crash)"
+REAP_MARGIN_SECONDS = 120
+_REAP_BATCH = 50
+_REAP_MAX_BATCHES = 20
 
 
 def _now():
@@ -463,6 +467,46 @@ async def fail_timed_out_step(step_id: int) -> None:
         run_id = step.run_id
         await db.commit()
     advance_run_task.delay(run_id)
+
+
+def step_hard_limit_seconds() -> int:
+    """The hard time limit of the step task, read from the worker config (task override, else the default)."""
+    from app.tasks.workflows import execute_step_task
+    from app.worker import celery_app
+
+    return int(execute_step_task.time_limit or celery_app.conf.task_time_limit or 0)
+
+
+async def reap_stuck_steps() -> List[int]:
+    """Beat sweep: a hard kill / worker crash leaves a step `running` forever (the task is acked, never
+    redelivered). Fail steps running longer than the hard limit + margin and advance their runs through the
+    normal failure path (error branches, finalize_run, loop slot release). `waiting` steps are not touched.
+    Returns the reaped step ids."""
+    from app.tasks.workflows import advance_run_task
+
+    cutoff = _now() - timedelta(seconds=step_hard_limit_seconds() + REAP_MARGIN_SECONDS)
+    reaped, run_ids = [], []
+    for _ in range(_REAP_MAX_BATCHES):
+        async with AsyncSessionLocal() as db:
+            steps = (await db.execute(
+                select(WorkflowRunStep)
+                .where(WorkflowRunStep.status == "running", WorkflowRunStep.started_at < cutoff)
+                .order_by(WorkflowRunStep.id).limit(_REAP_BATCH)
+                .with_for_update(skip_locked=True)
+            )).scalars().all()
+            if not steps:
+                break
+            for step in steps:
+                step.status, step.error, step.finished_at = "failed", STEP_REAPED, _now()
+                reaped.append(step.id)
+                if step.run_id not in run_ids:
+                    run_ids.append(step.run_id)
+            await db.commit()
+    for run_id in run_ids:
+        advance_run_task.delay(run_id)
+    if reaped:
+        logger.warning("reaped %d stuck workflow steps (runs=%s steps=%s)", len(reaped), run_ids, reaped)
+    return reaped
 
 
 async def loop_tick(parent_step_id: int) -> None:
