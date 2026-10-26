@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User as UserIcon, Loader2, Sparkles, Terminal, Eraser, X } from 'lucide-react';
+import { Send, Bot, User as UserIcon, Loader2, Terminal, Eraser, X } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -99,8 +99,8 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
             {/* Header */}
             <div className="p-4 border-b border-line bg-panel/50 backdrop-blur-md flex items-center justify-between shrink-0">
                 <h3 className="font-bold text-fg flex items-center gap-2 text-sm uppercase tracking-wider">
-                    <Sparkles size={16} className="text-accent" />
-                    Copilot
+                    <Bot size={16} className="text-accent" />
+                    SOC-bot
                     <span className="text-[10px] font-medium text-fg-3 normal-case tracking-normal">
                         {isCase ? `· case #${caseId}` : '· general'}
                     </span>

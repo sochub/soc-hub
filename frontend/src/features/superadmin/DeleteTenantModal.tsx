@@ -59,7 +59,7 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
             <div className="space-y-4">
                 <p className="text-sm text-fg-2">
                     This permanently deletes <span className="font-medium text-fg">{tenant.name}</span> and
-                    all of its cases, artifacts, audit history, IOCs, invitations, copilot conversations,
+                    all of its cases, artifacts, audit history, IOCs, invitations, SOC-bot conversations,
                     playbooks, and webhooks. This cannot be undone.
                 </p>
 
