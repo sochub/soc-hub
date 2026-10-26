@@ -23,13 +23,13 @@
   "secrets": [
     {
       "name": "OKTA_RESPONSE_PRIVATE_KEY",
-      "description": "Private key of the Okta API Services app (JWK JSON or PEM). The app needs the Help Desk Administrator or Organization Administrator admin role.",
+      "description": "Private key of the Okta API Services app (JWK JSON or PEM). The app needs the Help Desk Administrator (can reset MFA) or Organization Administrator role. This secret and app are shared with the suspend templates, so if those are installed too the shared app needs Organization/Group Administrator.",
       "hosts": [
         "%%OKTA_DOMAIN%%"
       ]
     }
   ],
-  "setup": "### Okta side\n1. Applications > Create App Integration > **API Services**.\n2. General > Client Credentials > Client authentication **Public key / Private key**. Keep **Require Demonstrating Proof of Possession (DPoP) header in token requests** ON. Add key > **Generate new key**, and copy the private key (JSON or PEM) and its `kid`.\n3. **Okta API Scopes** > Grant `okta.users.manage`.\n4. **Admin roles** > assign the role: **Help Desk Administrator** or **Organization Administrator** (a Help Desk admin can't act on admins).\n\n### Here\n1. Settings > Secrets: add `OKTA_RESPONSE_PRIVATE_KEY` (paste the private key; allowed host = your Okta domain).\n2. Install with `OKTA_DOMAIN` and `OKTA_CLIENT_ID`. Paste the private key as a JWK (it includes the `kid`); a PEM key has no `kid`, so also set `key_id` in the auth block of each HTTP step.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact. With no target it only writes a note.\n1. `GET /api/v1/users/<login>` to get the user ID; not found > note, nothing else.\n2. `POST /api/v1/users/<id>/lifecycle/reset_factors` (removes every enrolled authenticator; the user must re-enroll).\n3. Note with the HTTP status. Sessions are not revoked; run *Okta: suspend user and revoke sessions* for that.\n\nDocs: [Reset all authenticators](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserLifecycle/#tag/UserLifecycle/operation/resetFactors), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm).",
+  "setup": "### Okta side\n1. Applications > Create App Integration > **API Services**.\n2. General > Client Credentials > Client authentication **Public key / Private key**. Keep **Require Demonstrating Proof of Possession (DPoP) header in token requests** ON. Add key > **Generate new key**, and copy the private key (JSON or PEM) and its `kid`.\n3. **Okta API Scopes** > Grant `okta.users.manage` AND `okta.users.read` (the user lookup needs read).\n4. **Admin roles** > assign the role: **Help Desk Administrator** (can reset MFA) or **Organization Administrator**. The response app/secret is shared with the suspend templates: if those are installed too, the shared app needs Organization Administrator (or scoped Group Administrator), since Help Desk Administrator cannot suspend users.\n\n### Here\n1. Settings > Secrets: add `OKTA_RESPONSE_PRIVATE_KEY` (paste the private key; allowed host = your Okta domain).\n2. Install with `OKTA_DOMAIN` and `OKTA_CLIENT_ID`. Paste the private key as a JWK (it includes the `kid`); a PEM key has no `kid`, so also set `key_id` in the auth block of each HTTP step.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact. With no target it only writes a note.\n1. `GET /api/v1/users/<login>` to get the user ID; not found > note, nothing else.\n2. `POST /api/v1/users/<id>/lifecycle/reset_factors` (removes every enrolled authenticator; the user must re-enroll). Run *Okta: suspend user and revoke sessions* (or reset the password) first: whoever signs in next with the password enrolls the new authenticators.\n3. Note with the HTTP status. Sessions are not revoked; run *Okta: suspend user and revoke sessions* for that.\n\nDocs: [Reset all authenticators](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserLifecycle/#tag/UserLifecycle/operation/resetFactors), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm).",
   "graph": {
     "nodes": [
       {
@@ -72,7 +72,7 @@
         },
         "config": {
           "method": "GET",
-          "url": "https://%%OKTA_DOMAIN%%/api/v1/users/{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) | urlencode }}",
+          "url": "https://%%OKTA_DOMAIN%%/api/v1/users/{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) | urlencode | replace('/', '%2F') }}",
           "headers": {
             "Accept": "application/json"
           },
@@ -81,7 +81,7 @@
             "token_url": "https://%%OKTA_DOMAIN%%/oauth2/v1/token",
             "client_id": "%%OKTA_CLIENT_ID%%",
             "private_key": "{{ secrets.OKTA_RESPONSE_PRIVATE_KEY }}",
-            "scope": "okta.users.manage",
+            "scope": "okta.users.manage okta.users.read",
             "dpop": true
           }
         }
@@ -126,7 +126,7 @@
             "token_url": "https://%%OKTA_DOMAIN%%/oauth2/v1/token",
             "client_id": "%%OKTA_CLIENT_ID%%",
             "private_key": "{{ secrets.OKTA_RESPONSE_PRIVATE_KEY }}",
-            "scope": "okta.users.manage",
+            "scope": "okta.users.manage okta.users.read",
             "dpop": true
           }
         }
@@ -139,7 +139,7 @@
           "y": 590
         },
         "config": {
-          "content": "Okta authenticator reset for {{ (case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim }} (id {{ steps.lookup.output.body.id }}): reset_factors HTTP {{ steps.reset.output.status }} (200 is success). The user must re-enroll their authenticators; sessions are not revoked: run Okta: suspend user and revoke sessions for that."
+          "content": "Okta authenticator reset for {{ (case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim }} (id {{ steps.lookup.output.body.id }}): reset_factors HTTP {{ steps.reset.output.status }} (200 is success). The user must re-enroll their authenticators. Run Okta: suspend user and revoke sessions (or reset the password) first: whoever signs in next with the password enrolls the new authenticators; sessions are not revoked: run Okta: suspend user and revoke sessions for that."
         }
       }
     ],

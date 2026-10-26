@@ -312,6 +312,8 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
                 _err(errors, nid, f"auth.{secret_key} must be a secret reference like {{{{ secrets.NAME }}}}")
             if "dpop" in auth and not isinstance(auth["dpop"], bool):
                 _err(errors, nid, "auth.dpop must be true or false")
+            elif "dpop" in auth and auth.get("type") != "oauth2_private_key_jwt":
+                _err(errors, nid, "auth.dpop is only supported with oauth2_private_key_jwt")
             for k in ("region", "service") if auth.get("type") == "aws_sigv4" else ():
                 v = auth.get(k)
                 if isinstance(v, str) and "{{" not in v and not re.fullmatch(r"[a-z0-9-]{2,32}", v):

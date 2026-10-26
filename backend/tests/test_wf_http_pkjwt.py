@@ -246,6 +246,9 @@ def test_pkjwt_validation():
     assert "missing required field 'auth.private_key'" in msgs({k: v for k, v in ok.items() if k != "private_key"})
     assert ("auth.private_key must be a secret reference like {{ secrets.NAME }}"
             in msgs({**ok, "private_key": "-----BEGIN PRIVATE KEY-----"}))
+    for t in ("basic", "oauth2_client_credentials", "aws_sigv4"):
+        assert "auth.dpop is only supported with oauth2_private_key_jwt" in msgs({**ok, "type": t, "dpop": True})
+    assert "auth.dpop is only supported with oauth2_private_key_jwt" not in msgs({**ok, "dpop": True})
     for bad in ("true", 1, "yes", None):
         assert "auth.dpop must be true or false" in msgs({**ok, "dpop": bad})
     for good in (True, False):
@@ -550,3 +553,7 @@ def test_htu_and_proof_units():
     assert c["htm"] == "DELETE" and c["htu"] == "https://api.example.com/x" and c["nonce"] == "nn"
     assert c["ath"] == _b64(hashlib.sha256(b"tk").digest())
     assert set(c) == {"htm", "htu", "iat", "jti", "nonce", "ath"}
+    assert http_node._htu("https://api.example.com:443/x") == "https://api.example.com/x"
+    assert http_node._htu("http://api.example.com:80/x") == "http://api.example.com/x"
+    assert http_node._htu("https://api.example.com:80/x") == "https://api.example.com:80/x"
+    assert http_node._htu("http://api.example.com:443/x") == "http://api.example.com:443/x"

@@ -294,7 +294,11 @@ def _b64url(b: bytes) -> str:
 def _htu(url: str) -> str:
     """DPoP htu: scheme://host[:port]/path, without userinfo, query or fragment."""
     parts = urlsplit(url)
-    return f"{parts.scheme.lower()}://{parts.netloc.rpartition('@')[2].lower()}{parts.path or '/'}"
+    scheme, host = parts.scheme.lower(), parts.netloc.rpartition('@')[2].lower()
+    default = {"https": ":443", "http": ":80"}.get(scheme)
+    if default and host.endswith(default):
+        host = host[: -len(default)]
+    return f"{scheme}://{host}{parts.path or '/'}"
 
 
 def _dpop_proof(key, method: str, url: str, *, nonce: str | None = None, token: str | None = None) -> str:

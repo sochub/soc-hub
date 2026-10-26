@@ -63,7 +63,7 @@ Mapping: source `okta`, external_id `uuid`, title `displayMessage (actor.alterna
 
 1. Create an Okta **API Services** app integration per privilege level (read-only pull, response). Client authentication = **Public key / Private key**; keep **Require DPoP header in token requests** ON; generate a key and copy the private key (JWK includes the `kid`).
 2. Pull: grant scope `okta.logs.read` and the **Read-Only Administrator** role.
-3. Response (`okta-contain-user`, `okta-suspend-user`, `okta-reset-authenticators`): grant `okta.users.manage` and **Help Desk Administrator** (cannot act on admins) or **Organization Administrator**.
+3. Response (`okta-contain-user`, `okta-suspend-user`, `okta-reset-authenticators`): grant `okta.users.manage` and `okta.users.read` (the user lookup needs read) and the **Organization Administrator** role (or a Group Administrator scoped to the groups this may act on). Help Desk Administrator cannot suspend users; it can reset authenticators, but the response app is shared by all three templates.
 
 Roles: https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm
 
@@ -94,12 +94,11 @@ with the HTTP status. Sessions and tokens are not revoked. Undo with `POST /api/
 Same target and lookup; `POST /api/v1/users/<id>/lifecycle/reset_factors` removes every enrolled authenticator, so
 the user must re-enroll. Sessions are not revoked (use `okta-contain-user` for that). There is no undo.
 
+Ordering: run `okta-contain-user` or `okta-suspend-user` (or reset the password) first: whoever signs in next with the password enrolls the new authenticators.
+
 ### Notes
 
-- A 403 on a user lookup usually means the app's admin role cannot act on that user (Help Desk Administrator cannot
-  act on admins; use Organization Administrator). If Okta reports a missing scope for the lookup, grant
-  `okta.users.read` on the app and also add it to the HTTP node's `auth.scope` (space-separated:
-  `okta.users.manage okta.users.read`).
+- A 403 usually means the app's admin role cannot act on that user (Group Administrator outside its groups), or, for suspend, the app only has Help Desk Administrator (use Organization Administrator).
 - An explicit `key_id` in the auth block overrides the JWK's own `kid`.
 - Workflows installed earlier with an API token (SSWS) keep working until they are reinstalled; reinstalling uses the
   API Services app described above.

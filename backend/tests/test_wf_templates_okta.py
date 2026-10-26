@@ -23,8 +23,9 @@ from app.workflows import templates as tpl
 from tests.test_wf_templates_identity import _drain, _steps
 
 OKTA = "acme.okta.com"
-SCOPES = {"okta-system-log-pull": "okta.logs.read", "okta-contain-user": "okta.users.manage",
-          "okta-suspend-user": "okta.users.manage", "okta-reset-authenticators": "okta.users.manage"}
+RESP = "okta.users.manage okta.users.read"
+SCOPES = {"okta-system-log-pull": "okta.logs.read", "okta-contain-user": RESP,
+          "okta-suspend-user": RESP, "okta-reset-authenticators": RESP}
 SECRET = {"okta-system-log-pull": "OKTA_READ_PRIVATE_KEY"}
 
 
@@ -45,6 +46,13 @@ def test_okta_templates_use_api_services():
         assert "Okta side" in t["setup"] and "API Services" in t["setup"] and "DPoP" in t["setup"]
 
 
+def test_okta_response_templates_share_one_scope():
+    for key in ("okta-contain-user", "okta-suspend-user", "okta-reset-authenticators"):
+        scopes = {n["config"]["auth"]["scope"] for n in tpl.get_template(key)["graph"]["nodes"]
+                  if n["type"] == "http_request"}
+        assert scopes == {RESP}, key
+
+
 def test_no_ssws_left():
     for t in tpl.load_templates():
         text = json.dumps(t)
@@ -52,7 +60,7 @@ def test_no_ssws_left():
             assert bad not in text, (t["key"], bad)
 
 
-async def _scenario(queue, key, urls_expected):
+async def _scenario(queue, key, urls_expected, value="olack@adatum.com"):
     h = secrets.token_hex(3)
     ids = {"wf": [], "case": None, "art": None, "sec": []}
     async with AsyncSessionLocal() as db:
@@ -66,7 +74,7 @@ async def _scenario(queue, key, urls_expected):
             db.add(s)
             case = Case(title="Compromised account", tenant_id=tid)
             db.add(case)
-            art = Artifact(tenant_id=tid, artifact_type=ArtifactType.EMAIL, value="olack@adatum.com")
+            art = Artifact(tenant_id=tid, artifact_type=ArtifactType.EMAIL, value=value)
             db.add(art)
             await db.flush()
             ids["sec"].append(s.id)
@@ -115,14 +123,14 @@ async def _scenario(queue, key, urls_expected):
             await db.commit()
 
 
-def _run(monkeypatch, key, urls, check):
+def _run(monkeypatch, key, urls, check, value="olack@adatum.com"):
     import app.tasks.workflows as tw
     queue = []
     monkeypatch.setattr(tw.advance_run_task, "delay", lambda rid: queue.append(("advance", rid)))
     monkeypatch.setattr(tw.execute_step_task, "delay", lambda sid: queue.append(("step", sid)))
     monkeypatch.setattr(tw.loop_tick_task, "delay", lambda sid: queue.append(("tick", sid)))
     try:
-        steps = asyncio.run(_scenario(queue, key, urls))
+        steps = asyncio.run(_scenario(queue, key, urls, value))
     finally:
         asyncio.run(engine.dispose())
     check(steps)
@@ -143,3 +151,9 @@ def test_okta_suspend_dry_run(monkeypatch):
         assert "suspend HTTP 200" in note and "unsuspend" in note
     _run(monkeypatch, "okta-suspend-user",
          {"suspend": ("POST", "/api/v1/users/00u1abcd/lifecycle/suspend")}, check)
+
+
+def test_okta_lookup_url_encodes_slash(monkeypatch):
+    _run(monkeypatch, "okta-suspend-user",
+         {"lookup": ("GET", "/api/v1/users/a%2Fb%40adatum.com"),
+          "suspend": ("POST", "/api/v1/users/00u1abcd/lifecycle/suspend")}, lambda steps: None, value="a/b@adatum.com")
