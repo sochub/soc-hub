@@ -116,6 +116,8 @@ class User(BaseModel):
     has_avatar: bool = False
     avatar_version: Optional[str] = None
     mfa_enabled: bool = False
+    # Tenant listings only: whether the caller may deactivate/activate/reset MFA on this account.
+    account_manageable: Optional[bool] = None
 
     class Config:
         from_attributes = True

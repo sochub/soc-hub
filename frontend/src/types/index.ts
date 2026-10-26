@@ -195,6 +195,9 @@ export interface User {
   timezone?: string | null;
   has_avatar?: boolean;
   mfa_enabled?: boolean;
+  // Tenant listings: false when the caller can't deactivate/activate/reset MFA on this account
+  // (a super admin, or a user who also belongs to other tenants).
+  account_manageable?: boolean | null;
   has_password?: boolean;
   mfa_required_by_tenant?: boolean;
   avatar_version?: string | null;

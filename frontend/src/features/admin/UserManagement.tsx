@@ -121,6 +121,10 @@ export default function UserManagement() {
                         ) : users.map(user => {
                             const role = user.role ?? 'viewer';
                             const RoleIcon = roleIcons[role] || Shield;
+                            // Server-enforced too (account_guard): account-wide actions only for accounts this
+                            // admin owns; a super admin's membership is managed by super admins only.
+                            const manageable = user.account_manageable !== false;
+                            const roleEditable = !user.is_super_admin || !!me?.is_super_admin;
                             return (
                                 <tr key={user.id} className="hover:bg-raised transition-colors">
                                     <td className="px-6 py-4">
@@ -133,7 +137,7 @@ export default function UserManagement() {
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
-                                        {editingRoleUser === user.id ? (
+                                        {editingRoleUser === user.id && roleEditable ? (
                                             <select
                                                 className="bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg"
                                                 defaultValue={role}
@@ -147,12 +151,13 @@ export default function UserManagement() {
                                             </select>
                                         ) : (
                                             <button
-                                                onClick={() => setEditingRoleUser(user.id)}
+                                                onClick={() => roleEditable && setEditingRoleUser(user.id)}
+                                                disabled={!roleEditable}
                                                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${roleBadgeColors[role] || roleBadgeColors.viewer}`}
                                             >
                                                 <RoleIcon size={12} />
                                                 {role}
-                                                <ChevronDown size={10} className="opacity-50" />
+                                                {roleEditable && <ChevronDown size={10} className="opacity-50" />}
                                             </button>
                                         )}
                                     </td>
@@ -176,7 +181,7 @@ export default function UserManagement() {
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 text-right space-x-4">
-                                        {me && user.mfa_enabled && user.id !== me.id && (!user.is_super_admin || me.is_super_admin) && (
+                                        {me && manageable && user.mfa_enabled && user.id !== me.id && (!user.is_super_admin || me.is_super_admin) && (
                                             <button
                                                 onClick={() => setResetTarget(user)}
                                                 className="text-xs text-red-400 hover:text-red-300 transition-colors"
@@ -184,12 +189,18 @@ export default function UserManagement() {
                                                 Reset MFA
                                             </button>
                                         )}
-                                        <button
-                                            onClick={() => toggleActiveMutation.mutate({ userId: user.id, activate: !user.is_active })}
-                                            className="text-xs text-fg-3 hover:text-fg transition-colors"
-                                        >
-                                            {user.is_active ? 'Deactivate' : 'Activate'}
-                                        </button>
+                                        {manageable ? (
+                                            <button
+                                                onClick={() => toggleActiveMutation.mutate({ userId: user.id, activate: !user.is_active })}
+                                                className="text-xs text-fg-3 hover:text-fg transition-colors"
+                                            >
+                                                {user.is_active ? 'Deactivate' : 'Activate'}
+                                            </button>
+                                        ) : (
+                                            <span className="text-xs text-muted" title="This account belongs to other tenants or is a platform admin; ask a platform admin.">
+                                                Managed by platform admin
+                                            </span>
+                                        )}
                                     </td>
                                 </tr>
                             );
