@@ -189,7 +189,8 @@ def _suggestion_text(s) -> str:
     if s.kind == "milestone":
         return f"Set *{slack_escape(str(p.get('key', '')).replace('_', ' ').title())}* to {slack_escape(_at_label(p.get('at')))}?"
     label = _ART_LABEL.get(p.get("type"), slack_escape(str(p.get("type", "")).title()))
-    return f"{label} `{slack_escape(str(p.get('value', '')))}`"
+    value = slack_escape(str(p.get('value', '')).replace('`', '\u02cb'))  # no backtick may close the code span
+    return f"{label} `{value}`"
 
 
 def _resolved_line(s, names: dict) -> str:

@@ -87,6 +87,28 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
         await respond(payload["response_url"], {"replace_original": True, "text": card_text(case), "blocks": card})
 
 
+async def _handle_suggestion_action(tenant_id: int, payload: dict, btn_tenant_id: int, suggestion_id: int,
+                                    verb: str) -> None:
+    """Add/Set/Dismiss on a SOC-bot suggestion. The reply is re-rendered by the after-commit war_room.rerender card."""
+    if btn_tenant_id != tenant_id:
+        return  # button belongs to another tenant's message
+    from app.services.war_room_suggestions import resolve_suggestion
+    clicker = payload["user"]["id"]
+    async with AsyncSessionLocal() as db:
+        _, token = await load_integration(db, tenant_id)
+        user = await _platform_user(db, tenant_id, await _slack_email(token, clicker))
+        if not user:
+            await _ephemeral(payload, "Your Slack account isn't linked to a sochub user with analyst access in this tenant.")
+            return
+        try:
+            await resolve_suggestion(db, tenant_id=tenant_id, suggestion_id=suggestion_id,
+                                     accept=verb == "accept", user=user, slack_user_id=clicker)
+        except LookupError:
+            await _ephemeral(payload, "This suggestion no longer exists.")
+            return
+        await db.commit()
+
+
 def authorize_answer(step_status: str, target_slack_id: Optional[str], clicker_id: str) -> Optional[str]:
     if step_status != "waiting":
         return "This request was already answered or has expired."
@@ -147,6 +169,8 @@ async def handle_interaction(tenant_id: int, payload: dict) -> None:
         try:
             if parsed[0] == "case":
                 await _handle_case_action(tenant_id, payload, *parsed[1:])
+            elif parsed[0] == "wrs":
+                await _handle_suggestion_action(tenant_id, payload, *parsed[1:])
             elif parsed[0] == "wf":
                 await handle_answer(tenant_id, payload, parsed[1], parsed[2])
         except SlackError:

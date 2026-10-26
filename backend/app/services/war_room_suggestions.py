@@ -62,9 +62,11 @@ async def record_candidates(db, case, candidates: list, *, channel: str, source_
     return out
 
 
-async def resolve_suggestion(db, *, tenant_id: int, suggestion_id: int, accept: bool, user) -> WarRoomSuggestion:
+async def resolve_suggestion(db, *, tenant_id: int, suggestion_id: int, accept: bool, user,
+                             slack_user_id: Optional[str] = None) -> WarRoomSuggestion:
     s = (await db.execute(select(WarRoomSuggestion).where(
-        WarRoomSuggestion.id == suggestion_id, WarRoomSuggestion.tenant_id == tenant_id).with_for_update())).scalars().first()
+        WarRoomSuggestion.id == suggestion_id, WarRoomSuggestion.tenant_id == tenant_id).with_for_update()
+        )).scalars().first()
     if s is None:
         raise LookupError("suggestion not found")
     if s.status != "pending":
@@ -92,7 +94,8 @@ async def resolve_suggestion(db, *, tenant_id: int, suggestion_id: int, accept: 
     s.resolved_at = datetime.now(timezone.utc)
     await create_audit_log(db=db, entity_type="war_room_suggestion", entity_id=s.id,
                            action=f"war_room_suggestion_{status}", tenant_id=tenant_id, user_id=user.id,
-                           changes={"case_id": s.case_id, "kind": s.kind, "value_key": s.value_key})
+                           changes={"case_id": s.case_id, "kind": s.kind, "value_key": s.value_key,
+                                    **({"slack_user_id": slack_user_id} if slack_user_id else {})})
     if s.reply_ts:
         queue_card(db, tenant_id, "war_room.rerender", case.id,
                    {"reply_ts": s.reply_ts, "channel": s.slack_channel})

@@ -303,12 +303,31 @@ def should_alert(min_severity: Optional[str], severity, *, previous=None) -> boo
     return previous is None or ui.severity_rank(previous) < floor
 
 
+async def _rerender_suggestions(db, token: str, tenant_id: int, changes: dict) -> None:
+    """Redraw a SOC-bot suggestions thread reply from the current DB state."""
+    from app.models.war_room_suggestion import WarRoomSuggestion
+    channel, ts = changes.get("channel"), changes.get("reply_ts")
+    if not channel or not ts:
+        return
+    rows = (await db.execute(select(WarRoomSuggestion).where(
+        WarRoomSuggestion.tenant_id == tenant_id, WarRoomSuggestion.slack_channel == channel,
+        WarRoomSuggestion.reply_ts == ts).order_by(WarRoomSuggestion.id))).scalars().all()
+    if not rows:
+        return
+    names = await _names(db, [r.resolved_by_user_id for r in rows])
+    await _safe(slack_call(token, "chat.update", channel=channel, ts=ts, text="SOC-bot suggestions",
+                           blocks=ui.suggestions_reply(rows, tenant_id, names)))
+
+
 async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: dict) -> None:
     async with AsyncSessionLocal() as db:
         try:
             integ, token = await load_integration(db, tenant_id)
         except SlackError:
             return  # Slack not configured for this tenant
+        if event_type == "war_room.rerender":
+            await _rerender_suggestions(db, token, tenant_id, changes or {})
+            return
         case = await _case(db, tenant_id, case_id)
         if not case:
             return

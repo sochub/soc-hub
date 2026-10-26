@@ -168,6 +168,26 @@ def test_double_resolve_applies_once(delays):
     run(body)
 
 
+def test_stale_loaded_row_does_not_double_apply(delays):
+    """A session already holding the row as pending must re-read status after another session resolved it."""
+    async def body(ids):
+        async with AsyncSessionLocal() as db, AsyncSessionLocal() as other:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t)).id)
+            u = await make_user(db, ids)
+            (s,) = await rec(db, case, [art("1.2.3.4")])
+            sid, uid, tid, cid = s.id, u.id, t.id, case.id
+            stale = (await db.execute(select(WarRoomSuggestion).where(WarRoomSuggestion.id == sid))).scalars().one()
+            assert stale.status == "pending"
+            ou = await other.get(type(u), uid)
+            await ws.resolve_suggestion(other, tenant_id=tid, suggestion_id=sid, accept=True, user=ou)
+            await other.commit()
+            again = await ws.resolve_suggestion(db, tenant_id=tid, suggestion_id=sid, accept=True, user=u)
+            await db.commit()
+            assert again.status == "accepted" and await _artifact_count(db, cid) == 1
+    run(body)
+
+
 def test_resolve_unknown_or_other_tenant_raises():
     async def body(ids):
         async with AsyncSessionLocal() as db:
