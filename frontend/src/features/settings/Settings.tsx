@@ -286,6 +286,7 @@ export default function Settings() {
         idp_entity_id: '', idp_sso_url: '', idp_x509_cert: '',
         oidc_issuer: '', oidc_client_id: '', oidc_client_secret: '', oidc_scopes: 'openid email profile',
         auto_provision: false, default_role: 'viewer' as 'analyst' | 'viewer',
+        saml_allow_idp_initiated: false,
     });
     const [savedFlash, setSavedFlash] = useState(false);
 
@@ -302,6 +303,7 @@ export default function Settings() {
                 idp_x509_cert: cfg.idp_x509_cert ?? '',
                 auto_provision: cfg.auto_provision,
                 default_role: cfg.default_role,
+                saml_allow_idp_initiated: cfg.saml_allow_idp_initiated,
             });
         }
     }, [cfg]);
@@ -375,6 +377,19 @@ export default function Settings() {
                                         rows={6} placeholder="-----BEGIN CERTIFICATE-----"
                                         className="w-full bg-panel border border-line-strong px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent" />
                                     <p className="text-[11px] text-fg-3 mt-1">The IdP must sign the assertion (in Keycloak, enable “Sign assertions”).</p>
+                                </div>
+                                <div>
+                                    <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
+                                        <input type="checkbox" checked={form.saml_allow_idp_initiated}
+                                            onChange={e => setForm(f => ({ ...f, saml_allow_idp_initiated: e.target.checked }))}
+                                            className="border-line-strong text-accent focus:ring-accent" />
+                                        allow IdP-initiated sign-in
+                                    </label>
+                                    <p className="text-[11px] text-fg-3 mt-1">
+                                        Off by default: only sign-ins started from this site are accepted. Turning it on lets users
+                                        start from the IdP's app dashboard, but also exposes the tenant to login CSRF: anyone with an
+                                        account at the same IdP can silently sign a colleague's browser into their own account.
+                                    </p>
                                 </div>
                                 <p className="label-mono pt-2">// oidc</p>
                                 {field('issuer url', 'oidc_issuer', 'https://idp.example.com')}

@@ -16,8 +16,14 @@ class FakeAuth:
         self.email = email
         self.aid = f"_{uuid.uuid4().hex}"
 
-    def process_response(self):
+    def process_response(self, request_id=None):
         pass
+
+    def get_last_response_in_response_to(self):
+        return None  # unsolicited (IdP-initiated): the tenant must allow it
+
+    def get_last_request_id(self):
+        return "_req-guest"
 
     def get_errors(self):
         return []
@@ -45,7 +51,7 @@ class FakeAuth:
 def test_guest_sso(monkeypatch):
     async def body(ids):
         async with AsyncSessionLocal() as db:
-            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            t = await make_tenant(db, ids, require_sso=True, sso=True, idp_initiated=True)
             c = await make_case(db, ids, t)
             e = ids.email("sso")
             await make_grant(db, c, e)
@@ -79,7 +85,7 @@ def test_guest_sso(monkeypatch):
 def test_guest_sso_replayed_assertion_refused(monkeypatch):
     async def body(ids):
         async with AsyncSessionLocal() as db:
-            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            t = await make_tenant(db, ids, require_sso=True, sso=True, idp_initiated=True)
             e = ids.email("replay")
             await make_grant(db, await make_case(db, ids, t), e)
         fixed = FakeAuth(e)

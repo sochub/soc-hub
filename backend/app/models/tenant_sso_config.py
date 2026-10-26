@@ -29,5 +29,8 @@ class TenantSSOConfig(Base):
     # users are never attached to a tenant by SSO (see sso._resolve_sso_user).
     auto_provision = Column(Boolean, nullable=False, default=False)
     default_role = Column(String, nullable=False, default="viewer")
+    # Accept unsolicited (IdP-initiated) SAML responses. Off by default: they carry no browser binding, so
+    # anyone with an account at the same IdP can sign a victim's browser into their account (login CSRF).
+    saml_allow_idp_initiated = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

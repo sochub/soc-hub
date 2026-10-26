@@ -145,6 +145,7 @@ export interface SSOConfig {
   idp_x509_cert: string | null;
   auto_provision: boolean;
   default_role: 'analyst' | 'viewer';
+  saml_allow_idp_initiated: boolean;
   sp_entity_id: string;
   sp_acs_url: string;
   sp_metadata_url: string;

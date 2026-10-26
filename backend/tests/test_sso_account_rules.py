@@ -33,7 +33,8 @@ async def _setup():
         await db.flush()
         db.add(TenantSSOConfig(tenant_id=ta.id, idp_entity_id="https://idp.example.com",
                                idp_sso_url="https://idp.example.com/sso", idp_x509_cert="MIIB",
-                               auto_provision=True, default_role="analyst"))
+                               auto_provision=True, default_role="analyst",
+                               saml_allow_idp_initiated=True))
         users = {}
         for name, tenants, sa in [("local", [ta], False), ("multi", [ta, tb], False),
                                   ("other", [tb], False), ("sa", [], True), ("sa_member", [ta], True)]:
@@ -147,8 +148,11 @@ def test_acs_redirects_with_clear_message(monkeypatch):
             self.email = email
             self.aid = f"_{uuid.uuid4().hex}"
 
-        def process_response(self):
+        def process_response(self, request_id=None):
             pass
+
+        def get_last_response_in_response_to(self):
+            return None
 
         def get_errors(self):
             return []
@@ -200,8 +204,11 @@ def test_saml_invalid_stores_fixed_code_not_idp_text(monkeypatch):
     secret_msg = "StatusMessage for victim@leak.example"
 
     class BadAuth:
-        def process_response(self):
+        def process_response(self, request_id=None):
             pass
+
+        def get_last_response_in_response_to(self):
+            return None
 
         def get_errors(self):
             return ["invalid_response"]
@@ -230,8 +237,11 @@ class _FixedAuth:
     def __init__(self, email, aid, not_after=None):
         self.email, self.aid, self.not_after = email, aid, not_after
 
-    def process_response(self):
+    def process_response(self, request_id=None):
         pass
+
+    def get_last_response_in_response_to(self):
+        return None
 
     def get_errors(self):
         return []

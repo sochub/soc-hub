@@ -20,6 +20,7 @@ class SSOConfigUpdate(BaseModel):
     oidc_scopes: Optional[str] = None
     auto_provision: Optional[bool] = None
     default_role: Optional[str] = None
+    saml_allow_idp_initiated: Optional[bool] = None
 
     @field_validator("default_role")
     @classmethod
@@ -73,6 +74,7 @@ class SSOConfigOut(BaseModel):
     has_oidc_client_secret: bool
     auto_provision: bool
     default_role: str
+    saml_allow_idp_initiated: bool = False
     # Service-provider values the admin pastes into their IdP
     sp_entity_id: str
     sp_acs_url: str

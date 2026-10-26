@@ -40,8 +40,8 @@ def _overrides():
     app.dependency_overrides[mfa_mod.get_redis] = lambda: redis
 
 
-async def _tenant(db, ids, method="password", sso=False):
-    t = await make_tenant(db, ids, sso=sso)
+async def _tenant(db, ids, method="password", sso=False, idp_initiated=False):
+    t = await make_tenant(db, ids, sso=sso, idp_initiated=idp_initiated)
     t.member_login_method = method
     await db.commit()
     return t
@@ -339,7 +339,7 @@ def test_refresh_cookie_wins_over_body():
 def test_saml_login_creates_session(monkeypatch):
     async def body(c, ids):
         async with AsyncSessionLocal() as db:
-            t = await _tenant(db, ids, "saml", sso=True)
+            t = await _tenant(db, ids, "saml", sso=True, idp_initiated=True)
             u = await _user(db, ids, "a", [(t, "analyst")])
         monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: FakeAuth(u.email))
         r = await _call(c, "POST", f"/api/v1/auth/saml/{t.slug}/acs", data={"SAMLResponse": "x"})
