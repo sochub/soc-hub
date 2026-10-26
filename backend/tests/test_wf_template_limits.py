@@ -147,6 +147,8 @@ MEMORY_VECTORS = [
     "{{ ((('%999999s').encode() * 900) % (('x'.encode(),) * 900))|length }}",
     "{{ ('%*s'.encode())|format(300000000, 'x'.encode())|length }}",
     "{{ (5).to_bytes(300000000, 'big')|length }}",
+    "{{ true.to_bytes(300000000, 'big')|length }}",
+    "{{ (1 == 1).to_bytes(1000000000, 'big')|length }}",
     "{{ ('%*s')|format(300000000, 'x') }}",
 ]
 
@@ -291,6 +293,8 @@ def test_hooks_not_reachable_through_map_or_select(tpl):
     "((('%*s').encode() % (300000000, 'x'.encode()))|length) > 0",
     "(('%*s'.encode())|format(300000000, 'x'.encode())|length) > 0",
     "((5).to_bytes(300000000, 'big')|length) > 0",
+    "(true.to_bytes(300000000, 'big')|length) > 0",
+    "((1 == 1).to_bytes(1000000000, 'big')|length) > 0",
 ])
 def test_bytes_vectors_in_expressions_and_trigger_filters(expr):
     def go():

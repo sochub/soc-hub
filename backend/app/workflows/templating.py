@@ -526,7 +526,7 @@ class _LimitedSandbox(ImmutableSandboxedEnvironment):
         owner = getattr(target, "__self__", None)
         if isinstance(owner, (str, bytes)):
             args, kwargs = _str_method_precheck(owner, getattr(target, "__name__", ""), args, kwargs)
-        elif _is_int(owner) and getattr(target, "__name__", "") == "to_bytes":
+        elif isinstance(owner, int) and getattr(target, "__name__", "") == "to_bytes":  # bool too
             length = args[0] if args else kwargs.get("length", 1)
             if _is_int(length):
                 _need(length)  # allocates `length` bytes up front
