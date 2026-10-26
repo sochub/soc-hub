@@ -11,6 +11,7 @@ import contextvars
 import functools
 import inspect
 import re
+import string
 import time
 from contextlib import contextmanager
 from typing import Any, List
@@ -18,6 +19,7 @@ from typing import Any, List
 from celery.exceptions import SoftTimeLimitExceeded
 from jinja2 import StrictUndefined, Undefined, nodes, pass_context
 from jinja2.sandbox import ImmutableSandboxedEnvironment
+from jinja2.utils import _PassArg
 from jinja2.visitor import NodeTransformer
 
 _SINGLE_EXPR = re.compile(r"^\s*\{\{(?P<expr>(?:(?!\{\{|\}\}).)+)\}\}\s*$", re.S)
@@ -130,38 +132,75 @@ def _is_int(v: Any) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-_PCT_SPEC = re.compile(r"%(?:\([^)]*\))?[-#0 +]*(\*|\d*)(?:\.(\*|\d*))?[hlL]?[diouxXeEfFgGcrsa%]")
-_BRACE_SPEC = re.compile(r"\{[^{}]*?:([^{}]*)\}")
-_NESTED_SPEC = re.compile(r"\{[^{}]*:[^{}]*\{")
+_PCT_SPEC = re.compile(r"%(?:\([^)]*\))?[-#0 +]*(\*|\d*)(?:\.(\*|\d*))?[hlL]?([diouxXeEfFgGcrsa%])")
+MAX_FMT_FIELDS = 1000  # replacement fields in one format string
+
+
+def _str_size(v: Any) -> int:
+    """Upper-ish bound on the length of str(v) / repr(v) for a format argument."""
+    if isinstance(v, (str, bytes, bytearray)):
+        return len(v)
+    if _is_int(v):
+        return v.bit_length() // 3 + 2
+    if isinstance(v, (int, float, bool)) or v is None:
+        return 32
+    return 2 * _size(v) + 2  # containers: items plus quotes/separators
+
+
+def _arg_values(args: Any) -> list:
+    if isinstance(args, dict):
+        return list(args.values())
+    if isinstance(args, tuple):
+        return list(args)
+    return [args]
+
+
+def _format_estimate(fmt_len: int, n_fields: int, widths: int, values: list) -> None:
+    """Every field may repeat the largest argument: len(fmt) + fields x max(arg) + widths."""
+    if n_fields > MAX_FMT_FIELDS:
+        _limit(f"more than {MAX_FMT_FIELDS} format fields")
+    biggest = max((_str_size(v) for v in values), default=0)
+    _need(fmt_len + n_fields * biggest + widths)
+
+
+def _spec_digits(part: str) -> int:
+    if len(part) > _MAX_FMT_DIGITS:
+        _limit("format width too large")
+    return int(part)
 
 
 def _check_pct_format(fmt: str, args: Any) -> None:
-    """`fmt % args` / `fmt|format(...)`: bound the field widths before Python allocates them."""
-    total, star = len(fmt), False
-    for width, prec in _PCT_SPEC.findall(fmt):
+    """`fmt % args` / `fmt|format(...)`: bound fields x args and widths before Python allocates them."""
+    values = _arg_values(args)
+    n_fields, widths, star = 0, 0, False
+    for width, prec, conv in _PCT_SPEC.findall(fmt):
+        if conv == "%":
+            continue
+        n_fields += 1
         for part in (width, prec):
             if part == "*":
                 star = True
             elif part:
-                if len(part) > _MAX_FMT_DIGITS:
-                    _limit("format width too large")
-                total += int(part)
-    values = args if isinstance(args, tuple) else (args,)
+                widths += _spec_digits(part)
     if star:
-        total += sum(v for v in values if _is_int(v) and v > 0)
-    _need(total + _size(args))
+        widths += sum(v for v in values if _is_int(v) and v > 0)
+    _format_estimate(len(fmt), n_fields, widths, values)
 
 
-def _check_brace_format(fmt: str, args: tuple, kwargs: dict) -> None:
-    if _NESTED_SPEC.search(fmt):
-        _limit("nested format specifications are not allowed")
-    total = len(fmt)
-    for spec in _BRACE_SPEC.findall(fmt):
-        for part in re.findall(r"\d+", spec):
-            if len(part) > _MAX_FMT_DIGITS:
-                _limit("format width too large")
-            total += int(part)
-    _need(total + _size(args) + _size(kwargs))
+def _check_brace_format(fmt: str, args: tuple, kwargs: dict, mapping: Any = None) -> None:
+    n_fields, widths = 0, 0
+    for _literal, field, spec, _conv in string.Formatter().parse(fmt):
+        if field is None:
+            continue
+        n_fields += 1
+        if spec:
+            if "{" in spec:
+                _limit("nested format specifications are not allowed")
+            widths += sum(_spec_digits(d) for d in re.findall(r"\d+", spec))
+    values = list(args) + list(kwargs.values())
+    if isinstance(mapping, dict):
+        values += list(mapping.values())
+    _format_estimate(len(fmt), n_fields, widths, values)
 
 
 def _safe_range(*args: int) -> range:
@@ -194,12 +233,13 @@ def _str_method_precheck(s, name: str, args: tuple, kwargs: dict):
                 hits = min(hits, count)
             _need(len(s) + hits * max(len(new) - len(old), 0))
     elif name == "join" and args:
-        items = list(args[0])
-        _tick(len(items))
+        items = _materialize(args[0])
         _need(sum(_size(i) for i in items) + len(s) * len(items))
         return (items,) + tuple(args[1:]), kwargs
-    elif name in ("format", "format_map") and isinstance(s, str):
+    elif name == "format" and isinstance(s, str):
         _check_brace_format(s, args, kwargs)
+    elif name == "format_map" and isinstance(s, str):
+        _check_brace_format(s, (), {}, mapping=args[0] if args else None)
     elif name in ("translate", "maketrans"):
         _limit(f"str.{name}() is not allowed in templates")
     return args, kwargs
@@ -238,8 +278,7 @@ def _f_format(a):
 
 
 def _f_join(a):
-    items = list(a["value"])
-    _tick(len(items))
+    items = _materialize(a["value"])
     _need(sum(_size(i) for i in items) + len(str(a["d"])) * len(items))
     a["value"] = items
 
@@ -256,8 +295,7 @@ def _f_slice(a):
 
 def _f_sum(a):
     if isinstance(a["start"], (str, list, tuple)):
-        items = list(a["iterable"])
-        _tick(len(items))
+        items = _materialize(a["iterable"])
         _need(_size(a["start"]) + sum(_size(i) for i in items))
         a["iterable"] = items
 
@@ -273,14 +311,42 @@ _FILTER_PRECHECKS = {"replace": _f_replace, "center": _f_center, "indent": _f_in
                      "tojson": _f_tojson}
 
 
+def _is_lazy_iterable(v: Any) -> bool:
+    return (hasattr(v, "__iter__") and not hasattr(v, "__len__")
+            and not isinstance(v, (str, bytes, bytearray, dict, Undefined)))
+
+
+def _accumulate(iterable):
+    """Yield items, ticking the budget and failing once their running size passes MAX_SIZE, so a filter that
+    materializes a generator (list, join, sum, sort, unique, batch, ...) never builds a huge list first."""
+    total = 0
+    for item in iterable:
+        _tick()
+        total += _size(item) + 1
+        if total > MAX_SIZE:
+            _limit(f"value larger than {MAX_SIZE} characters/items")
+        yield item
+
+
+def _materialize(iterable) -> list:
+    if _is_lazy_iterable(iterable):
+        return list(_accumulate(iterable))
+    items = list(iterable)
+    _tick(len(items))
+    return items
+
+
 def _limit_filter(name: str, fn):
-    """Tick the budget, pre-check known amplifiers, and size-check every filter result."""
+    """Tick the budget, bound lazy inputs, pre-check known amplifiers, and size-check every result."""
     precheck = _FILTER_PRECHECKS.get(name)
     sig = inspect.signature(fn) if precheck else None
+    value_pos = 0 if _PassArg.from_obj(fn) is None else 1  # skip context/eval_ctx/environment
 
     @functools.wraps(fn)  # keeps jinja_pass_arg (pass_context/pass_environment markers)
     def wrapper(*args, **kwargs):
         _tick()
+        if len(args) > value_pos and _is_lazy_iterable(args[value_pos]):
+            args = args[:value_pos] + (_accumulate(args[value_pos]),) + args[value_pos + 1:]
         if precheck:
             try:
                 bound = sig.bind(*args, **kwargs)
@@ -296,7 +362,7 @@ def _limit_filter(name: str, fn):
 # ---------------------------------------------------------------------------------------------------------
 # The environment
 
-_INTERNAL_FILTERS = ("_wf_iter", "_wf_cap", "_wf_emit", "_wf_static")
+_INTERNAL_FILTERS = ("wf:iter", "wf:cap", "wf:emit", "wf:static")
 
 
 class _BudgetIter:
@@ -335,7 +401,8 @@ def _wf_emit(_ctx, value):
 
 @pass_context
 def _wf_static(_ctx, n):
-    _emit(n)
+    if _is_int(n) and n > 0:
+        _emit(n)
     return ""
 
 
@@ -348,12 +415,12 @@ class _Instrument(NodeTransformer):
 
     def visit_For(self, node):
         self.generic_visit(node)
-        node.iter = _wrap(node.iter, "_wf_iter")
+        node.iter = _wrap(node.iter, "wf:iter")
         return node
 
     def visit_Concat(self, node):
         self.generic_visit(node)
-        return _wrap(node, "_wf_cap")
+        return _wrap(node, "wf:cap")
 
     def visit_Output(self, node):
         self.generic_visit(node)
@@ -361,9 +428,9 @@ class _Instrument(NodeTransformer):
         for child in node.nodes:
             if isinstance(child, nodes.TemplateData):
                 # literal template text is emitted as-is (no finalize/escaping); count it separately
-                out += [child, _wrap(nodes.Const(len(child.data), lineno=child.lineno), "_wf_static")]
+                out += [child, _wrap(nodes.Const(len(child.data), lineno=child.lineno), "wf:static")]
             else:
-                out.append(_wrap(child, "_wf_emit"))
+                out.append(_wrap(child, "wf:emit"))
         node.nodes = out
         return node
 
@@ -428,6 +495,7 @@ def _guard_secrets(fn):
         if any(isinstance(a, ref) for a in args) or any(isinstance(v, ref) for v in kwargs.values()):
             raise TemplateError("secrets can only be inserted, not transformed")
         return fn(*args, **kwargs)
+    wrapper._secret_guarded = True
     return wrapper
 
 
@@ -442,7 +510,7 @@ def _harden(env: ImmutableSandboxedEnvironment) -> ImmutableSandboxedEnvironment
 def _add_internal_filters(env: ImmutableSandboxedEnvironment) -> ImmutableSandboxedEnvironment:
     # Budget hooks inserted by _Instrument. Deliberately NOT secret-guarded: they return their argument
     # unchanged (or "" for _wf_static), so a secret passing through is still only inserted.
-    env.filters.update({"_wf_iter": _wf_iter, "_wf_cap": _wf_cap, "_wf_emit": _wf_emit, "_wf_static": _wf_static})
+    env.filters.update({"wf:iter": _wf_iter, "wf:cap": _wf_cap, "wf:emit": _wf_emit, "wf:static": _wf_static})
     return env
 
 
