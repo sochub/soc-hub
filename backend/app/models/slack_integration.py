@@ -21,5 +21,8 @@ class SlackIntegration(Base):
     # NULL severity = alerts off.
     alert_channel = Column(String, nullable=True)
     alert_min_severity = Column(String, nullable=True)
+    war_room_name_template = Column(String, nullable=True)
+    # Last time Slack delivered a message event for this workspace (SOC-bot health signal).
+    last_message_event_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

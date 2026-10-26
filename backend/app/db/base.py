@@ -33,3 +33,4 @@ from app.models.notification import Notification, CaseFollower  # noqa: F401
 from app.models.case_guest import CaseGuest, GuestAccount, GuestNotification  # noqa: F401
 from app.models.auth_session import AuthSession  # noqa: F401
 from app.models.oauth_client import OAuthClient  # noqa: F401
+from app.models.war_room_suggestion import WarRoomSuggestion, WarRoomMessageSeen  # noqa: F401
