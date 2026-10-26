@@ -25,7 +25,7 @@ from app.reports import tlp as tlp_mod
 from app.reports.builder import build_report, min_tlp, report_row, to_jsonable
 from app.reports.charts import lifecycle_svg, timeline_svg
 from app.reports.pdf import RenderTimeout, render_pdf_async, strip_userinfo
-from app.schemas.report import MILESTONE_FIELDS, TEXT_MAX, TLP, ReportDraft, ReportIn
+from app.schemas.report import TEXT_MAX, TLP, ReportDraft, ReportIn
 from app.services.ai_service import _parse_json_reply
 from app.utils.audit import create_audit_log
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Never log narrative text, IOC values or AI replies: ids, formats and outcomes only.
 _LOG = "report %s tenant=%s case=%s format=%s full=%s outcome=%s"
 TEXT_FIELDS = ("executive_summary", "impact", "lessons_learned")
-_FIELDS = (*TEXT_FIELDS, "tlp", *MILESTONE_FIELDS)
+_FIELDS = (*TEXT_FIELDS, "tlp")
 _DEFAULTS = {f: None for f in _FIELDS} | {"tlp": "amber"}
 _SVG_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff",
                 "Cache-Control": "no-store"}
@@ -113,10 +113,6 @@ async def put_report(
     if not tlp_mod.at_least(body.tlp, floor):
         _log("put", tenant_id, case_id, "invalid")
         raise _tlp_floor_error(floor)
-    overrides = {k: getattr(body, f"{k}_at") for k in ms_mod.KEYS}
-    if not ms_mod.ordered(overrides):
-        _log("put", tenant_id, case_id, "invalid")
-        raise HTTPException(status_code=422, detail="Milestones must be in chronological order")
 
     # Upsert: create the row if missing, then lock it so concurrent saves serialise and the diff is exact.
     created = (await db.execute(insert(CaseReport).values(tenant_id=tenant_id, case_id=case_id)

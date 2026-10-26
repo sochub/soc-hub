@@ -377,9 +377,16 @@ export default function CaseDetail() {
                             transition={{ duration: 0.2 }}
                         >
                             {activeTab === 'activity' && shareError && <p role="alert" className="mb-3 text-sm text-severity-critical">{shareError}</p>}
-                            {activeTab === 'timeline' && id && <CaseTimeline caseId={parseInt(id)} />}
+                            {activeTab === 'timeline' && id && <CaseTimeline caseId={parseInt(id)} activity={caseData?.timeline_events ?? []} />}
                             {activeTab === 'assets' && id && <CaseAssets caseId={parseInt(id)} />}
-                            {activeTab === 'activity' && <IncidentOverview caseData={caseData} tz={me?.timezone} />}
+                            {activeTab === 'activity' && (
+                                <IncidentOverview caseData={caseData} tz={me?.timezone} canEdit={canSeeGuests}
+                                    onOpenInvestigation={(eid) => {
+                                        selectTab('timeline');
+                                        // The Timeline tab mounts after the tab switch; scroll once its row exists.
+                                        setTimeout(() => document.getElementById(`case-event-${eid}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+                                    }} />
+                            )}
                             {activeTab === 'activity' && (
                                 <div className="relative space-y-8 my-4">
                                     {/* Add Event Button */}
