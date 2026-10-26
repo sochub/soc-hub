@@ -21,6 +21,7 @@ _HTTP_SECRET_KEYS = ("url", "headers", "body", "auth")
 # auth.type -> (required keys, key that must be a {{ secrets.NAME }} reference)
 _AUTH_TYPES = {
     "oauth2_client_credentials": (("token_url", "client_id", "client_secret"), "client_secret"),
+    "oauth2_private_key_jwt": (("token_url", "client_id", "private_key", "scope"), "private_key"),
     "basic": (("username", "password"), "password"),
     "aws_sigv4": (("access_key_id", "secret_access_key", "region", "service"), "secret_access_key"),
     "google_service_account": (("service_account_key", "scopes"), "service_account_key"),
@@ -297,7 +298,7 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
         auth = cfg["auth"]
         auth_spec = _AUTH_TYPES.get(auth.get("type"))
         if auth_spec is None:
-            _err(errors, nid, "auth.type must be oauth2_client_credentials, basic, aws_sigv4 or google_service_account")
+            _err(errors, nid, "auth.type must be oauth2_client_credentials, oauth2_private_key_jwt, basic, aws_sigv4 or google_service_account")
         else:
             required, secret_key = auth_spec
             for k in required:
@@ -309,6 +310,10 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
             if (not isinstance(sec, str) or len(sec) > 200
                     or not re.fullmatch(r"\{\{\s*secrets\.[A-Z][A-Z0-9_]{1,63}\s*\}\}", sec.strip())):
                 _err(errors, nid, f"auth.{secret_key} must be a secret reference like {{{{ secrets.NAME }}}}")
+            if "dpop" in auth and not isinstance(auth["dpop"], bool):
+                _err(errors, nid, "auth.dpop must be true or false")
+            elif "dpop" in auth and auth.get("type") != "oauth2_private_key_jwt":
+                _err(errors, nid, "auth.dpop is only supported with oauth2_private_key_jwt")
             for k in ("region", "service") if auth.get("type") == "aws_sigv4" else ():
                 v = auth.get(k)
                 if isinstance(v, str) and "{{" not in v and not re.fullmatch(r"[a-z0-9-]{2,32}", v):

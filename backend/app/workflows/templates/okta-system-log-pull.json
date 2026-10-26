@@ -12,18 +12,24 @@
       "label": "Okta domain",
       "placeholder": "acme.okta.com",
       "help": "Your Okta org host name, without https://. A custom domain works too."
+    },
+    {
+      "key": "OKTA_CLIENT_ID",
+      "label": "API Services app client ID",
+      "placeholder": "0oa1b2c3d4e5f6g7h8i9",
+      "help": "Client ID of the Okta API Services app integration (General > Client Credentials)."
     }
   ],
   "secrets": [
     {
-      "name": "OKTA_API_TOKEN",
-      "description": "Okta API token created by a Read-Only Administrator (sent as `Authorization: SSWS <token>`).",
+      "name": "OKTA_READ_PRIVATE_KEY",
+      "description": "Private key of the Okta API Services app (JWK JSON or PEM). The app needs the Read-Only Administrator admin role.",
       "hosts": [
         "%%OKTA_DOMAIN%%"
       ]
     }
   ],
-  "setup": "### Okta side\n1. Create (or pick) a dedicated Okta admin account and give it the **Read-Only Administrator** role (Security > Administrators). An API token has exactly the permissions of the admin who created it, and Read-Only Administrator can view the System Log.\n2. Signed in as that admin: Security > API > Tokens > **Create token**. Copy the value once.\n3. Optional: under the token, restrict it to the network zone of this server.\n\n### Here\n1. Settings > Secrets: add `OKTA_API_TOKEN` with allowed host = your Okta domain.\n2. Install with `OKTA_DOMAIN` = `acme.okta.com` (no scheme), review, then enable.\n\n### What it calls\n`GET https://<OKTA_DOMAIN>/api/v1/logs?since=<previous run>&sortOrder=ASCENDING&limit=200&filter=<eventType list>` (a polling request: no `until`, ascending). Each event becomes an alert with source `okta`, external id = the event `uuid`, title = `displayMessage (actor.alternateId)`, severity mapped from the event `severity`: ERROR → high, WARN → medium, INFO → low, DEBUG → info. Re-reading an event (overlapping windows) does not create a second alert.\n\nIn Okta Identity Engine a rejected push is usually logged as `user.authentication.auth_via_mfa` with outcome reason `INVALID_CREDENTIALS`, which is too noisy to pull blindly; add it to the filter in the HTTP step if you want it.\n\n### Limits\nponytail: one page per run (`limit=200`, Okta allows up to 1000); the `Link: rel=\"next\"` header is not followed, so more than 200 matching events in 5 minutes are cut off. Raise `limit` and the loop's `max_items` (max 500) together if you hit it. A non-200 answer (bad token, 429) creates nothing and fails the run with the HTTP status; the next run re-reads the window from the last successful run (at most 24 h back). Okta keeps System Log events for 90 days and rate-limits `/api/v1/logs` per org.\n\nDocs: [List System Log events](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/SystemLog/#tag/SystemLog/operation/listLogEvents), [System Log query](https://developer.okta.com/docs/reference/system-log-query/), [Event types](https://developer.okta.com/docs/reference/api/event-types/), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm), [Rate limits](https://developer.okta.com/docs/reference/rl-global-mgmt/).",
+  "setup": "### Okta side\n1. Applications > Create App Integration > **API Services**.\n2. General > Client Credentials > Client authentication **Public key / Private key**. Keep **Require Demonstrating Proof of Possession (DPoP) header in token requests** ON. Add key > **Generate new key**, and copy the private key (JSON or PEM) and its `kid`.\n3. **Okta API Scopes** > Grant `okta.logs.read`.\n4. **Admin roles** > assign the role: **Read-Only Administrator** (can view the System Log).\n\n### Here\n1. Settings > Secrets: add `OKTA_READ_PRIVATE_KEY` (paste the private key; allowed host = your Okta domain).\n2. Install with `OKTA_DOMAIN` and `OKTA_CLIENT_ID`. Paste the private key as a JWK (it includes the `kid`); a PEM key has no `kid`, so also set `key_id` in the auth block of each HTTP step.\n\n### What it does\nAuthenticates with the API Services app (private-key JWT, DPoP-bound token) and calls:\n`GET https://<OKTA_DOMAIN>/api/v1/logs?since=<previous run>&sortOrder=ASCENDING&limit=200&filter=<eventType list>` (a polling request: no `until`, ascending). Each event becomes an alert with source `okta`, external id = the event `uuid`, title = `displayMessage (actor.alternateId)`, severity mapped from the event `severity`: ERROR → high, WARN → medium, INFO → low, DEBUG → info. Re-reading an event (overlapping windows) does not create a second alert.\n\nIn Okta Identity Engine a rejected push is usually logged as `user.authentication.auth_via_mfa` with outcome reason `INVALID_CREDENTIALS`, which is too noisy to pull blindly; add it to the filter in the HTTP step if you want it.\n\n### Limits\nponytail: one page per run (`limit=200`, Okta allows up to 1000); the `Link: rel=\"next\"` header is not followed, so more than 200 matching events in 5 minutes are cut off. Raise `limit` and the loop's `max_items` (max 500) together if you hit it. A non-200 answer (bad token, 429) creates nothing and fails the run with the HTTP status; the next run re-reads the window from the last successful run (at most 24 h back). Okta keeps System Log events for 90 days and rate-limits `/api/v1/logs` per org.\n\nDocs: [List System Log events](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/SystemLog/#tag/SystemLog/operation/listLogEvents), [System Log query](https://developer.okta.com/docs/reference/system-log-query/), [Event types](https://developer.okta.com/docs/reference/api/event-types/), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm), [Rate limits](https://developer.okta.com/docs/reference/rl-global-mgmt/).",
   "graph": {
     "nodes": [
       {
@@ -46,8 +52,15 @@
           "method": "GET",
           "url": "https://%%OKTA_DOMAIN%%/api/v1/logs?since={{ trigger.since | urlencode }}&sortOrder=ASCENDING&limit=200&filter={{ 'eventType eq \"security.threat.detected\" or eventType eq \"security.breached_credential.detected\" or eventType eq \"security.session.detect_client_roaming\" or eventType eq \"user.account.lock\" or eventType eq \"user.account.lock.limit\" or eventType eq \"user.account.report_suspicious_activity_by_enduser\" or eventType eq \"user.account.privilege.grant\" or eventType eq \"user.mfa.okta_verify.deny_push\" or eventType eq \"user.mfa.attempt_bypass\" or eventType eq \"application.policy.sign_on.deny_access\"' | urlencode }}",
           "headers": {
-            "Authorization": "SSWS {{ secrets.OKTA_API_TOKEN }}",
             "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_private_key_jwt",
+            "token_url": "https://%%OKTA_DOMAIN%%/oauth2/v1/token",
+            "client_id": "%%OKTA_CLIENT_ID%%",
+            "private_key": "{{ secrets.OKTA_READ_PRIVATE_KEY }}",
+            "scope": "okta.logs.read",
+            "dpop": true
           }
         },
         "retries": 2

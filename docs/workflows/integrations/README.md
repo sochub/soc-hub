@@ -34,8 +34,10 @@ How pulls behave: each run reads from the last **successful** run (at most 24 h 
 | Microsoft | ingest | `m365-defender-alerts-pull`: Microsoft 365 Defender: pull alerts | MS_CLIENT_ID, MS_CLIENT_SECRET | AZURE_TENANT_ID |
 | Microsoft | ingest | `sentinel-incidents-pull`: Microsoft Sentinel: pull incidents | SENTINEL_CLIENT_ID, SENTINEL_CLIENT_SECRET | AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, RESOURCE_GROUP, WORKSPACE_NAME |
 | Microsoft | response | `entra-revoke-sessions`: Entra ID: revoke sign-in sessions (and optionally disable) | ENTRA_RESPONSE_CLIENT_ID, ENTRA_RESPONSE_CLIENT_SECRET | AZURE_TENANT_ID |
-| Okta | ingest | `okta-system-log-pull`: Okta: pull security events | OKTA_API_TOKEN | OKTA_DOMAIN |
-| Okta | response | `okta-contain-user`: Okta: suspend user and revoke sessions | OKTA_RESPONSE_API_TOKEN | OKTA_DOMAIN |
+| Okta | ingest | `okta-system-log-pull`: Okta: pull security events | OKTA_READ_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
+| Okta | response | `okta-contain-user`: Okta: suspend user and revoke sessions | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
+| Okta | response | `okta-suspend-user`: Okta: suspend user | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
+| Okta | response | `okta-reset-authenticators`: Okta: reset authenticators | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
 | Proofpoint | ingest | `proofpoint-tap-pull`: Proofpoint TAP: pull delivered threats and permitted clicks | PROOFPOINT_PRINCIPAL, PROOFPOINT_SECRET | - |
 | SentinelOne | ingest | `sentinelone-threats-pull`: SentinelOne: pull threats | S1_API_TOKEN | S1_CONSOLE |
 | SentinelOne | response | `sentinelone-disconnect-agent`: SentinelOne: disconnect agent from network | S1_API_TOKEN | S1_CONSOLE |

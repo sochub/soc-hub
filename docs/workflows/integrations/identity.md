@@ -11,6 +11,8 @@ graph, then enable it. Node and template-context details are in [the workflows R
 | `entra-risk-detections-pull` | ingest | every 15 min | Graph `identityProtection/riskDetections` → alerts (source `entra-id`) |
 | `identity-alerts-to-case` | triage | `alert.ingested` | groups identity alerts per user into a case, adds the user, applies a playbook |
 | `okta-contain-user` | response | manual | suspends the case's user in Okta and revokes their sessions |
+| `okta-suspend-user` | response | manual | suspends the case's user in Okta (sessions are not revoked) |
+| `okta-reset-authenticators` | response | manual | resets all enrolled authenticators of the case's user; they must re-enroll |
 | `entra-revoke-sessions` | response | manual | revokes the case's user's Entra sessions; optionally disables the account |
 
 ## How the ingest templates behave
@@ -37,7 +39,7 @@ item as payload. The condition's false branch goes to a `fail` step.
 ### What is pulled
 
 `GET https://<OKTA_DOMAIN>/api/v1/logs?since=<since>&sortOrder=ASCENDING&limit=200&filter=<expr>`, a polling
-query (no `until`), with `Authorization: SSWS <token>`. The filter keeps these event types:
+query (no `until`), authenticated as an Okta API Services app (private-key JWT, DPoP-bound token). The filter keeps these event types:
 
 | Event type | Meaning |
 |---|---|
@@ -59,24 +61,20 @@ Mapping: source `okta`, external_id `uuid`, title `displayMessage (actor.alterna
 
 ### Vendor-side setup
 
-1. Pull: an admin account with **Read-Only Administrator** creates an API token (Security > API > Tokens). Tokens
-   inherit the creating admin's permissions.
-2. Response (`okta-contain-user`): a separate admin with **Organization Administrator** (or **Group Administrator**
-   scoped to the groups it may act on) creates a second token. Read-only admins cannot suspend users or clear
-   sessions; super administrators can only be acted on by a super administrator.
-3. Optionally restrict each token to this server's network zone.
+1. Create an Okta **API Services** app integration per privilege level (read-only pull, response). Client authentication = **Public key / Private key**; keep **Require DPoP header in token requests** ON; generate a key and copy the private key (JWK includes the `kid`).
+2. Pull: grant scope `okta.logs.read` and the **Read-Only Administrator** role.
+3. Response (`okta-contain-user`, `okta-suspend-user`, `okta-reset-authenticators`): grant `okta.users.manage` and `okta.users.read` (the user lookup needs read) and the **Organization Administrator** role (or a Group Administrator scoped to the groups this may act on). Help Desk Administrator cannot suspend users; it can reset authenticators, but the response app is shared by all three templates.
 
-Okta recommends scoped OAuth service apps over SSWS tokens, but service apps for the management API authenticate
-with `private_key_jwt`, which `http_request.auth` does not support; SSWS tokens are what these templates use.
+Roles: https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm
 
 ### Secrets and params
 
 | Secret | Allowed hosts | Used by |
 |---|---|---|
-| `OKTA_API_TOKEN` | `<OKTA_DOMAIN>` | `okta-system-log-pull` |
-| `OKTA_RESPONSE_API_TOKEN` | `<OKTA_DOMAIN>` | `okta-contain-user` |
+| `OKTA_READ_PRIVATE_KEY` | `<OKTA_DOMAIN>` | `okta-system-log-pull` |
+| `OKTA_RESPONSE_PRIVATE_KEY` | `<OKTA_DOMAIN>` | `okta-contain-user`, `okta-suspend-user`, `okta-reset-authenticators` |
 
-Param `OKTA_DOMAIN`: the org host, e.g. `acme.okta.com` (no scheme).
+Params: `OKTA_DOMAIN` (the org host, e.g. `acme.okta.com`, no scheme) and `OKTA_CLIENT_ID` (the API Services app's client ID). A PEM key has no `kid`: set `key_id` in the HTTP steps' auth block (an optional `OKTA_KEY_ID` param is not offered because template params cannot be empty).
 
 ### Response: `okta-contain-user`
 
@@ -85,6 +83,25 @@ workflow only writes a note. Steps: `GET /api/v1/users/<login>` to resolve the u
 `POST /api/v1/users/<id>/lifecycle/suspend` (200; only ACTIVE users can be suspended);
 `DELETE /api/v1/users/<id>/sessions?oauthTokens=true` (204; also revokes OIDC/OAuth tokens, but not sessions held
 by downstream apps); then a note with both HTTP statuses. Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.
+
+### Response: `okta-suspend-user`
+
+Same target and user lookup as `okta-contain-user`, but only `POST /api/v1/users/<id>/lifecycle/suspend`, then a note
+with the HTTP status. Sessions and tokens are not revoked. Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.
+
+### Response: `okta-reset-authenticators`
+
+Same target and lookup; `POST /api/v1/users/<id>/lifecycle/reset_factors` removes every enrolled authenticator, so
+the user must re-enroll. Sessions are not revoked (use `okta-contain-user` for that). There is no undo.
+
+Ordering: run `okta-contain-user` or `okta-suspend-user` (or reset the password) first: whoever signs in next with the password enrolls the new authenticators.
+
+### Notes
+
+- A 403 usually means the app's admin role cannot act on that user (Group Administrator outside its groups), or, for suspend, the app only has Help Desk Administrator (use Organization Administrator).
+- An explicit `key_id` in the auth block overrides the JWK's own `kid`.
+- Workflows installed earlier with an API token (SSWS) keep working until they are reinstalled; reinstalling uses the
+  API Services app described above.
 
 ### Rate limits and ceilings
 

@@ -114,6 +114,7 @@ jobs:
         # Audit the environment we actually ship (requirements + overrides), not a fresh resolve of requirements.txt.
         run: |
           python -m venv /tmp/app
+          /tmp/app/bin/pip install --upgrade "pip>=26.1.2" "setuptools>=84.1.0"
           /tmp/app/bin/pip install -r backend/requirements.txt
           /tmp/app/bin/pip install --no-deps -r backend/requirements-overrides.txt
           /tmp/app/bin/pip install pip-audit
