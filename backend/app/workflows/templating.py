@@ -8,6 +8,10 @@ produced value, the total emitted output and the final result are capped. Breach
 TemplateError, like any other template error.
 """
 import contextvars
+import datetime
+import decimal
+import uuid
+from collections.abc import ItemsView, KeysView, ValuesView
 import functools
 import inspect
 import re
@@ -18,8 +22,9 @@ from typing import Any, List
 
 from celery.exceptions import SoftTimeLimitExceeded
 from jinja2 import StrictUndefined, Undefined, nodes, pass_context
+from jinja2.runtime import LoopContext
 from jinja2.sandbox import ImmutableSandboxedEnvironment
-from jinja2.utils import _PassArg
+from jinja2.utils import Cycler, Joiner, Namespace, _PassArg  # Cycler/Joiner repr is short
 from jinja2.visitor import NodeTransformer
 
 _SINGLE_EXPR = re.compile(r"^\s*\{\{(?P<expr>(?:(?!\{\{|\}\}).)+)\}\}\s*$", re.S)
@@ -92,27 +97,50 @@ def _emit(n: int) -> None:
 # ---------------------------------------------------------------------------------------------------------
 # Size accounting
 
+_OPAQUE_TYPES = (LoopContext, Cycler, Joiner, datetime.date, datetime.time, datetime.timedelta, decimal.Decimal, uuid.UUID, complex)
+_SCALAR_COST = {float: 24, bool: 5, type(None): 4}
+_OPAQUE_COST = 64          # datetime/Decimal/UUID, iterators, secret refs: short str()/repr()
+_CALLABLE_COST = 128       # functions, macros, bound methods
+_CONTAINER_ITEM_COST = 4   # repr punctuation per item: quotes, ", ", ": "
+_MAX_DEPTH = 64
+
+
 def _size(v: Any, budget: int = MAX_SIZE, depth: int = 0) -> int:
-    """Approximate size (chars + items) of a value; stops counting once past `budget`."""
+    """Estimated length of str()/repr()/tojson of a value (stops counting once past `budget`).
+
+    Aliasing makes this matter: `[x] * 1000` is tiny in memory but its text repeats x 1000 times, so every
+    value is charged by the text it can expand to. Unknown types are charged pessimistically."""
     if isinstance(v, (str, bytes, bytearray)):
         return len(v)
-    if depth > 32:
-        return 1
-    if isinstance(v, dict):
-        total = len(v)
-        for k, x in v.items():
+    if isinstance(v, Undefined):
+        return 1  # rendering it raises
+    if _is_int(v):
+        return v.bit_length() * 3 // 10 + 2
+    cost = _SCALAR_COST.get(type(v))
+    if cost is not None:
+        return cost
+    if depth > _MAX_DEPTH:
+        return budget + 1
+    if isinstance(v, (dict, list, tuple, set, frozenset, KeysView, ValuesView, ItemsView)):
+        items = v.items() if isinstance(v, dict) else v
+        total = 2 + len(v) * _CONTAINER_ITEM_COST
+        for x in items:
             if total > budget:
                 break
-            total += _size(k, budget - total, depth + 1) + _size(x, budget - total, depth + 1)
+            if isinstance(v, dict):
+                total += _size(x[0], budget - total, depth + 1) + _size(x[1], budget - total, depth + 1)
+            else:
+                total += _size(x, budget - total, depth + 1)
         return total
-    if isinstance(v, (list, tuple, set, frozenset)):
-        total = len(v)
-        for x in v:
-            if total > budget:
-                break
-            total += _size(x, budget - total, depth + 1)
-        return total
-    return 1
+    if isinstance(v, Namespace):
+        return 16 + _size(object.__getattribute__(v, "_Namespace__attrs"), budget, depth + 1)
+    if isinstance(v, range):
+        return 32 + len(v)
+    if isinstance(v, _OPAQUE_TYPES) or isinstance(v, _secret_classes()) or hasattr(type(v), "__next__"):
+        return _OPAQUE_COST
+    if callable(v):
+        return _CALLABLE_COST
+    return budget + 1  # unknown type: assume the worst
 
 
 def _check(v: Any) -> Any:
@@ -136,17 +164,6 @@ _PCT_SPEC = re.compile(r"%(?:\([^)]*\))?[-#0 +]*(\*|\d*)(?:\.(\*|\d*))?[hlL]?([d
 MAX_FMT_FIELDS = 1000  # replacement fields in one format string
 
 
-def _str_size(v: Any) -> int:
-    """Upper-ish bound on the length of str(v) / repr(v) for a format argument."""
-    if isinstance(v, (str, bytes, bytearray)):
-        return len(v)
-    if _is_int(v):
-        return v.bit_length() // 3 + 2
-    if isinstance(v, (int, float, bool)) or v is None:
-        return 32
-    return 2 * _size(v) + 2  # containers: items plus quotes/separators
-
-
 def _arg_values(args: Any) -> list:
     if isinstance(args, dict):
         return list(args.values())
@@ -159,7 +176,7 @@ def _format_estimate(fmt_len: int, n_fields: int, widths: int, values: list) -> 
     """Every field may repeat the largest argument: len(fmt) + fields x max(arg) + widths."""
     if n_fields > MAX_FMT_FIELDS:
         _limit(f"more than {MAX_FMT_FIELDS} format fields")
-    biggest = max((_str_size(v) for v in values), default=0)
+    biggest = max((_size(v) for v in values), default=0)
     _need(fmt_len + n_fields * biggest + widths)
 
 
@@ -264,10 +281,15 @@ def _f_indent(a):
     _need(len(s) + (s.count("\n") + 1) * max(w, 0))
 
 
+_MAX_WRAP_LINES = 20_000
+
+
 def _f_wordwrap(a):
     s, width = str(a["s"]), a["width"]
     wrap = a["wrapstring"] if a["wrapstring"] is not None else "\n"
     w = width if _is_int(width) and width > 0 else 1
+    if len(s) // w > _MAX_WRAP_LINES:  # textwrap is slow per line, in one uninterruptible call
+        _limit(f"wordwrap would produce more than {_MAX_WRAP_LINES} lines")
     _need(len(s) + (2 * len(s) // w + s.count("\n") + 1) * len(str(wrap)))
 
 
@@ -336,17 +358,30 @@ def _materialize(iterable) -> list:
     return items
 
 
+# Filters that build the text of their (possibly non-str) input: str(), repr(), json, pprint, escaping.
+_STRINGIFYING_FILTERS = frozenset([
+    "string", "pprint", "tojson", "upper", "lower", "title", "capitalize", "trim", "striptags", "wordcount",
+    "truncate", "center", "indent", "replace", "wordwrap", "urlize", "escape", "e", "forceescape", "safe",
+    "urlencode", "xmlattr", "int", "float", "format",
+])
+
+
 def _limit_filter(name: str, fn):
     """Tick the budget, bound lazy inputs, pre-check known amplifiers, and size-check every result."""
     precheck = _FILTER_PRECHECKS.get(name)
     sig = inspect.signature(fn) if precheck else None
     value_pos = 0 if _PassArg.from_obj(fn) is None else 1  # skip context/eval_ctx/environment
+    stringifies = name in _STRINGIFYING_FILTERS
 
     @functools.wraps(fn)  # keeps jinja_pass_arg (pass_context/pass_environment markers)
     def wrapper(*args, **kwargs):
         _tick()
-        if len(args) > value_pos and _is_lazy_iterable(args[value_pos]):
-            args = args[:value_pos] + (_accumulate(args[value_pos]),) + args[value_pos + 1:]
+        if len(args) > value_pos:
+            value = args[value_pos]
+            if _is_lazy_iterable(value):
+                args = args[:value_pos] + (_accumulate(value),) + args[value_pos + 1:]
+            elif stringifies and not isinstance(value, str):
+                _check(value)  # its text is built in one call: estimate it first
         if precheck:
             try:
                 bound = sig.bind(*args, **kwargs)
@@ -395,7 +430,7 @@ def _wf_cap(_ctx, value):
 def _wf_emit(_ctx, value):
     if isinstance(value, Undefined):
         return value  # rendering it raises the usual undefined error
-    _emit(len(value) if isinstance(value, str) else len(str(value)))
+    _emit(_size(value, MAX_EMITTED))  # estimated before Jinja stringifies it
     return value
 
 
@@ -420,6 +455,7 @@ class _Instrument(NodeTransformer):
 
     def visit_Concat(self, node):
         self.generic_visit(node)
+        node.nodes = [_wrap(n, "wf:cap") for n in node.nodes]  # each operand, before it is stringified
         return _wrap(node, "wf:cap")
 
     def visit_Output(self, node):
@@ -449,6 +485,16 @@ class _LimitedSandbox(ImmutableSandboxedEnvironment):
         source = _Instrument().visit(source)
         source.set_environment(self)
         return super()._generate(source, name, filename, defer_init=defer_init)
+
+    def call_filter(self, name, *args, **kwargs):
+        if isinstance(name, str) and name.startswith("wf:"):  # map('wf:...'), select(...) by name
+            raise TemplateError(f"No filter named {name!r}.")
+        return super().call_filter(name, *args, **kwargs)
+
+    def call_test(self, name, *args, **kwargs):
+        if isinstance(name, str) and name.startswith("wf:"):
+            raise TemplateError(f"No test named {name!r}.")
+        return super().call_test(name, *args, **kwargs)
 
     def call_binop(self, context, op, left, right):
         _tick()

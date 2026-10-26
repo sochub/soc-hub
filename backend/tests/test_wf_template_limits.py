@@ -203,3 +203,79 @@ def test_wall_clock_budget(monkeypatch):
     monkeypatch.setattr(templating.time, "monotonic", lambda: float(next(clock)))
     with pytest.raises(TemplateLimitError, match="longer than"):
         render("{% for i in range(5) %}{{ i }}{% endfor %}", CTX)
+
+
+# Aliasing: one big value repeated N times is small in memory but huge as text. Every value is charged by
+# the text it expands to, so the repetition (or the stringification) is refused before it happens.
+ALIAS_VECTORS = [
+    "{% set ns = namespace(a='x' * 900000) %}{{ ([ns] * 1000)|pprint|length }}",
+    "{% set ns = namespace(a='x' * 900000) %}{{ ('{0}' * 900).format(ns)|length }}",
+    "{% set ns = namespace(a='x' * 900000) %}{{ ('%s' * 900) % ((ns,) * 900) }}",
+    "{% set ns = namespace(a='x' * 900000) %}{% for i in range(1000) %}{{ ns }}{% endfor %}",
+    "{% set ns = namespace(a='x' * 900000) %}{{ ({}.fromkeys(range(1000), ns))|tojson|length }}",
+    "{{ ([10 ** 1000] * 400000)|pprint|length }}",
+    "{{ ([10 ** 1000] * 400000)|tojson|length }}",
+    "{{ ('' ~ ([10 ** 1000] * 400000))|length }}",
+    "{{ ([10 ** 1000] * 400000)|string|length }}",
+    "x{{ [10 ** 1000] * 400000 }}",
+    "{% set d = {'k': 'x' * 900000} %}x{{ [d.items()] * 1000 }}",
+    "{% set d = {'k': 'x' * 900000} %}x{{ [d.values()] * 1000 }}",
+    "{% set c = cycler('x' * 900000) %}x{{ [c.items] * 1000 }}",
+    "{% set ns = namespace(a='x' * 900000) %}{{ ([ns, ns, ns, ns, ns, ns])|string|length }}",
+]
+
+
+@pytest.mark.parametrize("tpl", ALIAS_VECTORS)
+def test_alias_vectors_rejected_with_small_peak(tpl):
+    def go():
+        with pytest.raises(TemplateLimitError):
+            render(tpl, CTX)
+    assert _peak(go) < 20 * 1024 * 1024, tpl
+
+
+def test_alias_vectors_in_slack_render():
+    def go():
+        with pytest.raises(TemplateLimitError):
+            render_slack("x{{ [10 ** 1000] * 400000 }}", CTX)
+    assert _peak(go) < 20 * 1024 * 1024
+
+
+@pytest.mark.parametrize("expr", [
+    "(([namespace(a='x' * 900000)] * 1000)|join|length) > 0",
+    "(([10 ** 1000] * 400000)|string|length) > 0",
+])
+def test_alias_vectors_in_trigger_filters_and_expressions(expr):
+    def go():
+        assert trigger_matches(expr, CTX) is False
+        with pytest.raises(TemplateLimitError):
+            eval_expr(expr, CTX)
+    start = time.monotonic()
+    assert _peak(go) < 20 * 1024 * 1024
+    assert time.monotonic() - start < 5.0
+
+
+def test_reasonable_values_still_stringify():
+    assert render("{% set ns = namespace(a='hi') %}{{ ns.a }} {{ [1, 2]|string }}", CTX) == "hi [1, 2]"
+    assert render("x{{ 10 ** 300 }}", CTX) == "x" + str(10 ** 300)
+    assert render("{{ case|tojson|length > 10 }}", CTX) is True
+    assert render("{% set d = {'k': 'v'} %}x{{ d.items()|list }}", CTX) == "x[('k', 'v')]"
+    assert render("{% for i in range(3) %}{{ loop.cycle('a', 'b') }}{% endfor %}", CTX) == "aba"
+    assert render("{% set c = cycler('x' * 900000) %}{{ ([c] * 1000)|length }}", CTX) == "1000"  # short repr
+
+
+def test_wordwrap_pathological_width_rejected_quickly():
+    start = time.monotonic()
+    with pytest.raises(TemplateLimitError):
+        render("{{ ('x' * 330000)|wordwrap(1)|length }}", CTX)
+    assert time.monotonic() - start < 1.0
+    assert render("{{ 'aaa bbb ccc'|wordwrap(4) }}", CTX) == "aaa\nbbb\nccc"
+
+
+@pytest.mark.parametrize("tpl", [
+    "{{ [-999999999]|map('wf:static')|list }}",
+    "{{ [[1]]|map('wf:iter')|list }}",
+    "{{ [1]|select('wf:cap')|list }}",
+])
+def test_hooks_not_reachable_through_map_or_select(tpl):
+    with pytest.raises(TemplateError):
+        render(tpl, CTX)
