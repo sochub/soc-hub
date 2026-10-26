@@ -103,7 +103,7 @@ def test_slack_accept_creates_artifact_and_updates_reply(env):
         assert env["ephem"] == []
         (up,) = env["updates"]
         assert up["channel"] == CHANNEL and up["ts"] == "5.5" and up["text"] == "SOC-bot suggestions"
-        assert "added by" in flat(up["blocks"]) and "actions" not in flat(up["blocks"])
+        assert "added the" in flat(up["blocks"]) and "actions" not in flat(up["blocks"])
     run(body)
 
 
@@ -114,7 +114,7 @@ def test_slack_dismiss(env):
             await sa.handle_interaction(t.id, {**payload(), "actions": [{"value": f"wrs:{t.id}:{s.id}:d"}]})
             await drain(env)
             assert env["ephem"] == []
-            assert len(env["updates"]) == 1 and "dismissed" in flat(env["updates"][0]["blocks"])
+            assert len(env["updates"]) == 1 and "Dismissed" in flat(env["updates"][0]["blocks"])
             assert (await db.execute(select(func.count()).select_from(CaseArtifact).where(
                 CaseArtifact.case_id == case.id))).scalar() == 0
     run(body)
@@ -165,7 +165,7 @@ def test_ui_accept_rerenders_slack_reply(env):
             calls = await drain(env)
             assert len(calls) == 1 and calls[0][1] == "war_room.rerender"
             (up,) = env["updates"]
-            assert up["ts"] == "5.5" and "added by" in flat(up["blocks"])
+            assert up["ts"] == "5.5" and "added the" in flat(up["blocks"])
     run(body)
 
 
@@ -189,7 +189,7 @@ def test_racing_slack_and_ui_apply_once(env):
 
 
 def test_reply_backtick_value_cannot_break_code_span():
-    s = WarRoomSuggestion(id=1, kind="artifact", payload={"type": "domain", "value": "a`b.com"}, status="pending")
+    s = WarRoomSuggestion(id=1, case_id=1, kind="artifact", payload={"type": "domain", "value": "a`b.com"}, status="pending")
     text = json.dumps(suggestions_reply([s], 1))
     assert "a`b.com" not in text and "aˋb.com" in json.dumps(suggestions_reply([s], 1), ensure_ascii=False)
 
@@ -208,5 +208,5 @@ def test_slack_milestone_conflict_no_ephemeral(env):
             await db.commit()
             await sa._handle_suggestion_action(t.id, payload(), t.id, m.id, "accept")
             await drain(env)
-            assert env["ephem"] == [] and "conflicts" in flat(env["updates"][0]["blocks"])
+            assert env["ephem"] == [] and "out of order" in flat(env["updates"][0]["blocks"])
     run(body)

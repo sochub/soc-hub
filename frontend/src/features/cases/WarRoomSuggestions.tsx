@@ -3,22 +3,25 @@ import { Bot, Check, ExternalLink, Loader2, X } from 'lucide-react';
 import { api } from '../../api/client';
 import type { WarRoomSuggestion } from '../../types';
 
-const TYPE_LABEL: Record<string, string> = {
-    ip: 'IP', domain: 'Domain', url: 'URL', file_hash: 'Hash', email: 'Email', hostname: 'Host', username: 'User',
+const TYPE_STYLE: Record<string, [string, string]> = {
+    ip: ['🌐', 'IP'], domain: ['🔗', 'domain'], url: ['🔗', 'URL'], file_hash: ['🧬', 'file hash'],
+    email: ['✉️', 'email address'], hostname: ['🖥️', 'host'], username: ['👤', 'user'],
 };
-const MILESTONE_LABEL: Record<string, string> = {
-    first_seen: 'First seen', detected: 'Detected', contained: 'Contained', recovered: 'Recovered',
+const MILESTONE_STYLE: Record<string, [string, string]> = {
+    first_seen: ['👀', 'First seen'], detected: ['🚨', 'Detected'], contained: ['🛡️', 'Contained'], recovered: ['✅', 'Recovered'],
 };
 
 function describe(s: WarRoomSuggestion): { text: string; accept: string } {
     if (s.kind === 'artifact') {
         const t = s.payload.type ?? '';
-        return { text: `${TYPE_LABEL[t] ?? t} ${s.payload.value ?? ''}`, accept: 'Add' };
+        const [emoji, noun] = TYPE_STYLE[t] ?? ['🔎', t];
+        return { text: `${emoji} Add the ${noun} ${s.payload.value ?? ''} to the case artifacts?`, accept: 'Add to case' };
     }
     const key = s.payload.key ?? '';
+    const [emoji, title] = MILESTONE_STYLE[key] ?? ['🔎', key];
     const at = s.payload.at ? new Date(s.payload.at) : null;
     const when = at && !Number.isNaN(at.getTime()) ? at.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : (s.payload.at ?? '');
-    return { text: `Set ${MILESTONE_LABEL[key] ?? key} to ${when}`, accept: 'Set' };
+    return { text: `${emoji} Set the case's ${title} milestone to ${when}?`, accept: 'Set milestone' };
 }
 
 export default function WarRoomSuggestions({ caseId }: { caseId: number }) {

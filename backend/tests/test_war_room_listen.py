@@ -249,7 +249,7 @@ def test_bot_and_edited_messages_ignored(delays, extra):
 # ---- blocks ------------------------------------------------------------------
 
 def _sug(id, kind, payload, status="pending", by=None):
-    return WarRoomSuggestion(id=id, kind=kind, payload=payload, status=status, resolved_by_user_id=by)
+    return WarRoomSuggestion(id=id, case_id=42, kind=kind, payload=payload, status=status, resolved_by_user_id=by)
 
 
 def test_suggestions_reply_blocks():
@@ -259,8 +259,8 @@ def test_suggestions_reply_blocks():
          _sug(4, "milestone", {"key": "contained", "at": "2026-10-26T14:32:00+01:00"})]
     blocks = suggestions_reply(s, 7)
     text = " ".join(b["text"]["text"] for b in blocks if b["type"] == "section")
-    assert "IP `1.2.3.4`" in text and "Host `WS&lt;1&gt;`" in text and "User `corp\\bob`" in text
-    assert "Set *Contained* to Mon 26 Oct 14:32" in text
+    assert "IP `1.2.3.4`" in text and "host `WS&lt;1&gt;`" in text and "user `corp\\bob`" in text
+    assert "*Contained* milestone to Mon 26 Oct 14:32" in text
     vals = [e["value"] for b in blocks if b["type"] == "actions" for e in b["elements"]]
     assert "wrs:7:1:a" in vals and "wrs:7:1:d" in vals and "wrs:7:4:a" in vals
 
@@ -271,5 +271,55 @@ def test_suggestions_reply_resolved_rows():
          _sug(3, "milestone", {"key": "contained", "at": "2026-10-26T14:32:00+00:00"}, "conflict")]
     blocks = suggestions_reply(s, 7, names={5: "Ana"})
     ctx = " ".join(e["text"] for b in blocks if b["type"] == "context" for e in b["elements"])
-    assert "✓ added by Ana" in ctx and "dismissed" in ctx and "⚠ conflicts with Detected" in ctx
+    assert ":white_check_mark: Ana added the IP `1.2.3.4` to the case." in ctx
+    assert ":no_entry_sign: Dismissed — it won't be suggested again for this case." in ctx
+    assert "*Contained* out of order" in ctx and "Detected" not in ctx
     assert not [b for b in blocks if b["type"] == "actions"]
+
+
+def _texts(blocks):
+    out = []
+    for b in blocks:
+        if b["type"] == "section":
+            out.append(b["text"]["text"])
+        elif b["type"] == "context":
+            out += [e["text"] for e in b["elements"]]
+        elif b["type"] == "actions":
+            out += [e["text"]["text"] for e in b["elements"]]
+    return " | ".join(out)
+
+
+def test_reply_header_and_quip_stable():
+    from app.services.slack_blocks import SOC_BOT_QUIPS
+    s = [_sug(5, "artifact", {"type": "ip", "value": "1.2.3.4"}), _sug(6, "artifact", {"type": "domain", "value": "a.com"})]
+    first = suggestions_reply(s, 7)
+    assert "SOC-bot spotted something new for case #42" in first[0]["text"]["text"]
+    quip = first[1]["elements"][0]["text"]
+    assert quip in SOC_BOT_QUIPS
+    assert suggestions_reply(s, 7)[1]["elements"][0]["text"] == quip
+    s[1].status, s[1].resolved_by_user_id = "dismissed", 1
+    assert suggestions_reply(s, 7, names={1: "Ana"})[1]["elements"][0]["text"] == quip
+
+
+def test_artifact_row_is_a_question():
+    text = _texts(suggestions_reply([_sug(1, "artifact", {"type": "ip", "value": "1.2.3.4"}),
+                                     _sug(2, "artifact", {"type": "hostname", "value": "WS1"})], 7))
+    assert ":globe_with_meridians: Should I add the IP `1.2.3.4` to the case artifacts?" in text
+    assert ":desktop_computer: Should I add the host `WS1` to the case artifacts?" in text
+    assert "Add to case" in text
+
+
+def test_milestone_row_wording():
+    text = _texts(suggestions_reply([_sug(1, "milestone", {"key": "contained", "at": "2026-10-26T14:32:00+01:00"})], 7))
+    assert ":shield: This sounds like the containment time. Should I set the case's *Contained* milestone to" in text
+    assert "Set milestone" in text
+
+
+def test_resolved_lines_wording():
+    s = [_sug(1, "milestone", {"key": "recovered", "at": "2026-10-26T14:32:00+00:00"}, "accepted", 5),
+         _sug(2, "artifact", {"type": "ip", "value": "5.6.7.8"}, "dismissed", 5),
+         _sug(3, "milestone", {"key": "recovered", "at": "2026-10-26T14:32:00+00:00"}, "conflict")]
+    text = _texts(suggestions_reply(s, 7, names={5: "Ana"}))
+    assert ":white_check_mark: Ana set *Recovered* to" in text
+    assert ":no_entry_sign: Dismissed by Ana" in text
+    assert "*Recovered* out of order" in text and "Detected" not in text
