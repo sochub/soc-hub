@@ -103,7 +103,7 @@ The tenant **HTTP allowlist** (Integrations, tenant admin) lists hostnames that 
 
 - Entries are DNS hostnames with at least two labels (`soar.corp.example.com`) or wildcards (`*.corp.example.com`, subdomains only). IP addresses, single-label names (`redis`, `db`, `localhost`), schemes, ports and paths are rejected with `422`; at most 100 entries.
 - Allowlisted hosts are still resolved, checked and pinned. Loopback, link-local (including `169.254.169.254` and `fd00:ec2::254`), unspecified, multicast and reserved addresses, and their IPv4-mapped/compatible forms, are refused for every host.
-- Private addresses are reachable through the allowlist **only if the platform operator sets `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST=true`** (env, default `false`). With it off, the allowlist has no effect on address checks; keep it off on a shared multi-tenant deployment.
+- Private addresses are reachable through the allowlist **only if the platform operator sets `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST=true`** (env, default `false`). With it off, the allowlist has no effect on address checks. **Enabling it lets every tenant admin reach private addresses, including the platform's own internal network** (any multi-label name that resolves there, e.g. via wildcard DNS or container/cluster network names such as `db.svc.cluster.local`). Enable it only on single-tenant or on-prem deployments.
 - A request that carries a secret must use `https://`, allowlisted or not ("secrets are only sent over https").
 
 ## Worked example: group EDR alerts into one case

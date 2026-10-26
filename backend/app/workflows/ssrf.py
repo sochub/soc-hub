@@ -1,6 +1,8 @@
 """Outbound URL guard for tenant-directed HTTP: the http_request node, OAuth token URLs, the tenant AI
 api_base, and (with an operator-set list) OIDC discovery."""
+import hashlib
 import ipaddress
+import logging
 import re
 import socket
 from typing import List, Optional
@@ -9,6 +11,7 @@ from urllib.parse import urlparse
 from app.core.config import settings
 
 _resolve = socket.getaddrinfo  # module-level hook so tests can stub DNS
+logger = logging.getLogger(__name__)
 
 MAX_ALLOWLIST = 100
 HTTPS_ONLY = "secrets are only sent over https"
@@ -55,7 +58,8 @@ def _always_blocked(ip) -> bool:
 
 def _private(ip) -> bool:
     a = _effective(ip)
-    return a.is_private or (isinstance(a, ipaddress.IPv4Address) and a in _SHARED)
+    return (a.is_private or (isinstance(a, ipaddress.IPv4Address) and a in _SHARED)
+            or (isinstance(a, ipaddress.IPv6Address) and a.is_site_local))  # deprecated fec0::/10
 
 
 def allowlist_entry(raw) -> Optional[str]:
@@ -98,13 +102,53 @@ def normalize_allowlist(entries) -> List[str]:
     return sorted(out)
 
 
+def stored_entry(raw) -> Optional[str]:
+    """An entry as saved before validation existed (e.g. `https://api.example.com/path`), reduced to its
+    host and validated: scheme, userinfo, path, query and port are stripped. None if still invalid."""
+    return allowlist_entry(_host_part(raw)) if isinstance(raw, str) else None
+
+
+def _host_part(raw: str) -> str:
+    s = raw.strip()
+    if "://" in s:
+        s = s.split("://", 1)[1]
+    s = re.split(r"[/?#]", s, maxsplit=1)[0].rpartition("@")[2]
+    if s.count(":") == 1:  # host:port (IPv6 literals have more colons and are rejected anyway)
+        s = s.split(":", 1)[0]
+    return s
+
+
+_LOGGABLE = re.compile(r"[A-Za-z0-9.*\-]{1,253}")
+
+
+def _redacted(raw) -> str:
+    """Safe-to-log form of a stored entry: its bare host part, never userinfo/path/query; else a short hash."""
+    s = raw if isinstance(raw, str) else repr(raw)
+    host = _host_part(s)
+    if _LOGGABLE.fullmatch(host):
+        return host
+    return f"<len={len(s)} sha256={hashlib.sha256(s.encode()).hexdigest()[:8]}>"
+
+
+def stored_allowlist(entries, tenant_id=None) -> List[str]:
+    """The tenant's stored allowlist in normalized form; invalid legacy entries are dropped and logged."""
+    out = set()
+    for raw in entries or []:
+        e = stored_entry(raw)
+        if e is None:
+            logger.warning("http allowlist: dropping invalid entry tenant=%s host=%s", tenant_id, _redacted(raw))
+        else:
+            out.add(e)
+    return sorted(out)
+
+
 def host_on_allowlist(host: Optional[str], allowlist) -> bool:
     """Case- and trailing-dot-insensitive match against the tenant HTTP allowlist. `*.suffix` matches strict
-    subdomains. Stored entries that fail validation (saved before it existed) never match."""
+    subdomains. Stored legacy entries match as their normalized form (`stored_entry`); invalid ones never do."""
     if not host:
         return False
     h = host.strip().rstrip(".").lower()
-    for e in filter(None, (allowlist_entry(x) for x in (allowlist or []))):
+    for e in filter(None, (stored_entry(x) for x in (allowlist or []))):
         if e.startswith("*.") and h.endswith(e[1:]) and h != e[2:]:
             return True
         if h == e:

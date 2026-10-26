@@ -49,8 +49,9 @@ class Settings(BaseSettings):
 
     # Platform-level switch: may a host on a tenant's HTTP allowlist (workflow HTTP node, OAuth token URL,
     # tenant AI api_base) resolve to a private address (RFC 1918, CGNAT 100.64/10, ULA fc00::/7)? Off by
-    # default: tenant admins must not reach the platform's internal network. Loopback, link-local and cloud
-    # metadata addresses are blocked regardless.
+    # default. Enabling it lets every tenant admin reach private addresses, including the platform's own
+    # internal network (wildcard DNS, container network names): single-tenant/on-prem deployments only.
+    # Loopback, link-local and cloud metadata addresses are blocked regardless.
     WORKFLOW_ALLOW_PRIVATE_ALLOWLIST: bool = False
 
     # CORS: comma-separated list of allowed origins. Empty = no cross-origin

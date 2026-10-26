@@ -46,9 +46,10 @@ DNS = {
     "cgnat.corp.example.com": ["100.64.1.1"],
     "ula.corp.example.com": ["fd12:3456::1"],
     "mixed.corp.example.com": ["93.184.216.34", "127.0.0.1"],
+    "sitelocal.corp.example.com": ["fec0::1"],
 }
 ALWAYS_BLOCKED = ["loop", "meta", "mapped", "mappedmeta", "v6loop", "ec2v6", "linklocal6", "zero", "mcast"]
-PRIVATE = ["onprem", "cgnat", "ula"]
+PRIVATE = ["onprem", "cgnat", "ula", "sitelocal"]
 
 
 def fake_resolve(host, port, *a, **kw):
@@ -145,6 +146,38 @@ def test_good_entries_normalized():
         "*.corp.example.com", "api.example.com"]
 
 
+@pytest.mark.parametrize("raw,norm", [
+    ("https://api.cloudflare.com", "api.cloudflare.com"),
+    ("https://user:pw@API.example.com:8443/path?q=1", "api.example.com"),
+    ("api.example.com:443", "api.example.com"),
+    ("*.corp.example.com", "*.corp.example.com"),
+    ("http://127.0.0.1:8080/", None),
+    ("intranet", None),
+])
+def test_stored_legacy_entries_normalized(raw, norm):
+    assert ssrf.stored_entry(raw) == norm
+
+
+def test_stored_legacy_url_entry_matches_as_hostname(dns, private_off):
+    assert ssrf.host_on_allowlist("api.cloudflare.com", ["https://api.cloudflare.com"])
+    assert ssrf.stored_allowlist(["https://b.example.com", "a.example.com:443", "redis"], 7) == [
+        "a.example.com", "b.example.com"]
+
+
+def test_dropped_entries_logged_redacted(caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    out = ssrf.stored_allowlist(["https://user:secret@x.example.com/p?q=1",
+                                 "https://user:secret@intranet/p?q=1",
+                                 "user:secret@10.0.0.5:8080/p?q=1",
+                                 "weird secret/p?q=1"], 9)
+    assert out == ["x.example.com"]
+    text = caplog.text + " ".join(str(r.args) for r in caplog.records)
+    assert caplog.records, "dropped entries are logged"
+    for bad in ("secret", "/p", "q=1", "user"):
+        assert bad not in text, bad
+
+
 def test_too_many_entries():
     with pytest.raises(ssrf.AllowlistError):
         ssrf.normalize_allowlist([f"h{i}.example.com" for i in range(ssrf.MAX_ALLOWLIST + 1)])
@@ -177,6 +210,15 @@ def test_allowlist_put_api():
                 assert r.status_code == 422, r.text
                 r = await c.put(url, json={"hosts": ["api.example.com", "*.corp.example.com"]})
                 assert r.status_code == 200 and r.json() == {"hosts": ["*.corp.example.com", "api.example.com"]}, r.text
+                # legacy values stored before validation: GET normalizes, and saving the GET result back works
+                async with AsyncSessionLocal() as db:
+                    t = await db.get(Tenant, ids["t"])
+                    t.workflow_http_allowlist = ["https://api.cloudflare.com", "x.example.com:8443", "127.0.0.1"]
+                    await db.commit()
+                r = await c.get(url)
+                assert r.json() == {"hosts": ["api.cloudflare.com", "x.example.com"]}, r.text
+                r = await c.put(url, json=r.json())
+                assert r.status_code == 200 and r.json() == {"hosts": ["api.cloudflare.com", "x.example.com"]}, r.text
         finally:
             app.dependency_overrides.clear()
             async with AsyncSessionLocal() as db:

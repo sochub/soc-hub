@@ -16,7 +16,7 @@ from app.schemas.workflow import (AllowlistIn, DryRunIn, ManualRunIn, RunDetail,
 from app.utils.audit import create_audit_log
 from app.workflows.runtime import cancel_run, create_run, flush_withdrawals, start_manual_run
 from app.workflows import templates as wf_templates
-from app.workflows.ssrf import AllowlistError, normalize_allowlist
+from app.workflows.ssrf import AllowlistError, normalize_allowlist, stored_allowlist
 from app.workflows.validation import workflow_errors
 
 router = APIRouter()
@@ -80,7 +80,7 @@ def _out(wf: Workflow, stats: dict, secret_names: Optional[set] = None) -> dict:
 async def get_allowlist(db: AsyncSession = Depends(deps.get_db), current_user: User = Depends(deps.require_admin),
                         tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalars().first()
-    return {"hosts": tenant.workflow_http_allowlist or []}
+    return {"hosts": stored_allowlist(tenant.workflow_http_allowlist, tenant_id)}
 
 
 @router.put("/settings/http-allowlist")
