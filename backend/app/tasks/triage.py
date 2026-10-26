@@ -15,6 +15,7 @@ from app.models.playbook import PlaybookTemplate
 from app.models.case_triage import CaseTriageResult
 from app.services.ai_service import AIService
 from app.services.artifact_types import not_private
+from app.utils.tenant_state import tenant_deactivated
 from app.api.v1.copilot import _find_related_cases
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,11 @@ async def _run_with_session(triage_id: int) -> None:
             select(CaseTriageResult).where(CaseTriageResult.id == triage_id)
         )).scalars().first()
         if not triage:
+            return
+        if await tenant_deactivated(db, triage.tenant_id):  # queued before a deactivation: no LLM work
+            triage.status = "failed"
+            triage.error_message = "Tenant deactivated."
+            await db.commit()
             return
 
         case = (await db.execute(select(Case).where(Case.id == triage.case_id))).scalars().first()

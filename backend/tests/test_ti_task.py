@@ -36,6 +36,14 @@ class FakeSource:
         return self.result
 
 
+@pytest.fixture(autouse=True)
+def _tenant_not_deactivated(monkeypatch):
+    """These tests use made-up tenant ids and a stubbed world; the deactivated-tenant gate has its own tests."""
+    async def never(db, tenant_id):
+        return False
+    monkeypatch.setattr(task, "tenant_deactivated", never)
+
+
 @pytest_asyncio.fixture
 async def tenant():
     await engine.dispose()  # drop pooled connections a previous test's loop may have left behind

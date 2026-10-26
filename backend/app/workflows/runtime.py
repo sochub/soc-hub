@@ -10,9 +10,11 @@ from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case
+from app.models.tenant import Tenant
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.secrets.refs import SecretsNamespace
 from app.utils.audit import create_audit_log
+from app.utils.tenant_state import TENANT_DEACTIVATED_ERROR, tenant_deactivated
 from app.workflows.context import build_context
 from app.workflows.cron import cron_matches
 from app.workflows.dryrun import dry_run_behaviour, simulated_output
@@ -112,6 +114,8 @@ async def dispatch_event(tenant_id, event_type, case_id, alert_id, changes, dept
     from app.workflows.context import alert_to_dict, case_to_dict
 
     async with AsyncSessionLocal() as db:
+        if await tenant_deactivated(db, tenant_id):
+            return  # a deactivated tenant's automation never starts
         workflows = (await db.execute(select(Workflow).where(
             Workflow.tenant_id == tenant_id, Workflow.enabled == True, Workflow.trigger_type == event_type,  # noqa: E712
         ))).scalars().all()
@@ -160,6 +164,7 @@ async def run_due_schedules(now: datetime) -> List[int]:
         # ponytail: one global scan, no per-tenant batching; FOR UPDATE SKIP LOCKED guards overlapping sweeps.
         workflows = (await db.execute(select(Workflow).where(
             Workflow.enabled == True, Workflow.trigger_type == "schedule",  # noqa: E712
+            Workflow.tenant_id.in_(select(Tenant.id).where(Tenant.is_active.isnot(False))),  # not deactivated tenants
         ).with_for_update(skip_locked=True))).scalars().all()
         for wf in workflows:
             last = wf.last_fired_at
@@ -243,10 +248,10 @@ async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] =
         await cancel_run(db, child)
 
 
-async def cancel_run(db, run: WorkflowRun) -> None:
+async def cancel_run(db, run: WorkflowRun, error: Optional[str] = None) -> None:
     if run.status in _TERMINAL_RUN:
         return
-    await finalize_run(db, run, "cancelled")  # also cancels non-terminal children, queues DM withdrawals
+    await finalize_run(db, run, "cancelled", error)  # also cancels non-terminal children, queues DM withdrawals
 
 
 def flush_withdrawals(db) -> None:
@@ -265,7 +270,8 @@ async def withdraw_messages(targets) -> None:
             by_tenant.setdefault(tenant_id, []).append((channel, ts))
         async with AsyncSessionLocal() as db:
             for tenant_id, items in by_tenant.items():
-                await _update_slack_messages(db, tenant_id, items, "This request was withdrawn.", ":no_entry_sign:")
+                if not await tenant_deactivated(db, tenant_id):
+                    await _update_slack_messages(db, tenant_id, items, "This request was withdrawn.", ":no_entry_sign:")
     except Exception:
         logger.warning("could not withdraw Slack messages", exc_info=True)
 
@@ -293,6 +299,11 @@ async def advance_run(run_id: int) -> None:
     async with AsyncSessionLocal() as db:
         run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id).with_for_update())).scalars().first()
         if not run or run.status in _TERMINAL_RUN or run.status == "queued":
+            return
+        if await tenant_deactivated(db, run.tenant_id):  # deactivated mid-run: stop here, schedule nothing
+            await cancel_run(db, run, TENANT_DEACTIVATED_ERROR)
+            await db.commit()
+            flush_withdrawals(db)
             return
         steps = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id))).scalars().all()
         states = {s.node_id: {"status": s.status, "output": s.output} for s in steps}
@@ -344,6 +355,10 @@ async def execute_step(step_id: int) -> None:
         if run.status in _TERMINAL_RUN:
             return
         run_id, tenant_id = run.id, run.tenant_id  # usable after a rollback expires `run`
+        if await tenant_deactivated(db, tenant_id):
+            await db.rollback()  # release the step lock first: cancel_run locks run -> steps
+            await _cancel_deactivated(run_id)
+            return
         step.status = "running"
         step.started_at = step.started_at or _now()
         await db.commit()
@@ -423,6 +438,17 @@ async def execute_step(step_id: int) -> None:
         advance_run_task.delay(step.run_id)
 
 
+async def _cancel_deactivated(run_id: int) -> None:
+    """Cancel a run whose tenant was deactivated (finalizes its steps and any loop children)."""
+    async with AsyncSessionLocal() as db:
+        run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id).with_for_update())).scalars().first()
+        if run is None:
+            return
+        await cancel_run(db, run, TENANT_DEACTIVATED_ERROR)
+        await db.commit()
+        flush_withdrawals(db)
+
+
 async def fail_timed_out_step(step_id: int) -> None:
     """The soft time limit fired outside execute_step's own handler (e.g. inside the event loop): fail the
     step if it is still active and advance its run so the run finalizes instead of hanging."""
@@ -498,7 +524,8 @@ async def expire_waits() -> None:
         rows = (await db.execute(
             select(WorkflowRunStep, WorkflowRun.tenant_id).join(WorkflowRun, WorkflowRun.id == WorkflowRunStep.run_id)
             .where(WorkflowRunStep.status == "waiting", WorkflowRunStep.wait_expires_at.isnot(None),
-                   WorkflowRunStep.wait_expires_at < _now())
+                   WorkflowRunStep.wait_expires_at < _now(),
+                   WorkflowRun.tenant_id.in_(select(Tenant.id).where(Tenant.is_active.isnot(False))))
             .with_for_update(of=WorkflowRunStep, skip_locked=True).limit(200)
         )).all()
         for step, tenant_id in rows:

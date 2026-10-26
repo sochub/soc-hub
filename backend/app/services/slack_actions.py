@@ -14,6 +14,7 @@ from app.models.workflow import WorkflowRun, WorkflowRunStep
 from app.services.case_service import apply_case_update
 from app.services.slack_blocks import card_text, case_card
 from app.services.slack_service import SlackError, load_integration, parse_action_value, respond, slack_call
+from app.utils.tenant_state import tenant_active  # noqa: F401  (re-exported: Slack entry points import it from here)
 from app.workflows.events import emit_event
 from app.workflows.templating import slack_escape
 
@@ -43,12 +44,6 @@ async def _slack_email(token: str, slack_user_id: str) -> Optional[str]:
 
 
 TENANT_DEACTIVATED = "This workspace's SOC Hub tenant is deactivated."
-
-
-async def tenant_active(db, tenant_id: int) -> bool:
-    """Slack never acts in a deactivated tenant (NULL counts as active, like everywhere else)."""
-    return (await db.execute(select(Tenant.id).where(
-        Tenant.id == tenant_id, Tenant.is_active.isnot(False)))).first() is not None
 
 
 async def _platform_user(db, tenant_id: int, email: Optional[str]) -> Optional[User]:

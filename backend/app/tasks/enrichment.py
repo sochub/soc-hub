@@ -17,6 +17,7 @@ from app.enrichment.indicators import normalise, should_skip, tlp_allows
 from app.enrichment.ratelimit import RateLimiter, limits_for
 from app.enrichment.sources import REGISTRY
 from app.models.enrichment_result import EnrichmentResult
+from app.utils.tenant_state import tenant_deactivated
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,8 @@ async def _entry(tenant_id, raw_type, value, tlp, force, only=None, attempt=0, *
         return
     itype, v = norm
     async with AsyncSessionLocal() as db:
+        if await tenant_deactivated(db, tenant_id):  # also stops already-queued tasks and pending retries
+            return
         if not force:
             s = await load_settings(db, tenant_id)
             if not tlp_allows(tlp or s.artifact_tlp, s.auto_max_tlp):

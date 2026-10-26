@@ -16,6 +16,7 @@ from app.services.slack_blocks import suggestions_reply
 from app.services.slack_service import SlackError, load_integration, slack_call
 from app.services.war_room_extract import extract_candidates
 from app.services.war_room_suggestions import record_candidates
+from app.utils.tenant_state import tenant_deactivated
 from app.tasks.runner import _run_async
 from app.worker import celery_app
 
@@ -78,6 +79,8 @@ async def _release(channel: str, ts: str) -> None:
 async def process_message(tenant_id: int, event: dict) -> None:
     channel, ts, user = event["channel"], event["ts"], event.get("user")
     async with AsyncSessionLocal() as db:
+        if await tenant_deactivated(db, tenant_id):
+            return  # queued before a deactivation: no rows, no suggestions, no Slack call
         db.add(WarRoomMessageSeen(slack_channel=channel, ts=ts, tenant_id=tenant_id))
         try:
             await db.flush()
