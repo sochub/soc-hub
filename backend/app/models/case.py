@@ -56,6 +56,11 @@ class Case(Base):
     # Dedupe markers so the SLA sweep emails once per breach, not every scan.
     sla_response_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
     sla_resolution_breach_notified_at = Column(DateTime(timezone=True), nullable=True)
+    # Declared incident milestones (NULL = computed; see app.services.milestones). Shared by glance and report.
+    first_seen_at = Column(DateTime(timezone=True), nullable=True)
+    detected_at = Column(DateTime(timezone=True), nullable=True)
+    contained_at = Column(DateTime(timezone=True), nullable=True)
+    recovered_at = Column(DateTime(timezone=True), nullable=True)
 
     alerts = relationship("Alert", back_populates="case")
     timeline_events = relationship("TimelineEvent", back_populates="case")
@@ -101,6 +106,7 @@ class TimelineEvent(Base):
     guest = relationship("CaseGuest", lazy="joined")
     via = Column(String(16), nullable=True)  # set when an MCP client wrote this entry on behalf of user_id
     via_client = Column(String(200), nullable=True)
+    pinned = Column(Boolean, nullable=False, default=False, server_default="false")  # shown on the incident glance
 
     @property
     def guest_email(self):

@@ -167,7 +167,7 @@ def test_truncation_slices_and_notes():
 
 def test_out_of_order_note():
     r = make_report(milestones=_ms(ttc_seconds=None, out_of_order=["ttc_seconds"]))
-    assert "Milestone times are out of order — check the overrides." in render_html(r)
+    assert "Milestone times are out of order — check the case milestones." in render_html(r)
     assert "Milestone times are out of order" not in render_html(make_report())
 
 

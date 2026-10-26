@@ -1,18 +1,28 @@
 import { useState } from 'react';
-import { Flag } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Flag, Pencil } from 'lucide-react';
 
-import type { Case } from '../../types';
+import { api } from '../../api/client';
+import type { Case, CaseEvent, MilestoneKey } from '../../types';
 import { formatDateTime } from '../../utils/datetime';
+import MilestonesEditor from './MilestonesEditor';
+import { MILESTONES } from './milestones';
 
 const STATUS_COLOR: Record<string, string> = {
     new: 'var(--color-lime)', open: 'var(--color-accent)', in_progress: 'var(--color-magenta)',
     pending: 'var(--color-severity-medium)', resolved: 'var(--color-severity-low)', closed: 'var(--color-fg-3)',
+    before_case: 'var(--color-fg-3)',
 };
 const TYPE_COLOR: Record<string, string> = {
     status_change: 'var(--color-accent)', containment: 'var(--color-severity-high)', remediation: 'var(--color-lime)',
     investigation: 'var(--color-magenta)', artifact_added: 'var(--color-severity-low)',
     task: 'var(--color-severity-medium)', severity_change: 'var(--color-severity-critical)',
 };
+const MILESTONE_COLOR: Record<MilestoneKey, string> = {
+    first_seen: 'var(--color-severity-critical)', detected: 'var(--color-accent)',
+    contained: 'var(--color-severity-high)', recovered: 'var(--color-lime)',
+};
+const ALWAYS_SHOWN = new Set(['status_change', 'severity_change']); // they drive the phase bar
 const STATUS_RE = /Status changed from (\w+) to (\w+)/;
 const ROWS = 4; // flag heights, staggered like a plan chart
 
@@ -23,30 +33,59 @@ function duration(ms: number): string {
     if (h < 48) return `${h}h${m % 60 ? ` ${m % 60}m` : ''}`;
     return `${Math.floor(h / 24)}d${h % 24 ? ` ${h % 24}h` : ''}`;
 }
+const secs = (s: number | null | undefined) => (s === null || s === undefined || s < 0 ? '—' : duration(s * 1000));
 
 const label = (s: string) => s.replace(/_/g, ' ');
 const plain = (s: string) => s.replace(/@\[([^\]]+)\]\(user:\d+\)/g, '@$1').replace(/[#*_`>~[\]]/g, '').trim();
 
-/** Horizontal "incident at a glance": status phases, milestones and every event on one time axis. */
-export default function IncidentOverview({ caseData, tz }: { caseData: Case; tz?: string | null }) {
+type Item = { key: string; at: number; text: string; type: string; color: string; open: () => void };
+
+/** Horizontal "incident at a glance": milestones, status phases and the pinned events on one time axis. */
+export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestigation }: {
+    caseData: Case; tz?: string | null; canEdit?: boolean; onOpenInvestigation?: (eventId: number) => void;
+}) {
     const [now] = useState(() => Date.now()); // "now" for open cases, fixed per mount
-    const events = [...(caseData.timeline_events ?? [])].sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at));
-    const start = +new Date(caseData.created_at);
-    const resolved = caseData.resolved_at ? +new Date(caseData.resolved_at) : null;
-    const last = events.length ? +new Date(events[events.length - 1].created_at) : start;
-    // Resolved cases end at resolution; later follow-ups are pinned to the right edge instead of stretching the axis.
-    const end = Math.max(resolved ?? Math.max(now, last), start + 60000);
-    const pos = (t: number) => `${((Math.min(t, end) - start) / (end - start)) * 100}%`;
+    const [editing, setEditing] = useState(false);
+    const { data: invEvents = [] } = useQuery({
+        queryKey: ['case-events', caseData.id],
+        queryFn: async () => (await api.get(`/cases/${caseData.id}/events`)).data as CaseEvent[],
+    });
+    const ms = caseData.milestones ?? null;
+
+    const activity = [...(caseData.timeline_events ?? [])].sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at));
+    const jump = (id: number) => document.getElementById(`event-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Curated: pinned activity, status/severity changes, and investigation events pinned (flagged) to the glance.
+    const items: Item[] = [
+        ...activity.filter((e) => e.pinned || ALWAYS_SHOWN.has(e.event_type)).map((e) => ({
+            key: `a${e.id}`, at: +new Date(e.created_at), text: plain(e.content).slice(0, 80) || label(e.event_type),
+            type: label(e.event_type), color: TYPE_COLOR[e.event_type] ?? 'var(--color-fg-3)', open: () => jump(e.id),
+        })),
+        ...invEvents.filter((e) => e.flagged).map((e) => ({
+            key: `i${e.id}`, at: +new Date(e.event_date), text: e.title, type: label(e.category),
+            color: TYPE_COLOR.investigation, open: () => onOpenInvestigation?.(e.id),
+        })),
+    ].sort((a, b) => a.at - b.at);
+
+    const created = +new Date(caseData.created_at);
+    const declaredFirst = ms?.first_seen.source === 'declared' && ms.first_seen.at ? +new Date(ms.first_seen.at) : null;
+    const start = Math.min(declaredFirst ?? created, created); // only a declared First seen stretches the axis
+    const recoveredAt = ms?.recovered.at ? +new Date(ms.recovered.at) : (caseData.resolved_at ? +new Date(caseData.resolved_at) : null);
+    const last = items.length ? items[items.length - 1].at : start;
+    // Recovered cases end at recovery; later follow-ups are pinned to the right edge instead of stretching the axis.
+    const end = Math.max(recoveredAt ?? Math.max(now, last), start + 60000);
+    const clamp = (t: number) => Math.min(Math.max(t, start), end);
+    const pos = (t: number) => `${((clamp(t) - start) / (end - start)) * 100}%`;
     const ack = caseData.acknowledged_at ? +new Date(caseData.acknowledged_at) : null;
 
     // Status phases: initial status runs until the first change, then each change opens the next one.
-    const changes = events.flatMap((e) => {
+    const changes = activity.flatMap((e) => {
         const m = e.event_type === 'status_change' ? STATUS_RE.exec(e.content) : null;
         return m ? [{ at: +new Date(e.created_at), from: m[1], to: m[2] }] : [];
     });
     let phases: { status: string; from: number; to: number }[] = [];
+    if (start < created) phases.push({ status: 'before_case', from: start, to: created });
     if (changes.length) {
-        let cur = { status: changes[0].from, from: start };
+        let cur = { status: changes[0].from, from: created };
         for (const c of changes) {
             phases.push({ ...cur, to: c.at });
             cur = { status: c.to, from: c.at };
@@ -54,31 +93,45 @@ export default function IncidentOverview({ caseData, tz }: { caseData: Case; tz?
         phases.push({ ...cur, to: end });
     } else {
         // No parsable status history: derive phases from the case's own timestamps.
-        if (ack) phases.push({ status: 'new', from: start, to: ack });
-        phases.push({ status: resolved ? 'in_progress' : caseData.status, from: ack ?? start, to: end });
+        if (ack) phases.push({ status: 'new', from: created, to: ack });
+        phases.push({ status: caseData.resolved_at ? 'in_progress' : caseData.status, from: ack ?? created, to: end });
     }
     phases = phases.filter((p) => Math.min(p.to, end) > p.from);
 
-    const flagged = events.filter((e) => e.event_type !== 'comment' && e.event_type !== 'guest_comment');
-    const comments = events.length - flagged.length;
+    const markers = ms ? MILESTONES.flatMap(({ key, label: name }) => (ms[key].at
+        ? [{ key, name, at: +new Date(ms[key].at as string), source: ms[key].source }] : [])) : [];
 
     const stats: [string, string][] = [
-        ['Total duration', `${duration((resolved ?? now) - start)}${resolved ? '' : ' · ongoing'}`],
-        ['Time to acknowledge', ack ? duration(ack - start) : '—'],
-        ['Time to resolve', resolved ? duration(resolved - start) : '—'],
-        ['Actions · comments', `${flagged.length} · ${comments}`],
+        ['Total duration', `${duration((recoveredAt ?? now) - start)}${recoveredAt ? '' : ' · ongoing'}`],
+        ['Time to detect', secs(ms?.ttd_seconds)],
+        ['Time to contain', secs(ms?.ttc_seconds)],
+        ['Time to recover', secs(ms?.ttr_seconds)],
     ];
-    const after = (t: string) => (resolved && +new Date(t) > resolved ? ` (${duration(+new Date(t) - resolved)} after resolution)` : '');
-    const jump = (id: number) => document.getElementById(`event-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const after = (t: number) => (recoveredAt && t > recoveredAt ? ` (${duration(t - recoveredAt)} after recovery)` : '');
 
     return (
         <section aria-label="Incident at a glance" className="glass-panel rounded-xl border border-line bg-panel p-4 space-y-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="text-sm font-semibold text-fg">Incident at a glance</h3>
-                <span className="text-[11px] font-mono text-muted">
-                    {formatDateTime(caseData.created_at, tz)} → {resolved ? formatDateTime(caseData.resolved_at, tz) : 'now'}
-                </span>
+                <div className="flex items-baseline gap-3">
+                    <span className="text-[11px] font-mono text-muted">
+                        {formatDateTime(new Date(start), tz)} → {recoveredAt ? formatDateTime(new Date(recoveredAt), tz) : 'now'}
+                    </span>
+                    {ms && canEdit && (
+                        <button type="button" onClick={() => setEditing((v) => !v)} aria-expanded={editing}
+                            className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline">
+                            <Pencil size={11} /> {editing ? 'Close' : 'Edit milestones'}
+                        </button>
+                    )}
+                </div>
             </div>
+
+            {ms && editing && (
+                <div className="rounded-lg border border-line bg-raised/40 p-3">
+                    <MilestonesEditor key={JSON.stringify(ms)} caseId={caseData.id} milestones={ms} canEdit={!!canEdit}
+                        onDone={() => setEditing(false)} />
+                </div>
+            )}
 
             <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {stats.map(([k, v]) => (
@@ -92,36 +145,36 @@ export default function IncidentOverview({ caseData, tz }: { caseData: Case; tz?
             {/* ponytail: linear time scale; bursts of events crowd together, switch to a log/ordinal scale if that hurts */}
             <div className="overflow-x-auto">
                 <div className="relative min-w-[640px] px-2">
-                    {/* Flags: non-comment actions, staggered over ROWS heights, pole down to the axis */}
+                    {/* Flags: the curated items, staggered over ROWS heights, pole down to the axis */}
                     <div className="relative" style={{ height: ROWS * 26 + 8 }}>
-                        {flagged.map((e, i) => {
+                        {items.map((e, i) => {
                             const row = i % ROWS;
-                            const color = TYPE_COLOR[e.event_type] ?? 'var(--color-fg-3)';
-                            const left = (+new Date(e.created_at) - start) / (end - start);
+                            const left = (clamp(e.at) - start) / (end - start);
                             return (
-                                <button key={e.id} type="button" onClick={() => jump(e.id)}
-                                    title={`${formatDateTime(e.created_at, tz)} · ${label(e.event_type)}${after(e.created_at)}\n${plain(e.content)}`}
+                                <button key={e.key} type="button" onClick={e.open}
+                                    title={`${formatDateTime(new Date(e.at), tz)} · ${e.type}${after(e.at)}\n${e.text}`}
                                     className="absolute bottom-0 flex items-start gap-1 group/flag text-left"
-                                    style={left > 0.7 ? { right: `calc(100% - ${pos(+new Date(e.created_at))})`, top: row * 26, flexDirection: 'row-reverse' } : { left: pos(+new Date(e.created_at)), top: row * 26 }}>
+                                    style={left > 0.7 ? { right: `calc(100% - ${pos(e.at)})`, top: row * 26, flexDirection: 'row-reverse' } : { left: pos(e.at), top: row * 26 }}>
                                     <span className="absolute top-0 bottom-0 w-px bg-line-strong" style={left > 0.7 ? { right: 0 } : { left: 0 }} />
-                                    <Flag size={14} className="shrink-0 relative" style={{ color, fill: color }} />
-                                    <span className="text-[11px] leading-4 text-fg-2 group-hover/flag:text-fg max-w-[180px] truncate">
-                                        {plain(e.content).slice(0, 80) || label(e.event_type)}
-                                    </span>
+                                    <Flag size={14} className="shrink-0 relative" style={{ color: e.color, fill: e.color }} />
+                                    <span className="text-[11px] leading-4 text-fg-2 group-hover/flag:text-fg max-w-[180px] truncate">{e.text}</span>
                                 </button>
                             );
                         })}
                     </div>
 
-                    {/* Axis with a dot per event (comments included) */}
+                    {/* Axis with a dot per item and a marker per milestone */}
                     <div className="relative h-3 rounded-full bg-raised-2">
-                        {events.map((e) => (
-                            <button key={e.id} type="button" onClick={() => jump(e.id)} aria-label={`${label(e.event_type)} at ${formatDateTime(e.created_at, tz)}`}
-                                title={`${formatDateTime(e.created_at, tz)} · ${label(e.event_type)}${after(e.created_at)}`}
+                        {items.map((e) => (
+                            <button key={e.key} type="button" onClick={e.open} aria-label={`${e.type} at ${formatDateTime(new Date(e.at), tz)}`}
+                                title={`${formatDateTime(new Date(e.at), tz)} · ${e.type}${after(e.at)}`}
                                 className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 size-2.5 rounded-full ring-2 ring-panel hover:scale-150 transition-transform"
-                                style={{ left: pos(+new Date(e.created_at)), background: TYPE_COLOR[e.event_type] ?? 'var(--color-fg-3)' }} />
+                                style={{ left: pos(e.at), background: e.color }} />
                         ))}
-                        {ack && <span title={`Acknowledged ${formatDateTime(caseData.acknowledged_at, tz)}`} className="absolute -top-1 bottom-[-4px] w-0.5 bg-lime" style={{ left: pos(ack) }} />}
+                        {markers.map((m) => (
+                            <span key={m.key} title={`${m.name} · ${formatDateTime(new Date(m.at), tz)} · ${m.source}`}
+                                className="absolute -top-1 bottom-[-4px] w-0.5" style={{ left: pos(m.at), background: MILESTONE_COLOR[m.key] }} />
+                        ))}
                     </div>
 
                     {/* Status phases with their durations */}
@@ -138,9 +191,9 @@ export default function IncidentOverview({ caseData, tz }: { caseData: Case; tz?
 
                     {/* Spans: response and resolution brackets */}
                     <div className="relative h-5 mt-2 text-[10px] font-mono">
-                        {ack && <Span from="0%" to={pos(ack)} color="var(--color-lime)" text={`respond ${duration(ack - start)}`} />}
-                        <Span from={ack ? pos(ack) : '0%'} to={pos(resolved ?? end)} color="var(--color-accent)"
-                            text={resolved ? `resolve ${duration(resolved - (ack ?? start))}` : 'in progress →'} />
+                        {ack && <Span from={pos(created)} to={pos(ack)} color="var(--color-lime)" text={`respond ${duration(ack - created)}`} />}
+                        <Span from={pos(ack ?? created)} to={pos(recoveredAt ?? end)} color="var(--color-accent)"
+                            text={recoveredAt ? `resolve ${duration(recoveredAt - (ack ?? created))}` : 'in progress →'} />
                     </div>
                 </div>
             </div>
@@ -149,7 +202,10 @@ export default function IncidentOverview({ caseData, tz }: { caseData: Case; tz?
                 {Object.entries(TYPE_COLOR).map(([t, c]) => (
                     <span key={t} className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: c }} />{label(t)}</span>
                 ))}
-                <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-fg-3" />comment / other</span>
+                {MILESTONES.map(({ key, label: name }) => (
+                    <span key={key} className="inline-flex items-center gap-1"><span className="h-2 w-0.5" style={{ background: MILESTONE_COLOR[key] }} />{name}</span>
+                ))}
+                <span className="text-muted">· pin entries in the Timeline tab to show them here</span>
             </div>
         </section>
     );

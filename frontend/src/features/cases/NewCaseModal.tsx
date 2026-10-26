@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, ChevronLeft, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ArtifactForm from '../artifacts/ArtifactForm';
+import { localToIso } from './milestones';
 import { api } from '../../api/client';
 import type { PlaybookSummary } from '../../types';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
@@ -10,7 +11,7 @@ import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../c
 interface NewCaseModalProps {
     show: boolean;
     onClose: () => void;
-    onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; artifacts: any[]; playbook_template_id?: string }) => void;
+    onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; artifacts: any[]; playbook_template_id?: string; first_seen_at?: string }) => void;
     isSubmitting: boolean;
 }
 
@@ -26,6 +27,16 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
         playbook_template_id: ''
     });
     const [artifacts, setArtifacts] = useState<Array<{ type: string; value: string; isolated: boolean; enrichment?: any }>>([]);
+    // "Incident started": pre-filled with now; only sent when the analyst moved it (else First seen stays computed).
+    const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    // The modal stays mounted between opens: re-take "now" each time it opens (React "adjust state on prop change").
+    const [incidentStart, setIncidentStart] = useState(nowLocal);
+    const [startDefault, setStartDefault] = useState(incidentStart);
+    const [wasShown, setWasShown] = useState(show);
+    if (show !== wasShown) {
+        setWasShown(show);
+        if (show) { const n = nowLocal(); setIncidentStart(n); setStartDefault(n); }
+    }
 
     const { data: playbooks = [] } = useQuery({
         queryKey: ['playbooks', 'mine'],
@@ -53,7 +64,9 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
         onSubmit({
             ...caseData,
             tags: tagsArray,
-            artifacts
+            artifacts,
+            // Declared only when the analyst moved it away from the default (editing back to it counts as untouched).
+            ...(incidentStart !== startDefault && localToIso(incidentStart) ? { first_seen_at: localToIso(incidentStart) as string } : {}),
         });
         handleClose();
     };
@@ -169,6 +182,15 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                                     <option value="high">High</option>
                                     <option value="critical">Critical</option>
                                 </select>
+                            </div>
+
+                            <div>
+                                <label htmlFor="new-case-incident-start" className={modalLabel}>
+                                    Incident started <span className="text-muted font-normal">(defaults to now · move it back if it began earlier)</span>
+                                </label>
+                                <input id="new-case-incident-start" type="datetime-local" value={incidentStart} min="1970-01-01T00:00" max={nowLocal()}
+                                    onChange={(e) => setIncidentStart(e.target.value)}
+                                    className={modalInput} />
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">

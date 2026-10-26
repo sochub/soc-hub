@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Flag, FileText, FileX, Pencil, Trash2, Download, X, Sparkles } from 'lucide-react';
+import { Plus, Flag, FileText, FileX, Pencil, Trash2, Download, X, Sparkles, Pin, PinOff } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { formatDateTime } from '../../utils/datetime';
-import type { CaseEvent, User } from '../../types';
+import type { CaseEvent, MilestoneKey, TimelineEvent, User } from '../../types';
+import { MILESTONES, apiDetail, useSaveMilestones } from './milestones';
 import TimelineSuggest from './TimelineSuggest';
 import { Markdown, MarkdownField } from '../../components/Markdown';
 
@@ -26,6 +27,11 @@ const EVENT_CATEGORIES: [string, string, string][] = [
     ['exfiltration', 'Exfiltration', '#ec4899'],
     ['impact', 'Impact', '#dc2626'],
 ];
+const plain = (s: string) => s.replace(/@\[([^\]]+)\]\(user:\d+\)/g, '@$1').replace(/[#*_`>~[\]]/g, '').trim();
+const ACTIVITY_DEFAULT_LIMIT = 200; // above this many activity entries the tab opens on Investigation
+type Source = 'all' | 'investigation' | 'activity';
+type Row = { kind: 'inv'; at: number; e: CaseEvent } | { kind: 'act'; at: number; a: TimelineEvent };
+
 const CAT = Object.fromEntries(EVENT_CATEGORIES.map(([k, label, color]) => [k, { label, color }]));
 
 type Draft = {
@@ -77,10 +83,12 @@ function exportCsv(events: CaseEvent[], caseId: number) {
 
 const field = 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
 
-export default function CaseTimeline({ caseId }: { caseId: number }) {
+export default function CaseTimeline({ caseId, activity = [] }: { caseId: number; activity?: TimelineEvent[] }) {
     const qc = useQueryClient();
     const [query, setQuery] = useState('');
     const [flaggedOnly, setFlaggedOnly] = useState(false);
+    const [source, setSource] = useState<Source>(() => (activity.length > ACTIVITY_DEFAULT_LIMIT ? 'investigation' : 'all'));
+    const setMilestone = useSaveMilestones(caseId);
     const [editing, setEditing] = useState<number | 'new' | null>(null);
     const [draft, setDraft] = useState<Draft>(blank);
     const [suggesting, setSuggesting] = useState(false);
@@ -106,17 +114,28 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
         onSuccess: invalidate,
     });
     const remove = useMutation({ mutationFn: async (id: number) => api.delete(`/cases/${caseId}/events/${id}`), onSuccess: invalidate });
+    const pin = useMutation({
+        mutationFn: async ({ id, pinned }: { id: number; pinned: boolean }) => api.patch(`/cases/${caseId}/timeline/${id}/pin`, { pinned }),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['case'] }),
+    });
 
     const shown = useMemo(() => events.filter((e) => (!flaggedOnly || e.flagged) && matches(e, query)), [events, flaggedOnly, query]);
+    // Activity entries interleave by their own time; "Pinned" means pinned for them, and the text filter is a plain substring.
+    const shownActivity = useMemo(() => activity.filter((a) => (!flaggedOnly || a.pinned)
+        && (!query.trim() || plain(a.content).toLowerCase().includes(query.trim().toLowerCase()))), [activity, flaggedOnly, query]);
     const days = useMemo(() => {
+        const rows: Row[] = [
+            ...(source !== 'activity' ? shown.map((e) => ({ kind: 'inv' as const, at: +new Date(e.event_date), e })) : []),
+            ...(source !== 'investigation' ? shownActivity.map((a) => ({ kind: 'act' as const, at: +new Date(a.created_at), a })) : []),
+        ].sort((x, y) => x.at - y.at);
         const fmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeZone: me?.timezone || undefined });
-        const out: [string, CaseEvent[]][] = [];
-        for (const e of shown) {
-            const day = fmt.format(new Date(e.event_date));
-            if (out.length && out[out.length - 1][0] === day) out[out.length - 1][1].push(e); else out.push([day, [e]]);
+        const out: [string, Row[]][] = [];
+        for (const r of rows) {
+            const day = fmt.format(new Date(r.at));
+            if (out.length && out[out.length - 1][0] === day) out[out.length - 1][1].push(r); else out.push([day, [r]]);
         }
         return out;
-    }, [shown, me?.timezone]);
+    }, [shown, shownActivity, source, me?.timezone]);
 
     if (isLoading) return <p className="font-mono text-xs text-muted">$ loading timeline…</p>;
 
@@ -152,7 +171,7 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
                 </div>
             )}
             <div className="flex items-center gap-4 text-xs text-fg-2">
-                <label className="flex items-center gap-1.5"><input type="checkbox" checked={draft.flagged} onChange={(e) => setDraft({ ...draft, flagged: e.target.checked })} /> Flagged</label>
+                <label className="flex items-center gap-1.5"><input type="checkbox" checked={draft.flagged} onChange={(e) => setDraft({ ...draft, flagged: e.target.checked })} /> Pin to glance</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={draft.in_summary} onChange={(e) => setDraft({ ...draft, in_summary: e.target.checked })} /> Include in report</label>
                 <div className="ml-auto flex gap-2">
                     <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs text-fg-3 hover:text-fg">Cancel</button>
@@ -171,9 +190,17 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
             <div className="flex flex-wrap items-center gap-2">
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter… (e.g. category:lateral tag:psexec artifact:10.0 flag:true)"
                     className={cn(field, 'flex-1 min-w-48 font-mono text-xs')} aria-label="Filter events" />
-                <button onClick={() => setFlaggedOnly((v) => !v)} aria-pressed={flaggedOnly}
+                <div role="group" aria-label="Show" className="flex rounded-sm overflow-hidden border border-line">
+                    {(['all', 'investigation', 'activity'] as const).map((k) => (
+                        <button key={k} onClick={() => setSource(k)} aria-pressed={source === k}
+                            className={cn('text-xs px-2.5 py-1.5 capitalize transition-colors', source === k ? 'bg-accent/15 text-accent' : 'bg-raised text-fg-2 hover:bg-raised-2')}>
+                            {k}
+                        </button>
+                    ))}
+                </div>
+                <button onClick={() => setFlaggedOnly((v) => !v)} aria-pressed={flaggedOnly} title='Only entries pinned to the glance'
                     className={cn('text-xs px-3 py-1.5 rounded-sm flex items-center gap-1.5 transition-colors', flaggedOnly ? 'bg-accent/15 text-accent' : 'bg-raised text-fg-2 hover:bg-raised-2')}>
-                    <Flag size={12} /> Flagged
+                    <Flag size={12} /> Pinned
                 </button>
                 <button onClick={() => exportCsv(shown, caseId)} disabled={!shown.length} className="text-xs bg-raised hover:bg-raised-2 text-fg-2 px-3 py-1.5 rounded-sm flex items-center gap-1.5 disabled:opacity-50">
                     <Download size={12} /> CSV
@@ -190,7 +217,12 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
                     </button>
                 )}
             </div>
-            <p className="text-[11px] font-mono text-muted">{shown.length} of {events.length} events</p>
+            <p className="text-[11px] font-mono text-muted">
+                {source !== 'activity' && `${shown.length} of ${events.length} events`}
+                {source === 'all' && ' · '}
+                {source !== 'investigation' && `${shownActivity.length} of ${activity.length} activity entries`}
+            </p>
+            {setMilestone.isError && <p role="alert" className="text-xs text-severity-critical">{apiDetail(setMilestone.error)}</p>}
             {suggesting && <TimelineSuggest caseId={caseId} categories={EVENT_CATEGORIES} timezone={me?.timezone} onClose={() => setSuggesting(false)} />}
             {editing === 'new' && form}
 
@@ -206,24 +238,51 @@ export default function CaseTimeline({ caseId }: { caseId: number }) {
                             <span className="absolute left-0 top-1 w-[15px] h-[15px] rounded-full bg-panel border-2 border-line" />
                             {day}
                         </h3>
-                        {list.map((e) => {
+                        {list.map((r) => {
+                            if (r.kind === 'act') {
+                                const a = r.a;
+                                return (
+                                    <article key={`a${a.id}`} className="relative pl-6 group">
+                                        <span className="absolute left-[5px] top-2.5 w-[5px] h-[5px] rounded-full bg-fg-3" />
+                                        <div className="rounded-md border border-line/60 bg-raised/30 px-3 py-1.5 flex items-center gap-2 text-xs text-fg-3">
+                                            <span className="font-mono text-muted shrink-0">{formatDateTime(a.created_at, me?.timezone)}</span>
+                                            <span className="text-[10px] uppercase tracking-wide shrink-0">{a.event_type.replace(/_/g, ' ')}</span>
+                                            <span className="truncate">{plain(a.content)}</span>
+                                            {canEdit ? (
+                                                <button onClick={() => pin.mutate({ id: a.id, pinned: !a.pinned })} aria-pressed={!!a.pinned}
+                                                    title={a.pinned ? 'Unpin from glance' : 'Pin to glance'}
+                                                    className={cn('ml-auto shrink-0 hover:text-fg', a.pinned ? 'text-accent' : 'text-muted opacity-0 group-hover:opacity-100 focus:opacity-100')}>
+                                                    {a.pinned ? <Pin size={13} /> : <PinOff size={13} />}
+                                                </button>
+                                            ) : a.pinned && <Pin size={12} className="ml-auto text-accent" aria-label="Pinned" />}
+                                        </div>
+                                    </article>
+                                );
+                            }
+                            const e = r.e;
                             const c = CAT[e.category] ?? CAT.unspecified;
                             if (editing === e.id) return <div key={e.id} className="pl-6">{form}</div>;
                             return (
-                                <article key={e.id} className="relative pl-6 group">
+                                <article key={e.id} id={`case-event-${e.id}`} className="relative pl-6 group">
                                     <span className="absolute left-[4px] top-3 w-[7px] h-[7px] rounded-full" style={{ background: c.color }} />
                                     <div className="rounded-lg border border-line bg-panel p-3 border-l-4" style={{ borderLeftColor: c.color }}>
                                         <div className="flex flex-wrap items-center gap-2">
                                             <span className="text-xs font-mono text-muted">{formatDateTime(e.event_date, me?.timezone)}</span>
                                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-sm" style={{ color: c.color, background: `${c.color}22` }}>{c.label}</span>
                                             {e.source && <span className="text-[10px] font-mono text-fg-3 bg-raised px-1.5 py-0.5 rounded-sm">{e.source}</span>}
-                                            {e.flagged && <Flag size={12} className="text-severity-high" aria-label="Flagged" />}
+                                            {e.flagged && <Flag size={12} className="text-severity-high" aria-label="Pinned to glance" />}
                                             {canEdit && (
                                                 <span className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                                                    <button onClick={() => patch.mutate({ id: e.id, flagged: !e.flagged })} title={e.flagged ? 'Unflag' : 'Flag'} className={cn('hover:text-fg', e.flagged ? 'text-severity-high' : 'text-muted')}><Flag size={13} /></button>
+                                                    <button onClick={() => patch.mutate({ id: e.id, flagged: !e.flagged })} title={e.flagged ? 'Unpin from glance' : 'Pin to glance'} className={cn('hover:text-fg', e.flagged ? 'text-severity-high' : 'text-muted')}><Flag size={13} /></button>
                                                     <button onClick={() => patch.mutate({ id: e.id, in_summary: !e.in_summary })} title={e.in_summary ? 'In report — click to exclude' : 'Excluded from report — click to include'} className={cn('hover:text-fg', e.in_summary ? 'text-accent' : 'text-muted')}>
                                                         {e.in_summary ? <FileText size={13} /> : <FileX size={13} />}
                                                     </button>
+                                                    <select value="" aria-label="Set as milestone" title="Use this event's time as a case milestone"
+                                                        onChange={(ev) => { const k = ev.target.value as MilestoneKey; if (k) setMilestone.mutate({ [`${k}_at`]: e.event_date }); }}
+                                                        className="text-[11px] bg-raised text-fg-2 rounded-sm px-1 py-0.5 border border-line">
+                                                        <option value="">Set as…</option>
+                                                        {MILESTONES.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
+                                                    </select>
                                                     <button onClick={() => { setDraft(fromEvent(e)); setEditing(e.id); }} title="Edit" className="text-muted hover:text-fg"><Pencil size={13} /></button>
                                                     <button onClick={() => { if (confirm('Delete this event?')) remove.mutate(e.id); }} title="Delete" className="text-muted hover:text-severity-critical"><Trash2 size={13} /></button>
                                                 </span>
