@@ -66,7 +66,7 @@ async def resolve_suggestion(db, *, tenant_id: int, suggestion_id: int, accept: 
                              slack_user_id: Optional[str] = None) -> WarRoomSuggestion:
     s = (await db.execute(select(WarRoomSuggestion).where(
         WarRoomSuggestion.id == suggestion_id, WarRoomSuggestion.tenant_id == tenant_id).with_for_update()
-        )).scalars().first()
+        .execution_options(populate_existing=True))).scalars().first()
     if s is None:
         raise LookupError("suggestion not found")
     if s.status != "pending":

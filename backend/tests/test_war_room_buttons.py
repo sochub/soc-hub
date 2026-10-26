@@ -181,6 +181,7 @@ def test_racing_slack_and_ui_apply_once(env):
             assert (await db.execute(select(func.count()).select_from(AuditLog).where(
                 AuditLog.tenant_id == t.id, AuditLog.action == "war_room_suggestion_accepted"))).scalar() == 1
             assert len(env["updates"]) == 1  # the no-op click queued no second re-render
+            assert env["ephem"] == ["This suggestion was already resolved."]
     run(body)
 
 
