@@ -76,3 +76,33 @@ def test_rollback_drops_queued_card(delays):
             await db.commit()
         assert delays == []
     run(body)
+
+
+async def _set_twice(ids, first, second):
+    async with AsyncSessionLocal() as db:
+        t = await make_tenant(db, ids)
+        c = await make_case(db, ids, t, **({"contained_at": first} if first else {}))
+        case = await db.get(Case, c.id)
+        await set_milestones(db, case, {"contained_at": second}, 7)
+        await db.commit()
+
+
+def test_clearing_contained_queues_nothing(delays):
+    async def body(ids):
+        await _set_twice(ids, AT, None)
+        assert delays == []
+    run(body)
+
+
+def test_same_contained_value_queues_nothing(delays):
+    async def body(ids):
+        await _set_twice(ids, AT, AT)
+        assert delays == []
+    run(body)
+
+
+def test_changed_contained_value_queues_one_card(delays):
+    async def body(ids):
+        await _set_twice(ids, AT, datetime(2099, 10, 23, 1, 0, tzinfo=UTC))
+        assert len(delays) == 1 and delays[0][1] == "containment.confirmed"
+    run(body)
