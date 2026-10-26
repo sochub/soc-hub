@@ -21,6 +21,7 @@ from app.models.enrichment_result import EnrichmentResult
 from app.models.ioc import IOC
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.services.milestones import case_milestones
 from app.reports import branding, milestones, tlp
 from app.reports.defang import scrub_userinfo
 from app.utils.sla import compute_sla_state, load_policy_overrides
@@ -183,17 +184,7 @@ async def build_report(db, case, *, full: bool, generated_by) -> dict:
         e["n"] = n
 
     # --- milestones ---
-    overrides = {}
-    if row:
-        overrides = {k: v for k, v in (("first_seen", row.first_seen_at), ("detected", row.detected_at),
-                                        ("contained", row.contained_at), ("recovered", row.recovered_at))
-                     if v is not None}
-    ms = milestones.compute(
-        ioc_first_seen=[i.first_seen for i in iocs if i.first_seen is not None],
-        alert_created=[a.created_at for a in alerts if a.created_at is not None],
-        case_created=case.created_at,
-        contained_candidates=[t.completed_at for t in done if t.phase == "containment" and t.completed_at],
-        resolved_at=case.resolved_at, overrides=overrides)
+    ms = await case_milestones(db, case)  # the case's declared/computed milestones; shared with the glance
 
     # --- actions ---
     actions: Dict[str, List[dict]] = {}

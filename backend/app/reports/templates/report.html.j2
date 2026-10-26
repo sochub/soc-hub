@@ -212,7 +212,7 @@ tr { page-break-inside: avoid; }
   </div>
   <div class="prose">{{ r.executive_summary or "—" }}</div>
   {%- if ms.out_of_order %}
-  <p class="note">Milestone times are out of order — check the overrides.</p>
+  <p class="note">Milestone times are out of order — check the case milestones.</p>
   {%- endif %}
   <h3>Incident lifecycle</h3>
   <div class="chart">{{ lifecycle_svg | safe }}</div>

@@ -72,14 +72,15 @@ export default function CasesList() {
     });
 
     const createCaseMutation = useMutation({
-        mutationFn: async (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; artifacts: any[]; playbook_template_id?: string }) => {
+        mutationFn: async (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; artifacts: any[]; playbook_template_id?: string; first_seen_at?: string }) => {
             const response = await api.post('/cases/', {
                 title: data.title,
                 description: data.description,
                 severity: data.severity,
                 status: data.status,
                 tags: data.tags,
-                source: data.source
+                source: data.source,
+                ...(data.first_seen_at ? { first_seen_at: data.first_seen_at } : {}),
             });
 
             if (data.artifacts && data.artifacts.length > 0) {

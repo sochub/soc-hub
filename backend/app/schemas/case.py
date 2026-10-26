@@ -1,5 +1,5 @@
 from typing import Optional, List, Any, Literal
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.services.avatars import avatar_version
 from app.models.case import CaseStatus, CaseSeverity, CASE_OUTCOMES
@@ -101,6 +101,7 @@ class TimelineEvent(TimelineEventBase):
     guest_email: Optional[str] = None
     via: Optional[str] = None
     via_client: Optional[str] = None
+    pinned: bool = False
 
     class Config:
         from_attributes = True
@@ -142,8 +143,38 @@ class CaseBase(BaseModel):
 
     _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
 
+def _require_tz(v: Optional[datetime]) -> Optional[datetime]:
+    """Incident times must carry an offset: a naive time would be read in the server's zone."""
+    if v is not None and (v.tzinfo is None or v.utcoffset() is None):
+        raise ValueError("Milestone times must include a timezone")
+    return v
+
+
 class CaseCreate(CaseBase):
-    pass
+    # Analyst-declared incident start; omitted when the analyst left the form default.
+    first_seen_at: Optional[datetime] = None
+
+    @field_validator("first_seen_at")
+    @classmethod
+    def _not_future(cls, v):
+        v = _require_tz(v)
+        if v is not None and v > datetime.now(timezone.utc) + timedelta(seconds=60):
+            raise ValueError("incident start cannot be in the future")
+        return v
+
+
+class PinIn(BaseModel):
+    pinned: bool
+
+
+class MilestonesIn(BaseModel):
+    """Only keys present in the body change; null clears the declaration."""
+    first_seen_at: Optional[datetime] = None
+    detected_at: Optional[datetime] = None
+    contained_at: Optional[datetime] = None
+    recovered_at: Optional[datetime] = None
+
+    _tz = field_validator("first_seen_at", "detected_at", "contained_at", "recovered_at")(_require_tz)
 
 class CaseUpdate(BaseModel):
     title: Optional[str] = None
@@ -186,6 +217,8 @@ class Case(CaseBase):
     sla_resolution_status: Optional[str] = None
     sla_resolution_due_at: Optional[datetime] = None
     sla_overall_status: Optional[str] = None
+    # Detail endpoint only (app.services.milestones.case_milestones).
+    milestones: Optional[dict] = None
 
     class Config:
         from_attributes = True

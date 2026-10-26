@@ -14,6 +14,7 @@ class CaseReport(Base):
     impact = Column(Text, nullable=True)
     lessons_learned = Column(Text, nullable=True)
     tlp = Column(String, nullable=False, default="amber", server_default="amber")
+    # superseded by cases.*_at milestones (kept, no longer read)
     first_seen_at = Column(DateTime(timezone=True), nullable=True)
     detected_at = Column(DateTime(timezone=True), nullable=True)
     contained_at = Column(DateTime(timezone=True), nullable=True)

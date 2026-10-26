@@ -131,8 +131,7 @@ async def _scenario(monkeypatch, caplog):
                 assert d["ai_available"] is False, f"a ai {d}"
                 rep = d["report"]
                 assert rep["tlp"] == "amber", f"a tlp {rep}"
-                for k in ("executive_summary", "impact", "lessons_learned", "first_seen_at", "detected_at",
-                          "contained_at", "recovered_at", "updated_by_email", "updated_at"):
+                for k in ("executive_summary", "impact", "lessons_learned", "updated_by_email", "updated_at"):
                     assert rep[k] is None, f"a default {k} {rep}"
                 assert d["milestones"]["detected"]["source"] == "computed", f"a milestones {d['milestones']}"
                 assert d["milestones"]["recovered"]["source"] == "unknown", f"a milestones {d['milestones']}"
@@ -241,15 +240,10 @@ async def _scenario(monkeypatch, caplog):
                 assert r.status_code == 422 and r.json()["detail"] == "TLP must be at least RED", f"i tlp {r.text}"
                 assert len(await audit_rows(action="export_report")) == n_exp, "i rejected export audited"
 
-                # c) PUT validation: TLP below floor, out-of-order milestones, naive datetime -> 422, nothing saved
+                # c) PUT validation: TLP below floor, over-long text -> 422, nothing saved
+                # (milestones moved to the case: tests/test_case_milestones.py)
                 r = await call("PUT", base, "put", "invalid", json={"tlp": "amber"})
                 assert r.status_code == 422 and r.json()["detail"] == "TLP must be at least RED", f"c tlp {r.text}"
-                r = await call("PUT", base, "put", "invalid", json={
-                    "tlp": "red", "detected_at": "2026-01-02T00:00:00Z", "contained_at": "2026-01-01T00:00:00Z"})
-                assert r.status_code == 422, f"c order {r.status_code}"
-                assert r.json()["detail"] == "Milestones must be in chronological order", f"c order {r.text}"
-                r = await call("PUT", base, json={"tlp": "red", "detected_at": "2026-01-02T00:00:00"})
-                assert r.status_code == 422 and "Milestone times must include a timezone" in r.text, f"c naive {r.text}"
                 r = await call("PUT", base, json={"tlp": "red", "impact": "x" * 20001})
                 assert r.status_code == 422, f"c too long {r.status_code}"
                 assert await report_row() is None, "c invalid PUT wrote a row"
@@ -265,9 +259,8 @@ async def _scenario(monkeypatch, caplog):
                 assert rep["executive_summary"] == SECRET_SUMMARY and rep["impact"] == SECRET_IMPACT, f"b {rep}"
                 assert rep["lessons_learned"] == SECRET_LESSONS and rep["tlp"] == "red", f"b {rep}"
                 assert rep["updated_by_email"] == user.email and rep["updated_at"], f"b who {rep}"
-                assert datetime.fromisoformat(rep["detected_at"]) == datetime(2026, 1, 1, tzinfo=timezone.utc), \
-                    f"b detected {rep}"
-                assert r.json()["milestones"]["detected"]["source"] == "override", "b override source"
+                assert "detected_at" not in rep, f"b milestones are not report fields {rep}"
+                assert r.json()["milestones"]["detected"]["source"] == "computed", "b report PUT ignores milestones"
                 r = await call("GET", base, "get", "ok")
                 assert r.json()["report"]["impact"] == SECRET_IMPACT, "b not persisted"
                 row = await report_row()
@@ -275,8 +268,7 @@ async def _scenario(monkeypatch, caplog):
                 aud = await audit_rows(entity_type="case_report", action="update")
                 assert len(aud) == 1 and aud[0].entity_id == row.id, f"b audit {aud}"
                 assert sorted(aud[0].changes["fields"]) == sorted(
-                    ["executive_summary", "impact", "lessons_learned", "tlp", "first_seen_at", "detected_at",
-                     "contained_at"]), f"b audit fields {aud[0].changes}"
+                    ["executive_summary", "impact", "lessons_learned", "tlp"]), f"b audit fields {aud[0].changes}"
                 blob = json.dumps(aud[0].changes)
                 assert all(s not in blob for s in (SECRET_SUMMARY, SECRET_IMPACT, SECRET_LESSONS)), "b text in audit"
                 # a second identical PUT changes nothing: audited with an empty field list
