@@ -183,7 +183,13 @@ async def login_mfa(
         raise
     if not await spend_mfa_challenge(redis, payload.get("jti")):
         raise expired  # this challenge was already used to sign in
-    tid, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=True)
+    try:
+        tid, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=True)
+    except HTTPException:  # every tenant of this member was deactivated since the password step
+        await audit_event("security", "login.failed", request=request, outcome="denied", user_id=user.id,
+                          user_email=user.email, tenant_id=await _default_active_tenant_id(db, user),
+                          changes={"reason": "tenant_deactivated"})
+        raise
     if refused_slug is not None:  # the tenant's login method changed since the password step
         raise sso_required_error(refused_slug)
     await audit_event("security", "mfa.challenge_passed", request=request, user_id=user.id,

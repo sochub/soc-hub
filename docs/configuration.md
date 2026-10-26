@@ -939,6 +939,13 @@ the `SECRET_KEY`-derived and legacy keys. After it has run, stored secrets no lo
 `ENCRYPTION_KEY`, restart backend, worker and slack-socket, run the script, and remove the old value from
 `ENCRYPTION_KEYS_PREVIOUS` only after the script reports `undecryptable=0` on every table.
 
+**Rotating `SECRET_KEY` while `ENCRYPTION_KEY` is unset.** Stored secrets were derived from the old
+`SECRET_KEY`, so list the old `SECRET_KEY` value in `ENCRYPTION_KEYS_PREVIOUS` (entries go through the same
+HKDF derivation): values written under HKDF(old `SECRET_KEY`) keep decrypting, and the script then moves
+them to the new key. Values still in the legacy SHA-256(old `SECRET_KEY`) format (written before key
+separation and never re-encrypted) are **not** recoverable that way: run the script before rotating
+`SECRET_KEY`, and confirm it reports no undecryptable values.
+
 ## Login throttling
 
 Every login attempt makes a **conditional, atomic reservation** in Redis (one Lua

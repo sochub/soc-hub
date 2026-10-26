@@ -163,3 +163,16 @@ def test_encryption_key_is_optional_in_production():
 def test_production_rejects_weak_encryption_key(value):
     with pytest.raises(ValueError, match="ENCRYPTION_KEY"):
         _prod_settings(ENCRYPTION_KEY=value)
+
+
+def test_old_secret_key_in_previous_keys_decrypts_hkdf_data(keys):
+    old_secret = settings.SECRET_KEY
+    token = crypto.encrypt("written-under-old-secret-key")  # HKDF(old SECRET_KEY), ENCRYPTION_KEY unset
+    legacy = _legacy_fernet(old_secret).encrypt(b"legacy").decode()
+    keys.setattr(settings, "SECRET_KEY", "n" * 48)  # rotated
+    with pytest.raises(InvalidToken):
+        crypto.decrypt(token)
+    keys.setattr(settings, "ENCRYPTION_KEYS_PREVIOUS", old_secret)
+    assert crypto.decrypt(token) == "written-under-old-secret-key"
+    with pytest.raises(InvalidToken):  # documented: the legacy SHA-256 format is not recovered this way
+        crypto.decrypt(legacy)

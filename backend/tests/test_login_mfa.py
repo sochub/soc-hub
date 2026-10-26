@@ -377,3 +377,25 @@ def test_throttle_namespaces_never_collide():
         assert fr._live(f"mfa:attempts:email:{ids['mfa']}") is not None
         assert fr._live(f"login:attempts:email:{ids['mfa']}") is None
     _scenario(body)
+
+
+def test_mfa_stage_tenant_deactivated_refusal_is_audited():
+    """The tenant was deactivated between the password and the code step: refused, and audited."""
+    async def body(c, ids):
+        r = await _pw(c, ids, "mfa")
+        assert r.status_code == 200 and r.json()["mfa_required"] is True
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(Tenant).where(Tenant.id == ids["ta"]).values(is_active=False))
+            await db.commit()
+        code = totp.totp_at(ids["secret"], time.time())
+        r2 = await c.post(LOGIN2, json={"mfa_token": r.json()["mfa_token"], "code": code})
+        assert r2.status_code == 403, r2.text
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(AuditLog).where(
+                AuditLog.user_id == ids["mfa"], AuditLog.action == "login.failed"))).scalars().all()
+            assert [r.changes.get("reason") for r in rows] == ["tenant_deactivated"], rows
+            assert not (await db.execute(select(AuditLog).where(
+                AuditLog.user_id == ids["mfa"], AuditLog.action == "login.success"))).scalars().all()
+            await db.execute(delete(AuditLog).where(AuditLog.user_id == ids["mfa"]))  # rows with tenant_id NULL too
+            await db.commit()
+    _scenario(body)
