@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import logging
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import jwt
@@ -212,7 +212,7 @@ def test_pkjwt_token_failure_hides_assertion(monkeypatch):
     real_send = http_node._send
 
     async def fake_send(url, method, headers, body, pinned_ip, secret=False):
-        if "login.example.com" in url:
+        if urlsplit(url).hostname == "login.example.com":
             sent.append(body)
             raise NodeError(f"boom {body}")
         return await real_send(url, method, headers, body, pinned_ip, secret)
@@ -543,7 +543,7 @@ def test_htu_and_proof_units():
     assert http_node._htu("https://u:p@api.example.com/x") == "https://api.example.com/x"
     assert http_node._htu("https://api.example.com") == "https://api.example.com/"
     key = ec.generate_private_key(ec.SECP256R1())
-    p = http_node._dpop_proof(key, "delete", "https://api.example.com/x?y=2", nonce="nn", token="tk")
+    p = http_node._dpop_proof(key, "delete", "https://api.example.com/x?y=2", nonce="nn", ath="ATH")
     hdr = jwt.get_unverified_header(p)
     assert hdr["typ"] == "dpop+jwt"  # PyJWT must not overwrite typ with "JWT"
     nums = key.public_key().public_numbers()
@@ -551,7 +551,7 @@ def test_htu_and_proof_units():
                           "y": _b64(nums.y.to_bytes(32, "big"))}
     c = jwt.decode(p, key.public_key(), algorithms=["ES256"])
     assert c["htm"] == "DELETE" and c["htu"] == "https://api.example.com/x" and c["nonce"] == "nn"
-    assert c["ath"] == _b64(hashlib.sha256(b"tk").digest())
+    assert c["ath"] == "ATH"
     assert set(c) == {"htm", "htu", "iat", "jti", "nonce", "ath"}
     assert http_node._htu("https://api.example.com:443/x") == "https://api.example.com/x"
     assert http_node._htu("http://api.example.com:80/x") == "http://api.example.com/x"

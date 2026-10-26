@@ -34,7 +34,7 @@ _NOT_DPOP = "token is not DPoP-bound — enable Require DPoP on the app or set d
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # fixed: the key JSON's token_uri is ignored
 _AWS_NAME = re.compile(r"[a-z0-9-]{2,32}")
 # ponytail: per-process cache; move to Redis if workers multiply.
-# sha256(tenant, token_url, form before signing, dpop) -> (access_token, expires_at monotonic, DPoP key or None)
+# sha256(tenant, token_url, form before signing, dpop) -> (access_token, expires_at monotonic, (DPoP key, ath) or None)
 _TOKENS: dict = {}
 logger = logging.getLogger(__name__)
 # httpx logs every request URL at INFO ("HTTP Request: GET https://...?key=<secret>"), botocore.auth logs the
@@ -107,7 +107,8 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
         except ValueError:
             raise NodeError("invalid URL") from None
         if auth["type"] in TOKEN_AUTH_TYPES:
-            token, dpop_key, token_key = await _oauth_token(nctx, tenant, auth, api_host)
+            token, dpop, token_key = await _oauth_token(nctx, tenant, auth, api_host)
+            dpop_key, ath = dpop or (None, None)
             if dpop_key is not None:
                 headers = {k: v for k, v in headers.items() if k.lower() != "dpop"}  # auth wins
                 headers["Authorization"] = f"DPoP {token}"
@@ -136,11 +137,11 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             resp = await _send(url, method, headers, body, pinned_ip, bool(hidden))
         else:
             # One proof per request. hidden is a fresh dict here (it holds the token), never `used`.
-            hidden["dpop:0"] = headers["DPoP"] = _dpop_proof(dpop_key, method, url, token=token)
+            hidden["dpop:0"] = headers["DPoP"] = _dpop_proof(dpop_key, method, url, ath=ath)
             resp = await _send(url, method, headers, body, pinned_ip, True)
             nonce_hdr = _header(resp, "dpop-nonce")
             if resp["status"] == 401 and "use_dpop_nonce" in _header(resp, "www-authenticate") and nonce_hdr:
-                hidden["dpop:1"] = headers["DPoP"] = _dpop_proof(dpop_key, method, url, nonce=nonce_hdr, token=token)
+                hidden["dpop:1"] = headers["DPoP"] = _dpop_proof(dpop_key, method, url, nonce=nonce_hdr, ath=ath)
                 resp = await _send(url, method, headers, body, pinned_ip, True)  # exactly one retry
             if resp["status"] == 401 and "invalid_token" in _header(resp, "www-authenticate"):
                 _TOKENS.pop(token_key, None)  # the next run mints a fresh token
@@ -158,8 +159,8 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             _log_secret_use(nctx.run.tenant_id, used, host, outcome)
 
 
-async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> tuple[str, object, str]:
-    """Client-credentials grant -> (token, DPoP key or None, cache key). Same SSRF guard and secret host
+async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> tuple[str, tuple | None, str]:
+    """Client-credentials grant -> (token, (DPoP key, ath) or None, cache key). Same SSRF guard and secret host
     binding as the main request, checked against the token host. The minted token is a derived credential,
     so it is bound to the same hosts as the client secret: `api_host` must be allowed by every secret used
     here. The token and DPoP key are returned to the caller only; never logged or put in output."""
@@ -274,9 +275,11 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
         ttl = int(resp["body"].get("expires_in") or 0) - 60
     except (TypeError, ValueError):
         ttl = 0
+    # ath (RFC 9449 4.2) is fixed per token, so it is derived once here and cached with the DPoP key.
+    dpop_binding = (dpop_key, _b64url(hashlib.sha256(token.encode()).digest())) if dpop_key is not None else None
     if ttl > 0:
-        _TOKENS[key] = (token, time.monotonic() + ttl, dpop_key)
-    return token, dpop_key, key
+        _TOKENS[key] = (token, time.monotonic() + ttl, dpop_binding)
+    return token, dpop_binding, key
 
 
 def _header(resp: dict, name: str) -> str:
@@ -301,7 +304,7 @@ def _htu(url: str) -> str:
     return f"{scheme}://{host}{parts.path or '/'}"
 
 
-def _dpop_proof(key, method: str, url: str, *, nonce: str | None = None, token: str | None = None) -> str:
+def _dpop_proof(key, method: str, url: str, *, nonce: str | None = None, ath: str | None = None) -> str:
     """ES256 DPoP proof (RFC 9449 section 4). The header jwk carries the public key only."""
     nums = key.public_key().public_numbers()
     jwk = {"kty": "EC", "crv": "P-256", "x": _b64url(nums.x.to_bytes(32, "big")),
@@ -309,8 +312,8 @@ def _dpop_proof(key, method: str, url: str, *, nonce: str | None = None, token: 
     claims = {"htm": method.upper(), "htu": _htu(url), "iat": int(time.time()), "jti": token_urlsafe(24)}
     if nonce:
         claims["nonce"] = nonce
-    if token:
-        claims["ath"] = _b64url(hashlib.sha256(token.encode()).digest())
+    if ath:
+        claims["ath"] = ath
     try:
         return jwt.encode(claims, key, algorithm="ES256", headers={"typ": "dpop+jwt", "jwk": jwk})
     except Exception:  # never echo library text
