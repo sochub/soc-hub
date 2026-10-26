@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Sparkles } from 'lucide-react';
+import { Bot } from 'lucide-react';
 import CopilotChat from './CopilotChat';
 
 /** Extract a case id from the current path, or null when not on a case detail view. */
@@ -33,10 +33,10 @@ export default function CopilotWidget() {
                 initial={false}
                 animate={{ scale: open ? 0 : 1, opacity: open ? 0 : 1 }}
                 transition={{ duration: 0.15 }}
-                aria-label="Open copilot"
+                aria-label="Open SOC-bot"
                 className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-2xl bg-brand-gradient shadow-xl shadow-accent/30 flex items-center justify-center hover:shadow-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
             >
-                <Sparkles size={24} />
+                <Bot size={24} />
             </motion.button>
 
             {/* Slide-over panel */}
@@ -57,7 +57,7 @@ export default function CopilotWidget() {
                             exit={{ x: '100%' }}
                             transition={{ type: 'spring', stiffness: 320, damping: 34 }}
                             role="dialog"
-                            aria-label="Copilot"
+                            aria-label="SOC-bot"
                             className="fixed top-0 right-0 z-50 h-full w-full max-w-md border-l border-line bg-canvas shadow-2xl"
                         >
                             {/* key forces a fresh chat (and session fetch) when switching between case/general context */}
