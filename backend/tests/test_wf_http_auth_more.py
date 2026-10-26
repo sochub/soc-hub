@@ -198,4 +198,4 @@ def test_validation():
             in _msgs({**ok_aws, "secret_access_key": "x"}))
     assert "auth.region must match [a-z0-9-]{2,32}" in _msgs({**ok_aws, "region": "US East"})
     assert "missing required field 'auth.service'" in _msgs({k: v for k, v in ok_aws.items() if k != "service"})
-    assert "auth.type must be oauth2_client_credentials, basic, aws_sigv4 or google_service_account" in _msgs({"type": "digest"})
+    assert "auth.type must be oauth2_client_credentials, oauth2_private_key_jwt, basic, aws_sigv4 or google_service_account" in _msgs({"type": "digest"})

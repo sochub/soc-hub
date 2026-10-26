@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from secrets import token_urlsafe
 from urllib.parse import urlencode, urlsplit
 
 import httpx
@@ -12,6 +13,8 @@ import jwt
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from botocore.credentials import Credentials
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from sqlalchemy import select
 
 from app.models.tenant import Tenant
@@ -23,7 +26,10 @@ from app.workflows.nodes import NodeContext, NodeError, RetryableNodeError, exec
 from app.workflows.ssrf import SSRFError, assert_url_allowed
 
 MAX_BODY = 1_000_000
-AUTH_TYPES = ("oauth2_client_credentials", "basic", "aws_sigv4", "google_service_account")
+AUTH_TYPES = ("oauth2_client_credentials", "oauth2_private_key_jwt", "basic", "aws_sigv4", "google_service_account")
+TOKEN_AUTH_TYPES = ("oauth2_client_credentials", "oauth2_private_key_jwt", "google_service_account")
+CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+_BAD_KEY = "auth.private_key is not a valid PEM or JWK private key"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # fixed: the key JSON's token_uri is ignored
 _AWS_NAME = re.compile(r"[a-z0-9-]{2,32}")
 # ponytail: per-process cache; move to Redis if workers multiply.
@@ -68,7 +74,7 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
     auth = config.get("auth")
     if auth not in (None, ""):
         if not isinstance(auth, dict) or auth.get("type") not in AUTH_TYPES:
-            raise NodeError("auth.type must be oauth2_client_credentials, basic, aws_sigv4 or google_service_account")
+            raise NodeError("auth.type must be oauth2_client_credentials, oauth2_private_key_jwt, basic, aws_sigv4 or google_service_account")
         headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}  # auth wins
     body = config.get("body")
 
@@ -97,7 +103,7 @@ async def run_http(nctx: NodeContext, config: dict) -> dict:
             api_host = urlsplit(url).hostname or ""
         except ValueError:
             raise NodeError("invalid URL") from None
-        if auth["type"] in ("oauth2_client_credentials", "google_service_account"):
+        if auth["type"] in TOKEN_AUTH_TYPES:
             token = await _oauth_token(nctx, tenant, auth, api_host)
             headers["Authorization"] = f"Bearer {token}"
             hidden = {**used, "": token}  # "" never reaches _log_secret_use (that logs `used` names only)
@@ -139,14 +145,22 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
     the client secret: `api_host` must be allowed by every secret used here. The token is returned to the
     caller only; never logged or put in output."""
     google = auth["type"] == "google_service_account"
+    pkjwt = auth["type"] == "oauth2_private_key_jwt"
     if google:  # JWT-bearer grant, signed below once the key is resolved
-        token_url, secret_field = GOOGLE_TOKEN_URL, "key"
+        token_url, secret_field, auth_field = GOOGLE_TOKEN_URL, "key", "service_account_key"
         form = {"key": str(auth.get("service_account_key") or ""), "subject": str(auth.get("subject") or ""),
                 "scope": str(auth.get("scopes") or "")}
         if not form["key"] or not form["scope"]:
             raise NodeError("auth needs service_account_key and scopes")
+    elif pkjwt:  # client assertion (RFC 7523), signed below once the key is resolved
+        token_url, secret_field = str(auth.get("token_url") or ""), "private_key"
+        auth_field = secret_field
+        form = {k: str(auth.get(k) or "") for k in ("client_id", "private_key", "scope", "key_id")}
+        if not token_url or not form["client_id"] or not form["private_key"] or not form["scope"]:
+            raise NodeError("auth needs token_url, client_id, private_key and scope")
     else:
         token_url, secret_field = str(auth.get("token_url") or ""), "client_secret"
+        auth_field = secret_field
         form = {"grant_type": "client_credentials", "client_id": str(auth.get("client_id") or ""),
                 "client_secret": str(auth.get("client_secret") or "")}
         for opt in ("scope", "audience"):  # audience: e.g. Wiz requires audience=wiz-api
@@ -174,8 +188,7 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
         raise
     # The client secret must come from the secret store, and its host binding also covers the API host.
     if form[secret_field] not in used.values():
-        raise NodeError(f"auth.{'service_account_key' if google else 'client_secret'} must be a secret reference "
-                        "like {{ secrets.NAME }}")
+        raise NodeError(f"auth.{auth_field} must be a secret reference like {{{{ secrets.NAME }}}}")
     rows = (await nctx.db.execute(select(TenantSecret).where(
         TenantSecret.tenant_id == nctx.run.tenant_id, TenantSecret.name.in_(list(used))))).scalars().all()
     for row in rows:
@@ -183,13 +196,21 @@ async def _oauth_token(nctx: NodeContext, tenant, auth: dict, api_host: str) -> 
             _log_secret_use(nctx.run.tenant_id, used, api_host, "blocked")
             raise NodeError(f"Secret {row.name} is not allowed for host {api_host} "
                             "(an OAuth token is bound to the same hosts as its client secret)")
-    key = hashlib.sha256(json.dumps([nctx.run.tenant_id, token_url, form], sort_keys=True).encode()).hexdigest()
+    # Keyed before signing: a signed form is unique per call (iat/jti). scope is in the form; dpop changes the
+    # token kind, so it is part of the key too.
+    key = hashlib.sha256(json.dumps([nctx.run.tenant_id, token_url, form, bool(auth.get("dpop", False))],
+                                    sort_keys=True).encode()).hexdigest()
     cached = _TOKENS.get(key)
     if cached and cached[1] > time.monotonic():
         return cached[0]
     if google:
         form = _google_assertion(form)
         used = {**used, "": form["assertion"]}  # redaction only; "" is dropped before _log_secret_use
+    elif pkjwt:
+        assertion = _client_assertion(form["client_id"], token_url, form["private_key"], form["key_id"] or None)
+        form = {"grant_type": "client_credentials", "scope": form["scope"],
+                "client_assertion_type": CLIENT_ASSERTION_TYPE, "client_assertion": assertion}
+        used = {**used, "": assertion}  # redaction only; "" is dropped before _log_secret_use
 
     outcome = "error"
     try:
@@ -230,6 +251,44 @@ def _google_assertion(form: dict) -> dict:
     except Exception:
         raise NodeError("auth.service_account_key is not a valid service account JSON key") from None
     return {"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion}
+
+
+def _load_private_key(raw: str) -> tuple[object, str, str | None]:
+    """(key, alg, jwk kid) from a private JWK (JSON) or a PEM (PKCS#8 / PKCS#1 / SEC1). RSA -> RS256,
+    EC P-256 -> ES256. Errors are fixed strings: never echo key text or library error text."""
+    kid = None
+    try:
+        try:
+            jwk = json.loads(raw)
+        except ValueError:
+            jwk = None
+        if isinstance(jwk, dict):
+            if not jwk.get("d"):  # a public JWK cannot sign
+                raise ValueError
+            key = jwt.PyJWK(jwk).key
+            kid = jwk.get("kid") if isinstance(jwk.get("kid"), str) and jwk.get("kid") else None
+        else:
+            key = load_pem_private_key(raw.encode(), password=None)
+    except Exception:
+        raise NodeError(_BAD_KEY) from None
+    if isinstance(key, rsa.RSAPrivateKey):
+        return key, "RS256", kid
+    if isinstance(key, ec.EllipticCurvePrivateKey) and isinstance(key.curve, ec.SECP256R1):
+        return key, "ES256", kid
+    raise NodeError("auth.private_key: unsupported key type")
+
+
+def _client_assertion(client_id: str, token_url: str, raw_key: str, key_id: str | None) -> str:
+    """Signed client assertion (RFC 7523 section 2.2) for private_key_jwt client authentication."""
+    key, alg, jwk_kid = _load_private_key(raw_key)
+    now = int(time.time())
+    claims = {"iss": client_id, "sub": client_id, "aud": token_url, "iat": now, "exp": now + 300,
+              "jti": token_urlsafe(24)}
+    kid = key_id or jwk_kid
+    try:
+        return jwt.encode(claims, key, algorithm=alg, headers={"kid": kid} if kid else None)
+    except Exception:
+        raise NodeError(_BAD_KEY) from None
 
 
 async def _auth_creds(nctx: NodeContext, tenant, auth: dict, url: str, host: str) -> tuple[dict, dict]:
