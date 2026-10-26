@@ -14,7 +14,7 @@ from app.models.user import User
 from app.services.slack_service import SlackError, load_integration
 from app.schemas import case as case_schema
 from app.services.case_service import (
-    add_timeline_note, apply_case_update, check_case_update, create_case_record, edit_timeline_note,
+    add_timeline_note, apply_case_update, check_case_update, create_case_record, delete_timeline_note, edit_timeline_note,
 )
 from app.notifications import service as notif_service
 from app.utils.roles import resolve_active_role
@@ -471,7 +471,8 @@ async def delete_timeline_event(
     result = await db.execute(
         select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
     )
-    if not result.scalars().first():
+    case = result.scalars().first()
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
     result = await db.execute(
@@ -489,6 +490,6 @@ async def delete_timeline_event(
     if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
         raise HTTPException(status_code=403, detail="Only the author or an admin can delete this entry")
 
-    await db.delete(event)
+    await delete_timeline_note(db, case=case, event=event, user_id=current_user.id)
     await db.commit()
     return {"ok": True}

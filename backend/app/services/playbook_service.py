@@ -60,9 +60,16 @@ async def tenant_template(db: AsyncSession, *, tenant_id: int, template_id: int)
     return t if t is not None and t.tenant_id == tenant_id and not t.is_system else None
 
 
-async def update_template(db: AsyncSession, *, template: PlaybookTemplate, data: PlaybookTemplateUpdate) -> PlaybookTemplate:
+async def update_template(db: AsyncSession, *, template: PlaybookTemplate, data: PlaybookTemplateUpdate,
+                          user_id: Optional[int] = None) -> PlaybookTemplate:
     """Set the given fields; ``tasks`` (when not None) replaces every task. Commits. The caller checks ownership."""
     t = template
+    changes = {f: {"from": getattr(t, f), "to": getattr(data, f)}
+               for f in ("name", "category", "description") if getattr(data, f) is not None and getattr(data, f) != getattr(t, f)}
+    if data.tasks is not None:
+        changes["tasks"] = {"from": len(t.tasks), "to": len(data.tasks)}
+    await create_audit_log(db=db, entity_type="playbook", entity_id=t.id, action="playbook_updated",
+                           tenant_id=t.tenant_id, user_id=user_id, changes=changes)
     if data.name is not None:
         t.name = data.name
     if data.category is not None:
@@ -82,7 +89,10 @@ async def update_template(db: AsyncSession, *, template: PlaybookTemplate, data:
     return await _load(db, t.id)
 
 
-async def delete_template(db: AsyncSession, *, template: PlaybookTemplate) -> None:
+async def delete_template(db: AsyncSession, *, template: PlaybookTemplate, user_id: Optional[int] = None) -> None:
     """Delete the template and its tasks. Commits. The caller checks ownership."""
+    await create_audit_log(db=db, entity_type="playbook", entity_id=template.id, action="playbook_deleted",
+                           tenant_id=template.tenant_id, user_id=user_id,
+                           changes={"name": template.name, "status": template.status, "tasks": len(template.tasks)})
     await db.delete(template)
     await db.commit()

@@ -747,7 +747,7 @@ async def delete_activity_entry(db: AsyncSession, p: OAuthPrincipal, case_id: in
     c, ev = await _activity_entry(db, p, case_id, entry_id)
     if not _may_change_entry(p, ev):
         raise ToolError("Only the author or an admin can delete this entry")
-    await db.delete(ev)
+    await case_service.delete_timeline_note(db, case=c, event=ev, user_id=p.user.id)
     await db.commit()
     return {"deleted": entry_id, "case_id": c.id}
 
@@ -990,7 +990,7 @@ async def update_artifact(db: AsyncSession, p: OAuthPrincipal, artifact_id: int,
     if not data:
         raise ToolError("Nothing to change")
     data = ArtifactUpdate(**data).model_dump(exclude_unset=True)
-    await case_service.update_artifact(db, artifact=a, data=data)
+    await case_service.update_artifact(db, artifact=a, data=data, user_id=p.user.id)
     await db.commit()
     await db.refresh(a)
     return (await _artifact_rows(db, [a]))[0]
@@ -1258,7 +1258,7 @@ async def update_playbook(db: AsyncSession, p: OAuthPrincipal, playbook_id: int,
                                             tasks=_playbook_tasks(tasks)))
     if not data.model_dump(exclude_unset=True):
         raise ToolError("Nothing to change")
-    return _playbook_out(await playbook_service.update_template(db, template=t, data=data))
+    return _playbook_out(await playbook_service.update_template(db, template=t, data=data, user_id=p.user.id))
 
 
 @tool
@@ -1266,7 +1266,7 @@ async def delete_playbook(db: AsyncSession, p: OAuthPrincipal, playbook_id: int)
     """Admins only: delete a tenant playbook. Tasks already copied onto cases stay."""
     _require_admin(p, "delete playbooks")
     t = await _own_playbook(db, p, playbook_id)
-    await playbook_service.delete_template(db, template=t)
+    await playbook_service.delete_template(db, template=t, user_id=p.user.id)
     return {"deleted": playbook_id}
 
 
