@@ -15,6 +15,7 @@ from app.models.war_room_suggestion import WarRoomSuggestion
 from app.services import slack_actions as sa
 from app.services import slack_bot
 from app.services.slack_blocks import suggestions_reply
+from app.services.war_room_extract import Candidate
 from app.services.slack_service import parse_action_value
 from app.utils.crypto import encrypt
 from tests.guest_fixtures import client, make_case, make_tenant, make_user, run
@@ -99,6 +100,7 @@ def test_slack_accept_creates_artifact_and_updates_reply(env):
             audit = (await db.execute(select(AuditLog).where(
                 AuditLog.tenant_id == t.id, AuditLog.action == "war_room_suggestion_accepted"))).scalars().one()
             assert audit.changes["slack_user_id"] == "U1"
+        assert env["ephem"] == []
         (up,) = env["updates"]
         assert up["channel"] == CHANNEL and up["ts"] == "5.5" and up["text"] == "SOC-bot suggestions"
         assert "added by" in flat(up["blocks"]) and "actions" not in flat(up["blocks"])
@@ -111,6 +113,7 @@ def test_slack_dismiss(env):
             t, case, u, _, s = await setup(db, ids, env)
             await sa.handle_interaction(t.id, {**payload(), "actions": [{"value": f"wrs:{t.id}:{s.id}:d"}]})
             await drain(env)
+            assert env["ephem"] == []
             assert len(env["updates"]) == 1 and "dismissed" in flat(env["updates"][0]["blocks"])
             assert (await db.execute(select(func.count()).select_from(CaseArtifact).where(
                 CaseArtifact.case_id == case.id))).scalar() == 0
@@ -189,3 +192,21 @@ def test_reply_backtick_value_cannot_break_code_span():
     s = WarRoomSuggestion(id=1, kind="artifact", payload={"type": "domain", "value": "a`b.com"}, status="pending")
     text = json.dumps(suggestions_reply([s], 1))
     assert "a`b.com" not in text and "aˋb.com" in json.dumps(suggestions_reply([s], 1), ensure_ascii=False)
+
+
+def test_slack_milestone_conflict_no_ephemeral(env):
+    async def body(ids):
+        from datetime import datetime, timezone
+        async with AsyncSessionLocal() as db:
+            t, case, u, _, s = await setup(db, ids, env)
+            c = await db.get(Case, case.id)
+            c.detected_at = datetime(2099, 12, 1, tzinfo=timezone.utc)
+            await db.commit()
+            (m,) = await rec(db, c, [Candidate("milestone", {"key": "contained", "at": "2099-10-22T18:40:00+00:00"}, "contained")],
+                             channel=CHANNEL)
+            m.reply_ts = "6.6"
+            await db.commit()
+            await sa._handle_suggestion_action(t.id, payload(), t.id, m.id, "accept")
+            await drain(env)
+            assert env["ephem"] == [] and "conflicts" in flat(env["updates"][0]["blocks"])
+    run(body)

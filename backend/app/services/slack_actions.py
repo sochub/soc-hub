@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import func, or_, select
 
 from app.db.session import AsyncSessionLocal
@@ -93,7 +92,7 @@ async def _handle_suggestion_action(tenant_id: int, payload: dict, btn_tenant_id
     """Add/Set/Dismiss on a SOC-bot suggestion. The reply is re-rendered by the after-commit war_room.rerender card."""
     if btn_tenant_id != tenant_id:
         return  # button belongs to another tenant's message
-    from app.services.war_room_suggestions import resolve_suggestion
+    from app.services.war_room_suggestions import resolve_suggestion_ex
     clicker = payload["user"]["id"]
     async with AsyncSessionLocal() as db:
         _, token = await load_integration(db, tenant_id)
@@ -102,12 +101,11 @@ async def _handle_suggestion_action(tenant_id: int, payload: dict, btn_tenant_id
             await _ephemeral(payload, "Your Slack account isn't linked to a sochub user with analyst access in this tenant.")
             return
         try:
-            s = await resolve_suggestion(db, tenant_id=tenant_id, suggestion_id=suggestion_id,
+            _, applied = await resolve_suggestion_ex(db, tenant_id=tenant_id, suggestion_id=suggestion_id,
                                      accept=verb == "accept", user=user, slack_user_id=clicker)
         except LookupError:
             await _ephemeral(payload, "This suggestion no longer exists.")
             return
-        applied = sa_inspect(s).attrs.status.history.has_changes()  # False: someone resolved it first
         await db.commit()
     if not applied:
         await _ephemeral(payload, "This suggestion was already resolved.")

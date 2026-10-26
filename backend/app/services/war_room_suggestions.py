@@ -62,15 +62,20 @@ async def record_candidates(db, case, candidates: list, *, channel: str, source_
     return out
 
 
-async def resolve_suggestion(db, *, tenant_id: int, suggestion_id: int, accept: bool, user,
-                             slack_user_id: Optional[str] = None) -> WarRoomSuggestion:
+async def resolve_suggestion(db, **kw) -> WarRoomSuggestion:
+    return (await resolve_suggestion_ex(db, **kw))[0]
+
+
+async def resolve_suggestion_ex(db, *, tenant_id: int, suggestion_id: int, accept: bool, user,
+                                slack_user_id: Optional[str] = None) -> tuple:
+    """Returns (suggestion, applied); applied is False when it was already resolved before this call."""
     s = (await db.execute(select(WarRoomSuggestion).where(
         WarRoomSuggestion.id == suggestion_id, WarRoomSuggestion.tenant_id == tenant_id).with_for_update()
         .execution_options(populate_existing=True))).scalars().first()
     if s is None:
         raise LookupError("suggestion not found")
     if s.status != "pending":
-        return s
+        return s, False
     case = (await db.execute(select(Case).where(Case.id == s.case_id, Case.tenant_id == tenant_id))).scalars().first()
     if case is None:
         raise LookupError("case not found")
@@ -100,4 +105,4 @@ async def resolve_suggestion(db, *, tenant_id: int, suggestion_id: int, accept: 
         queue_card(db, tenant_id, "war_room.rerender", case.id,
                    {"reply_ts": s.reply_ts, "channel": s.slack_channel})
     await db.flush()
-    return s
+    return s, True
