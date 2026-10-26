@@ -47,7 +47,7 @@ export default function WarRoomSuggestions({ caseId }: { caseId: number }) {
                 return (
                     <div key={s.id} className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-2.5 py-1.5 text-xs">
                         <span className="text-fg-2">{d.text}</span>
-                        {s.permalink && (
+                        {s.permalink?.startsWith('https://') && (
                             <a href={s.permalink} target="_blank" rel="noopener noreferrer" title="Open in Slack" className="text-fg-3 hover:text-fg-2">
                                 <ExternalLink size={12} />
                             </a>
