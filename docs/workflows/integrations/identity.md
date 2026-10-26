@@ -96,7 +96,11 @@ the user must re-enroll. Sessions are not revoked (use `okta-contain-user` for t
 
 ### Notes
 
-- If a user lookup returns 403, also grant the app `okta.users.read`.
+- A 403 on a user lookup usually means the app's admin role cannot act on that user (Help Desk Administrator cannot
+  act on admins; use Organization Administrator). If Okta reports a missing scope for the lookup, grant
+  `okta.users.read` on the app and also add it to the HTTP node's `auth.scope` (space-separated:
+  `okta.users.manage okta.users.read`).
+- An explicit `key_id` in the auth block overrides the JWK's own `kid`.
 - Workflows installed earlier with an API token (SSWS) keep working until they are reinstalled; reinstalling uses the
   API Services app described above.
 
