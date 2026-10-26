@@ -142,6 +142,38 @@ def test_workflow_failed_card_redacts_and_truncates(delays, posts):
         await slack_bot.on_case_event(*delays[0])
         war = _war(posts)
         assert war[0]["attachments"][0]["color"] == "#e01e5a" and SECRET not in flat(war)
+        assert f"/workflows/runs/{p['run_id']}|View run>" in flat(war)
+    run(body)
+
+
+def test_secret_straddling_300_not_leaked(delays):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, u, case = await _setup(db, ids)
+            db.add(TenantSecret(tenant_id=t.id, name="TKN", value_enc=encrypt(SECRET)))
+            await db.commit()
+            await _wf_run(db, t, case, status="failed", error="a" * 290 + SECRET)
+        err = delays[0][3]["error"]
+        assert len(err) <= 300 and SECRET[:5] not in err
+    run(body)
+
+
+def test_card_failure_does_not_break_finalize(delays, monkeypatch):
+    from app.workflows import runtime
+
+    async def boom(db, r):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(runtime, "_queue_finished_card", boom)
+
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, u, case = await _setup(db, ids)
+            r = await _wf_run(db, t, case, status="succeeded")
+            rid = r.id
+        async with AsyncSessionLocal() as db:
+            assert (await db.get(WorkflowRun, rid)).status == "succeeded"
+        assert delays == []
     run(body)
 
 

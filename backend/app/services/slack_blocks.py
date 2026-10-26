@@ -33,6 +33,11 @@ def case_url(case_id: int) -> str:
     return f"{base}/cases/{case_id}" if base else ""
 
 
+def run_url(run_id: int) -> str:
+    base = (settings.FRONTEND_URL or "").rstrip("/")
+    return f"{base}/workflows/runs/{run_id}" if base else ""
+
+
 def _btn(text: str, tenant_id: int, case_id: int, action: str, style: Optional[str] = None) -> dict:
     b = {"type": "button", "text": {"type": "plain_text", "text": text}, "action_id": f"case_{action}",
          "value": f"case:{tenant_id}:{case_id}:{action}"}
@@ -262,6 +267,8 @@ def war_room_card(event_type: str, case, payload: dict, *, actor: Optional[str])
             lines.append(f"…and {len(payload['steps']) - 20} more")
         if payload.get("error"):
             lines.append(f"Error: {slack_escape(str(payload['error'])[:300])}")
+        if payload.get("run_id") and run_url(payload["run_id"]):
+            lines.append(f"<{run_url(payload['run_id'])}|View run>")
         detail = "\n".join(lines) or None
     elif event_type == "containment.confirmed":
         color, title = GREEN, "Containment confirmed"
