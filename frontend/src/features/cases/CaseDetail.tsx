@@ -17,6 +17,9 @@ import CaseEvidence from './CaseEvidence';
 import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
 import FollowButton from './FollowButton';
+import WarRoomPill from './WarRoomPill';
+import OpenWarRoomModal from './OpenWarRoomModal';
+import WarRoomSuggestions from './WarRoomSuggestions';
 import MentionTextarea from './MentionTextarea';
 import { stripMentions } from './mentionChips';
 import { Markdown, MarkdownField } from '../../components/Markdown';
@@ -123,6 +126,14 @@ export default function CaseDetail() {
         staleTime: 300_000,
     });
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
+    const canWarRoom = isAdmin || me?.role === 'analyst';
+    const [showWarRoom, setShowWarRoom] = useState(false);
+    // The Slack config endpoint is admin-only; a 403 simply hides the Open button.
+    const { data: slackCfg } = useQuery({
+        queryKey: ['slack-config'],
+        queryFn: async () => (await api.get('/slack/config')).data as { configured: boolean; war_room_name_template: string | null },
+        enabled: canWarRoom, retry: false,
+    });
     // Viewers can't list guests (the API returns 403), so they don't get the tab.
     const canSeeGuests = isAdmin || me?.role === 'analyst';
     // Mirrors the backend rule for editing/deleting timeline entries: admin, or the analyst who wrote it.
@@ -292,6 +303,13 @@ export default function CaseDetail() {
                                 )}>
                                     {caseData.severity}
                                 </span>
+                                {caseData.slack_channel_id && <WarRoomPill caseData={caseData} canEdit={canWarRoom} />}
+                                {!caseData.slack_channel_id && canWarRoom && slackCfg?.configured && (
+                                    <button type="button" onClick={() => setShowWarRoom(true)}
+                                        className="inline-flex items-center gap-1 rounded-sm border border-line-strong px-2.5 py-0.5 text-xs text-fg-2 hover:bg-raised">
+                                        <Hash size={12} /> Open war room
+                                    </button>
+                                )}
                                 {caseData.outcome && (
                                     <span className="px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border border-line text-fg-2 tracking-wider">
                                         {caseData.outcome.replace(/_/g, ' ')}
@@ -330,6 +348,8 @@ export default function CaseDetail() {
                         <p className="text-fg-2 leading-relaxed text-sm">{caseData.description}</p>
                     </div>
 
+                    {id && canWarRoom && caseData.slack_channel_id && <WarRoomSuggestions caseId={parseInt(id)} />}
+                    {id && <OpenWarRoomModal open={showWarRoom} onClose={() => setShowWarRoom(false)} caseId={parseInt(id)} title={caseData.title} template={slackCfg?.war_room_name_template ?? null} />}
                     {id && <TriagePanel caseId={parseInt(id)} />}
                     <SLAPanel caseData={caseData} />
 
