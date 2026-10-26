@@ -18,7 +18,7 @@ export default function OpenWarRoomModal({ open, onClose, caseId, title, templat
     const create = useMutation({
         mutationFn: async () => (await api.post(`/cases/${caseId}/war-room`, { name: value.trim() || null, listen })).data,
         onSuccess: () => { qc.invalidateQueries({ queryKey: ['case'] }); setName(null); setError(null); onClose(); },
-        onError: (e) => setError(isAxiosError(e) && typeof e.response?.data?.detail === 'string' ? e.response.data.detail : 'Could not create the channel.'),
+        onError: (e) => { qc.invalidateQueries({ queryKey: ['case'] }); setError(isAxiosError(e) && typeof e.response?.data?.detail === 'string' ? e.response.data.detail : 'Could not create the channel.'); },
     });
     const close = () => { setName(null); setError(null); onClose(); };
 

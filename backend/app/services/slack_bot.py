@@ -286,8 +286,9 @@ async def open_war_room(db, tenant_id: int, case: Case, user: User, clicker_slac
                          content=f"Slack war room opened: #{name}"))
     await db.commit()
     names = await _names(db, [case.owner_id])
-    await slack_call(token, "chat.postMessage", channel=channel, text=ui.card_text(case),
-                     blocks=ui.case_card(case, names.get(case.owner_id), note=f"War room for case #{case.id:04d}"))
+    # the room exists and is committed: the intro card is best-effort
+    await _safe(slack_call(token, "chat.postMessage", channel=channel, text=ui.card_text(case),
+                           blocks=ui.case_card(case, names.get(case.owner_id), note=f"War room for case #{case.id:04d}")))
     return channel
 
 

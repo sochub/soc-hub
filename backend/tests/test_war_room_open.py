@@ -111,6 +111,30 @@ def test_open_from_case_private_named_and_listening(monkeypatch):
     asyncio.run(go())
 
 
+def test_card_post_failure_still_succeeds_and_audits(monkeypatch):
+    async def go():
+        async with world(monkeypatch) as w:
+            inner = slack_bot.slack_call
+
+            async def flaky(token, method, **kw):
+                if method == "chat.postMessage":
+                    raise SlackError("boom", "channel_not_found")
+                return await inner(token, method, **kw)
+
+            monkeypatch.setattr(slack_bot, "slack_call", flaky)
+            r = await w["client"].post(f"/api/v1/cases/{w['case_id']}/war-room", json={"listen": False})
+            assert r.status_code == 200, r.text
+            assert r.json()["channel_id"]
+            async with AsyncSessionLocal() as db:
+                c = (await db.execute(select(Case).where(Case.id == w["case_id"]))).scalars().one()
+                assert c.slack_channel_id == r.json()["channel_id"]
+                rows = (await db.execute(select(AuditLog).where(
+                    AuditLog.entity_type == "case", AuditLog.entity_id == w["case_id"],
+                    AuditLog.action == "war_room_opened"))).scalars().all()
+                assert len(rows) == 1
+    asyncio.run(go())
+
+
 def test_open_with_custom_name_is_sanitised(monkeypatch):
     async def go():
         async with world(monkeypatch) as w:

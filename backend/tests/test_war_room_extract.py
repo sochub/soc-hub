@@ -95,6 +95,29 @@ def test_yesterday_keyword():
     assert _milestones(_extract("first seen yesterday 22:00")) == {"first_seen": "2026-10-25T22:00:00+01:00"}
 
 
+def test_explicit_date_after_time():
+    assert _milestones(_extract("contained at 14:32 on 2026-10-24")) == {"contained": "2026-10-24T14:32:00+02:00"}
+
+
+def test_explicit_date_before_time():
+    assert _milestones(_extract("contained on 2026-10-24 14:32")) == {"contained": "2026-10-24T14:32:00+02:00"}
+    assert _milestones(_extract("detected 2026-10-20 at 2:05pm")) == {"detected": "2026-10-20T14:05:00+02:00"}
+
+
+def test_explicit_date_with_utc_and_beats_yesterday_and_rollback():
+    assert _milestones(_extract("recovered on 2026-10-24 09:10 UTC")) == {"recovered": "2026-10-24T09:10:00+00:00"}
+    assert _milestones(_extract("first seen yesterday 22:00 2026-10-20")) == {"first_seen": "2026-10-20T22:00:00+02:00"}
+    # a time later than the message, on an explicit date, is not rolled back
+    assert _milestones(_extract("contained 2026-10-26 23:50")) == {"contained": "2026-10-26T23:50:00+01:00"}
+
+
+def test_far_date_does_not_attach():
+    m = _milestones(_extract("contained at 14:32, and unrelated stuff happened long before on 2026-10-01"))
+    assert m == {"contained": "2026-10-26T14:32:00+01:00"}
+    assert _milestones(_extract("see 2026-10-24 notes about how it was eventually contained at 14:32")) == {
+        "contained": "2026-10-26T14:32:00+01:00"}
+
+
 def test_no_milestone_without_keyword():
     assert _milestones(_extract("meeting at 14:32")) == {}
     assert _milestones(_extract("contained the situation, and later we met at 14:32 sharp")) == {}

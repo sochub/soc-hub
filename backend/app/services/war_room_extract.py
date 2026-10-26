@@ -4,7 +4,7 @@ No DB, no network."""
 import html
 import re
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.utils.copilot_heuristics import detect_indicators
@@ -133,12 +133,14 @@ def _usernames(text: str) -> list[str]:
 
 _KEYWORD_KEY = {"first seen": "first_seen", "detected": "detected", "contained": "contained",
                 "isolated": "contained", "recovered": "recovered", "restored": "recovered"}
-# keyword, <=15 non-digit chars, optional "yesterday", time (14:32 / 2:32pm), optional UTC/Z
+# keyword, <=15 non-digit chars, optional "yesterday", optional ISO date, time (14:32 / 2:32pm), optional UTC/Z
 _MILESTONE = re.compile(
     r"\b(?P<kw>first seen|detected|contained|isolated|recovered|restored)\b"
     r"[^\d\n]{0,15}?"
     r"(?P<yest>yesterday\s+(?:at\s+)?)?"
-    r"(?P<h>\d{1,2}):(?P<m>\d{2})\s*(?P<ap>am|pm)?\s*(?P<z>utc|z)?(?![\w])",
+    r"(?:(?P<d1>\d{4}-\d{2}-\d{2})[^\d\n]{0,4}?)?"
+    r"(?P<h>\d{1,2}):(?P<m>\d{2})\s*(?P<ap>am|pm)?\s*(?P<z>utc|z)?(?![\w])"
+    r"(?:[ ,]{1,2}(?:on[ ])?(?P<d2>\d{4}-\d{2}-\d{2})(?!\d))?",
     re.IGNORECASE,
 )
 _UTC = ZoneInfo("UTC")
@@ -154,9 +156,16 @@ def _milestone_at(m: re.Match, tz: ZoneInfo, message_at: datetime) -> str | None
     if message_at.tzinfo is None:
         message_at = message_at.replace(tzinfo=_UTC)
     now = message_at.astimezone(zone)
-    day = now.date() - timedelta(days=1 if m["yest"] else 0)
+    explicit = m["d1"] or m["d2"]
+    if explicit:
+        try:
+            day = date.fromisoformat(explicit)
+        except ValueError:
+            return None
+    else:
+        day = now.date() - timedelta(days=1 if m["yest"] else 0)
     at = datetime.combine(day, time(hour, minute), tzinfo=zone)
-    if not m["yest"] and at > now:   # a bare time cannot be in the future
+    if not explicit and not m["yest"] and at > now:   # a bare time cannot be in the future
         at = datetime.combine(day - timedelta(days=1), time(hour, minute), tzinfo=zone)
     return at.isoformat()
 
