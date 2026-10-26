@@ -557,3 +557,6 @@ def test_htu_and_proof_units():
     assert http_node._htu("http://api.example.com:80/x") == "http://api.example.com/x"
     assert http_node._htu("https://api.example.com:80/x") == "https://api.example.com:80/x"
     assert http_node._htu("http://api.example.com:443/x") == "http://api.example.com:443/x"
+    # Okta checks htu against the decoded path (verified live: %40 in htu -> 400 invalid_dpop_proof)
+    assert http_node._htu("https://o.example.com/api/v1/users/a.b%2Bc%40x.io?q=%40") == \
+        "https://o.example.com/api/v1/users/a.b+c@x.io"

@@ -6,7 +6,7 @@ import logging
 import re
 import time
 from secrets import token_urlsafe
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import unquote, urlencode, urlsplit
 
 import httpx
 import jwt
@@ -304,13 +304,14 @@ def _b64url(b: bytes) -> str:
 
 
 def _htu(url: str) -> str:
-    """DPoP htu: scheme://host[:port]/path, without userinfo, query or fragment."""
+    """DPoP htu: scheme://host[:port]/path, without userinfo, query or fragment. The path is percent-decoded:
+    Okta matches htu against the decoded request path (an encoded '@' in a user lookup fails as invalid htu)."""
     parts = urlsplit(url)
     scheme, host = parts.scheme.lower(), parts.netloc.rpartition('@')[2].lower()
     default = {"https": ":443", "http": ":80"}.get(scheme)
     if default and host.endswith(default):
         host = host[: -len(default)]
-    return f"{scheme}://{host}{parts.path or '/'}"
+    return f"{scheme}://{host}{unquote(parts.path) or '/'}"
 
 
 def _dpop_proof(key, method: str, url: str, *, nonce: str | None = None, ath: str | None = None) -> str:
