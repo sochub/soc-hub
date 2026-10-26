@@ -64,7 +64,7 @@ async def handle_envelope(integration_id: int, msg: dict) -> Optional[dict]:
         if kind == "interactive":
             return await slack_bot.dispatch_interactive(db, integ, payload)
         if kind == "events_api":
-            slack_bot.dispatch_event(integ, payload)
+            await asyncio.to_thread(slack_bot.dispatch_event, integ, payload)  # Celery .delay blocks on the broker
     return None
 
 

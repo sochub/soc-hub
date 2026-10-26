@@ -412,9 +412,19 @@ async def dispatch_command(db, integ: SlackIntegration, form: dict) -> dict:
         return _ephemeral("Something went wrong talking to Slack. Try again.")
 
 
+def _is_listenable_message(event: dict) -> bool:
+    """A human-authored plain message (or thread broadcast); edits, joins and bot posts never count."""
+    return (event.get("type") == "message" and not event.get("bot_id")
+            and event.get("subtype") in (None, "thread_broadcast")
+            and bool(event.get("user") and event.get("channel") and event.get("ts") and event.get("text")))
+
+
 def dispatch_event(integ: SlackIntegration, payload: dict) -> None:
     from app.tasks.slack import slack_home_task
 
     event = payload.get("event") or {}
     if event.get("type") == "app_home_opened" and event.get("tab") == "home" and event.get("user"):
         slack_home_task.delay(integ.tenant_id, event["user"])
+    elif _is_listenable_message(event):
+        from app.tasks.war_room import war_room_message_task
+        war_room_message_task.delay(integ.tenant_id, {k: event.get(k) for k in ("channel", "ts", "thread_ts", "user", "text")})

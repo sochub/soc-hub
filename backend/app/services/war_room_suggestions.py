@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.models.artifact import Artifact, ArtifactType
 from app.models.case import Case
@@ -51,9 +52,13 @@ async def record_candidates(db, case, candidates: list, *, channel: str, source_
         s = WarRoomSuggestion(tenant_id=case.tenant_id, case_id=case.id, kind=c.kind, payload=c.payload,
                               value_key=c.value_key, status="pending", slack_channel=channel,
                               source_ts=source_ts, permalink=permalink)
-        db.add(s)
+        try:
+            async with db.begin_nested():  # a concurrent same-value insert skips only this candidate
+                db.add(s)
+                await db.flush()
+        except IntegrityError:
+            continue
         out.append(s)
-    await db.flush()
     return out
 
 

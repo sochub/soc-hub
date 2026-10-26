@@ -167,3 +167,55 @@ HELP = ("*sochub commands*\n"
         "• `/sochub mine`: your open cases\n"
         "• Message menu (⋯) → *Create sochub case*: turn any message into a case\n"
         "• The *Home* tab of this app lists your queue")
+
+
+# ---- SOC-bot war-room suggestions ---------------------------------------------
+
+_ART_LABEL = {"ip": "IP", "hostname": "Host", "username": "User", "domain": "Domain", "url": "URL",
+              "file_hash": "Hash", "email": "Email"}
+
+
+def _at_label(iso: str) -> str:
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return str(iso)
+    return f"{dt.strftime('%a %d %b %H:%M')} {dt.tzname() or ''}".strip()
+
+
+def _suggestion_text(s) -> str:
+    p = s.payload or {}
+    if s.kind == "milestone":
+        return f"Set *{slack_escape(str(p.get('key', '')).replace('_', ' ').title())}* to {slack_escape(_at_label(p.get('at')))}?"
+    label = _ART_LABEL.get(p.get("type"), slack_escape(str(p.get("type", "")).title()))
+    return f"{label} `{slack_escape(str(p.get('value', '')))}`"
+
+
+def _resolved_line(s, names: dict) -> str:
+    if s.status == "accepted":
+        who = names.get(s.resolved_by_user_id)
+        verb = "set" if s.kind == "milestone" else "added"
+        return f"✓ {verb} by {slack_escape(who)}" if who else f"✓ {verb}"
+    if s.status == "conflict":
+        return "⚠ conflicts with Detected"
+    return "dismissed"
+
+
+def suggestions_reply(suggestions: list, tenant_id: int, names: Optional[dict] = None) -> List[dict]:
+    """Thread reply listing SOC-bot suggestions; pending ones get Add/Set + Dismiss buttons.
+    names maps resolved_by_user_id to a display name."""
+    names = names or {}
+    blocks: List[dict] = []
+    for s in suggestions:
+        text = _suggestion_text(s)
+        if s.status != "pending":
+            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"{text}  ·  {_resolved_line(s, names)}"}]})
+            continue
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+        blocks.append({"type": "actions", "block_id": f"wrs_{s.id}", "elements": [
+            {"type": "button", "action_id": "wrs_accept", "style": "primary", "value": f"wrs:{tenant_id}:{s.id}:a",
+             "text": {"type": "plain_text", "text": "Set" if s.kind == "milestone" else "Add"}},
+            {"type": "button", "action_id": "wrs_dismiss", "value": f"wrs:{tenant_id}:{s.id}:d",
+             "text": {"type": "plain_text", "text": "Dismiss"}}]})
+    return blocks

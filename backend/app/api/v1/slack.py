@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import secrets
@@ -238,5 +239,5 @@ async def events(request: Request, db: AsyncSession = Depends(deps.get_db)) -> R
             raise HTTPException(status_code=401, detail="invalid signature")
         return JSONResponse({"challenge": str(payload.get("challenge", ""))[:200]})
     match = await _verified(request, db, body, payload.get("team_id"))
-    slack_bot.dispatch_event(match, payload)
+    await asyncio.to_thread(slack_bot.dispatch_event, match, payload)  # Celery .delay blocks on the broker
     return Response(status_code=200)

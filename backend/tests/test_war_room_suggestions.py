@@ -231,3 +231,35 @@ def test_cross_tenant_suggestion_404():
             # own case, but a suggestion belonging to another tenant's case
             assert (await cl.post(f"/api/v1/cases/{c2.id}/war-room/suggestions/{s.id}/accept", headers=h2)).status_code == 404
     run(body)
+
+
+def test_record_skips_concurrent_duplicate_without_dropping_batch(monkeypatch):
+    """A unique-constraint race on one value must not drop the rest of the batch."""
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t)).id)
+            # a rival committed 1.1.1.1 after our dedupe read: hide it from the pre-read
+            rival = WarRoomSuggestion(tenant_id=t.id, case_id=case.id, kind="artifact",
+                                      payload={"type": "ip", "value": "1.1.1.1"}, value_key="ip:1.1.1.1",
+                                      status="pending", slack_channel="C9", source_ts="0.1")
+            db.add(rival)
+            await db.commit()
+            real_execute = db.execute
+            n = {"i": 0}
+
+            async def hide_existing(stmt, *a, **kw):
+                res = await real_execute(stmt, *a, **kw)
+                n["i"] += 1
+                if n["i"] == 2:  # the `existing` pre-read
+                    class Empty:
+                        def all(self):
+                            return []
+                    return Empty()
+                return res
+            monkeypatch.setattr(db, "execute", hide_existing)
+            out = await ws.record_candidates(db, case, [art("1.1.1.1"), art("2.2.2.2")], channel="C1",
+                                             source_ts="1.1", permalink=None)
+            await db.commit()
+            assert [s.value_key for s in out] == ["ip:2.2.2.2"]
+    run(body)
