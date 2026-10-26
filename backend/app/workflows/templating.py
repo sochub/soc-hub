@@ -295,8 +295,11 @@ def _f_wordwrap(a):
 
 def _f_format(a):
     args, kwargs = a.get("args", ()), a.get("kwargs", {})
-    if isinstance(a["value"], str):
-        _check_pct_format(a["value"], kwargs if kwargs else tuple(args))
+    value = a["value"]
+    if isinstance(value, (bytes, bytearray)):
+        _limit("bytes formatting is not allowed in templates")
+    # the filter formats str(value) (soft_str), whatever the value's type
+    _check_pct_format(value if isinstance(value, str) else str(value), kwargs if kwargs else tuple(args))
 
 
 def _f_join(a):
@@ -511,6 +514,8 @@ class _LimitedSandbox(ImmutableSandboxedEnvironment):
         elif op == "+":
             if isinstance(left, (str, bytes, list, tuple)) and isinstance(right, (str, bytes, list, tuple)):
                 _need(_size(left) + _size(right))
+        elif op == "%" and isinstance(left, (bytes, bytearray)):
+            _limit("bytes formatting is not allowed in templates")
         elif op == "%" and isinstance(left, str):
             _check_pct_format(left, right)
         return _check(super().call_binop(context, op, left, right))
@@ -521,6 +526,10 @@ class _LimitedSandbox(ImmutableSandboxedEnvironment):
         owner = getattr(target, "__self__", None)
         if isinstance(owner, (str, bytes)):
             args, kwargs = _str_method_precheck(owner, getattr(target, "__name__", ""), args, kwargs)
+        elif _is_int(owner) and getattr(target, "__name__", "") == "to_bytes":
+            length = args[0] if args else kwargs.get("length", 1)
+            if _is_int(length):
+                _need(length)  # allocates `length` bytes up front
         return _check(super().call(__context, __obj, *args, **kwargs))
 
 
