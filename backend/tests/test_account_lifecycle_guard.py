@@ -15,6 +15,7 @@ from sqlalchemy import delete, select, update
 
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
+from app.api.v1 import invitations as invitations_mod
 from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.membership import TenantMembership
@@ -109,8 +110,8 @@ def test_tenant_admin_cannot_invite_super_admin():
         sa2 = await _user(ids["sa2"])
         r = await c.post("/api/v1/invitations/", headers=await _hdr(ids["admin"], ids["ta"]),
                          json={"email": sa2.email, "role": "viewer"})
-        assert r.status_code == 400, r.text
-        assert "super" not in r.json()["detail"].lower()
+        # same answer as another existing account that can't be added (reveals nothing about the account)
+        assert r.status_code == 409 and r.json()["detail"] == invitations_mod.CANNOT_ADD_EXISTING, r.text
         assert await _membership(ids["sa2"], ids["ta"]) is None
         rows = await _denials(ids)
         assert len(rows) == 1 and rows[0].user_id == ids["admin"] and rows[0].outcome == "denied"
@@ -220,4 +221,21 @@ def test_member_list_flags_manageable_accounts():
         assert flags[ids["multi"]] is False and flags[ids["sa"]] is False
         r = await c.get("/api/v1/users/", headers=await _hdr(ids["sa"], ids["ta"]))
         assert all(u["account_manageable"] for u in r.json())
+    _scenario(body)
+
+
+def test_existing_normal_user_still_added_directly():
+    """Product decision: inviting an existing (non-super-admin) account adds the membership directly."""
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(TenantMembership).where(
+                TenantMembership.user_id == ids["multi"], TenantMembership.tenant_id == ids["ta"]))
+            await db.commit()
+        multi = await _user(ids["multi"])
+        r = await c.post("/api/v1/invitations/", headers=await _hdr(ids["admin"], ids["ta"]),
+                         json={"email": multi.email, "role": "analyst"})
+        assert r.status_code == 201 and r.json()["added_directly"] is True, r.text
+        m = await _membership(ids["multi"], ids["ta"])
+        assert m is not None and m.role == "analyst"
+        assert await _denials(ids) == []
     _scenario(body)

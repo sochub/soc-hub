@@ -340,6 +340,19 @@ async def change_password(
     return await web.reissue_for_session(db, request, response, current_user, sid=current_user._session_id)
 
 
+async def _locked_member(db: AsyncSession, user_id: int, tenant_id: int):
+    """Lock the target user row, then load their membership in ``tenant_id`` (404 if none).
+
+    The lock makes the ownership check (app.utils.account_guard) and the change atomic: adding a membership to
+    an existing user locks the same row (invitations.create_invitation)."""
+    user = (await db.execute(
+        select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+    )).scalars().first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User is not a member of this tenant.")
+    return user, await _membership_in_tenant(db, user_id, tenant_id)
+
+
 async def _membership_in_tenant(db: AsyncSession, user_id: int, tenant_id: int) -> TenantMembership:
     res = await db.execute(
         select(TenantMembership).where(
@@ -367,8 +380,7 @@ async def update_user_role(
     if role_in.role == UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=400, detail="Cannot assign super_admin role.")
 
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
-    user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    user, membership = await _locked_member(db, user_id, tenant_id)
     await assert_can_manage_account(db, current_user, user, tenant_id, action="role_change", scope=MEMBERSHIP,
                                     request=request)
     membership.role = role_in.role.value
@@ -391,8 +403,7 @@ async def remove_member(
     """Remove a user from the active tenant (deletes the membership only)."""
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="You cannot remove yourself.")
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
-    target = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    target, membership = await _locked_member(db, user_id, tenant_id)
     await assert_can_manage_account(db, current_user, target, tenant_id, action="remove_member", scope=MEMBERSHIP,
                                     request=request)
     if membership.role == UserRole.ADMIN.value:
@@ -418,10 +429,9 @@ async def deactivate_user(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Deactivate a user's account (account-wide). Super admin, or an admin of the user's only tenant."""
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot deactivate yourself.")
-    user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    user, membership = await _locked_member(db, user_id, tenant_id)
     await assert_can_manage_account(db, current_user, user, tenant_id, action="deactivate", scope=GLOBAL,
                                     request=request)
     user.is_active = False
@@ -446,8 +456,7 @@ async def activate_user(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Reactivate a user's account (account-wide). Super admin, or an admin of the user's only tenant."""
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
-    user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    user, membership = await _locked_member(db, user_id, tenant_id)
     await assert_can_manage_account(db, current_user, user, tenant_id, action="activate", scope=GLOBAL,
                                     request=request)
     user.is_active = True

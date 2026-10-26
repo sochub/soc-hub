@@ -206,20 +206,18 @@ def test_switch_into_sso_tenant_refused():
     _go(body)
 
 
-def test_multi_tenant_user_sso_into_b(monkeypatch):
+def test_multi_tenant_user_sso_into_b_refused(monkeypatch):
+    """Tenant B's IdP can't sign in an account that also belongs to tenant A (B's admins control that IdP)."""
     async def body(c, ids):
         async with AsyncSessionLocal() as db:
             ta = await _tenant(db, ids, "password")
             tb = await _tenant(db, ids, "saml", sso=True)
             u = await _user(db, ids, "multi", [(ta, "analyst"), (tb, "analyst")])
-        sess = await _saml_login(c, monkeypatch, tb, u.email)
-        c.cookies.clear()
-        hdr = {"Cookie": f"{COOKIE}={sess}"}
-        me = await c.get("/api/v1/users/me", headers=hdr)
-        assert me.status_code == 200 and me.json()["active_tenant_id"] == tb.id
-        sw = await c.post("/api/v1/auth/switch-tenant", headers={**hdr, **XRW}, json={"tenant_id": ta.id})
-        assert sw.status_code == 403 and sw.json()["detail"] == {"code": "password_required"}
-        async with AsyncSessionLocal() as db:  # no membership was added
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: FakeAuth(u.email))
+        r = await c.post(f"/api/v1/auth/saml/{tb.slug}/acs", data={"SAMLResponse": "x"})
+        assert r.status_code == 303 and "#sso_error=" in r.headers["location"], r.headers["location"]
+        assert f"{COOKIE}=" not in r.headers.get("set-cookie", "")
+        async with AsyncSessionLocal() as db:  # memberships unchanged
             n = (await db.execute(select(TenantMembership.tenant_id).where(
                 TenantMembership.user_id == u.id))).scalars().all()
         assert sorted(n) == sorted([ta.id, tb.id])

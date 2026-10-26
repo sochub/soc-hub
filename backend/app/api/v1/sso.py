@@ -217,9 +217,10 @@ async def _resolve_sso_user(
     tenant_ids = set((await db.execute(
         select(TenantMembership.tenant_id).where(TenantMembership.user_id == user.id)
     )).scalars().all())
-    if tenant.id not in tenant_ids:
-        # Not a member here: never auto-attached. Members of other tenants too are fine: an SSO session
-        # only ever opens the tenant whose IdP issued it (app.auth.login_policy).
+    if tenant_ids != {tenant.id}:
+        # Not a member here: never auto-attached. A member of other tenants too is refused: this tenant's admins
+        # control the IdP and could otherwise sign in as an account they don't own (and change its account-wide
+        # state: sessions, profile). Same rule as app.utils.account_guard.
         raise HTTPException(status_code=403, detail=SSO_NOT_ALLOWED)
     return user
 

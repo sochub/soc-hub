@@ -251,7 +251,12 @@ async def mfa_reset(
         raise HTTPException(status_code=404, detail="Not found")
     if actor.id == user_id:
         raise HTTPException(status_code=400, detail="Use Turn off two-factor in your profile")
-    target = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    # Lock the target first so the membership/ownership check and the reset are atomic
+    # (membership changes for an existing user lock the same row: invitations.create_invitation).
+    target = (await db.execute(
+        select(User).options(selectinload(User.memberships)).where(User.id == user_id)
+        .with_for_update(of=User).execution_options(populate_existing=True)
+    )).scalars().first()
     if target is None:
         raise HTTPException(status_code=404, detail="Not found")
     if actor.is_super_admin:
@@ -266,7 +271,6 @@ async def mfa_reset(
         await assert_can_manage_account(db, actor, target, active, action="mfa_reset", scope=GLOBAL,
                                         request=request)
         audit_tid = active
-    target = await _lock_user(db, user_id)
     target.mfa_secret_enc = None
     target.mfa_enabled_at = None
     security.bump_token_version(target)

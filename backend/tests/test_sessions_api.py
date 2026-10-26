@@ -129,3 +129,27 @@ def test_mcp_toggle_admin_only():
                                                          AuditLog.action == "tenant.mcp_toggled"))).scalars().all()
             assert len(n) == 1
     _scenario(body)
+
+
+def test_super_admin_oauth_sessions_hidden_from_tenant_admin():
+    """Super admins are break-glass: a tenant admin can neither see nor revoke their tenant-scoped sessions."""
+    async def body(c, ids, extra):
+        adm = await _hdr(ids["admin"], ids["ta"])
+        sa_sid = await _oauth(ids, extra, "sa")
+        r = await c.get(f"{BASE}/tenants/current/oauth-sessions", headers=adm)
+        assert r.status_code == 200 and sa_sid not in [x["id"] for x in r.json()]
+        assert "-sa@example.com" not in r.text
+        r = await c.delete(f"{BASE}/tenants/current/oauth-sessions/{sa_sid}", headers=adm)
+        assert r.status_code == 404 and r.json()["detail"] == "Not found"
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(select(AuthSession).where(AuthSession.id == sa_sid))).scalar_one()
+            assert row.revoked_at is None
+            denied = (await db.execute(select(AuditLog).where(
+                AuditLog.tenant_id == ids["ta"], AuditLog.action == "user.manage_denied"))).scalars().all()
+        assert len(denied) == 1 and denied[0].user_id == ids["admin"] and denied[0].outcome == "denied"
+        # the super admin sees and revokes it
+        sa = await _hdr(ids["sa"], ids["ta"])
+        r = await c.get(f"{BASE}/tenants/current/oauth-sessions", headers=sa)
+        assert sa_sid in [x["id"] for x in r.json()]
+        assert (await c.delete(f"{BASE}/tenants/current/oauth-sessions/{sa_sid}", headers=sa)).status_code == 204
+    _scenario(body)
