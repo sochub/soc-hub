@@ -1,12 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Flag, FileText, FileX, Pencil, Trash2, Download, X, Sparkles, Pin, PinOff } from 'lucide-react';
+import { Plus, Flag, FileText, FileX, Pencil, Trash2, Download, X, Sparkles, Pin, PinOff, MessageSquare } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { formatDateTime } from '../../utils/datetime';
 import type { CaseEvent, MilestoneKey, TimelineEvent, User } from '../../types';
 import { MILESTONES, apiDetail, useSaveMilestones } from './milestones';
 import TimelineSuggest from './TimelineSuggest';
+import { NoteComposer, NoteEntry } from './CaseNotes';
+import { isNote } from './notes';
 import { Markdown, MarkdownField } from '../../components/Markdown';
 import { csvCell } from '../../lib/csv';
 
@@ -28,9 +31,32 @@ const EVENT_CATEGORIES: [string, string, string][] = [
     ['exfiltration', 'Exfiltration', '#ec4899'],
     ['impact', 'Impact', '#dc2626'],
 ];
+// Shown under the category picker; the attacker stages are MITRE ATT&CK tactics.
+const CAT_HINT: Record<string, string> = {
+    unspecified: 'Not classified yet. You can reclassify later.',
+    legitimate: 'Checked and benign or authorised, e.g. an admin login or a scheduled job. Kept to show it was ruled out.',
+    remediation: 'An action your team took: isolate a host, reset a password, block an IP.',
+    initial_access: 'The attacker gets in: phishing click, exploited VPN, stolen credentials used.',
+    execution: 'The attacker runs code: malicious macro, PowerShell launched.',
+    persistence: 'The attacker stays in across reboots or logouts: scheduled task, new service, run key.',
+    privilege_escalation: 'The attacker gains higher rights: local admin, token theft.',
+    defense_evasion: 'The attacker avoids detection: AV disabled, logs cleared.',
+    credential_access: 'The attacker steals credentials: LSASS dump, brute force, keylogging.',
+    discovery: 'The attacker learns the environment: AD enumeration, network scans.',
+    lateral_movement: 'The attacker moves to other machines: PsExec, RDP to a server.',
+    collection: 'The attacker gathers data to steal: files staged or archived.',
+    command_and_control: 'The attacker talks to their infrastructure: beaconing to a C2 domain.',
+    exfiltration: 'The attacker takes data out: upload to cloud storage.',
+    impact: 'The attacker does damage: ransomware encryption, data wiped.',
+};
 const plain = (s: string) => s.replace(/@\[([^\]]+)\]\(user:\d+\)/g, '@$1').replace(/[#*_`>~[\]]/g, '').trim();
-const ACTIVITY_DEFAULT_LIMIT = 200; // above this many activity entries the tab opens on Investigation
+const ACTIVITY_DEFAULT_LIMIT = 200; // above this many activity entries the feed opens on the story only
 type Source = 'all' | 'investigation' | 'activity';
+const SOURCES: [Source, string, string][] = [
+    ['all', 'All', 'Everything, in time order'],
+    ['investigation', 'Story', 'Investigation events: what happened during the incident'],
+    ['activity', 'Notes & changes', 'Notes, comments and what changed on the case'],
+];
 type Row = { kind: 'inv'; at: number; e: CaseEvent } | { kind: 'act'; at: number; a: TimelineEvent };
 
 const CAT = Object.fromEntries(EVENT_CATEGORIES.map(([k, label, color]) => [k, { label, color }]));
@@ -83,11 +109,15 @@ function exportCsv(events: CaseEvent[], caseId: number) {
 
 const field = 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
 
+/** The case's one feed: investigation events (the story, dated when they happened) interleaved with notes and system changes. */
 export default function CaseTimeline({ caseId, activity = [] }: { caseId: number; activity?: TimelineEvent[] }) {
     const qc = useQueryClient();
+    const { hash } = useLocation();
     const [query, setQuery] = useState('');
     const [flaggedOnly, setFlaggedOnly] = useState(false);
-    const [source, setSource] = useState<Source>(() => (activity.length > ACTIVITY_DEFAULT_LIMIT ? 'investigation' : 'all'));
+    // A deep link to a note (#event-<id>) needs the notes shown.
+    const [source, setSource] = useState<Source>(() => (activity.length > ACTIVITY_DEFAULT_LIMIT && !hash.startsWith('#event-') ? 'investigation' : 'all'));
+    const [noting, setNoting] = useState(false);
     const setMilestone = useSaveMilestones(caseId);
     const [editing, setEditing] = useState<number | 'new' | null>(null);
     const [draft, setDraft] = useState<Draft>(blank);
@@ -137,7 +167,19 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
         return out;
     }, [shown, shownActivity, source, me?.timezone]);
 
-    if (isLoading) return <p className="font-mono text-xs text-muted">$ loading timeline…</p>;
+    // Deep link from a notification: #event-<id> -> scroll to and briefly highlight the note, once per hash.
+    const handledHash = useRef<string | null>(null);
+    useEffect(() => {
+        if (isLoading || !/^#event-\d+$/.test(hash) || handledHash.current === hash) return;
+        const el = document.getElementById(hash.slice(1));
+        if (!el) return;
+        handledHash.current = hash;
+        el.scrollIntoView({ block: 'center' });
+        el.classList.add('ring-2', 'ring-accent');
+        setTimeout(() => el.classList.remove('ring-2', 'ring-accent'), 2000);
+    }, [isLoading, hash, days]);
+
+    if (isLoading) return <p className="font-mono text-xs text-muted">$ loading activity…</p>;
 
     const form = (
         <div className="glass-panel p-4 rounded-xl border border-line bg-panel space-y-3">
@@ -147,9 +189,12 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input type="datetime-local" value={draft.event_date} onChange={(e) => setDraft({ ...draft, event_date: e.target.value })} className={field} aria-label="Event date" />
-                <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} className={field} aria-label="Category">
-                    {EVENT_CATEGORIES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                </select>
+                <div>
+                    <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} className={field} aria-label="Category" aria-describedby="event-category-hint">
+                        {EVENT_CATEGORIES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                    </select>
+                    <p id="event-category-hint" className="mt-1 text-[11px] text-muted">{CAT_HINT[draft.category]}</p>
+                </div>
                 <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="Title" className={cn(field, 'sm:col-span-2')} aria-label="Title" />
                 <input value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })} placeholder="Source (EDR, Sysmon, proxy log…)" className={field} aria-label="Source" />
                 <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="Tags, comma separated" className={field} aria-label="Tags" />
@@ -191,10 +236,10 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter… (e.g. category:lateral tag:psexec artifact:10.0 flag:true)"
                     className={cn(field, 'flex-1 min-w-48 font-mono text-xs')} aria-label="Filter events" />
                 <div role="group" aria-label="Show" className="flex rounded-sm overflow-hidden border border-line">
-                    {(['all', 'investigation', 'activity'] as const).map((k) => (
-                        <button key={k} onClick={() => setSource(k)} aria-pressed={source === k}
-                            className={cn('text-xs px-2.5 py-1.5 capitalize transition-colors', source === k ? 'bg-accent/15 text-accent' : 'bg-raised text-fg-2 hover:bg-raised-2')}>
-                            {k}
+                    {SOURCES.map(([k, label, hint]) => (
+                        <button key={k} onClick={() => setSource(k)} aria-pressed={source === k} title={hint}
+                            className={cn('text-xs px-2.5 py-1.5 transition-colors', source === k ? 'bg-accent/15 text-accent' : 'bg-raised text-fg-2 hover:bg-raised-2')}>
+                            {label}
                         </button>
                     ))}
                 </div>
@@ -212,7 +257,14 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                     </button>
                 )}
                 {canEdit && (
-                    <button onClick={() => { setDraft(blank()); setEditing('new'); }} className="text-xs bg-accent text-on-accent hover:bg-accent-hover px-3 py-1.5 rounded-sm flex items-center gap-1.5 font-medium">
+                    <button onClick={() => { setNoting(true); setEditing(null); }} title="A comment or update, stamped now. @mention teammates."
+                        className="text-xs bg-raised hover:bg-raised-2 text-fg-2 px-3 py-1.5 rounded-sm flex items-center gap-1.5">
+                        <MessageSquare size={12} /> Add note
+                    </button>
+                )}
+                {canEdit && (
+                    <button onClick={() => { setDraft(blank()); setEditing('new'); setNoting(false); }} title="Something that happened in the incident, dated when it happened. Builds the story, the glance and the report."
+                        className="text-xs bg-accent text-on-accent hover:bg-accent-hover px-3 py-1.5 rounded-sm flex items-center gap-1.5 font-medium">
                         <Plus size={12} /> Add event
                     </button>
                 )}
@@ -224,10 +276,11 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
             </p>
             {setMilestone.isError && <p role="alert" className="text-xs text-severity-critical">{apiDetail(setMilestone.error)}</p>}
             {suggesting && <TimelineSuggest caseId={caseId} categories={EVENT_CATEGORIES} timezone={me?.timezone} onClose={() => setSuggesting(false)} />}
+            {noting && <NoteComposer caseId={caseId} onClose={() => setNoting(false)} />}
             {editing === 'new' && form}
 
-            {!events.length && editing !== 'new' && !suggesting && (
-                <div className="text-center py-12 text-muted text-sm">No investigation events yet. Add what happened, when, and where it was seen, or use Suggest to pull them from alerts, notes and pasted logs.</div>
+            {!events.length && !activity.length && editing !== 'new' && !noting && !suggesting && (
+                <div className="text-center py-12 text-muted text-sm">Nothing recorded yet. Add a note for quick updates, or an event for what happened and when. Suggest pulls events from alerts, notes and pasted logs.</div>
             )}
 
             <div className="relative space-y-6">
@@ -239,10 +292,18 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                             {day}
                         </h3>
                         {list.map((r) => {
+                            if (r.kind === 'act' && isNote(r.a.event_type)) {
+                                return (
+                                    <article key={`a${r.a.id}`} id={`event-${r.a.id}`} className="relative pl-6 group scroll-mt-24 rounded-lg">
+                                        <span className="absolute left-[5px] top-3 w-[5px] h-[5px] rounded-full bg-fg-3" />
+                                        <NoteEntry caseId={caseId} note={r.a} me={me} />
+                                    </article>
+                                );
+                            }
                             if (r.kind === 'act') {
                                 const a = r.a;
                                 return (
-                                    <article key={`a${a.id}`} className="relative pl-6 group">
+                                    <article key={`a${a.id}`} id={`event-${a.id}`} className="relative pl-6 group scroll-mt-24">
                                         <span className="absolute left-[5px] top-2.5 w-[5px] h-[5px] rounded-full bg-fg-3" />
                                         <div className="rounded-md border border-line/60 bg-raised/30 px-3 py-1.5 flex items-center gap-2 text-xs text-fg-3">
                                             <span className="font-mono text-muted shrink-0">{formatDateTime(a.created_at, me?.timezone)}</span>

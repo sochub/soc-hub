@@ -31,7 +31,8 @@ interface GNode {
 }
 interface GLink { source: string; target: string; match?: boolean }
 
-export default function ArtifactMindMap() {
+/** Without `caseId`: the whole tenant. With it: that case, its artifacts and IOCs, and whatever they link to (2 hops). */
+export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const [dims, setDims] = useState({ width: 900, height: 600 });
 
@@ -122,15 +123,25 @@ export default function ArtifactMindMap() {
 
         let nodes = ns;
         let links = ls;
+        if (caseId !== undefined) {
+            const near = new Set([`case-${caseId}`]);
+            for (let hop = 0; hop < 2; hop++) {
+                links.forEach(l => {
+                    if (near.has(l.source) || near.has(l.target)) { near.add(l.source); near.add(l.target); }
+                });
+            }
+            nodes = nodes.filter(n => near.has(n.id));
+            links = links.filter(l => near.has(l.source) && near.has(l.target));
+        }
         if (connectedOnly) {
             const linked = new Set<string>();
-            ls.forEach(l => { linked.add(l.source); linked.add(l.target); });
-            nodes = ns.filter(n => linked.has(n.id));
+            links.forEach(l => { linked.add(l.source); linked.add(l.target); });
+            nodes = nodes.filter(n => linked.has(n.id));
             const keep = new Set(nodes.map(n => n.id));
-            links = ls.filter(l => keep.has(l.source) && keep.has(l.target));
+            links = links.filter(l => keep.has(l.source) && keep.has(l.target));
         }
         return { nodes, links };
-    }, [cases, artifacts, iocs, showKind, sevFilter, threatFilter, query, connectedOnly, hiddenTypes]);
+    }, [cases, artifacts, iocs, showKind, sevFilter, threatFilter, query, connectedOnly, hiddenTypes, caseId]);
 
     // adjacency for hover/selection highlighting
     const neighbors = useMemo(() => {
@@ -274,9 +285,9 @@ export default function ArtifactMindMap() {
     const resetView = () => setView({ x: 0, y: 0, k: 1 });
 
     return (
-        <div className="p-4 sm:p-6 flex flex-col h-[calc(100vh-3.5rem)]">
+        <div className={caseId === undefined ? 'p-4 sm:p-6 flex flex-col h-[calc(100vh-3.5rem)]' : 'flex flex-col h-[70vh]'}>
             <div className="flex justify-between items-end mb-4 shrink-0 flex-wrap gap-2">
-                <div>
+                <div className={caseId === undefined ? undefined : 'hidden'}>
                     <h1 className="text-xl font-semibold text-fg tracking-tight">Investigation Graph</h1>
                     <p className="label-mono mt-1">cases ◉ · artifacts ▢ · iocs ◇ — drag, zoom, click for details</p>
                 </div>
