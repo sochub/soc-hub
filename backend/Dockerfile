@@ -20,7 +20,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt requirements-overrides.txt ./
-RUN pip install --no-cache-dir --upgrade "pip>=25.3" "setuptools>=83"
+RUN pip install --no-cache-dir --upgrade "pip>=26.1.2" "setuptools>=84.1.0"
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir --no-deps -r requirements-overrides.txt
 
