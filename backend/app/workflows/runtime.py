@@ -5,6 +5,7 @@ import secrets as _stdlib_secrets
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 _ACTIVE_STEP = {"pending", "running", "waiting"}
 _TERMINAL_RUN = {"succeeded", "failed", "cancelled"}
 _BACKOFF = [10, 60]
+STEP_TIMED_OUT = "step timed out"
 
 
 def _now():
@@ -378,6 +380,12 @@ async def execute_step(step_id: int) -> None:
                 step.status, step.output, step.finished_at = "succeeded", {"error": str(e)}, _now()
             else:
                 step.status, step.error, step.finished_at = "failed", str(e), _now()
+        except SoftTimeLimitExceeded:  # Celery soft time limit: fail the step cleanly, the run finalizes
+            logger.warning("workflow step %s hit the task time limit", step_id)
+            await db.rollback()
+            step = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == step_id))).scalars().first()
+            nctx.after_commit.clear()
+            step.status, step.error, step.finished_at = "failed", STEP_TIMED_OUT, _now()
         except Exception as e:  # bug in an executor — fail the step, keep the worker alive
             logger.exception("workflow step %s crashed", step_id)
             await db.rollback()
@@ -413,6 +421,22 @@ async def execute_step(step_id: int) -> None:
         execute_step_task.apply_async((step_id,), countdown=retry_in)
     else:  # also for "waiting": advance_run flips the run to status=waiting
         advance_run_task.delay(step.run_id)
+
+
+async def fail_timed_out_step(step_id: int) -> None:
+    """The soft time limit fired outside execute_step's own handler (e.g. inside the event loop): fail the
+    step if it is still active and advance its run so the run finalizes instead of hanging."""
+    from app.tasks.workflows import advance_run_task
+
+    async with AsyncSessionLocal() as db:
+        step = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == step_id)
+                                 .with_for_update())).scalars().first()
+        if not step or step.status not in ("pending", "running"):
+            return
+        step.status, step.error, step.finished_at = "failed", STEP_TIMED_OUT, _now()
+        run_id = step.run_id
+        await db.commit()
+    advance_run_task.delay(run_id)
 
 
 async def loop_tick(parent_step_id: int) -> None:

@@ -5,6 +5,18 @@ import app.db.base  # noqa: F401 — register all models before any task queries
 
 celery_app = Celery("worker", broker=settings.REDIS_URL)
 
+# Time limits. Every tenant's automation, SLA sweeps, notifications and enrichment share this one worker
+# (and beat runs embedded in it), so no task may hold a pool process indefinitely. At the soft limit Celery
+# raises SoftTimeLimitExceeded inside the task (workflow steps catch it and fail with "step timed out");
+# at the hard limit the pool process is killed and replaced. Tasks that legitimately run longer set their
+# own `soft_time_limit`/`time_limit` (AI triage, threat-intel enrichment, the SLA sweep).
+# Follow-up (not done here): split automation onto its own queue/worker and run beat separately, so one
+# busy tenant can't delay SLA sweeps at all.
+celery_app.conf.update(
+    task_soft_time_limit=120,
+    task_time_limit=150,
+)
+
 # The worker (docker-compose `worker` service) is started with no `-Q` flag,
 # so it only ever consumes the default "celery" queue — routing tasks
 # elsewhere (as a prior "main-queue" route did) means they're published but

@@ -196,7 +196,8 @@ async def _entry(tenant_id, raw_type, value, tlp, force, only=None, attempt=0, *
         await run_enrichment(db, tenant_id, itype, v, sources=only, force=force, attempt=attempt, limiter=limiter)
 
 
-@celery_app.task(acks_late=True)
+# Sources run sequentially, each with a 15 s HTTP timeout plus rate-limit waits.
+@celery_app.task(acks_late=True, soft_time_limit=300, time_limit=330)
 def enrich_indicator(tenant_id, raw_type, value, tlp, force=False, only=None, attempt=0):
     async def main():
         # Redis clients are bound to this asyncio.run() loop, so they are created here and closed here.

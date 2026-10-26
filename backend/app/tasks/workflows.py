@@ -1,5 +1,7 @@
 import logging
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from app.tasks.runner import _run_async
 from app.worker import celery_app
 
@@ -20,8 +22,14 @@ def advance_run_task(run_id):
 
 @celery_app.task(acks_late=True)
 def execute_step_task(step_id):
-    from app.workflows.runtime import execute_step
-    _run_async(execute_step(step_id))
+    from app.workflows import runtime
+    try:
+        _run_async(runtime.execute_step(step_id))
+    except SoftTimeLimitExceeded:
+        # The soft limit landed outside the step's own handler (e.g. in the event loop). Mark the step
+        # failed and advance the run; there are task_time_limit - task_soft_time_limit seconds left.
+        logger.warning("workflow step %s timed out outside its handler", step_id)
+        _run_async(runtime.fail_timed_out_step(step_id))
 
 
 @celery_app.task(acks_late=True)

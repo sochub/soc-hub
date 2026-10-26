@@ -126,7 +126,8 @@ async def _run_with_session(triage_id: int) -> None:
             await db.commit()
 
 
-@celery_app.task(acks_late=True, max_retries=1)
+# LLM calls may take AI_TIMEOUT_SECONDS (default 120 s) each, plus provider retries.
+@celery_app.task(acks_late=True, max_retries=1, soft_time_limit=600, time_limit=660)
 def run_case_triage_task(triage_id: int) -> None:
     """Runs async DB/LLM work from a sync Celery task — the app's ORM layer is
     fully async, so there's no sync session to reuse here."""
