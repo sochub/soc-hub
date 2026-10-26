@@ -56,7 +56,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libxml2-dev libxmlsec1-dev libxmlsec1-openssl pkg-config
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt
+        run: |
+          pip install -r backend/requirements.txt
+          pip install --no-deps -r backend/requirements-overrides.txt
       - name: Migrate
         working-directory: backend
         run: alembic upgrade head
@@ -109,6 +111,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libxml2-dev libxmlsec1-dev libxmlsec1-openssl pkg-config
       - name: pip-audit
+        # Audit the environment we actually ship (requirements + overrides), not a fresh resolve of requirements.txt.
         run: |
-          pip install pip-audit
-          pip-audit -r backend/requirements.txt
+          python -m venv /tmp/app
+          /tmp/app/bin/pip install -r backend/requirements.txt
+          /tmp/app/bin/pip install --no-deps -r backend/requirements-overrides.txt
+          /tmp/app/bin/pip install pip-audit
+          /tmp/app/bin/pip-audit
