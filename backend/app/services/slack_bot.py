@@ -22,7 +22,7 @@ from app.models.user import User
 from app.services import slack_blocks as ui
 from app.services import war_room_naming as wr_naming
 from app.services.case_service import add_timeline_note, apply_case_update, create_case_record
-from app.services.slack_actions import _platform_user, _slack_email
+from app.services.slack_actions import TENANT_DEACTIVATED, _platform_user, _slack_email, tenant_active
 from app.services.slack_service import SlackError, load_integration, slack_call
 from app.utils.crypto import decrypt
 from app.workflows.templating import slack_escape
@@ -450,6 +450,8 @@ async def dispatch_interactive(db, integ: SlackIntegration, payload: dict) -> Op
     from app.tasks.workflows import handle_slack_interaction_task
 
     kind = payload.get("type")
+    if not await tenant_active(db, integ.tenant_id):
+        return None  # plain ack: nothing runs in a deactivated tenant
     try:
         if kind == "view_submission":
             return await handle_submission(db, integ, payload)
@@ -464,6 +466,8 @@ async def dispatch_interactive(db, integ: SlackIntegration, payload: dict) -> Op
 
 
 async def dispatch_command(db, integ: SlackIntegration, form: dict) -> dict:
+    if not await tenant_active(db, integ.tenant_id):
+        return _ephemeral(TENANT_DEACTIVATED)
     try:
         return await handle_command(db, integ, form)
     except SlackError:

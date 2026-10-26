@@ -214,3 +214,19 @@ def test_guest_relay_comes_from_bound_state(monkeypatch):
         assert _ok(r), r.headers
         assert "/guest/" not in unquote(r.headers["location"])
     _go(body)
+
+
+def test_acs_without_saml_response_is_a_clean_refusal(monkeypatch):
+    """The real library raises on a POST with no SAMLResponse: refused like any invalid response, cookie cleared."""
+    async def body(c, ids):
+        real = sso_mod.saml_service.make_auth
+        t, u = await _setup(ids)
+        bind = await _start(c, t.slug, monkeypatch, SpAuth(u.email))
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth", real)  # the real python3-saml
+        c.cookies.clear()
+        r = await c.post(f"/api/v1/auth/saml/{t.slug}/acs", data={"RelayState": "x"},
+                         headers={"Cookie": f"{sso_mod.SAML_COOKIE}={bind}"})
+        assert r.status_code == 303 and _err(r), r.text
+        assert unquote(r.headers["location"].split("#sso_error=", 1)[1]) == sso_mod.SSO_FAILED
+        assert any(h.startswith(f'{sso_mod.SAML_COOKIE}=""') for h in r.headers.get_list("set-cookie"))
+    _go(body)

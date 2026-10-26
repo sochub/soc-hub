@@ -139,12 +139,15 @@ async def read_user_me(
         for m, t in pairs
         if current_user.is_super_admin or t.is_active is not False
     ]
-    mfa_required = any(t.require_mfa for _, t in pairs)
+    mfa_required = any(t.require_mfa for _, t in pairs if current_user.is_super_admin or t.is_active is not False)
     if current_user.is_super_admin and not mfa_required:  # super admins can enter every tenant
         mfa_required = await deps.tenant_requires_mfa(db, current_user)
-    role = resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
+    # A member whose active tenant is deactivated has no role there (every tenant route answers 403).
+    deactivated = bool(getattr(current_user, "_tenant_deactivated", False))
+    role = None if deactivated else resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
 
     return UserMe(
+        tenant_deactivated=deactivated,
         id=current_user.id,
         email=current_user.email,
         full_name=current_user.full_name,

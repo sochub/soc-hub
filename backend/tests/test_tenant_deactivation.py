@@ -129,3 +129,24 @@ def test_super_admin_keeps_full_access_to_deactivated_tenant():
         assert r.status_code == 200, r.text
         del other
     _go(body)
+
+
+def test_me_has_no_role_in_deactivated_tenant():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            t.require_mfa = True
+            await db.commit()
+            u = await _user(db, ids, "a", [(t, "admin")])
+            sa = await _super_admin(db, ids)
+        tok = await make_web_token(None, u, t.id)
+        me = (await _call(c, "GET", "/api/v1/users/me", headers=_bearer(tok))).json()
+        assert me["role"] == "admin" and me["tenant_deactivated"] is False and me["mfa_required_by_tenant"] is True
+        await _deactivate(t.id)
+        me = (await _call(c, "GET", "/api/v1/users/me", headers=_bearer(tok))).json()
+        assert me["role"] is None and me["tenant_deactivated"] is True and me["mfa_required_by_tenant"] is False
+        # super admin in the deactivated tenant: unchanged
+        sa_tok = await make_web_token(None, sa, t.id)
+        me = (await _call(c, "GET", "/api/v1/users/me", headers=_bearer(sa_tok))).json()
+        assert me["role"] == "super_admin" and me["tenant_deactivated"] is False
+    _go(body)

@@ -249,5 +249,7 @@ async def events(request: Request, db: AsyncSession = Depends(deps.get_db)) -> R
             raise HTTPException(status_code=401, detail="invalid signature")
         return JSONResponse({"challenge": str(payload.get("challenge", ""))[:200]})
     match = await _verified(request, db, body, payload.get("team_id"))
+    if not await slack_bot.tenant_active(db, match.tenant_id):
+        return Response(status_code=200)  # ack; nothing runs in a deactivated tenant
     await asyncio.to_thread(slack_bot.dispatch_event, match, payload)  # Celery .delay blocks on the broker
     return Response(status_code=200)

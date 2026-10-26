@@ -26,6 +26,7 @@ import app.db.base  # noqa: F401 — register models
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.slack_integration import SlackIntegration
+from app.models.tenant import Tenant
 from app.services import slack_bot
 from app.services.slack_service import SlackError, slack_call
 from app.utils.crypto import decrypt
@@ -64,6 +65,8 @@ async def handle_envelope(integration_id: int, msg: dict) -> Optional[dict]:
         if kind == "interactive":
             return await slack_bot.dispatch_interactive(db, integ, payload)
         if kind == "events_api":
+            if not await slack_bot.tenant_active(db, integ.tenant_id):
+                return None  # deactivated tenant: ack only (its socket closes at the next reconcile)
             await asyncio.to_thread(slack_bot.dispatch_event, integ, payload)  # Celery .delay blocks on the broker
     return None
 
@@ -129,7 +132,9 @@ async def _desired() -> Dict[int, Tuple[int, str]]:
     """integration id -> (tenant id, app token) for every integration with a usable app-level token."""
     out = {}
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(select(SlackIntegration).where(SlackIntegration.app_token_enc.isnot(None)))).scalars().all()
+        rows = (await db.execute(
+            select(SlackIntegration).join(Tenant, Tenant.id == SlackIntegration.tenant_id)
+            .where(SlackIntegration.app_token_enc.isnot(None), Tenant.is_active.isnot(False)))).scalars().all()
         for i in rows:
             try:
                 out[i.id] = (i.tenant_id, decrypt(i.app_token_enc))

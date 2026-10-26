@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case, CaseStatus
 from app.models.membership import TenantMembership
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.workflow import WorkflowRun, WorkflowRunStep
 from app.services.case_service import apply_case_update
@@ -41,13 +42,23 @@ async def _slack_email(token: str, slack_user_id: str) -> Optional[str]:
     return (info.get("user") or {}).get("profile", {}).get("email")
 
 
+TENANT_DEACTIVATED = "This workspace's SOC Hub tenant is deactivated."
+
+
+async def tenant_active(db, tenant_id: int) -> bool:
+    """Slack never acts in a deactivated tenant (NULL counts as active, like everywhere else)."""
+    return (await db.execute(select(Tenant.id).where(
+        Tenant.id == tenant_id, Tenant.is_active.isnot(False)))).first() is not None
+
+
 async def _platform_user(db, tenant_id: int, email: Optional[str]) -> Optional[User]:
     if not email:
         return None
     return (await db.execute(
         select(User).outerjoin(TenantMembership, (TenantMembership.user_id == User.id) & (TenantMembership.tenant_id == tenant_id))
         .where(func.lower(User.email) == email.lower(), User.is_active == True,  # noqa: E712
-               or_(User.is_super_admin == True, TenantMembership.role.in_(["admin", "analyst"])))  # noqa: E712
+               or_(User.is_super_admin == True, TenantMembership.role.in_(["admin", "analyst"])),  # noqa: E712
+               select(Tenant.id).where(Tenant.id == tenant_id, Tenant.is_active.isnot(False)).exists())
     )).scalars().first()
 
 
@@ -164,6 +175,9 @@ async def handle_answer(tenant_id: int, payload: dict, wait_token: str, index: i
 
 
 async def handle_interaction(tenant_id: int, payload: dict) -> None:
+    async with AsyncSessionLocal() as db:  # queued before a deactivation: still never acts
+        if not await tenant_active(db, tenant_id):
+            return
     for action in payload.get("actions") or []:
         parsed = parse_action_value(action.get("value", ""))
         if not parsed:

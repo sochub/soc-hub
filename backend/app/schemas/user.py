@@ -141,4 +141,6 @@ class UserMe(BaseModel):
     mfa_enabled: bool = False
     has_password: bool = True
     mfa_required_by_tenant: bool = False
+    # The active tenant is deactivated (members only): `role` is None and tenant routes answer 403.
+    tenant_deactivated: bool = False
     avatar_version: Optional[str] = None

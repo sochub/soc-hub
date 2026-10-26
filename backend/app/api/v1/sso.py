@@ -334,8 +334,12 @@ async def _saml_acs(request: Request, db: AsyncSession, slug: str) -> RedirectRe
     req = saml_service.build_request_dict(
         {k: v for k, v in form.items()}, {}, f"/api/v1/auth/saml/{slug}/acs"
     )
-    auth = saml_service.make_auth(slug, cfg, req)
-    auth.process_response(request_id=request_id)
+    try:
+        auth = saml_service.make_auth(slug, cfg, req)
+        auth.process_response(request_id=request_id)
+    except Exception as exc:  # e.g. no SAMLResponse in the POST: a clean refusal, never a 500
+        logger.warning("SAML response could not be processed tenant=%s error=%s", tenant.id, type(exc).__name__)
+        return await fail(SSO_FAILED, "saml_invalid")
     if auth.get_errors() or not auth.is_authenticated():
         reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
         return await fail(f"SSO sign-in failed: {reason}", "saml_invalid")
