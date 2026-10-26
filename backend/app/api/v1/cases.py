@@ -241,13 +241,14 @@ async def update_case(
         raise HTTPException(status_code=404, detail="Case not found")
 
     update_data = case_in.model_dump(exclude_unset=True)
+    reason = (update_data.pop("reason", None) or "").strip() or None  # not a column
     # require_analyst_or_above already guarantees analyst+; resolve the exact role only where it matters.
     role = (resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
                                 current_user.memberships) if "guest_summary" in update_data else "analyst")
     await check_case_update(db, case=case, data=update_data, tenant_id=tenant_id, role=role)
 
     changes = await apply_case_update(
-        db, case=case, update_data=update_data, user_id=current_user.id,
+        db, case=case, update_data=update_data, user_id=current_user.id, reason=reason,
     )
 
     await db.commit()

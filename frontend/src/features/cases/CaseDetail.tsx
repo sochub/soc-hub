@@ -22,7 +22,7 @@ import { stripMentions } from './mentionChips';
 import { Markdown, MarkdownField } from '../../components/Markdown';
 import IncidentOverview from './IncidentOverview';
 import GuestsPanel from '../guests/GuestsPanel';
-import type { User } from '../../types';
+import type { User, CaseEditPayload } from '../../types';
 import { formatDateTime } from '../../utils/datetime';
 import SLAPanel from './SLAPanel';
 import CaseAutomation from '../automations/CaseAutomation';
@@ -82,7 +82,7 @@ export default function CaseDetail() {
     const [editEventData, setEditEventData] = useState({ event_type: '', content: '' });
 
     const updateCaseMutation = useMutation({
-        mutationFn: async (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; outcome: string | null; closing_note: string | null }) => {
+        mutationFn: async (data: CaseEditPayload) => {
             if (!id) return;
             const response = await api.put(`/cases/${id}`, data);
             return response.data;

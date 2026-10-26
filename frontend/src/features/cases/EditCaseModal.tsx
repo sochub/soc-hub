@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { CaseEditPayload } from '../../types';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 
 interface EditCaseModalProps {
@@ -15,7 +16,7 @@ interface EditCaseModalProps {
         outcome?: string | null;
         closing_note?: string | null;
     };
-    onSubmit: (data: { title: string; description: string; severity: string; status: string; tags: string[]; source: string; outcome: string | null; closing_note: string | null }) => void;
+    onSubmit: (data: CaseEditPayload) => void;
     isSubmitting: boolean;
     error?: string | null;
 }
@@ -29,7 +30,8 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
         source: '',
         tags: '',
         outcome: '',
-        closing_note: ''
+        closing_note: '',
+        reason: ''
     });
 
     useEffect(() => {
@@ -42,7 +44,8 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                 source: caseData.source || 'user-reported',
                 tags: caseData.tags ? caseData.tags.join(', ') : '',
                 outcome: caseData.outcome || '',
-                closing_note: caseData.closing_note || ''
+                closing_note: caseData.closing_note || '',
+                reason: ''
             });
         }
     }, [caseData, show]);
@@ -54,9 +57,12 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
             return;
         }
         setLocalError(null);
+        const { reason, ...rest } = formData;
+        const changed = formData.status !== caseData.status || formData.severity !== caseData.severity;
         const tagsArray = formData.tags.split(',').map(t => t.trim()).filter(t => t);
         onSubmit({
-            ...formData,
+            ...rest,
+            ...(changed && reason.trim() ? { reason: reason.trim() } : {}),
             outcome: formData.outcome || null,
             closing_note: formData.closing_note || null,
             tags: tagsArray
@@ -157,6 +163,19 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                         />
                     </div>
                 </div>
+
+                {(formData.status !== caseData.status || formData.severity !== caseData.severity) && (
+                    <div>
+                        <label className={modalLabel}>Reason <span className="text-muted font-normal">(optional, shown on the timeline and in the war room)</span></label>
+                        <input
+                            type="text"
+                            value={formData.reason}
+                            onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+                            className={modalInput}
+                            maxLength={300}
+                        />
+                    </div>
+                )}
 
                 <div>
                     <label className={modalLabel}>Outcome <span className="text-muted font-normal">(required to close)</span></label>

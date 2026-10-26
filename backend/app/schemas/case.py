@@ -187,6 +187,7 @@ class CaseUpdate(BaseModel):
     guest_summary: Optional[str] = Field(None, max_length=4000)
     outcome: Optional[str] = None
     closing_note: Optional[str] = Field(None, max_length=8000)
+    reason: Optional[str] = Field(None, max_length=300)  # not a column: why status/severity changed
 
     _null_tags = field_validator("tags", mode="before")(_tags_or_empty)
 

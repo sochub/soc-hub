@@ -220,3 +220,45 @@ def suggestions_reply(suggestions: list, tenant_id: int, names: Optional[dict] =
             {"type": "button", "action_id": "wrs_dismiss", "value": f"wrs:{tenant_id}:{s.id}:d",
              "text": {"type": "plain_text", "text": "Dismiss"}}]})
     return blocks
+
+
+# --- war-room cards (colour-barred attachments) ---
+
+RED, GREEN, BLUE, YELLOW = "#e01e5a", "#2eb67d", "#36c5f0", "#ecb22e"
+
+
+def _pretty(v) -> str:
+    return str(_val(v) or "none").replace("_", " ").capitalize()
+
+
+def war_room_card(event_type: str, case, payload: dict, *, actor: Optional[str]) -> dict:
+    """One colour-barred war-room card. Returns {"text": fallback, "attachments": [{"color", "blocks"}]}."""
+    payload = payload or {}
+    color, title, detail = YELLOW, event_type, None
+    if event_type == "status.changed":
+        title = f"Status: {_pretty(payload.get('from'))} → {_pretty(payload.get('to'))}"
+    elif event_type == "severity.changed":
+        title = f"Severity: {_pretty(payload.get('from'))} → {_pretty(payload.get('to'))}"
+        if severity_rank(payload.get("to")) > severity_rank(payload.get("from")):
+            color = RED
+    elif event_type == "owner.changed":
+        title = f"Owner: {payload.get('from') or 'unassigned'} → {payload.get('to') or 'unassigned'}"
+    elif event_type == "sla.breached":
+        color, title = RED, f"SLA breached: {payload.get('label') or 'SLA'}"
+    elif event_type == "task.completed":
+        color, title = GREEN, f"Task completed: {payload.get('title') or ''}".rstrip(": ")
+    elif event_type == "workflow.finished":
+        color, title = BLUE, f"Workflow finished: {payload.get('name') or ''}".rstrip(": ")
+    elif event_type == "containment.confirmed":
+        color, title = GREEN, "Containment confirmed"
+    reason = payload.get("reason")
+    url = case_url(case.id)
+    ref = f"#{case.id:04d} {slack_escape((case.title or '')[:150])}"
+    link = f"<{url}|{ref}>" if url else ref
+    blocks: List[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{slack_escape(title)}*"}}]
+    if reason:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"“{slack_escape(str(reason))}”"}})
+    ctx = f"{link}" + (f"  ·  by {slack_escape(actor)}" if actor else "")
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": ctx}]})
+    fallback = f"{title} — #{case.id:04d} {(case.title or '')[:150]}"
+    return {"text": slack_escape(fallback), "attachments": [{"color": color, "blocks": blocks}]}

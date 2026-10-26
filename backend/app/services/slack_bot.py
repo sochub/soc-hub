@@ -360,13 +360,26 @@ async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: 
             await _safe(slack_call(token, "chat.update", channel=case.slack_card_channel, ts=case.slack_card_ts,
                                    text=ui.card_text(case), blocks=ui.case_card(case, owner)))
 
-        # 2. War room: a one-line update for each meaningful change.
+        # 2. War room: one card per meaningful change.
         if case.slack_channel_id and event_type in ("case.updated", "sla_breach"):
-            parts = [f"{k.replace('_id', '')}: {v.get('from')} → {v.get('to')}" for k, v in (changes or {}).items()
-                     if k in ("status", "severity", "owner_id") and isinstance(v, dict)]
-            line = note or (" · ".join(parts) if parts else None)
-            if line:
-                await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id, text=line))
+            cards = []
+            if event_type == "sla_breach":
+                cards.append(("sla.breached", {"label": (changes or {}).get("label", "SLA")}, None))
+            else:
+                for key, ev in (("status", "status.changed"), ("severity", "severity.changed"),
+                                ("owner_id", "owner.changed")):
+                    ch = (changes or {}).get(key)
+                    if isinstance(ch, dict):
+                        cards.append((ev, dict(ch), ch.get("by")))
+            if cards:
+                ids = [c[2] for c in cards] + [c[1].get(k) for c in cards if c[0] == "owner.changed" for k in ("from", "to")]
+                who = await _names(db, [i for i in ids if isinstance(i, int)])
+                for ev, payload, by in cards:
+                    if ev == "owner.changed":
+                        payload = {"from": who.get(payload.get("from")), "to": who.get(payload.get("to"))}
+                    msg = ui.war_room_card(ev, case, payload, actor=who.get(by))
+                    await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id,
+                                           text=msg["text"], attachments=msg["attachments"]))
 
         # 3. Owner DM on escalation (assignment and SLA breach DMs come from notifications delivery).
         if event_type == "case.updated" and sev_change and ui.severity_rank(sev_change.get("to")) > ui.severity_rank(sev_change.get("from")):

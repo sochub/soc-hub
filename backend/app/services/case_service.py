@@ -66,7 +66,8 @@ async def check_case_update(db: AsyncSession, *, case: Case, data: dict, tenant_
         raise HTTPException(status_code=422, detail="Owner is not a member of this tenant")
 
 
-async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, user_id: Optional[int]) -> dict:
+async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, user_id: Optional[int],
+                            reason: Optional[str] = None) -> dict:
     old_status = case.status
     changes = {}
     for field, value in update_data.items():
@@ -79,10 +80,16 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
                 changes[field]["removed"] = [t for t in before if t not in after]
             elif field == "owner_id":
                 changes["assignee"] = dict(changes[field])
+            if field in ("status", "severity", "owner_id") and user_id is not None:
+                changes[field]["by"] = user_id  # lets the war-room card name who made the change
+            if field in ("status", "severity") and reason:
+                changes[field]["reason"] = reason
         setattr(case, field, value)
 
     if "status" in changes:
         content = f"Status changed from {changes['status']['from']} to {changes['status']['to']}"
+        if reason:
+            content += f" — {reason}"
         if update_data["status"] == CaseStatus.CLOSED:
             if case.outcome:
                 content += f"\n\n**Outcome:** {_plain(case.outcome).replace('_', ' ')}"
@@ -103,7 +110,8 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
 
     if "severity" in changes:
         db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="severity_change",
-                             content=f"Severity changed from {changes['severity']['from']} to {changes['severity']['to']}"))
+                             content=f"Severity changed from {changes['severity']['from']} to {changes['severity']['to']}"
+                             + (f" — {reason}" if reason else "")))
 
     if changes:
         await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="update",
