@@ -1,0 +1,21 @@
+# Security headers for every SPA response. Included from each location that sets its own add_header
+# (nginx drops inherited add_header directives as soon as a location declares one), hence an include.
+# `always` keeps them on 304/404/error responses too.
+add_header X-Frame-Options "DENY" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+# HSTS is opt-in (HSTS_HEADER, e.g. "max-age=31536000; includeSubDomains") because it would lock plain-http
+# dev/test deployments out of the browser for a year. nginx omits a header whose value is empty.
+add_header Strict-Transport-Security "${HSTS_HEADER}" always;
+# CSP. Every directive is 'self' except the justified allowances:
+#  - style-src 'unsafe-inline': React `style={}` attributes, Framer Motion and Scalar inject inline styles, and
+#    index.html carries a style attribute (dark background, avoids a white flash). No inline *scripts* exist.
+#  - img-src data: blob:: avatars, branding logo and report chart SVGs are rendered from blob: URLs; data: for
+#    inlined icons/SVG backgrounds.
+#  - font-src 'self': fonts are bundled (@fontsource); no third-party font origin.
+#  - connect-src 'self': the API, /openapi.json and the MCP/OAuth routes are same-origin (nginx proxies them).
+#    The API docs "Send request" therefore only reaches this origin; the hosted Scalar proxy is disabled.
+#  - form-action 'self' / navigation: SSO (OIDC/SAML) starts are top-level navigations or same-origin POSTs to the
+#    API, and the IdP redirect back is a navigation, which form-action/connect-src do not govern.
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
