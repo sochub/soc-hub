@@ -18,7 +18,7 @@ from app.ai.aws import bedrock_credentials
 from app.ai.errors import AIError, AIUnavailable, scrub
 from app.ai.providers import PROVIDERS, SSRF_GUARDED, ConfigError, ProviderConfig, build_kwargs, missing_fields
 from app.core.config import settings
-from app.workflows.ssrf import SSRFError, assert_url_allowed
+from app.workflows.ssrf import HTTPS_ONLY, SSRFError, assert_url_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,8 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
             pinned_ip = await asyncio.to_thread(assert_url_allowed, cfg.api_base, list(allowlist))
         except SSRFError as e:
             raise _fail(AIUnavailable, f"AI endpoint not allowed: {e}", e) from None
+        if any(secrets) and urlparse(cfg.api_base).scheme.lower() != "https":
+            raise _fail(AIUnavailable, f"AI endpoint not allowed: {HTTPS_ONLY}", "ConfigError")
     aws_creds = await bedrock_credentials(cfg) if cfg.provider == "bedrock" else None
     secrets += list((aws_creds or {}).values())
     try:

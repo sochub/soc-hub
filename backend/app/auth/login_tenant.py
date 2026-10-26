@@ -14,6 +14,13 @@ from app.models.tenant import Tenant
 from app.models.user import User
 
 
+TENANT_DEACTIVATED = "This tenant is deactivated"
+
+
+def tenant_deactivated_error() -> HTTPException:
+    return HTTPException(status_code=403, detail=TENANT_DEACTIVATED)
+
+
 def _member_role(user: User, tenant_id: int) -> Optional[str]:
     return next((m.role for m in user.memberships if m.tenant_id == tenant_id), None)
 
@@ -48,18 +55,24 @@ async def audit_if_password_fallback(request: Request, user: User, tenant_id: Op
 
 async def password_login_tenant(db: AsyncSession, user: User, *, mfa_enabled: bool
                                 ) -> tuple[Optional[int], Optional[str], Optional[str]]:
-    """Default active tenant for a password sign-in: the lowest-id tenant the login policy lets a `pwd`
+    """Default active tenant for a password sign-in: the lowest-id ACTIVE tenant the login policy lets a `pwd`
     session enter. Returns (tenant_id, method, None); (None, None, None) for a user with no tenant; or
-    (None, None, slug of the lowest-id membership) when memberships exist but none admit a password."""
+    (None, None, slug of the lowest-id active membership) when active memberships exist but none admit a
+    password. Raises 403 (tenant_deactivated_error) when every membership is in a deactivated tenant.
+    Super admins (break-glass) never depend on tenant state: the lowest-id active tenant, else any."""
     if user.is_super_admin:
         row = (await db.execute(
-            select(Tenant.id, Tenant.member_login_method).order_by(Tenant.id).limit(1))).first()
+            select(Tenant.id, Tenant.member_login_method)
+            .order_by(Tenant.is_active.is_(False), Tenant.id).limit(1))).first()
         return (row[0], row[1], None) if row else (None, None, None)
     rows = (await db.execute(
         select(TenantMembership.tenant_id, TenantMembership.role, Tenant.member_login_method, Tenant.slug)
         .join(Tenant, Tenant.id == TenantMembership.tenant_id)
-        .where(TenantMembership.user_id == user.id)
+        .where(TenantMembership.user_id == user.id, Tenant.is_active.isnot(False))
         .order_by(TenantMembership.tenant_id))).all()
+    if not rows and (await db.execute(
+            select(TenantMembership.tenant_id).where(TenantMembership.user_id == user.id).limit(1))).first():
+        raise tenant_deactivated_error()
     for tid, role, method, _slug in rows:
         if member_may_enter(method, amr=AMR_PWD, sso_tenant_id=None, tenant_id=tid, role=role,
                             mfa_enabled=mfa_enabled, is_super_admin=False):

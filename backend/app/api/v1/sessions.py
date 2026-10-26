@@ -18,6 +18,7 @@ from app.models.auth_session import AuthSession
 from app.models.oauth_client import OAuthClient
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.utils.account_guard import deny
 
 router = APIRouter()          # mounted under /users (before users.router)
 tenant_router = APIRouter()   # mounted under /tenants (before tenants.router)
@@ -91,14 +92,15 @@ async def list_tenant_oauth_sessions(
     current_user: User = Depends(deps.require_admin),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    rows = (await db.execute(
-        select(AuthSession, OAuthClient.client_name, User.email)
-        .join(User, User.id == AuthSession.user_id)
-        .outerjoin(OAuthClient, OAuthClient.id == AuthSession.client_id)
-        .where(AuthSession.tenant_id == tenant_id, AuthSession.kind == "oauth",
-               AuthSession.revoked_at.is_(None), AuthSession.last_used_at >= _live_cutoff())
-        .order_by(AuthSession.last_used_at.desc())
-    )).all()
+    q = (select(AuthSession, OAuthClient.client_name, User.email)
+         .join(User, User.id == AuthSession.user_id)
+         .outerjoin(OAuthClient, OAuthClient.id == AuthSession.client_id)
+         .where(AuthSession.tenant_id == tenant_id, AuthSession.kind == "oauth",
+                AuthSession.revoked_at.is_(None), AuthSession.last_used_at >= _live_cutoff())
+         .order_by(AuthSession.last_used_at.desc()))
+    if not current_user.is_super_admin:  # super admins' sessions are visible to super admins only
+        q = q.where(User.is_super_admin.is_(False))
+    rows = (await db.execute(q)).all()
     return [TenantOAuthSessionOut(id=s.id, client_name=cn, user_email=email, amr=s.amr,
                                   created_at=s.created_at, last_used_at=s.last_used_at, ip=s.ip)
             for s, cn, email in rows]
@@ -112,6 +114,14 @@ async def revoke_tenant_oauth_session(
     current_user: User = Depends(deps.require_admin),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Response:
+    if not current_user.is_super_admin:
+        owner_is_sa = (await db.execute(
+            select(User.is_super_admin).join(AuthSession, AuthSession.user_id == User.id)
+            .where(AuthSession.id == session_id, AuthSession.tenant_id == tenant_id, AuthSession.kind == "oauth")
+        )).scalar()
+        if owner_is_sa:  # a super admin's session: same answer as an unknown one, but audited
+            await deny(request, current_user, tenant_id, "revoke_oauth_session", target_id=None,
+                       detail="Not found", status_code=404)
     if not await sessions.revoke(db, session_id, tenant_id=tenant_id):
         raise HTTPException(status_code=404, detail="Not found")
     await db.commit()

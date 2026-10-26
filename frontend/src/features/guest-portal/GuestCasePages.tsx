@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload } from 'lucide-react';
 import { Badge, Button, Label } from '../../components/ui';
 import { GuestShell } from './GuestAuthPages';
-import { guestApi, guestError, guestToken } from './guestApi';
+import { guestApi, guestError, guestSession, guestSignOut } from './guestApi';
 import GuestSecurityPanel from './GuestSecurityPanel';
 import { Markdown, MarkdownField } from '../../components/Markdown';
 
@@ -15,20 +15,20 @@ interface GuestFile { id: number; filename: string; size_bytes: number; sha256: 
 interface GuestMe { email: string; has_account: boolean; mfa_enabled: boolean; amr: string }
 
 function RequireGuest({ children }: { children: React.ReactNode }) {
-    return guestToken.get() ? <>{children}</> : <Navigate to="/guest/login" replace />;
+    return guestSession.active() ? <>{children}</> : <Navigate to="/guest/login" replace />;
 }
 
 function SignOut() {
     const navigate = useNavigate();
     return <button type="button" className="text-xs text-fg-3 hover:text-fg"
-        onClick={() => { guestToken.clear(); navigate('/guest/login'); }}>Sign out</button>;
+        onClick={() => { void guestSignOut().then(() => navigate('/guest/login')); }}>Sign out</button>;
 }
 
 function CreateAccountBanner() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [sent, setSent] = useState(false);
-    const { data: me } = useQuery({ queryKey: ['guest-me'], queryFn: async () => (await guestApi.get('/me')).data as GuestMe, enabled: !!guestToken.get() });
+    const { data: me } = useQuery({ queryKey: ['guest-me'], queryFn: async () => (await guestApi.get('/me')).data as GuestMe, enabled: guestSession.active() });
     if (!me || me.amr !== 'link' || me.has_account) return null;
     // The account is only created from the emailed link, so a forwarded invite can't claim this address.
     const send = async () => {
@@ -56,7 +56,7 @@ export function GuestHomePage() {
     const showAll = params.get('all') === '1';  // came back from a case: don't bounce a single-case guest
     const { data, isLoading } = useQuery({
         queryKey: ['guest-cases'], queryFn: async () => (await guestApi.get('/cases')).data as GuestCaseItem[],
-        enabled: !!guestToken.get(),
+        enabled: guestSession.active(),
     });
     useEffect(() => {
         if (!showAll && data?.length === 1) navigate(`/guest/cases/${data[0].id}`, { replace: true });
@@ -83,7 +83,7 @@ export function GuestCasePage() {
     const qc = useQueryClient();
     const [comment, setComment] = useState('');
     const [error, setError] = useState<string | null>(null);
-    const caseQ = useQuery({ queryKey: ['guest-case', id], queryFn: async () => (await guestApi.get(`/cases/${id}`)).data as GuestCase, retry: false, enabled: !!guestToken.get() });
+    const caseQ = useQuery({ queryKey: ['guest-case', id], queryFn: async () => (await guestApi.get(`/cases/${id}`)).data as GuestCase, retry: false, enabled: guestSession.active() });
     const timeline = useQuery({ queryKey: ['guest-timeline', id], queryFn: async () => (await guestApi.get(`/cases/${id}/timeline`)).data as GuestEvent[], enabled: caseQ.isSuccess });
     const files = useQuery({ queryKey: ['guest-files', id], queryFn: async () => (await guestApi.get(`/cases/${id}/attachments`)).data as GuestFile[], enabled: caseQ.isSuccess });
     const refresh = () => { setError(null); qc.invalidateQueries({ queryKey: ['guest-timeline', id] }); qc.invalidateQueries({ queryKey: ['guest-files', id] }); };

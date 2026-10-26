@@ -36,7 +36,8 @@ class Ids:
         return e
 
 
-async def make_tenant(db, ids: Ids, *, allow=(DOMAIN,), require_sso=False, sso=False) -> Tenant:
+async def make_tenant(db, ids: Ids, *, allow=(DOMAIN,), require_sso=False, sso=False,
+                      idp_initiated=False) -> Tenant:
     t = Tenant(name="wf-test", slug=f"wf-test-{ids.h}-g{len(ids.tenants)}",
                guest_domain_allowlist=list(allow), guest_login_method="saml" if require_sso else "password")
     db.add(t)
@@ -44,7 +45,8 @@ async def make_tenant(db, ids: Ids, *, allow=(DOMAIN,), require_sso=False, sso=F
     ids.tenants.append(int(t.id))
     if sso:
         db.add(TenantSSOConfig(tenant_id=t.id, idp_entity_id="https://idp.example/e",
-                               idp_sso_url="https://idp.example/sso", idp_x509_cert="MIIB"))
+                               idp_sso_url="https://idp.example/sso", idp_x509_cert="MIIB",
+                               saml_allow_idp_initiated=idp_initiated))
     await db.commit()
     return t
 

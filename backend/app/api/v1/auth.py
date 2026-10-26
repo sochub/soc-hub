@@ -117,7 +117,14 @@ async def login_access_token(
     await throttle.reset(email, ip)
     # Login-method policy runs BEFORE any MFA challenge, so a member who must use SSO never spends a TOTP.
     has_mfa = user.mfa_enabled_at is not None
-    active_tenant_id, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=has_mfa)
+    try:
+        active_tenant_id, method, refused_slug = await login_tenant.password_login_tenant(
+            db, user, mfa_enabled=has_mfa)
+    except HTTPException:  # every tenant of this member is deactivated: no session, no MFA challenge
+        await audit_event("security", "login.failed", request=request, outcome="denied", user_id=user.id,
+                          user_email=user.email, tenant_id=await _default_active_tenant_id(db, user),
+                          changes={"reason": "tenant_deactivated"})
+        raise
     # Break-glass admin without MFA: enrol first; mfa_enable re-applies the policy and mints the session.
     enrol_first = (refused_slug is not None and not has_mfa
                    and (await login_tenant.password_login_tenant(db, user, mfa_enabled=True))[0] is not None)
@@ -176,7 +183,13 @@ async def login_mfa(
         raise
     if not await spend_mfa_challenge(redis, payload.get("jti")):
         raise expired  # this challenge was already used to sign in
-    tid, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=True)
+    try:
+        tid, method, refused_slug = await login_tenant.password_login_tenant(db, user, mfa_enabled=True)
+    except HTTPException:  # every tenant of this member was deactivated since the password step
+        await audit_event("security", "login.failed", request=request, outcome="denied", user_id=user.id,
+                          user_email=user.email, tenant_id=await _default_active_tenant_id(db, user),
+                          changes={"reason": "tenant_deactivated"})
+        raise
     if refused_slug is not None:  # the tenant's login method changed since the password step
         raise sso_required_error(refused_slug)
     await audit_event("security", "mfa.challenge_passed", request=request, user_id=user.id,
@@ -207,7 +220,7 @@ async def switch_tenant(
     included) may switch into a tenant that requires it.
     """
     target = (await db.execute(select(Tenant).where(Tenant.id == body.tenant_id))).scalars().first()
-    if current_user.is_super_admin:
+    if current_user.is_super_admin:  # break-glass: any existing tenant, deactivated ones included
         if not target:
             raise HTTPException(status_code=404, detail="Tenant not found")
     else:
@@ -219,6 +232,8 @@ async def switch_tenant(
         )
         if not res.scalars().first():
             raise HTTPException(status_code=403, detail="You are not a member of that tenant.")
+        if target.is_active is False:
+            raise login_tenant.tenant_deactivated_error()
 
     if not login_tenant.session_may_enter(current_user, target.id, target.member_login_method):
         # Break-glass admin without MFA: enrolling MFA is what would let this session in.

@@ -39,8 +39,8 @@ def _overrides():
     app.dependency_overrides[mfa_mod.get_redis] = lambda: redis
 
 
-async def _tenant(db, ids, method="password", sso=False) -> Tenant:
-    t = await make_tenant(db, ids, sso=sso)
+async def _tenant(db, ids, method="password", sso=False, idp_initiated=False) -> Tenant:
+    t = await make_tenant(db, ids, sso=sso, idp_initiated=idp_initiated)
     t.member_login_method = method
     await db.commit()
     return t
@@ -177,7 +177,7 @@ def test_analyst_at_sso_tenant_refused_before_mfa():
 def test_sso_user_keeps_amr_after_mfa_enable():
     async def body(c, ids):
         async with AsyncSessionLocal() as db:
-            t = await _tenant(db, ids, "saml", sso=True)
+            t = await _tenant(db, ids, "saml", sso=True, idp_initiated=True)
             u = await _user(db, ids, "sso", [(t, "analyst")], password_login=False)
             tok = await make_web_token(None, u, t.id, amr="saml", sso_tenant_id=t.id)
         s = await c.post("/api/v1/users/me/mfa/setup", headers=_bearer(tok))
@@ -206,20 +206,18 @@ def test_switch_into_sso_tenant_refused():
     _go(body)
 
 
-def test_multi_tenant_user_sso_into_b(monkeypatch):
+def test_multi_tenant_user_sso_into_b_refused(monkeypatch):
+    """Tenant B's IdP can't sign in an account that also belongs to tenant A (B's admins control that IdP)."""
     async def body(c, ids):
         async with AsyncSessionLocal() as db:
             ta = await _tenant(db, ids, "password")
-            tb = await _tenant(db, ids, "saml", sso=True)
+            tb = await _tenant(db, ids, "saml", sso=True, idp_initiated=True)
             u = await _user(db, ids, "multi", [(ta, "analyst"), (tb, "analyst")])
-        sess = await _saml_login(c, monkeypatch, tb, u.email)
-        c.cookies.clear()
-        hdr = {"Cookie": f"{COOKIE}={sess}"}
-        me = await c.get("/api/v1/users/me", headers=hdr)
-        assert me.status_code == 200 and me.json()["active_tenant_id"] == tb.id
-        sw = await c.post("/api/v1/auth/switch-tenant", headers={**hdr, **XRW}, json={"tenant_id": ta.id})
-        assert sw.status_code == 403 and sw.json()["detail"] == {"code": "password_required"}
-        async with AsyncSessionLocal() as db:  # no membership was added
+        monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: FakeAuth(u.email))
+        r = await c.post(f"/api/v1/auth/saml/{tb.slug}/acs", data={"SAMLResponse": "x"})
+        assert r.status_code == 303 and "#sso_error=" in r.headers["location"], r.headers["location"]
+        assert f"{COOKIE}=" not in r.headers.get("set-cookie", "")
+        async with AsyncSessionLocal() as db:  # memberships unchanged
             n = (await db.execute(select(TenantMembership.tenant_id).where(
                 TenantMembership.user_id == u.id))).scalars().all()
         assert sorted(n) == sorted([ta.id, tb.id])
@@ -256,7 +254,7 @@ def test_legacy_token_without_amr_is_pwd():
 def test_saml_session_works(monkeypatch):
     async def body(c, ids):
         async with AsyncSessionLocal() as db:
-            t = await _tenant(db, ids, "saml", sso=True)
+            t = await _tenant(db, ids, "saml", sso=True, idp_initiated=True)
             u = await _user(db, ids, "an", [(t, "analyst")])
         sess = await _saml_login(c, monkeypatch, t, u.email)
         assert _claims(sess)["amr"] == "saml" and _claims(sess)["sso_tid"] == t.id

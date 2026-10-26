@@ -122,6 +122,10 @@ def test_triage_task_passes_triage_tenant(monkeypatch):
     from types import SimpleNamespace
     from app.tasks import triage as triage_task
 
+    async def never(db, tenant_id):  # the fake session below answers a fixed sequence of queries
+        return False
+    monkeypatch.setattr(triage_task, "tenant_deactivated", never)
+
     triage_row = SimpleNamespace(id=9, case_id=7, tenant_id=42, status="pending", error_message=None)
     case_row = SimpleNamespace(id=7, title="t", description="d", tags=[])
     firsts = [triage_row, case_row]

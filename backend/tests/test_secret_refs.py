@@ -184,7 +184,19 @@ def test_single_expression_render_containers():
 
 
 def test_every_filter_and_test_is_guarded():
-    from app.workflows.templating import _env, _slack_env
+    from app.workflows.templating import _INTERNAL_FILTERS, _env, _slack_env
     for env in (_env, _slack_env):
-        for f in list(env.filters.values()) + list(env.tests.values()):
-            assert getattr(f, "__wrapped__", None) is not None, f
+        filters = [f for k, f in env.filters.items() if k not in _INTERNAL_FILTERS]
+        for f in filters + list(env.tests.values()):
+            assert getattr(f, "_secret_guarded", False) is True, f
+        # the internal hooks are the only unguarded ones, and templates can't name them
+        assert {k for k, f in env.filters.items() if not getattr(f, "_secret_guarded", False)} == set(_INTERNAL_FILTERS)
+        assert all(":" in k for k in _INTERNAL_FILTERS)
+
+
+def test_internal_budget_filters_pass_secrets_through_unchanged():
+    # the limit hooks wrap every output/loop/concat; a secret flowing through them is still only inserted
+    assert render("x {{ secrets.API_TOKEN }} y", CTX) == f"x ⟦secret:API_TOKEN#{N}⟧ y"
+    assert render("{{ 'Bearer ' ~ secrets.API_TOKEN }}", CTX) == f"Bearer ⟦secret:API_TOKEN#{N}⟧"
+    with pytest.raises(TemplateError):
+        render("{{ secrets.API_TOKEN|_wf_cap }}", CTX)  # hooks aren't reachable by name from templates

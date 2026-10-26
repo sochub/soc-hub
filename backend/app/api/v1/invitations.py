@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -16,14 +16,19 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas import invitation as invitation_schema
 from app.services.email_service import send_invitation_email
+from app.utils.account_guard import deny
 from app.utils.emails import normalize_email
 
 router = APIRouter()
+
+CANNOT_ADD_EXISTING = ("This account signs in through another organization's single sign-on and can't be "
+                       "added to this tenant.")
 
 
 @router.post("/", response_model=invitation_schema.InvitationResponse, status_code=201)
 async def create_invitation(
     *,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db),
     invitation_in: invitation_schema.InvitationCreate,
     current_user: User = Depends(deps.require_admin),
@@ -38,8 +43,15 @@ async def create_invitation(
         raise HTTPException(status_code=400, detail="Cannot invite super admin users.")
 
     # Existing user → create a membership directly, no token needed.
-    result = await db.execute(select(User).where(func.lower(User.email) == invitation_in.email))
+    # FOR UPDATE: account-wide actions lock the same row, so "is this account owned by one tenant only?" can't
+    # race a membership being added here (app.utils.account_guard).
+    result = await db.execute(select(User).where(func.lower(User.email) == invitation_in.email).with_for_update())
     existing_user = result.scalars().first()
+    if existing_user and existing_user.is_super_admin and not current_user.is_super_admin:
+        # Break-glass accounts are managed by super admins only. Same answer as another account that can't be
+        # added, so it reveals nothing about the account.
+        await deny(request, current_user, tenant_id, "invite", target_id=None,
+                   detail=CANNOT_ADD_EXISTING, status_code=409)
     if existing_user:
         dup = await db.execute(
             select(TenantMembership).where(
@@ -52,8 +64,7 @@ async def create_invitation(
         if not existing_user.password_login_enabled:
             # SSO-only accounts may belong to a single tenant (SSO refuses multi-tenant users),
             # so adding one elsewhere would lock them out of their own organization.
-            raise HTTPException(status_code=409, detail="This account signs in through another "
-                                "organization's single sign-on and can't be added to this tenant.")
+            raise HTTPException(status_code=409, detail=CANNOT_ADD_EXISTING)
         db.add(TenantMembership(
             user_id=existing_user.id, tenant_id=tenant_id, role=invitation_in.role.value
         ))

@@ -8,6 +8,7 @@ import type { CaseEvent, MilestoneKey, TimelineEvent, User } from '../../types';
 import { MILESTONES, apiDetail, useSaveMilestones } from './milestones';
 import TimelineSuggest from './TimelineSuggest';
 import { Markdown, MarkdownField } from '../../components/Markdown';
+import { csvCell } from '../../lib/csv';
 
 // Categories: 3 generic + 12 ATT&CK tactics. Colour is deterministic per category.
 const EVENT_CATEGORIES: [string, string, string][] = [
@@ -71,7 +72,6 @@ function matches(e: CaseEvent, q: string): boolean {
     });
 }
 
-const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 function exportCsv(events: CaseEvent[], caseId: number) {
     const head = ['event_date', 'title', 'category', 'source', 'tags', 'artifacts', 'flagged', 'in_summary', 'content', 'raw'];
     const rows = events.map((e) => [e.event_date, e.title, e.category, e.source, e.tags.join('|'), e.artifacts.map((a) => a.value).join('|'), e.flagged, e.in_summary, e.content, e.raw]);

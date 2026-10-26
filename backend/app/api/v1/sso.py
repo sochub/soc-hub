@@ -17,7 +17,7 @@ from app.api.v1.auth import _safe_domain
 from app.audit.events import audit_event
 from app.auth import web
 from app.auth.login_policy import AMR_OIDC, AMR_SAML
-from app.core import security
+from app.core import security, session_cookie
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
 from app.guests import tokens as guest_tokens
@@ -123,7 +123,9 @@ async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: 
     await audit_event("security", "guest.login.sso", request=request, actor=f"guest:{email}", tenant_id=tenant.id)
     token = guest_tokens.issue_session(email, "sso", sso_tenant_id=tenant.id, sso_proto=proto)
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    return RedirectResponse(f"{base}/guest/sso#token={quote(token)}", status_code=303)
+    out = RedirectResponse(f"{base}/guest/sso", status_code=303)  # the token rides only in the HttpOnly cookie
+    session_cookie.set_guest(out, token, int(guest_tokens.SESSION_TTL.total_seconds()))
+    return out
 
 
 async def _tenant_and_config(db: AsyncSession, slug: str):
@@ -217,9 +219,10 @@ async def _resolve_sso_user(
     tenant_ids = set((await db.execute(
         select(TenantMembership.tenant_id).where(TenantMembership.user_id == user.id)
     )).scalars().all())
-    if tenant.id not in tenant_ids:
-        # Not a member here: never auto-attached. Members of other tenants too are fine: an SSO session
-        # only ever opens the tenant whose IdP issued it (app.auth.login_policy).
+    if tenant_ids != {tenant.id}:
+        # Not a member here: never auto-attached. A member of other tenants too is refused: this tenant's admins
+        # control the IdP and could otherwise sign in as an account they don't own (and change its account-wide
+        # state: sessions, profile). Same rule as app.utils.account_guard.
         raise HTTPException(status_code=403, detail=SSO_NOT_ALLOWED)
     return user
 
@@ -234,6 +237,43 @@ async def saml_metadata(*, db: AsyncSession = Depends(deps.get_db), slug: str) -
     return Response(content=xml, media_type="application/xml")
 
 
+# Login CSRF: the ACS only accepts a response to an AuthnRequest that THIS browser started. The request id is
+# kept server-side (single use), keyed by a random value in an HttpOnly cookie scoped to the SAML endpoints.
+# The IdP returns with a cross-site POST, which a SameSite=Lax/Strict cookie would not ride on: over https the
+# cookie is SameSite=None; Secure (it only binds, it grants nothing: a forged POST carrying it still needs an
+# assertion answering this browser's request id). Over plain http (local dev) browsers refuse None without
+# Secure, so it falls back to Lax (works when the IdP is same-site, e.g. localhost).
+SAML_COOKIE = "sochub_saml"
+_SAML_COOKIE_PATH = "/api/v1/auth/saml"
+_SAML_STATE_KEY = "saml:req:{}"
+_SAML_STATE_TTL = 600
+SAML_UNSOLICITED = "Your sign-in session expired or was already used. Please start the sign-in again."
+
+
+def _saml_cookie_kwargs() -> dict:
+    secure = settings.PUBLIC_BASE_URL.startswith("https")
+    return {"path": _SAML_COOKIE_PATH, "httponly": True, "secure": secure, "samesite": "none" if secure else "lax"}
+
+
+async def _pop_saml_state(bind: Optional[str]) -> Optional[dict]:
+    """Single-use: GETDEL the pending AuthnRequest for this browser. None when missing, malformed or Redis is
+    down (fail closed: only an explicitly enabled IdP-initiated flow can still proceed)."""
+    if not bind or len(bind) > 128:
+        return None
+    try:
+        raw = await _saml_redis().getdel(_SAML_STATE_KEY.format(bind))
+    except Exception:
+        logger.exception("SAML request store unavailable")
+        return None
+    try:
+        data = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+    ok = (isinstance(data, dict) and isinstance(data.get("tenant_id"), int) and isinstance(data.get("guest"), bool)
+          and isinstance(data.get("request_id"), str) and data["request_id"])
+    return data if ok else None
+
+
 @saml_router.get("/saml/{slug}/login")
 async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str, guest: bool = Query(False)) -> Any:
     """SP-initiated login: redirect the browser to the tenant's IdP. Public. `guest=1` starts a guest sign-in."""
@@ -243,7 +283,18 @@ async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str, gues
             _error_redirect("SSO is not enabled for this tenant.")
     req = saml_service.build_request_dict({}, {}, f"/api/v1/auth/saml/{slug}/login")
     auth = saml_service.make_auth(slug, cfg, req)
-    return RedirectResponse(auth.login(return_to=GUEST_RELAY) if guest else auth.login(), status_code=303)
+    url = auth.login(return_to=GUEST_RELAY) if guest else auth.login()
+    bind = secrets.token_urlsafe(32)
+    payload = json.dumps({"tenant_id": tenant.id, "request_id": auth.get_last_request_id(), "guest": guest})
+    try:
+        await _saml_redis().set(_SAML_STATE_KEY.format(bind), payload, ex=_SAML_STATE_TTL)
+    except Exception:
+        logger.exception("SAML request store unavailable; refusing sign-in tenant=%s", tenant.id)
+        msg = "SSO sign-in is temporarily unavailable. Please try again."
+        return _guest_error_redirect(None, msg) if guest else _error_redirect(msg)
+    out = RedirectResponse(url, status_code=303)
+    out.set_cookie(SAML_COOKIE, bind, max_age=_SAML_STATE_TTL, **_saml_cookie_kwargs())
+    return out
 
 
 async def _acs_fail(request: Request, tenant, message: str, code: str, *, guest: bool,
@@ -258,10 +309,21 @@ async def _acs_fail(request: Request, tenant, message: str, code: str, *, guest:
 async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db), slug: str) -> Any:
     """Assertion Consumer Service: validate the IdP response, sign the user in,
     and bounce back to the frontend with the JWT in the URL fragment. Public."""
-    form = await request.form()
-    is_guest = form.get("RelayState") == GUEST_RELAY
+    out = await _saml_acs(request, db, slug)
+    if SAML_COOKIE in request.cookies:  # its state was consumed either way
+        out.delete_cookie(SAML_COOKIE, **_saml_cookie_kwargs())
+    return out
 
+
+async def _saml_acs(request: Request, db: AsyncSession, slug: str) -> RedirectResponse:
+    form = await request.form()
+    state = await _pop_saml_state(request.cookies.get(SAML_COOKIE))  # consumed whatever happens next
     tenant, cfg = await _tenant_and_config(db, slug)
+    if state is not None and (tenant is None or state["tenant_id"] != tenant.id):
+        state = None
+    # SP-initiated: the audience is the one this browser started (RelayState is unsigned). IdP-initiated: RelayState.
+    is_guest = state["guest"] if state is not None else form.get("RelayState") == GUEST_RELAY
+    request_id = state["request_id"] if state is not None else None
     ready = tenant is not None and saml_ready(cfg)
 
     async def fail(msg: str, code: str, action: str = "sso.failed") -> RedirectResponse:
@@ -274,11 +336,22 @@ async def saml_acs(*, request: Request, db: AsyncSession = Depends(deps.get_db),
     req = saml_service.build_request_dict(
         {k: v for k, v in form.items()}, {}, f"/api/v1/auth/saml/{slug}/acs"
     )
-    auth = saml_service.make_auth(slug, cfg, req)
-    auth.process_response()
+    try:
+        auth = saml_service.make_auth(slug, cfg, req)
+        auth.process_response(request_id=request_id)
+    except Exception as exc:  # e.g. no SAMLResponse in the POST: a clean refusal, never a 500
+        logger.warning("SAML response could not be processed tenant=%s error=%s", tenant.id, type(exc).__name__)
+        return await fail(SSO_FAILED, "saml_invalid")
     if auth.get_errors() or not auth.is_authenticated():
         reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
         return await fail(f"SSO sign-in failed: {reason}", "saml_invalid")
+    in_response_to = auth.get_last_response_in_response_to()
+    if in_response_to is not None:
+        # Answers an AuthnRequest: it must be the one this browser started (and has not used yet).
+        if request_id is None or in_response_to != request_id:
+            return await fail(SAML_UNSOLICITED, "unsolicited")
+    elif not cfg.saml_allow_idp_initiated:
+        return await fail(SAML_UNSOLICITED, "unsolicited")
     if not await _claim_assertion(tenant.id, auth):
         return await fail(SSO_FAILED, "replay", action="sso.replay")
 
@@ -493,6 +566,7 @@ def _config_out(tenant: Tenant, cfg: Optional[TenantSSOConfig]) -> SSOConfigOut:
         has_oidc_client_secret=bool(cfg and cfg.oidc_client_secret_enc),
         auto_provision=bool(cfg and cfg.auto_provision),
         default_role=(cfg.default_role if cfg else "viewer"),
+        saml_allow_idp_initiated=bool(cfg and cfg.saml_allow_idp_initiated),
         sp_entity_id=urls["entity_id"],
         sp_acs_url=urls["acs_url"],
         sp_metadata_url=urls["metadata_url"],
@@ -537,7 +611,7 @@ async def update_sso_config(
         db.add(cfg)
 
     for field in ("idp_entity_id", "idp_sso_url", "idp_x509_cert", "oidc_issuer", "oidc_client_id",
-                  "oidc_scopes", "auto_provision", "default_role"):
+                  "oidc_scopes", "auto_provision", "default_role", "saml_allow_idp_initiated"):
         value = getattr(body, field)
         if value is not None:
             setattr(cfg, field, value)
@@ -564,6 +638,7 @@ async def update_sso_config(
                            changes={"member_login_method": tenant.member_login_method,
                                     "guest_login_method": tenant.guest_login_method,
                                     "auto_provision": cfg.auto_provision,
+                                    "saml_allow_idp_initiated": cfg.saml_allow_idp_initiated,
                                     "oidc_client_secret_changed": secret_changed})
     await db.commit()
     await db.refresh(cfg)

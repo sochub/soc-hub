@@ -21,6 +21,12 @@ _WEAK_REDIS_PASSWORDS = {"devredispass", "changeme", "redis"}
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sicms"
     SECRET_KEY: str = "changeme"
+    # At-rest encryption of stored secrets (app/utils/crypto.py). Optional: when unset the key is derived
+    # from SECRET_KEY with HKDF under its own label (never SECRET_KEY itself). Set it (>= 32 random chars)
+    # so a SECRET_KEY leak no longer exposes stored integration credentials. When changing it, move the old
+    # value into ENCRYPTION_KEYS_PREVIOUS (comma-separated) and run `python -m app.scripts.reencrypt_secrets`.
+    ENCRYPTION_KEY: Optional[str] = None
+    ENCRYPTION_KEYS_PREVIOUS: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_IDLE_DAYS: int = 30
@@ -44,8 +50,15 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # Hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an
-    # internal network). Exact-match, like the workflow HTTP allowlist.
+    # internal network). Exact-match, operator-controlled.
     OIDC_PRIVATE_HOSTS: list[str] = []
+
+    # Platform-level switch: may a host on a tenant's HTTP allowlist (workflow HTTP node, OAuth token URL,
+    # tenant AI api_base) resolve to a private address (RFC 1918, CGNAT 100.64/10, ULA fc00::/7)? Off by
+    # default. Enabling it lets every tenant admin reach private addresses, including the platform's own
+    # internal network (wildcard DNS, container network names): single-tenant/on-prem deployments only.
+    # Loopback, link-local and cloud metadata addresses are blocked regardless.
+    WORKFLOW_ALLOW_PRIVATE_ALLOWLIST: bool = False
 
     # CORS: comma-separated list of allowed origins. Empty = no cross-origin
     # access (frontend is served same-origin behind nginx). Stored as a raw
@@ -147,6 +160,13 @@ class Settings(BaseSettings):
                 "SECRET_KEY is weak: it is a known placeholder or shorter than "
                 f"{_MIN_SECRET_KEY_LENGTH} characters. Generate a strong key, e.g. "
                 "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
+            )
+        if self.ENCRYPTION_KEY and (  # empty = unset
+            len(self.ENCRYPTION_KEY) < _MIN_SECRET_KEY_LENGTH or self.ENCRYPTION_KEY == self.SECRET_KEY
+        ):
+            problems.append(
+                f"ENCRYPTION_KEY must be at least {_MIN_SECRET_KEY_LENGTH} characters and differ from "
+                "SECRET_KEY (or leave it unset)."
             )
         redis_password = urlsplit(self.REDIS_URL).password
         if not redis_password:

@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.audit.context import ctx_of
 from app.auth import sessions
 from app.auth.login_policy import AMR_PWD
-from app.auth.login_tenant import method_refusal, session_may_enter
+from app.auth.login_tenant import method_refusal, session_may_enter, tenant_deactivated_error
 from app.core import session_cookie
 from app.core.config import settings
 from app.db.session import get_db
@@ -78,13 +78,17 @@ async def get_current_user(
     user._amr = payload.get("amr") or AMR_PWD
     user._sso_tenant_id = payload.get("sso_tid")
     active = token_data.active_tenant_id
+    # A deactivated active tenant: get_effective_tenant_id refuses it and no role resolves there (for members;
+    # the super admin is break-glass and keeps access to inspect and reactivate it).
+    user._tenant_deactivated = False
     if active is not None:  # re-checked every request, so a login-method change cuts live sessions
         row = (await db.execute(
-            select(Tenant.member_login_method, Tenant.slug).where(Tenant.id == active))).first()
+            select(Tenant.member_login_method, Tenant.slug, Tenant.is_active).where(Tenant.id == active))).first()
         if row is not None:
-            method, slug = row
+            method, slug, tenant_active = row
             if not session_may_enter(user, active, method):
                 raise method_refusal(user, active, method, slug)
+            user._tenant_deactivated = tenant_active is False and not user.is_super_admin
     return user
 
 
@@ -99,6 +103,8 @@ def get_current_active_user(
 def _active_role(current_user: User) -> Optional[str]:
     """Resolve the caller's role string in their active tenant ('super_admin',
     'admin', 'analyst', 'viewer', or None)."""
+    if getattr(current_user, "_tenant_deactivated", False):
+        return None
     active = getattr(current_user, "_active_tenant_id", None)
     return resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
 
@@ -196,6 +202,8 @@ async def get_effective_tenant_id(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not a member of the active tenant.",
         )
+    if getattr(current_user, "_tenant_deactivated", False):
+        raise tenant_deactivated_error()
     _set_tenant(request, active)
     return active
 
@@ -268,8 +276,9 @@ async def default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int
         return res.scalars().first()
     res = await db.execute(
         select(TenantMembership.tenant_id)
+        .join(Tenant, Tenant.id == TenantMembership.tenant_id)
         .where(TenantMembership.user_id == user.id)
-        .order_by(TenantMembership.tenant_id)
+        .order_by(Tenant.is_active.is_(False), TenantMembership.tenant_id)
         .limit(1)
     )
     return res.scalars().first()

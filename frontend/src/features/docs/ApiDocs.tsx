@@ -50,7 +50,11 @@ export default function ApiDocs() {
 
             <div className="glass-panel rounded-xl border border-line overflow-hidden">
                 {schema.data
-                    ? <ApiReferenceReact configuration={{ content: schema.data, theme: 'purple', forceDarkModeState: 'dark', hideDarkModeToggle: true }} />
+                    ? <ApiReferenceReact configuration={{ content: schema.data, theme: 'purple', forceDarkModeState: 'dark', hideDarkModeToggle: true,
+                        // No hosted request proxy: "Send request" goes straight from the browser (the default proxy.scalar.com would
+                        // receive the pasted bearer token / API key and the deployment hostname). No telemetry, no hosted fonts either.
+                        proxyUrl: '', telemetry: false, withDefaultFonts: false,
+                        externalUrls: { dashboardUrl: '', registryUrl: '', proxyUrl: '', apiBaseUrl: '' } }} />
                     : <p className="p-5 text-sm text-fg-3">{schema.isError ? 'Could not load the API reference.' : 'Loading API reference…'}</p>}
             </div>
         </PageContainer>

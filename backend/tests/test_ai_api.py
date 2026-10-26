@@ -119,15 +119,31 @@ async def _scenario(monkeypatch, caplog, tested):
                                                                      "location": "us-central1", "service_account_json": "{bad"})
                 assert r.status_code == 422, f"e {r.status_code}"
 
-                # f) internal api_base needs the allowlist (400 per controller ruling) on PUT and /test
-                body_f = {"provider": "ollama", "model": "llama3", "api_base": "http://127.0.0.1:11434"}
+                # f) internal api_base needs the allowlist (400 per controller ruling) on PUT and /test,
+                # plus the platform switch for private addresses; loopback is never allowlistable
+                from app.workflows import ssrf
+
+                def fake_resolve(host, port, *a, **k):
+                    ip = {"llm.corp.example.com": "10.0.0.7", "loop.corp.example.com": "127.0.0.1"}.get(host)
+                    if ip is None:
+                        raise OSError("nx")
+                    return [(2, 1, 6, "", (ip, port))]
+                monkeypatch.setattr(ssrf, "_resolve", fake_resolve)
+                monkeypatch.setattr(settings, "WORKFLOW_ALLOW_PRIVATE_ALLOWLIST", True)
+                body_f = {"provider": "ollama", "model": "llama3", "api_base": "http://llm.corp.example.com:11434"}
                 r = await call("PUT", URL, "save", "rejected", json=body_f)
                 assert r.status_code == 400 and "allowlist" in r.json()["detail"], f"f {r.status_code} {r.text}"
                 r = await call("POST", URL + "/test", "test", "rejected", json=body_f)
                 assert r.status_code == 400 and "allowlist" in r.json()["detail"], f"f test {r.status_code} {r.text}"
                 assert tested == [], "f rejected body was tested"
                 r = await client.put("/api/v1/workflows/settings/http-allowlist", json={"hosts": ["127.0.0.1"]})
+                assert r.status_code == 422, "f IP literal allowlisted"
+                r = await client.put("/api/v1/workflows/settings/http-allowlist",
+                                     json={"hosts": ["llm.corp.example.com", "loop.corp.example.com"]})
                 assert r.status_code == 200, "f allowlist"
+                r = await call("PUT", URL, "save", "rejected",
+                               json={**body_f, "api_base": "http://loop.corp.example.com:11434"})
+                assert r.status_code == 400, f"f loopback allowlisted {r.status_code} {r.text}"
                 r = await call("PUT", URL, "save", "updated", json=body_f)
                 assert r.status_code == 200 and r.json()["api_base"] == body_f["api_base"], f"f retry {r.text}"
                 # switching to ollama (no secrets) leaves nothing set
@@ -139,19 +155,22 @@ async def _scenario(monkeypatch, caplog, tested):
                 assert (tested[-1].provider, tested[-1].model, tested[-1].source) == ("ollama", "llama3.1", "tenant"), "f2 cfg"
 
                 # f3) a changed api_base never carries the stored key over (PUT and test-with-body)
-                oc = {"provider": "openai_compatible", "model": "m", "api_base": "http://127.0.0.1:8000/v1"}
+                oc = {"provider": "openai_compatible", "model": "m", "api_base": "http://llm.corp.example.com:8000/v1"}
+                r = await call("PUT", URL, "save", "rejected", json={**oc, "api_key": KEY})
+                assert r.status_code == 400 and "https" in r.json()["detail"], f"f3 http key {r.status_code} {r.text}"
+                oc["api_base"] = "https://llm.corp.example.com:8000/v1"
                 r = await call("PUT", URL, "save", "updated", json={**oc, "api_key": KEY})
                 assert r.status_code == 200 and r.json()["secrets_set"]["api_key"] is True, f"f3 put {r.text}"
                 r = await call("POST", URL + "/test", "test", "ok", json=oc)
                 assert tested[-1].secrets.get("api_key") == KEY, "f3 same base keeps key"
-                moved = {**oc, "api_base": "http://127.0.0.1:9000/v1"}
+                moved = {**oc, "api_base": "https://llm.corp.example.com:9000/v1"}
                 r = await call("POST", URL + "/test", "test", "ok", json=moved)
                 assert r.status_code == 200 and KEY not in json.dumps(tested[-1].secrets), "f3 key sent to new base"
                 r = await call("PUT", URL, "save", "updated", json=moved)
                 assert r.status_code == 200 and r.json()["secrets_set"]["api_key"] is False, f"f3 put moved {r.text}"
 
                 # f4) api_base with userinfo is rejected at save and test
-                creds_url = {**oc, "api_base": "http://user:pw@127.0.0.1:8000/v1"}
+                creds_url = {**oc, "api_base": "https://user:pw@llm.corp.example.com:8000/v1"}
                 r = await call("PUT", URL, json=creds_url)
                 assert r.status_code == 422, f"f4 put {r.status_code}"
                 n = len(tested)

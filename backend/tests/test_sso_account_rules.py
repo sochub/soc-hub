@@ -1,6 +1,6 @@
-"""SSO account rules: a tenant's IdP may only sign in existing members of that tenant (they may also
-belong to other tenants; the SSO session only opens this one); never super admins; auto-provision
-only creates NEW users."""
+"""SSO account rules: a tenant's IdP may only sign in existing members of that tenant alone (not members
+of other tenants too: the tenant's admins control the IdP); never super admins; auto-provision only
+creates NEW users."""
 import asyncio
 import secrets
 import uuid
@@ -33,7 +33,8 @@ async def _setup():
         await db.flush()
         db.add(TenantSSOConfig(tenant_id=ta.id, idp_entity_id="https://idp.example.com",
                                idp_sso_url="https://idp.example.com/sso", idp_x509_cert="MIIB",
-                               auto_provision=True, default_role="analyst"))
+                               auto_provision=True, default_role="analyst",
+                               saml_allow_idp_initiated=True))
         users = {}
         for name, tenants, sa in [("local", [ta], False), ("multi", [ta, tb], False),
                                   ("other", [tb], False), ("sa", [], True), ("sa_member", [ta], True)]:
@@ -117,11 +118,10 @@ def test_super_admins_refused():
     _run(body)
 
 
-def test_member_of_another_tenant_allowed():
+def test_member_of_another_tenant_refused():
     async def body(ids):
-        u = await _resolve(ids, ids["emails"]["multi"])
-        assert u.id == ids["multi"]
-        assert await _memberships(ids["multi"]) == sorted([ids["ta"], ids["tb"]])  # no new membership
+        await _refused(ids, "multi")
+        assert await _memberships(ids["multi"]) == sorted([ids["ta"], ids["tb"]])  # unchanged
     _run(body)
 
 
@@ -148,8 +148,11 @@ def test_acs_redirects_with_clear_message(monkeypatch):
             self.email = email
             self.aid = f"_{uuid.uuid4().hex}"
 
-        def process_response(self):
+        def process_response(self, request_id=None):
             pass
+
+        def get_last_response_in_response_to(self):
+            return None
 
         def get_errors(self):
             return []
@@ -174,14 +177,14 @@ def test_acs_redirects_with_clear_message(monkeypatch):
         monkeypatch.setattr(sso_mod.saml_service, "make_auth", lambda slug, cfg, req: FakeAuth(current["e"]))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             url = f"/api/v1/auth/saml/{ids['slug']}/acs"
-            for who in ("sa", "other"):
+            for who in ("sa", "other", "multi"):
                 current["e"] = ids["emails"][who]
                 r = await c.post(url, data={"SAMLResponse": "x"})
                 assert r.status_code == 303
                 loc = r.headers["location"]
                 assert "#sso_error=" in loc and "set-cookie" not in r.headers
                 assert unquote(loc.split("#sso_error=", 1)[1]) == sso_mod.SSO_NOT_ALLOWED
-            for who in ("multi", "local"):
+            for who in ("local",):
                 current["e"] = ids["emails"][who]
                 r = await c.post(url, data={"SAMLResponse": "x"})
                 assert r.status_code == 303 and _signed_in(r)
@@ -190,10 +193,10 @@ def test_acs_redirects_with_clear_message(monkeypatch):
                 AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.failed"))).scalars().all()
             ok = (await db.execute(select(AuditLog).where(
                 AuditLog.tenant_id == ids["ta"], AuditLog.action == "sso.success"))).scalars().all()
-        assert len(failed) == 2 and all(r.category == "security" and r.outcome == "denied" for r in failed)
+        assert len(failed) == 3 and all(r.category == "security" and r.outcome == "denied" for r in failed)
         assert {r.changes["reason"] for r in failed} == {"not_allowed"}
         assert sso_mod.SSO_NOT_ALLOWED not in repr([vars(r) for r in failed + ok])
-        assert sorted(r.user_id for r in ok) == sorted([ids["multi"], ids["local"]])
+        assert [r.user_id for r in ok] == [ids["local"]]
     _run(body)
 
 
@@ -201,8 +204,11 @@ def test_saml_invalid_stores_fixed_code_not_idp_text(monkeypatch):
     secret_msg = "StatusMessage for victim@leak.example"
 
     class BadAuth:
-        def process_response(self):
+        def process_response(self, request_id=None):
             pass
+
+        def get_last_response_in_response_to(self):
+            return None
 
         def get_errors(self):
             return ["invalid_response"]
@@ -231,8 +237,11 @@ class _FixedAuth:
     def __init__(self, email, aid, not_after=None):
         self.email, self.aid, self.not_after = email, aid, not_after
 
-    def process_response(self):
+    def process_response(self, request_id=None):
         pass
+
+    def get_last_response_in_response_to(self):
+        return None
 
     def get_errors(self):
         return []

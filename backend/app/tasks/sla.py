@@ -87,6 +87,7 @@ async def _run() -> None:
         await engine.dispose()
 
 
-@celery_app.task(acks_late=True, max_retries=1)
+# Sweeps every tenant's open cases and sends breach email: scales with the whole deployment.
+@celery_app.task(acks_late=True, max_retries=1, soft_time_limit=270, time_limit=290)
 def check_sla_breaches_task() -> None:
     asyncio.run(_run())

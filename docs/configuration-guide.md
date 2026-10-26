@@ -20,7 +20,8 @@ Outside production the same checks only print warnings.
 
 | Setting | Where | Get it right |
 |---|---|---|
-| `SECRET_KEY` | `backend/.env` | At least 32 random characters: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Changing it later signs everyone out and makes stored Slack/integration secrets undecryptable (you re-enter them). |
+| `SECRET_KEY` | `backend/.env` | At least 32 random characters: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Changing it later signs everyone out, and (unless `ENCRYPTION_KEY` is set and `python -m app.scripts.reencrypt_secrets` has run) makes stored Slack/integration secrets undecryptable. |
+| `ENCRYPTION_KEY` | `backend/.env` | Optional, recommended: a separate ≥32-character key for stored secrets. See [configuration.md](configuration.md#encryption-at-rest-and-key-rotation) before setting or changing it. |
 | `POSTGRES_PASSWORD` | root `.env` | Not the compose default. Applied only when the database volume is **first** created; changing it afterwards does not change the database password. |
 | `REDIS_PASSWORD` | root `.env` | Required, and not a known default. |
 | `PUBLIC_BASE_URL` | root/backend `.env` | The URL users type, e.g. `https://soc.example.com`. SAML URLs and post-login redirects are built from it. |
@@ -105,9 +106,16 @@ Password login stays available for accounts that have a password.
 | `SSO response did not include an email address.` | NameID is not an email and none of the email attributes above is sent. See step 2. |
 | `SSO is not enabled for this tenant.` | Tick **enabled** and save, or the user typed the wrong tenant slug. |
 | `This account can't use single sign-on for this organization` | See "Who can sign in". |
+| `Your sign-in session expired or was already used. Please start the sign-in again.` | The SAML response did not answer a sign-in started from this browser in the last 10 minutes (or it was already used). Start from the SoC Hub login page. If users start from the IdP's app dashboard, see below. |
 
 Every failure is also written to **Settings → Audit log** with a reason code (`saml_invalid`, `no_email`,
-`not_allowed`, `replay`, `not_enabled`).
+`not_allowed`, `replay`, `not_enabled`, `unsolicited`).
+
+**IdP-initiated sign-in** (starting from the IdP's app dashboard) is refused by default: the ACS only accepts a
+response to a request this browser started (its id is kept server-side for 10 minutes behind an HttpOnly
+`sochub_saml` cookie, `SameSite=None; Secure` over https, and is single use). Tick **allow IdP-initiated
+sign-in** to accept unsolicited responses too. That exposes the tenant to login CSRF: anyone with an account at
+the same IdP can silently sign a colleague's browser into their own account. Assertions are still single use.
 
 ## 3. Two-factor authentication
 
@@ -151,7 +159,8 @@ a single case.
 - **Responder alerts** need a minimum severity (not "off") and the bot **invited to that channel**.
 - Analysts can only act from Slack if the **email on their Slack profile** matches their sochub account.
 
-"Slack credentials can't be decrypted (SECRET_KEY changed?)" means exactly that: re-enter the tokens.
+"Slack credentials can't be decrypted (SECRET_KEY changed?)" means the encryption key changed (see
+[key rotation](configuration.md#encryption-at-rest-and-key-rotation)): restore the old key, or re-enter the tokens.
 More symptoms are in the [Slack troubleshooting table](slack/setup.md#troubleshooting).
 
 ## 6. AI copilot

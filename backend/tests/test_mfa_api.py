@@ -318,7 +318,7 @@ def test_reset_protections_and_no_secret_leak():
             await db.commit()
         adm = await _hdr(ids["admin"], ids["ta"])
         r = await c.post(f"/api/v1/users/{ids['sa']}/mfa/reset", headers=adm)
-        assert r.status_code == 404
+        assert r.status_code == 403 and "super" not in r.text.lower()  # generic refusal (account_guard)
         assert (await _user(ids["sa"])).mfa_enabled_at is not None
         r = await c.post(f"/api/v1/users/{ids['admin']}/mfa/reset", headers=adm)
         assert r.status_code == 400 and r.json()["detail"] == "Use Turn off two-factor in your profile"

@@ -29,6 +29,8 @@ backend and worker get `DATABASE_URL` / `REDIS_URL` built from them.
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL DSN (asyncpg) | `postgresql+asyncpg://user:password@db:5432/sicms` |
 | `SECRET_KEY` | JWT signing key. **≥32 chars, not a placeholder** — in production the app refuses to boot with a weak key. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"` | _placeholder_ |
+| `ENCRYPTION_KEY` | Optional root key for secrets stored at rest (Slack tokens, workflow secrets, SSO/AI/enrichment credentials, two-factor seeds). When set: ≥32 chars and different from `SECRET_KEY` (production refuses to boot otherwise). When unset, the key is derived from `SECRET_KEY`. See [Encryption at rest and key rotation](#encryption-at-rest-and-key-rotation) | _(unset)_ |
+| `ENCRYPTION_KEYS_PREVIOUS` | Comma-separated former `ENCRYPTION_KEY` values, still accepted for decryption during a rotation | _(empty)_ |
 | `REDIS_URL` | Redis connection string. In production **must include a strong (non-default) password** | `redis://:<REDIS_PASSWORD>@redis:6379/0` (compose) |
 | `ENVIRONMENT` | Security mode: `production` \| `development` \| `test`. The credential checks above are hard failures **only** in `production`; otherwise they warn | `production` |
 | `DEBUG` | Logging only — no effect on security checks | `false` |
@@ -36,6 +38,7 @@ backend and worker get `DATABASE_URL` / `REDIS_URL` built from them.
 | `BACKEND_CORS_ORIGINS` | Comma-separated allowed origins. Empty = same-origin only | _(empty)_ |
 | `PUBLIC_BASE_URL` | Externally visible origin (behind nginx). Used to build SAML SP URLs and post-SSO redirects | `http://localhost` |
 | `OIDC_PRIVATE_HOSTS` | JSON list of hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an internal network). Exact match; see [sso/oidc.md](sso/oidc.md) | `[]` |
+| `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST` | Platform switch (operator only): may a host on a tenant's **HTTP allowlist** resolve to a private address (RFC 1918, CGNAT `100.64.0.0/10`, ULA `fc00::/7`)? Needed for workflows / tenant AI endpoints that call on-prem tools. **Enabling it lets every tenant admin reach private addresses, including the platform's own internal network** (any multi-label name that resolves there, e.g. via wildcard DNS or container/cluster network names such as `db.svc.cluster.local`). Enable it only on single-tenant or on-prem deployments. Loopback, link-local and cloud metadata addresses stay blocked either way. See [workflows/README.md](workflows/README.md#http-allowlist-and-ssrf) | `false` |
 
 ## AI provider
 
@@ -196,13 +199,13 @@ destination region.
 Tenant admins configure a provider under **Integrations → AI provider**
 (`GET`/`PUT`/`DELETE /api/v1/ai/config`; test with `POST /api/v1/ai/config/test`).
 
-- Credentials are encrypted at rest with `SECRET_KEY` and are write-only: the
+- Credentials are encrypted at rest (see [Encryption at rest](#encryption-at-rest-and-key-rotation)) and are write-only: the
   API only reports which secret fields are set. Leaving a secret blank on save
   keeps the stored value. Switching provider drops the stored secrets.
 - Tenant Vertex needs a service-account JSON key. Tenant Bedrock uses either
   **role** mode (assume a role, below) or **keys** mode (stored access keys).
   Tenants can't use the server's own credential chain.
-- If `SECRET_KEY` changes, stored credentials can't be decrypted. AI is then
+- If the encryption key is lost (`SECRET_KEY` changed without `ENCRYPTION_KEY` set, or `ENCRYPTION_KEY` changed without keeping the old one in `ENCRYPTION_KEYS_PREVIOUS`), stored credentials can't be decrypted. AI is then
   unavailable for that tenant until an admin re-enters the credentials.
 - With `AI_ALLOW_TENANT_OVERRIDE=false`, the deployment provider is used for
   everyone. Saving (`PUT`) and testing an unsaved config (`POST .../test` with a
@@ -256,10 +259,13 @@ expire.
 For tenant `ollama` and `openai_compatible` configs, `api_base` goes through the
 same outbound guard as workflow HTTP nodes, both when it is saved and on every
 call. A host that resolves to a private, loopback, link-local, CGNAT or reserved
-address is rejected unless it is on the tenant's **HTTP allowlist**
-(Integrations). Allowlisted hosts are trusted by name.
+address is rejected. A host on the tenant's **HTTP allowlist** (Integrations) may
+resolve to a private address only when the platform sets
+`WORKFLOW_ALLOW_PRIVATE_ALLOWLIST=true`; loopback, link-local and metadata
+addresses are refused even for allowlisted hosts. An `api_base` that carries an
+API key must be `https://` ("secrets are only sent over https").
 
-For a non-allowlisted `http://` URL, the call connects to the IP that was vetted,
+For an `http://` URL, the call connects to the IP that was vetted,
 so a second DNS answer can't rebind it to an internal address. `https://` keeps
 its hostname, because TLS certificate verification already defeats rebinding.
 The deployment default (env vars) is trusted and is not checked.
@@ -536,8 +542,8 @@ instead of pasting them into the graph. Tenant admins manage them in
 
 **Model.** A secret has a name (`^[A-Z][A-Z0-9_]{1,63}$`), a value (max 8 KB),
 an optional description and a list of **allowed hosts**. The value is encrypted at
-rest with `SECRET_KEY`. As with the AI credentials, if the key changes you must
-re-enter the values. Values are write-only: no endpoint ever returns them. Create,
+rest ([Encryption at rest](#encryption-at-rest-and-key-rotation)). As with the AI credentials, if the
+encryption key is lost you must re-enter the values. Values are write-only: no endpoint ever returns them. Create,
 update and delete are audit-logged with names and changed field names, never
 values. Deleting a secret that workflows still reference returns `409` with the
 list of workflows, unless you pass `?force=true`.
@@ -546,17 +552,17 @@ list of workflows, unless you pass `?force=true`.
 50 entries). An entry is either an exact hostname (`api.example.com`) or a
 wildcard `*.example.com`, which matches subdomains but not `example.com` itself.
 Patterns are lowercase, with no port, scheme or path. A bare single-label or IP
-entry is accepted only if it is already on the tenant's HTTP allowlist. That rule
+entry is accepted only if it is already on the tenant's HTTP allowlist (only
+possible for allowlists saved before allowlist entries were validated). That rule
 applies when an entry is added: when you edit a secret, entries that were already
 in its list are kept even if they have since left the allowlist. The check runs at
 send time against the final hostname and fails closed on anything malformed. A
 secret with an empty list is never sent anywhere. The SSRF guard and the tenant
 HTTP allowlist still apply on top.
 
-**HTTPS only.** A request that carries a secret must use `https://`. Plain
-`http://` is allowed only when the request host is on the tenant HTTP allowlist
-(for internal APIs). Otherwise the step fails with "Secret NAME can only be sent
-over HTTPS unless the host is on the tenant HTTP allowlist".
+**HTTPS only.** A request that carries a secret (in the URL, headers, body, or
+via `auth`), and every OAuth token request, must use `https://`, allowlisted host
+or not. Otherwise the step fails with "secrets are only sent over https".
 
 **Using a secret.** Write `{{ secrets.NAME }}`, for example the header
 `Authorization: Bearer {{ secrets.VT_API_KEY }}`. The node editor has an
@@ -853,8 +859,10 @@ The script clears the user's two-factor secret, signs them out everywhere, and
 prints only `MFA reset for user id N`. (`create_super_admin` does **not** touch
 two-factor.)
 
-**`SECRET_KEY` rotation.** Two-factor secrets are encrypted with `SECRET_KEY`.
-Rotating it makes every stored secret unreadable, so **everyone's two-factor stops
+**Key rotation.** Two-factor secrets are encrypted at rest ([Encryption at
+rest](#encryption-at-rest-and-key-rotation)). Rotating `ENCRYPTION_KEY` the documented way (old value kept in
+`ENCRYPTION_KEYS_PREVIOUS`) is safe. Losing the key (rotating `SECRET_KEY` while `ENCRYPTION_KEY` is unset,
+or dropping an old `ENCRYPTION_KEY`) makes every stored secret unreadable, so **everyone's two-factor stops
 working** (code checks return `409 MFA unavailable — contact your admin`). After a
 rotation, reset affected users from **Users → Reset MFA** (any admin who can still
 sign in) or with `reset_mfa` on the server, and have them enrol again.
@@ -902,6 +910,41 @@ these changes.
 - **Login throttling** — see below.
 - **Emails** — stored trimmed and lower-cased; `users` has a UNIQUE index on
   `lower(email)`, so login, invitations and SSO are case-insensitive.
+
+## Encryption at rest and key rotation
+
+Stored secrets (Slack bot/app tokens and signing secrets, workflow secrets, OIDC client secrets, tenant AI
+and enrichment credentials, user and guest two-factor seeds: every `*_enc` column) are encrypted with
+Fernet. The key is never `SECRET_KEY` itself: it is derived with HKDF-SHA256 (label
+`sochub/secret-encryption/v1`) from `ENCRYPTION_KEY`, or from `SECRET_KEY` when `ENCRYPTION_KEY` is unset.
+JWTs and sessions keep using `SECRET_KEY` unchanged, so none of this signs anyone out.
+
+Decryption accepts, in order: the current key, the `SECRET_KEY`-derived key (when `ENCRYPTION_KEY` is set),
+each `ENCRYPTION_KEYS_PREVIOUS` entry, and the legacy key (SHA-256 of `SECRET_KEY`, used before key
+separation). New values are always written with the current key.
+
+**Upgrading.** Nothing to do for existing data: it keeps decrypting. To move it to the new key now, run
+`docker compose exec backend python -m app.scripts.reencrypt_secrets` once the release is deployed. It
+re-encrypts every `*_enc` value with the current key (idempotent, one transaction per table, logs counts
+only, never values; values no key opens are reported and left unchanged, exit code 1). Don't roll back to a
+release older than key separation after running it: older releases only know the legacy key.
+
+**Separating the key from `SECRET_KEY` (recommended).** Set `ENCRYPTION_KEY`
+(`python -c "import secrets; print(secrets.token_urlsafe(48))"`) on the backend, worker and slack-socket
+services, restart them, then run the script. Until it has run, values written earlier still decrypt through
+the `SECRET_KEY`-derived and legacy keys. After it has run, stored secrets no longer depend on `SECRET_KEY`;
+`SECRET_KEY` can then be rotated (signing everyone out) without losing them.
+
+**Rotating `ENCRYPTION_KEY`.** Put the old value in `ENCRYPTION_KEYS_PREVIOUS` (comma-separated), set the new
+`ENCRYPTION_KEY`, restart backend, worker and slack-socket, run the script, and remove the old value from
+`ENCRYPTION_KEYS_PREVIOUS` only after the script reports `undecryptable=0` on every table.
+
+**Rotating `SECRET_KEY` while `ENCRYPTION_KEY` is unset.** Stored secrets were derived from the old
+`SECRET_KEY`, so list the old `SECRET_KEY` value in `ENCRYPTION_KEYS_PREVIOUS` (entries go through the same
+HKDF derivation): values written under HKDF(old `SECRET_KEY`) keep decrypting, and the script then moves
+them to the new key. Values still in the legacy SHA-256(old `SECRET_KEY`) format (written before key
+separation and never re-encrypted) are **not** recoverable that way: run the script before rotating
+`SECRET_KEY`, and confirm it reports no undecryptable values.
 
 ## Login throttling
 

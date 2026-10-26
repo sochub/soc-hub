@@ -111,7 +111,7 @@ def test_guest_wrong_password_logs_domain_only():
 def test_guest_sso_without_grant_is_denied_in_the_sso_tenant(monkeypatch):
     async def inner(ids, u):
         async with AsyncSessionLocal() as db:
-            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            t = await make_tenant(db, ids, require_sso=True, sso=True, idp_initiated=True)
             c = await make_case(db, ids, t)
             ok_email = ids.email("sso")
             await make_grant(db, c, ok_email)
@@ -135,7 +135,7 @@ def test_guest_sso_without_grant_is_denied_in_the_sso_tenant(monkeypatch):
 def test_replayed_guest_assertion_records_sso_replay(monkeypatch):
     async def inner(ids, u):
         async with AsyncSessionLocal() as db:
-            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            t = await make_tenant(db, ids, require_sso=True, sso=True, idp_initiated=True)
             e = ids.email("replay")
             await make_grant(db, await make_case(db, ids, t), e)
         fixed = FakeAuth(e)

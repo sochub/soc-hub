@@ -13,6 +13,7 @@ from app.models.user import User
 from app.services.email_service import _send_email, _smtp_configured
 from app.services.slack_blocks import case_card
 from app.services.slack_service import SlackError, load_integration, slack_call
+from app.utils.tenant_state import tenant_deactivated
 from app.workflows.templating import slack_escape
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ def _link(case_id: int) -> str:
 async def deliver_one(db, notification_id: int, redis) -> str:
     n = (await db.execute(select(Notification).where(Notification.id == notification_id))).scalars().first()
     if n is None or n.type not in EXTERNAL_TYPES:
+        return "skipped"
+    if await tenant_deactivated(db, n.tenant_id):  # no email/Slack for a deactivated tenant
         return "skipped"
     key = f"notif:ext:{n.user_id}:{n.case_id}"
     if not await redis.set(key, "1", nx=True, ex=300):

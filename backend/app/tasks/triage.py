@@ -15,6 +15,7 @@ from app.models.playbook import PlaybookTemplate
 from app.models.case_triage import CaseTriageResult
 from app.services.ai_service import AIService
 from app.services.artifact_types import not_private
+from app.utils.tenant_state import tenant_deactivated
 from app.api.v1.copilot import _find_related_cases
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,11 @@ async def _run_with_session(triage_id: int) -> None:
         )).scalars().first()
         if not triage:
             return
+        if await tenant_deactivated(db, triage.tenant_id):  # queued before a deactivation: no LLM work
+            triage.status = "failed"
+            triage.error_message = "Tenant deactivated."
+            await db.commit()
+            return
 
         case = (await db.execute(select(Case).where(Case.id == triage.case_id))).scalars().first()
         if not case:
@@ -126,7 +132,8 @@ async def _run_with_session(triage_id: int) -> None:
             await db.commit()
 
 
-@celery_app.task(acks_late=True, max_retries=1)
+# LLM calls may take AI_TIMEOUT_SECONDS (default 120 s) each, plus provider retries.
+@celery_app.task(acks_late=True, max_retries=1, soft_time_limit=600, time_limit=660)
 def run_case_triage_task(triage_id: int) -> None:
     """Runs async DB/LLM work from a sync Celery task — the app's ORM layer is
     fully async, so there's no sync session to reuse here."""

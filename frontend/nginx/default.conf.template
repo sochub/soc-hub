@@ -1,6 +1,7 @@
 server {
     listen 8080;
     server_name localhost;
+    server_tokens off;
 
     root /usr/share/nginx/html;
     index index.html;
@@ -10,8 +11,7 @@ server {
     # Every SPA path (the OAuth consent screen included) is never framed: clickjacking on Approve.
     location / {
         add_header Cache-Control "no-cache" always;
-        add_header X-Frame-Options "DENY" always;
-        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        include /etc/nginx/conf.d/security-headers.inc;
         try_files $uri $uri/ /index.html;
     }
 
@@ -19,11 +19,12 @@ server {
     # falling back to index.html (HTML served as JS fails silently -> blank page).
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
-        add_header X-Frame-Options "DENY" always;
-        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        include /etc/nginx/conf.d/security-headers.inc;
         try_files $uri =404;
     }
 
+    # Proxied locations deliberately carry no SPA headers: the backend owns the headers of its own responses (JSON,
+    # OAuth consent/SAML pages), and an SPA CSP (form-action 'self', no inline script) would break those.
     # Evidence uploads only: large, unbuffered bodies with long timeouts. A regex
     # location has no URI part on proxy_pass, so the request URI passes through
     # unchanged. Downloads (/attachments/{id}/download) use the default location.

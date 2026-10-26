@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Input, Label } from '../../components/ui';
-import { guestApi, guestError, guestToken } from './guestApi';
+import { guestApi, guestError, guestSession } from './guestApi';
 
 export function GuestShell({ children }: { children: React.ReactNode }) {
     return (
@@ -39,7 +39,7 @@ export function GuestLinkPage() {
     useEffect(() => {
         if (!token) return;
         guestApi.post('/auth/link', { token })
-            .then((r) => { guestToken.set(r.data.access_token); navigate('/guest', { replace: true }); })
+            .then(() => { guestSession.mark(); navigate('/guest', { replace: true }); })
             .catch((err) => {
                 const d = err?.response?.data?.detail;
                 if (d?.code === 'sso_required') navigate(`/guest/login?t=${encodeURIComponent(d.slug)}`, { replace: true });
@@ -70,15 +70,15 @@ export function GuestLoginPage() {
     const m = params.get('m');
     const notice = m === 'account' ? 'Sign in with your guest password.' : m === 'reset' ? 'Password updated — sign in.' : null;
 
-    const done = (tok: string) => { guestToken.set(tok); navigate('/guest', { replace: true }); };
+    const done = () => { guestSession.mark(); navigate('/guest', { replace: true }); };
     const submit = async (e: React.FormEvent) => {
         e.preventDefault(); setBusy(true); setError(null);
         try {
             if (mfaToken) {
-                done((await guestApi.post('/auth/login/mfa', { mfa_token: mfaToken, code })).data.access_token);
+                await guestApi.post('/auth/login/mfa', { mfa_token: mfaToken, code }); done();
             } else {
                 const r = await guestApi.post('/auth/login', { email, password });
-                if (r.data.mfa_required) setMfaToken(r.data.mfa_token); else done(r.data.access_token);
+                if (r.data.mfa_required) setMfaToken(r.data.mfa_token); else done();
             }
         } catch (err) {
             if (mfaToken && (err as { response?: { status?: number } })?.response?.status === 401) { setMfaToken(null); setCode(''); }
@@ -115,10 +115,10 @@ export function GuestLoginPage() {
 export function GuestSsoPage() {
     const navigate = useNavigate();
     useEffect(() => {
-        const tok = new URLSearchParams(window.location.hash.slice(1)).get('token');
-        window.history.replaceState(null, '', '/guest/sso');  // drop the token from the URL bar/history
-        if (tok) { guestToken.set(tok); navigate('/guest', { replace: true }); }
-        else navigate('/guest/login', { replace: true });
+        // The SSO callback set the HttpOnly guest cookie; a missing one sends the first API call's 401 to login.
+        window.history.replaceState(null, '', '/guest/sso');  // drop any legacy #token= from the URL bar/history
+        guestSession.mark();
+        navigate('/guest', { replace: true });
     }, [navigate]);
     return <GuestShell><p className="font-mono text-xs text-muted">$ signing in…</p></GuestShell>;
 }
@@ -173,8 +173,8 @@ export function GuestRegisterPage() {
     const submit = async (e: React.FormEvent) => {
         e.preventDefault(); setError(null); setBusy(true);
         try {
-            const r = await guestApi.post('/auth/register/confirm', { token, password });
-            guestToken.set(r.data.access_token);
+            await guestApi.post('/auth/register/confirm', { token, password });
+            guestSession.mark();
             navigate('/guest', { replace: true });
         } catch (err) { setError(guestError(err, 'This link is invalid or has expired.')); }
         finally { setBusy(false); }

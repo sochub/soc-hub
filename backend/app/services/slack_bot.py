@@ -22,7 +22,8 @@ from app.models.user import User
 from app.services import slack_blocks as ui
 from app.services import war_room_naming as wr_naming
 from app.services.case_service import add_timeline_note, apply_case_update, create_case_record
-from app.services.slack_actions import _platform_user, _slack_email
+from app.services.slack_actions import TENANT_DEACTIVATED, _platform_user, _slack_email, tenant_active
+from app.utils.tenant_state import tenant_deactivated
 from app.services.slack_service import SlackError, load_integration, slack_call
 from app.utils.crypto import decrypt
 from app.workflows.templating import slack_escape
@@ -322,6 +323,8 @@ async def _rerender_suggestions(db, token: str, tenant_id: int, changes: dict) -
 
 async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: dict) -> None:
     async with AsyncSessionLocal() as db:
+        if await tenant_deactivated(db, tenant_id):
+            return  # queued before a deactivation: no alerts, cards or re-renders
         try:
             integ, token = await load_integration(db, tenant_id)
         except SlackError:
@@ -433,6 +436,10 @@ async def publish_home(tenant_id: int, slack_user_id: str) -> None:
             _, token = await load_integration(db, tenant_id)
         except SlackError:
             return
+        if await tenant_deactivated(db, tenant_id):  # never publish a deactivated tenant's cases
+            await _safe(slack_call(token, "views.publish", user_id=slack_user_id, view={"type": "home", "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn", "text": TENANT_DEACTIVATED}}]}))
+            return
         user = await linked_user(db, tenant_id, token, slack_user_id)
         cases = []
         if user:
@@ -450,6 +457,8 @@ async def dispatch_interactive(db, integ: SlackIntegration, payload: dict) -> Op
     from app.tasks.workflows import handle_slack_interaction_task
 
     kind = payload.get("type")
+    if not await tenant_active(db, integ.tenant_id):
+        return None  # plain ack: nothing runs in a deactivated tenant
     try:
         if kind == "view_submission":
             return await handle_submission(db, integ, payload)
@@ -464,6 +473,8 @@ async def dispatch_interactive(db, integ: SlackIntegration, payload: dict) -> Op
 
 
 async def dispatch_command(db, integ: SlackIntegration, form: dict) -> dict:
+    if not await tenant_active(db, integ.tenant_id):
+        return _ephemeral(TENANT_DEACTIVATED)
     try:
         return await handle_command(db, integ, form)
     except SlackError:

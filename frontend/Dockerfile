@@ -16,7 +16,10 @@ FROM nginx/nginx-unprivileged:alpine
 # BACKEND_UPSTREAM: where the API lives (compose/k8s service name, or http://localhost:8000
 # when both containers share a Fargate task / pod).
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
-ENV NGINX_ENVSUBST_FILTER=^(MAX_UPLOAD_MB|BACKEND_UPSTREAM)$
+# Rendered to conf.d/security-headers.inc (not auto-loaded: only *.conf is); included by each location.
+COPY nginx/security-headers.inc.template /etc/nginx/templates/security-headers.inc.template
+ENV NGINX_ENVSUBST_FILTER=^(MAX_UPLOAD_MB|BACKEND_UPSTREAM|HSTS_HEADER)$
+ENV HSTS_HEADER=""
 ENV MAX_UPLOAD_MB=100
 ENV BACKEND_UPSTREAM=http://backend:8000
 

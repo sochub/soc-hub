@@ -24,6 +24,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.user import Token
+from app.utils.account_guard import GLOBAL, assert_can_manage_account
 from app.utils.audit import create_audit_log
 from app.utils.crypto import decrypt, encrypt
 
@@ -243,15 +244,20 @@ async def mfa_reset(
     db: AsyncSession = Depends(deps.get_db),
     actor: User = Depends(deps.get_current_active_user),
 ) -> Response:
-    """Super admin, or admin of the active tenant the target belongs to, clears the target's MFA."""
+    """Super admin, or an admin of the target's only tenant (the active one), clears the target's MFA."""
     role = deps._active_role(actor)
     active = getattr(actor, "_active_tenant_id", None)
     if role not in ("super_admin", "admin"):
         raise HTTPException(status_code=404, detail="Not found")
     if actor.id == user_id:
         raise HTTPException(status_code=400, detail="Use Turn off two-factor in your profile")
-    target = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
-    if target is None or (target.is_super_admin and not actor.is_super_admin):
+    # Lock the target first so the membership/ownership check and the reset are atomic
+    # (membership changes for an existing user lock the same row: invitations.create_invitation).
+    target = (await db.execute(
+        select(User).options(selectinload(User.memberships)).where(User.id == user_id)
+        .with_for_update(of=User).execution_options(populate_existing=True)
+    )).scalars().first()
+    if target is None:
         raise HTTPException(status_code=404, detail="Not found")
     if actor.is_super_admin:
         audit_tid = (await db.execute(
@@ -262,8 +268,9 @@ async def mfa_reset(
             TenantMembership.user_id == user_id, TenantMembership.tenant_id == active))).first()
         if member is None:
             raise HTTPException(status_code=404, detail="Not found")
+        await assert_can_manage_account(db, actor, target, active, action="mfa_reset", scope=GLOBAL,
+                                        request=request)
         audit_tid = active
-    target = await _lock_user(db, user_id)
     target.mfa_secret_enc = None
     target.mfa_enabled_at = None
     security.bump_token_version(target)

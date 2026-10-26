@@ -4,6 +4,7 @@ from urllib.parse import unquote
 from sqlalchemy import func, select
 
 from app.api.v1 import sso as sso_mod
+from app.core.session_cookie import GUEST_COOKIE
 from app.db.session import AsyncSessionLocal
 from app.guests import tokens
 from app.models.tenant import Tenant
@@ -16,8 +17,14 @@ class FakeAuth:
         self.email = email
         self.aid = f"_{uuid.uuid4().hex}"
 
-    def process_response(self):
+    def process_response(self, request_id=None):
         pass
+
+    def get_last_response_in_response_to(self):
+        return None  # unsolicited (IdP-initiated): the tenant must allow it
+
+    def get_last_request_id(self):
+        return "_req-guest"
 
     def get_errors(self):
         return []
@@ -45,7 +52,7 @@ class FakeAuth:
 def test_guest_sso(monkeypatch):
     async def body(ids):
         async with AsyncSessionLocal() as db:
-            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            t = await make_tenant(db, ids, require_sso=True, sso=True, idp_initiated=True)
             c = await make_case(db, ids, t)
             e = ids.email("sso")
             await make_grant(db, c, e)
@@ -58,10 +65,10 @@ def test_guest_sso(monkeypatch):
 
             r = await cl.post(f"/api/v1/auth/saml/{t.slug}/acs", data={"SAMLResponse": "x", "RelayState": "guest"})
             loc = r.headers["location"]
-            assert r.status_code == 303 and "/guest/sso#token=" in loc, loc
-            p = tokens.decode(unquote(loc.split("#token=", 1)[1]), tokens.SESSION)
+            assert r.status_code == 303 and loc.endswith("/guest/sso"), loc  # the session is the HttpOnly cookie
+            tok = r.cookies[GUEST_COOKIE]
+            p = tokens.decode(tok, tokens.SESSION)
             assert p["amr"] == "sso" and p["sso_tenant_id"] == t.id and p["email"] == e and p["sso_proto"] == "saml"
-            tok = unquote(loc.split("#token=", 1)[1])
             assert (await cl.get(f"/api/v1/guest/cases/{c.id}",
                                  headers={"Authorization": f"Bearer {tok}"})).status_code == 200
 
@@ -79,7 +86,7 @@ def test_guest_sso(monkeypatch):
 def test_guest_sso_replayed_assertion_refused(monkeypatch):
     async def body(ids):
         async with AsyncSessionLocal() as db:
-            t = await make_tenant(db, ids, require_sso=True, sso=True)
+            t = await make_tenant(db, ids, require_sso=True, sso=True, idp_initiated=True)
             e = ids.email("replay")
             await make_grant(db, await make_case(db, ids, t), e)
         fixed = FakeAuth(e)
@@ -87,7 +94,7 @@ def test_guest_sso_replayed_assertion_refused(monkeypatch):
         async with client() as cl:
             url = f"/api/v1/auth/saml/{t.slug}/acs"
             r = await cl.post(url, data={"SAMLResponse": "x", "RelayState": "guest"})
-            assert "/guest/sso#token=" in r.headers["location"]
+            assert r.headers["location"].endswith("/guest/sso") and r.cookies.get(GUEST_COOKIE)
             r = await cl.post(url, data={"SAMLResponse": "x", "RelayState": "guest"})
             loc = r.headers["location"]
             assert r.status_code == 303 and "/guest/login?t=" in loc and "#sso_error=" in loc

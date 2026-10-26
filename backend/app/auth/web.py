@@ -79,11 +79,14 @@ async def switch_session_tenant(db: AsyncSession, request: Request, response: Re
 
 
 async def _may_act_in(db: AsyncSession, user: User, tenant_id: int) -> bool:
-    """Membership (any existing tenant for super admins) and the login policy for this session."""
-    method = (await db.execute(select(Tenant.member_login_method).where(Tenant.id == tenant_id))).scalar()
-    if method is None:
+    """Membership in an active tenant (any existing tenant for super admins: break-glass) and the login
+    policy for this session."""
+    row = (await db.execute(select(Tenant.member_login_method, Tenant.is_active)
+                            .where(Tenant.id == tenant_id))).first()
+    if row is None or row[0] is None:
         return False
-    if not user.is_super_admin and not any(m.tenant_id == tenant_id for m in user.memberships):
+    method, active = row
+    if not user.is_super_admin and (active is False or not any(m.tenant_id == tenant_id for m in user.memberships)):
         return False
     return session_may_enter(user, tenant_id, method)
 
@@ -96,14 +99,15 @@ async def refresh_tenant(db: AsyncSession, user: User, session: AuthSession) -> 
     if session.tenant_id is not None and await _may_act_in(db, user, session.tenant_id):
         return True, session.tenant_id
     if user.is_super_admin:
-        rows = (await db.execute(select(Tenant.id, Tenant.member_login_method).order_by(Tenant.id))).all()
+        rows = (await db.execute(select(Tenant.id, Tenant.member_login_method, Tenant.is_active)
+                                 .order_by(Tenant.is_active.is_(False), Tenant.id))).all()
     else:
         rows = (await db.execute(
-            select(Tenant.id, Tenant.member_login_method)
+            select(Tenant.id, Tenant.member_login_method, Tenant.is_active)
             .join(TenantMembership, TenantMembership.tenant_id == Tenant.id)
             .where(TenantMembership.user_id == user.id).order_by(Tenant.id))).all()
-    for tid, method in rows:
-        if session_may_enter(user, tid, method):
+    for tid, method, active in rows:
+        if (user.is_super_admin or active is not False) and session_may_enter(user, tid, method):
             return True, tid
     return (not rows), None
 

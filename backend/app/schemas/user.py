@@ -116,6 +116,8 @@ class User(BaseModel):
     has_avatar: bool = False
     avatar_version: Optional[str] = None
     mfa_enabled: bool = False
+    # Tenant listings only: whether the caller may deactivate/activate/reset MFA on this account.
+    account_manageable: Optional[bool] = None
 
     class Config:
         from_attributes = True
@@ -139,4 +141,6 @@ class UserMe(BaseModel):
     mfa_enabled: bool = False
     has_password: bool = True
     mfa_required_by_tenant: bool = False
+    # The active tenant is deactivated (members only): `role` is None and tenant routes answer 403.
+    tenant_deactivated: bool = False
     avatar_version: Optional[str] = None

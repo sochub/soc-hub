@@ -339,7 +339,9 @@ def _ok(h):
 
 
 @pytest.mark.parametrize("provider,path", [("openai_compatible", "/v1"), ("ollama", "")])
-def test_tenant_redirects_refused(provider, path):
+def test_tenant_redirects_refused(monkeypatch, provider, path):
+    # The stubs listen on loopback, which the SSRF guard always refuses: vet it as the pinned address here.
+    monkeypatch.setattr(llm, "assert_url_allowed", lambda url, allow: "127.0.0.1")
     target, target_hits = _stub(_ok)
     tport = target.server_address[1]
 

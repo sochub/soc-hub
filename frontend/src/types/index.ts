@@ -145,6 +145,7 @@ export interface SSOConfig {
   idp_x509_cert: string | null;
   auto_provision: boolean;
   default_role: 'analyst' | 'viewer';
+  saml_allow_idp_initiated: boolean;
   sp_entity_id: string;
   sp_acs_url: string;
   sp_metadata_url: string;
@@ -195,6 +196,9 @@ export interface User {
   timezone?: string | null;
   has_avatar?: boolean;
   mfa_enabled?: boolean;
+  // Tenant listings: false when the caller can't deactivate/activate/reset MFA on this account
+  // (a super admin, or a user who also belongs to other tenants).
+  account_manageable?: boolean | null;
   has_password?: boolean;
   mfa_required_by_tenant?: boolean;
   avatar_version?: string | null;

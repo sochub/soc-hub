@@ -10,12 +10,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import ctx_of
+from app.core import session_cookie
 from app.db.session import get_db
 from app.guests import tokens
 from app.models.case_guest import CaseGuest, GuestAccount
 from app.models.tenant import Tenant
 
-guest_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/guest/auth/login")
+# auto_error=False: the browser guest session arrives as the guest cookie instead (session_cookie.GUEST_COOKIE).
+guest_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/guest/auth/login", auto_error=False)
 NOT_FOUND = HTTPException(status_code=404, detail="Case not found")
 
 
@@ -49,9 +51,14 @@ def session_allowed(tenant: Tenant, s: GuestSession) -> bool:
     return tenant.guest_login_method == "password"
 
 
-async def get_current_guest(request: Request, db: AsyncSession = Depends(get_db), token: str = Depends(guest_scheme)) -> GuestSession:
+async def get_current_guest(request: Request, db: AsyncSession = Depends(get_db),
+                            token: Optional[str] = Depends(guest_scheme)) -> GuestSession:
     bad = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials",
                         headers={"WWW-Authenticate": "Bearer"})
+    # only the guest cookie: the member session cookie (also sent to /api) is never read here
+    token = session_cookie.request_token(request, token, cookie=session_cookie.GUEST_COOKIE)
+    if not token:
+        raise bad
     try:
         p = tokens.decode(token, tokens.SESSION)
     except PyJWTError:

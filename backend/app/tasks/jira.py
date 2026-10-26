@@ -13,6 +13,18 @@ def create_jira_ticket_task(case_id: int, title: str, description: str, tenant_i
     `tenant_id` is carried for traceability/audit; the API caller has already
     verified the case belongs to that tenant before dispatch.
     """
+    if tenant_id is not None:  # queued before a deactivation: create nothing in Jira
+        from app.db.session import AsyncSessionLocal
+        from app.tasks.runner import _run_async
+        from app.utils.tenant_state import tenant_deactivated
+
+        async def _active():
+            async with AsyncSessionLocal() as db:
+                return await tenant_deactivated(db, tenant_id)
+
+        if _run_async(_active()):
+            logger.info("Jira ticket for case %d skipped: tenant %s is deactivated", case_id, tenant_id)
+            return None
     service = JiraService()
     result = service.create_issue_sync(title, description)
 

@@ -41,7 +41,7 @@ def _guard(url: str, code: str) -> None:
         raise OIDCError(code, "https required")
     try:
         # ponytail: resolve-then-connect leaves a DNS-rebinding window; pin the vetted IP if an IdP ever needs to be untrusted-by-name
-        assert_url_allowed(url, settings.OIDC_PRIVATE_HOSTS, resolve=_resolve)
+        assert_url_allowed(url, settings.OIDC_PRIVATE_HOSTS, resolve=_resolve, operator_hosts=True)
     except SSRFError as e:
         raise OIDCError(code, str(e)) from e
 

@@ -22,6 +22,7 @@ from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRol
 from app.core.login_throttle import LoginThrottle, client_ip, get_pwd_throttle
 from app.services.avatars import MAX_BYTES, avatar_version, reencode_avatar
 from app.storage import StorageError, get_storage
+from app.utils.account_guard import GLOBAL, MEMBERSHIP, assert_can_manage_account
 from app.utils.audit import create_audit_log
 from app.schemas.notification import MentionableUser
 from app.utils.roles import resolve_active_role
@@ -38,11 +39,18 @@ async def read_users(
     current_user: User = Depends(deps.require_admin),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """List users who are members of the active tenant, with their tenant role."""
+    """List users who are members of the active tenant, with their tenant role.
+
+    ``account_manageable`` tells the caller whether account-wide actions (deactivate, activate, MFA reset) are
+    open to them for that user (see app.utils.account_guard)."""
+    other = aliased(TenantMembership)
+    elsewhere = (select(other.id).where(other.user_id == User.id, other.tenant_id != tenant_id)
+                 .exists().correlate(User))
     rows = await db.execute(
-        select(User, TenantMembership.role)
+        select(User, TenantMembership.role, elsewhere)
         .join(TenantMembership, TenantMembership.user_id == User.id)
         .where(TenantMembership.tenant_id == tenant_id)
+        .order_by(User.id)
         .offset(skip).limit(limit)
     )
     return [
@@ -51,8 +59,9 @@ async def read_users(
             is_active=u.is_active, is_super_admin=u.is_super_admin, role=role,
             has_avatar=bool(u.avatar_key), avatar_version=avatar_version(u.avatar_key),
             mfa_enabled=u.mfa_enabled_at is not None,
+            account_manageable=current_user.is_super_admin or not (u.is_super_admin or other_tenants),
         )
-        for u, role in rows.all()
+        for u, role, other_tenants in rows.all()
     ]
 
 
@@ -124,16 +133,21 @@ async def read_user_me(
         .order_by(Tenant.id)
     )
     pairs = rows.all()
+    # Deactivated tenants are not offered to members (the super admin keeps them: break-glass).
     memberships = [
         MembershipOut(tenant_id=t.id, tenant_name=t.name, tenant_slug=t.slug, role=m.role)
         for m, t in pairs
+        if current_user.is_super_admin or t.is_active is not False
     ]
-    mfa_required = any(t.require_mfa for _, t in pairs)
+    mfa_required = any(t.require_mfa for _, t in pairs if current_user.is_super_admin or t.is_active is not False)
     if current_user.is_super_admin and not mfa_required:  # super admins can enter every tenant
         mfa_required = await deps.tenant_requires_mfa(db, current_user)
-    role = resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
+    # A member whose active tenant is deactivated has no role there (every tenant route answers 403).
+    deactivated = bool(getattr(current_user, "_tenant_deactivated", False))
+    role = None if deactivated else resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
 
     return UserMe(
+        tenant_deactivated=deactivated,
         id=current_user.id,
         email=current_user.email,
         full_name=current_user.full_name,
@@ -331,6 +345,19 @@ async def change_password(
     return await web.reissue_for_session(db, request, response, current_user, sid=current_user._session_id)
 
 
+async def _locked_member(db: AsyncSession, user_id: int, tenant_id: int):
+    """Lock the target user row, then load their membership in ``tenant_id`` (404 if none).
+
+    The lock makes the ownership check (app.utils.account_guard) and the change atomic: adding a membership to
+    an existing user locks the same row (invitations.create_invitation)."""
+    user = (await db.execute(
+        select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+    )).scalars().first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User is not a member of this tenant.")
+    return user, await _membership_in_tenant(db, user_id, tenant_id)
+
+
 async def _membership_in_tenant(db: AsyncSession, user_id: int, tenant_id: int) -> TenantMembership:
     res = await db.execute(
         select(TenantMembership).where(
@@ -347,6 +374,7 @@ async def _membership_in_tenant(db: AsyncSession, user_id: int, tenant_id: int) 
 @router.put("/{user_id}/role", response_model=UserSchema)
 async def update_user_role(
     *,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db),
     user_id: int,
     role_in: UserRoleUpdate,
@@ -357,11 +385,11 @@ async def update_user_role(
     if role_in.role == UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=400, detail="Cannot assign super_admin role.")
 
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
+    user, membership = await _locked_member(db, user_id, tenant_id)
+    await assert_can_manage_account(db, current_user, user, tenant_id, action="role_change", scope=MEMBERSHIP,
+                                    request=request)
     membership.role = role_in.role.value
     await db.commit()
-
-    user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
     return UserSchema(
         id=user.id, email=user.email, full_name=user.full_name,
         is_active=user.is_active, is_super_admin=user.is_super_admin, role=membership.role,
@@ -371,6 +399,7 @@ async def update_user_role(
 @router.delete("/{user_id}/membership", status_code=204)
 async def remove_member(
     *,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db),
     user_id: int,
     current_user: User = Depends(deps.require_admin),
@@ -379,7 +408,9 @@ async def remove_member(
     """Remove a user from the active tenant (deletes the membership only)."""
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="You cannot remove yourself.")
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
+    target, membership = await _locked_member(db, user_id, tenant_id)
+    await assert_can_manage_account(db, current_user, target, tenant_id, action="remove_member", scope=MEMBERSHIP,
+                                    request=request)
     if membership.role == UserRole.ADMIN.value:
         count = (await db.execute(
             select(func.count()).select_from(TenantMembership).where(
@@ -396,20 +427,24 @@ async def remove_member(
 @router.put("/{user_id}/deactivate", response_model=UserSchema)
 async def deactivate_user(
     *,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db),
     user_id: int,
     current_user: User = Depends(deps.require_admin),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """Deactivate a user's account. Admin of the user's tenant only."""
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
+    """Deactivate a user's account (account-wide). Super admin, or an admin of the user's only tenant."""
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot deactivate yourself.")
-    user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    user, membership = await _locked_member(db, user_id, tenant_id)
+    await assert_can_manage_account(db, current_user, user, tenant_id, action="deactivate", scope=GLOBAL,
+                                    request=request)
     user.is_active = False
     security.bump_token_version(user)
     await sessions.revoke_all_for_user(db, user.id)
     await db.commit()
+    await audit_event("security", "user.deactivated", request=request, user_id=current_user.id,
+                      user_email=current_user.email, tenant_id=tenant_id, entity_type="user", entity_id=user.id)
     return UserSchema(
         id=user.id, email=user.email, full_name=user.full_name,
         is_active=user.is_active, is_super_admin=user.is_super_admin, role=membership.role,
@@ -419,16 +454,20 @@ async def deactivate_user(
 @router.put("/{user_id}/activate", response_model=UserSchema)
 async def activate_user(
     *,
+    request: Request,
     db: AsyncSession = Depends(deps.get_db),
     user_id: int,
     current_user: User = Depends(deps.require_admin),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """Reactivate a user's account. Admin of the user's tenant only."""
-    membership = await _membership_in_tenant(db, user_id, tenant_id)
-    user = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    """Reactivate a user's account (account-wide). Super admin, or an admin of the user's only tenant."""
+    user, membership = await _locked_member(db, user_id, tenant_id)
+    await assert_can_manage_account(db, current_user, user, tenant_id, action="activate", scope=GLOBAL,
+                                    request=request)
     user.is_active = True
     await db.commit()
+    await audit_event("security", "user.activated", request=request, user_id=current_user.id,
+                      user_email=current_user.email, tenant_id=tenant_id, entity_type="user", entity_id=user.id)
     return UserSchema(
         id=user.id, email=user.email, full_name=user.full_name,
         is_active=user.is_active, is_super_admin=user.is_super_admin, role=membership.role,

@@ -3,15 +3,18 @@ import copy
 import logging
 import secrets as _stdlib_secrets
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case
+from app.models.tenant import Tenant
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.secrets.refs import SecretsNamespace
 from app.utils.audit import create_audit_log
+from app.utils.tenant_state import TENANT_DEACTIVATED_ERROR, tenant_deactivated
 from app.workflows.context import build_context
 from app.workflows.cron import cron_matches
 from app.workflows.dryrun import dry_run_behaviour, simulated_output
@@ -27,6 +30,11 @@ logger = logging.getLogger(__name__)
 _ACTIVE_STEP = {"pending", "running", "waiting"}
 _TERMINAL_RUN = {"succeeded", "failed", "cancelled"}
 _BACKOFF = [10, 60]
+STEP_TIMED_OUT = "step timed out"
+STEP_REAPED = "step did not finish (worker limit or crash)"
+REAP_MARGIN_SECONDS = 120
+_REAP_BATCH = 50
+_REAP_MAX_BATCHES = 20
 
 
 def _now():
@@ -110,6 +118,8 @@ async def dispatch_event(tenant_id, event_type, case_id, alert_id, changes, dept
     from app.workflows.context import alert_to_dict, case_to_dict
 
     async with AsyncSessionLocal() as db:
+        if await tenant_deactivated(db, tenant_id):
+            return  # a deactivated tenant's automation never starts
         workflows = (await db.execute(select(Workflow).where(
             Workflow.tenant_id == tenant_id, Workflow.enabled == True, Workflow.trigger_type == event_type,  # noqa: E712
         ))).scalars().all()
@@ -158,6 +168,7 @@ async def run_due_schedules(now: datetime) -> List[int]:
         # ponytail: one global scan, no per-tenant batching; FOR UPDATE SKIP LOCKED guards overlapping sweeps.
         workflows = (await db.execute(select(Workflow).where(
             Workflow.enabled == True, Workflow.trigger_type == "schedule",  # noqa: E712
+            Workflow.tenant_id.in_(select(Tenant.id).where(Tenant.is_active.isnot(False))),  # not deactivated tenants
         ).with_for_update(skip_locked=True))).scalars().all()
         for wf in workflows:
             last = wf.last_fired_at
@@ -241,10 +252,10 @@ async def finalize_run(db, run: WorkflowRun, status: str, error: Optional[str] =
         await cancel_run(db, child)
 
 
-async def cancel_run(db, run: WorkflowRun) -> None:
+async def cancel_run(db, run: WorkflowRun, error: Optional[str] = None) -> None:
     if run.status in _TERMINAL_RUN:
         return
-    await finalize_run(db, run, "cancelled")  # also cancels non-terminal children, queues DM withdrawals
+    await finalize_run(db, run, "cancelled", error)  # also cancels non-terminal children, queues DM withdrawals
 
 
 def flush_withdrawals(db) -> None:
@@ -263,7 +274,8 @@ async def withdraw_messages(targets) -> None:
             by_tenant.setdefault(tenant_id, []).append((channel, ts))
         async with AsyncSessionLocal() as db:
             for tenant_id, items in by_tenant.items():
-                await _update_slack_messages(db, tenant_id, items, "This request was withdrawn.", ":no_entry_sign:")
+                if not await tenant_deactivated(db, tenant_id):
+                    await _update_slack_messages(db, tenant_id, items, "This request was withdrawn.", ":no_entry_sign:")
     except Exception:
         logger.warning("could not withdraw Slack messages", exc_info=True)
 
@@ -291,6 +303,11 @@ async def advance_run(run_id: int) -> None:
     async with AsyncSessionLocal() as db:
         run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id).with_for_update())).scalars().first()
         if not run or run.status in _TERMINAL_RUN or run.status == "queued":
+            return
+        if await tenant_deactivated(db, run.tenant_id):  # deactivated mid-run: stop here, schedule nothing
+            await cancel_run(db, run, TENANT_DEACTIVATED_ERROR)
+            await db.commit()
+            flush_withdrawals(db)
             return
         steps = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id))).scalars().all()
         states = {s.node_id: {"status": s.status, "output": s.output} for s in steps}
@@ -342,8 +359,12 @@ async def execute_step(step_id: int) -> None:
         if run.status in _TERMINAL_RUN:
             return
         run_id, tenant_id = run.id, run.tenant_id  # usable after a rollback expires `run`
+        if await tenant_deactivated(db, tenant_id):
+            await db.rollback()  # release the step lock first: cancel_run locks run -> steps
+            await _cancel_deactivated(run_id)
+            return
         step.status = "running"
-        step.started_at = step.started_at or _now()
+        step.started_at = _now()  # start of the latest attempt (the reaper measures from it)
         await db.commit()
 
         node = _node(run.graph_snapshot, step.node_id)
@@ -378,6 +399,12 @@ async def execute_step(step_id: int) -> None:
                 step.status, step.output, step.finished_at = "succeeded", {"error": str(e)}, _now()
             else:
                 step.status, step.error, step.finished_at = "failed", str(e), _now()
+        except SoftTimeLimitExceeded:  # Celery soft time limit: fail the step cleanly, the run finalizes
+            logger.warning("workflow step %s hit the task time limit", step_id)
+            await db.rollback()
+            step = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == step_id))).scalars().first()
+            nctx.after_commit.clear()
+            step.status, step.error, step.finished_at = "failed", STEP_TIMED_OUT, _now()
         except Exception as e:  # bug in an executor — fail the step, keep the worker alive
             logger.exception("workflow step %s crashed", step_id)
             await db.rollback()
@@ -413,6 +440,79 @@ async def execute_step(step_id: int) -> None:
         execute_step_task.apply_async((step_id,), countdown=retry_in)
     else:  # also for "waiting": advance_run flips the run to status=waiting
         advance_run_task.delay(step.run_id)
+
+
+async def _cancel_deactivated(run_id: int) -> None:
+    """Cancel a run whose tenant was deactivated (finalizes its steps and any loop children)."""
+    async with AsyncSessionLocal() as db:
+        run = (await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id).with_for_update())).scalars().first()
+        if run is None:
+            return
+        await cancel_run(db, run, TENANT_DEACTIVATED_ERROR)
+        await db.commit()
+        flush_withdrawals(db)
+
+
+async def fail_timed_out_step(step_id: int) -> None:
+    """The soft time limit fired outside execute_step's own handler (e.g. inside the event loop): fail the
+    step if it is still active and advance its run so the run finalizes instead of hanging."""
+    from app.tasks.workflows import advance_run_task
+
+    async with AsyncSessionLocal() as db:
+        step = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.id == step_id)
+                                 .with_for_update())).scalars().first()
+        if not step or step.status not in ("pending", "running"):
+            return
+        step.status, step.error, step.finished_at = "failed", STEP_TIMED_OUT, _now()
+        run_id = step.run_id
+        await db.commit()
+    advance_run_task.delay(run_id)
+
+
+def step_hard_limit_seconds() -> int:
+    """The hard time limit of the step task, read from the worker config (task override, else the default)."""
+    from app.tasks.workflows import execute_step_task
+    from app.worker import celery_app
+
+    return int(execute_step_task.time_limit or celery_app.conf.task_time_limit or 0)
+
+
+async def reap_stuck_steps(step_ids: Optional[Iterable[int]] = None) -> List[int]:
+    """Beat sweep: a hard kill / worker crash leaves a step `running` forever (the task is acked, never
+    redelivered). Fail steps running longer than the hard limit + margin and advance their runs through the
+    normal failure path (error branches, finalize_run, loop slot release). `waiting` steps are not touched.
+    Returns the reaped step ids. `step_ids` restricts the sweep (tests only; beat passes None)."""
+    from app.tasks.workflows import advance_run_task
+
+    cutoff = _now() - timedelta(seconds=step_hard_limit_seconds() + REAP_MARGIN_SECONDS)
+    only = list(step_ids) if step_ids is not None else None
+    reaped, run_ids = [], []
+    for _ in range(_REAP_MAX_BATCHES):
+        async with AsyncSessionLocal() as db:
+            q = select(WorkflowRunStep).where(WorkflowRunStep.status == "running", WorkflowRunStep.started_at < cutoff)
+            if only is not None:
+                q = q.where(WorkflowRunStep.id.in_(only))
+            steps = (await db.execute(
+                q
+                .order_by(WorkflowRunStep.id).limit(_REAP_BATCH)
+                .with_for_update(skip_locked=True)
+            )).scalars().all()
+            if not steps:
+                break
+            for step in steps:
+                step.status, step.error, step.finished_at = "failed", STEP_REAPED, _now()
+                reaped.append(step.id)
+                if step.run_id not in run_ids:
+                    run_ids.append(step.run_id)
+            await db.commit()
+    for run_id in run_ids:
+        try:
+            advance_run_task.delay(run_id)
+        except Exception as e:  # broker outage: the step is already failed; the next advance of this run picks it up
+            logger.warning("could not queue advance for reaped run=%s err=%s", run_id, type(e).__name__)
+    if reaped:
+        logger.warning("reaped %d stuck workflow steps (runs=%s steps=%s)", len(reaped), run_ids, reaped)
+    return reaped
 
 
 async def loop_tick(parent_step_id: int) -> None:
@@ -474,7 +574,8 @@ async def expire_waits() -> None:
         rows = (await db.execute(
             select(WorkflowRunStep, WorkflowRun.tenant_id).join(WorkflowRun, WorkflowRun.id == WorkflowRunStep.run_id)
             .where(WorkflowRunStep.status == "waiting", WorkflowRunStep.wait_expires_at.isnot(None),
-                   WorkflowRunStep.wait_expires_at < _now())
+                   WorkflowRunStep.wait_expires_at < _now(),
+                   WorkflowRun.tenant_id.in_(select(Tenant.id).where(Tenant.is_active.isnot(False))))
             .with_for_update(of=WorkflowRunStep, skip_locked=True).limit(200)
         )).all()
         for step, tenant_id in rows:
