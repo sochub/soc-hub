@@ -21,6 +21,12 @@ def normalize_slack_text(text: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
+# Input bounds: Slack allows 40k chars; war-room signal lives in the first few thousand.
+MAX_RAW_CHARS = 16000
+MAX_TEXT_CHARS = 4000
+MAX_TOKEN_CHARS = 512
+
+
 @dataclass(frozen=True)
 class Candidate:
     kind: str          # "artifact" | "milestone"
@@ -33,51 +39,94 @@ def _artifact(type_: str, value: str) -> Candidate:
 
 
 # ---- hostnames / usernames ------------------------------------------------
+# Precision over recall: every rule below exists to keep ordinary words and file
+# names out of the suggestions. Token matching is procedural (split, then test
+# each token), so cost stays linear in the (capped) input.
 
 _URL_OR_EMAIL = re.compile(r"https?://\S+|[\w.%+-]+@[\w.-]+\.\w+", re.IGNORECASE)
-# FQDN-like token ending in an internal suffix (dc01.corp, srv.eu.lan)
-_INTERNAL_FQDN = re.compile(r"\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:local|corp|internal|lan|ad)\b", re.IGNORECASE)
-# letters-hyphen-digits (WS-FIN-07): >=2 letters first, digit-only last group
-_NAME_NUM = re.compile(r"\b[A-Za-z]{2,}(?:-[A-Za-z0-9]+)*-\d+\b")
-# Ticket/standard prefixes that look like NAME-123 but are not machines
-_NOT_HOST_PREFIX = {"cve", "sha", "md", "iso", "utf", "tls", "ssl", "rfc", "inc", "task", "ticket", "case", "kb", "ir", "soc", "http"}
+_TOKEN_SPLIT = re.compile(r"[^\s,;()\[\]{}<>\"'`]+")
+_LABEL = re.compile(r"[a-z0-9-]+")
+_INTERNAL_SUFFIXES = {"local", "corp", "internal", "lan", "ad"}
+# NAME-123 first groups that are products, protocols or ticket ids, not machines
+_NOT_HOST_PREFIX = {"cve", "sha", "md", "md5", "iso", "utf", "tls", "ssl", "rfc", "inc", "task", "ticket", "case",
+                    "kb", "ir", "soc", "http", "https", "tcp", "udp", "covid", "windows", "win", "python", "office",
+                    "aes", "rsa", "des", "sql", "ipv", "ms", "ssh", "ftp", "dns"}
 _HOST_CUE = re.compile(r"\b(?:host|hostname|machine|endpoint)[:\s]+([A-Za-z0-9][\w.-]*)", re.IGNORECASE)
 
-_DOMAIN_USER = re.compile(r"\b[A-Za-z][\w-]*\\[A-Za-z0-9][\w.-]*")   # ACME\jdoe
+# DOMAIN\user; the lookbehind rejects Windows paths (C:\Users\bob) and UNC shares (\\srv\share)
+_DOMAIN_USER = re.compile(r"(?<![\\\w:])[A-Za-z][\w-]*\\[A-Za-z0-9][\w.-]*")
+_NOT_DOMAIN = {"users", "windows", "program", "programdata", "system32", "temp", "appdata", "documents"}
 _USER_CUE = re.compile(r"\b(?:user(?:name)?|account|login)[:\s]+([A-Za-z0-9][\w.-]*)", re.IGNORECASE)
 # "reset password for jdoe", "disable the account for jdoe" (up to 2 words between)
 _USER_VERB = re.compile(r"\b(?:reset|disabl|lock|suspend)\w*(?:\s+\w+){0,2}?\s+for\s+([A-Za-z0-9][\w.-]*)", re.IGNORECASE)
 
-# Words that follow a cue but are not names ("host is down", "user logged in")
-_FILLER = {"is", "was", "are", "has", "had", "the", "a", "an", "and", "to", "of", "in", "on", "at", "that", "this",
-           "with", "from", "for", "it", "its", "appears", "seems", "logged", "locked", "name", "not", "also", "just"}
+# Words that follow a cue but are not names ("host is down", "account takeover")
+_FILLER = set("""is was are has had the a an and or to of in on at that this these those with from for it its appears
+seems logged locked name not also just can cant could would should will may might be been being by as if so but
+protection security learning takeover page example account user users username login logins host hostname machine
+machines endpoint endpoints server servers system systems device devices service services password passwords
+credentials session sessions activity details info information status issue issues alert alerts attempt attempts
+failure failures compromise compromised access admin administrator policy policies agent agents detection response
+management portal panel screen form field type types data file files""".split())
+_ENGLISH_SUFFIXES = ("ing", "tion", "sion", "ity", "ness", "ment", "able", "ible", "ous")
 
 
-def _clean_token(tok: str) -> str:
-    return tok.rstrip(".-_")
+def _identifier_like(tok: str) -> bool:
+    low = tok.lower()
+    if len(tok) < 2 or low in _FILLER or tok.replace(".", "").isdigit():
+        return False
+    if any(c in tok for c in "0123456789.-_"):
+        return True
+    return not low.endswith(_ENGLISH_SUFFIXES)
 
 
 def _cue_values(pattern: re.Pattern, text: str) -> list[str]:
     out = []
     for m in pattern.finditer(text):
-        tok = _clean_token(m.group(1))
-        if len(tok) >= 2 and tok.lower() not in _FILLER and not tok.replace(".", "").isdigit():
+        tok = m.group(1).rstrip(".-_")
+        if _identifier_like(tok):
             out.append(tok)
     return out
 
 
+def _is_internal_fqdn(tok: str) -> bool:
+    labels = tok.lower().split(".")
+    if len(labels) < 2 or labels[-1] not in _INTERNAL_SUFFIXES or not all(_LABEL.fullmatch(x) for x in labels):
+        return False
+    # report.ad / notes.local look like file names: need >=3 labels or a digit on the left
+    return len(labels) >= 3 or any(c.isdigit() for c in labels[0])
+
+
+def _is_name_num(tok: str) -> bool:
+    groups = tok.split("-")
+    first = groups[0]
+    if len(groups) < 2 or not all(g.isalnum() and g.isascii() for g in groups) or not groups[-1].isdigit():
+        return False
+    letters = sum(c.isalpha() for c in first)
+    if letters < 2 or first.lower() in _NOT_HOST_PREFIX:
+        return False
+    # all-caps (WS, DC) or a letter+digit mix (SRV2); "Windows-10" and "win-2019" are not machines
+    return first.isupper() or any(c.isdigit() for c in first)
+
+
 def _hostnames(text: str) -> list[str]:
-    found = [m.group(0) for m in _INTERNAL_FQDN.finditer(text)]
-    found += [m.group(0) for m in _NAME_NUM.finditer(text)
-              if m.group(0).split("-")[0].lower() not in _NOT_HOST_PREFIX]
-    found += _cue_values(_HOST_CUE, text)
-    return found
+    found = []
+    for raw in _TOKEN_SPLIT.findall(text):
+        tok = raw.strip(".:!?")
+        if not tok or any(c in tok for c in "\\/@=") or len(tok) > 253:
+            continue
+        if _is_internal_fqdn(tok) or _is_name_num(tok):
+            found.append(tok)
+    return found + _cue_values(_HOST_CUE, text)
 
 
 def _usernames(text: str) -> list[str]:
-    found = [m.group(0) for m in _DOMAIN_USER.finditer(text)]
-    found += _cue_values(_USER_CUE, text) + _cue_values(_USER_VERB, text)
-    return found
+    found = []
+    for m in _DOMAIN_USER.finditer(text):
+        nxt = text[m.end():m.end() + 1]
+        if m.group(0).split("\\")[0].lower() not in _NOT_DOMAIN and nxt != "\\":
+            found.append(m.group(0))
+    return found + _cue_values(_USER_CUE, text) + _cue_values(_USER_VERB, text)
 
 
 # ---- milestones ------------------------------------------------------------
@@ -114,16 +163,24 @@ def _milestone_at(m: re.Match, tz: ZoneInfo, message_at: datetime) -> str | None
 
 # ---- entry point -------------------------------------------------------------
 
+def _bounded(text: str) -> str:
+    """Normalise, then cap length and drop pathological tokens so the regex
+    work (including the shared indicator detector) stays cheap on hostile input."""
+    text = normalize_slack_text((text or "")[:MAX_RAW_CHARS])[:MAX_TEXT_CHARS]
+    return " ".join(t for t in text.split(" ") if len(t) <= MAX_TOKEN_CHARS)
+
+
 def extract_candidates(text: str, *, tz: ZoneInfo, message_at: datetime,
                        exclude_emails: set[str] = frozenset()) -> list[Candidate]:
-    text = normalize_slack_text(text)
+    text = _bounded(text)
     excluded = {e.lower() for e in exclude_emails}
     indicators = detect_indicators(text, limit=100)
+    indicator_values = {i["value"].lower() for i in indicators}
     # hostname/username scans must not read inside URLs or emails
     bare = _URL_OR_EMAIL.sub(" ", text)
-    hosts = _hostnames(bare)
+    # a cue token that is already a public indicator ("host evil.com") stays an indicator
+    hosts = [h for h in _hostnames(bare) if h.lower() not in indicator_values or _is_internal_fqdn(h)]
     host_set = {h.lower() for h in hosts}
-    indicator_values = {i["value"].lower() for i in indicators}
 
     out: dict[str, Candidate] = {}
 
@@ -131,9 +188,7 @@ def extract_candidates(text: str, *, tz: ZoneInfo, message_at: datetime,
         out.setdefault(c.value_key, c)
 
     for h in hosts:
-        # a cue token that is already a public indicator (e.g. "host evil.com") stays an indicator
-        if h.lower() not in indicator_values or _INTERNAL_FQDN.fullmatch(h):
-            add(_artifact("hostname", h))
+        add(_artifact("hostname", h))
     for i in indicators:
         v = i["value"]
         if i["artifact_type"] == "email" and v.lower() in excluded:

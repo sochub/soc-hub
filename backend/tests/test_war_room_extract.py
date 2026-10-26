@@ -102,3 +102,50 @@ def test_no_milestone_without_keyword():
 
 def test_invalid_time_ignored():
     assert _milestones(_extract("detected at 25:99")) == {}
+
+
+# ---- fix round 1: bounded cost and noise ------------------------------------
+
+import time
+
+import pytest
+
+
+@pytest.mark.parametrize("text", [
+    "a-" * 20000,
+    "a.a" * 13000 + "!",
+    "A-" * 20000 + "1x",
+    "a" + ".a" * 20000 + "!",
+    "a.a " * 10000,
+    "host " * 8000,
+    "user " + "a" * 40000,
+    "<" * 40000,
+    "a\\b " * 10000,
+])
+def test_adversarial_input_is_fast(text):
+    start = time.perf_counter()
+    _extract(text)
+    assert time.perf_counter() - start < 0.5
+
+
+@pytest.mark.parametrize("text", [
+    "COVID-19 Windows-10 Python-3 TCP-443 Office-365 win-2019",
+    "host machine endpoint protection; endpoint security; machine learning",
+    "the user account is compromised; account takeover; user can't login; login page",
+    "reset for example",
+    r"C:\Users\bob and \\fileserver\share",
+    "report.ad build.local notes.local",
+])
+def test_ordinary_words_are_not_artifacts(text):
+    assert _artifacts(_extract(text)) == set()
+
+
+def test_internal_fqdn_with_labels_still_found():
+    assert ("hostname", "fileserver.corp.local") in _artifacts(_extract("see fileserver.corp.local"))
+
+
+def test_cue_host_with_public_domain_stays_a_domain():
+    found = _artifacts(_extract("host: evil.com, host 10.0.0.5"))
+    assert ("domain", "evil.com") in found
+    assert ("ip", "10.0.0.5") in found
+    assert not any(t == "hostname" for t, _ in found)
