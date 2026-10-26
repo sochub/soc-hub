@@ -246,16 +246,34 @@ def war_room_card(event_type: str, case, payload: dict, *, actor: Optional[str])
     elif event_type == "sla.breached":
         color, title = RED, f"SLA breached: {payload.get('label') or 'SLA'}"
     elif event_type == "task.completed":
-        color, title = GREEN, f"Task completed: {payload.get('title') or ''}".rstrip(": ")
+        color, title = BLUE, f"Task completed: {payload.get('title') or ''}".rstrip(": ")
+        detail = f"{payload.get('done', 0)} of {payload.get('total', 0)} done"
+        if payload.get("phase"):
+            detail += f"  ·  {_pretty(payload.get('phase'))} phase"
     elif event_type == "workflow.finished":
-        color, title = BLUE, f"Workflow finished: {payload.get('name') or ''}".rstrip(": ")
+        ok = payload.get("status") == "succeeded"
+        color = BLUE if ok else RED
+        title = f"Workflow {'succeeded' if ok else _pretty(payload.get('status')).lower()}: {payload.get('workflow_name') or ''}".rstrip(": ")
+        lines = []
+        for st in (payload.get("steps") or [])[:20]:
+            http = f" (HTTP {st['http_status']})" if st.get("http_status") else ""
+            lines.append(f"• {slack_escape(str(st.get('node_id')))}: {slack_escape(str(st.get('status')))}{http}")
+        if len(payload.get("steps") or []) > 20:
+            lines.append(f"…and {len(payload['steps']) - 20} more")
+        if payload.get("error"):
+            lines.append(f"Error: {slack_escape(str(payload['error'])[:300])}")
+        detail = "\n".join(lines) or None
     elif event_type == "containment.confirmed":
         color, title = GREEN, "Containment confirmed"
+        if payload.get("after_workflow"):
+            detail = f"after workflow *{slack_escape(str(payload['after_workflow']))}* succeeded"
     reason = payload.get("reason")
     url = case_url(case.id)
     ref = f"#{case.id:04d} {slack_escape((case.title or '')[:150])}"
     link = f"<{url}|{ref}>" if url else ref
     blocks: List[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{slack_escape(title)}*"}}]
+    if detail:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": detail}})
     if reason:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"“{slack_escape(str(reason))}”"}})
     ctx = f"{link}" + (f"  ·  by {slack_escape(actor)}" if actor else "")

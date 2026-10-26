@@ -381,6 +381,14 @@ async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: 
                     await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id,
                                            text=msg["text"], attachments=msg["attachments"]))
 
+        if case.slack_channel_id and event_type in ("task.completed", "workflow.finished", "containment.confirmed"):
+            payload = dict(changes or {})
+            if event_type == "containment.confirmed":
+                payload["after_workflow"] = await _recent_workflow_name(db, tenant_id, case_id, payload.get("at"))
+            msg = ui.war_room_card(event_type, case, payload, actor=(await _names(db, [payload.get("user_id")])).get(payload.get("user_id")))
+            await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id,
+                                   text=msg["text"], attachments=msg["attachments"]))
+
         # 3. Owner DM on escalation (assignment and SLA breach DMs come from notifications delivery).
         if event_type == "case.updated" and sev_change and ui.severity_rank(sev_change.get("to")) > ui.severity_rank(sev_change.get("from")):
             owner_user = await db.get(User, case.owner_id) if case.owner_id else None
@@ -388,6 +396,24 @@ async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: 
             if sid:
                 await _dm(token, sid, ui.card_text(case), ui.case_card(
                     case, owner, note=f"Severity raised on your case: {sev_change.get('from')} → {sev_change.get('to')}"))
+
+
+async def _recent_workflow_name(db, tenant_id: int, case_id: int, at) -> Optional[str]:
+    """Name of a workflow that succeeded on the case at most 10 minutes before `at` (containment time)."""
+    from datetime import datetime, timedelta
+    from app.models.workflow import Workflow, WorkflowRun
+    try:
+        when = datetime.fromisoformat(str(at))
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    row = (await db.execute(
+        select(Workflow.name).join(WorkflowRun, WorkflowRun.workflow_id == Workflow.id).where(
+            WorkflowRun.tenant_id == tenant_id, WorkflowRun.case_id == case_id, WorkflowRun.status == "succeeded",
+            WorkflowRun.is_dry_run.is_(False), WorkflowRun.finished_at <= when,
+            WorkflowRun.finished_at >= when - timedelta(minutes=10)).order_by(WorkflowRun.finished_at.desc()).limit(1))).first()
+    return row[0] if row else None
 
 
 async def _safe(coro):
