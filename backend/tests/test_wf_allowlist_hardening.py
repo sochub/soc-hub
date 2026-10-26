@@ -170,12 +170,24 @@ def test_dropped_entries_logged_redacted(caplog):
     out = ssrf.stored_allowlist(["https://user:secret@x.example.com/p?q=1",
                                  "https://user:secret@intranet/p?q=1",
                                  "user:secret@10.0.0.5:8080/p?q=1",
-                                 "weird secret/p?q=1"], 9)
+                                 "weird secret/p?q=1",
+                                 "https://user:pa/ss@host.example.com",
+                                 "user:pw/x@h.com"], 9)
     assert out == ["x.example.com"]
     text = caplog.text + " ".join(str(r.args) for r in caplog.records)
     assert caplog.records, "dropped entries are logged"
     for bad in ("secret", "/p", "q=1", "user"):
         assert bad not in text, bad
+
+
+@pytest.mark.parametrize("stored", ["api.example.com", {"hosts": ["api.example.com"]}, 5])
+def test_stored_non_list_treated_as_empty(caplog, stored):
+    import logging
+    caplog.set_level(logging.WARNING)
+    assert ssrf.stored_allowlist(stored, 11) == []
+    assert ssrf.stored_allowlist(None, 11) == []
+    assert "tenant=11" in caplog.text and "api.example.com" not in caplog.text
+    assert not ssrf.host_on_allowlist("api.example.com", stored)
 
 
 def test_too_many_entries():

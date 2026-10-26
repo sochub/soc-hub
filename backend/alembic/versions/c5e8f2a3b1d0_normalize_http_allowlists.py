@@ -23,12 +23,18 @@ def upgrade() -> None:
     conn = op.get_bind()
     rows = conn.execute(sa.text("SELECT id, workflow_http_allowlist FROM tenants")).fetchall()
     for tid, raw in rows:
-        hosts = raw if isinstance(raw, list) else json.loads(raw or "[]")
-        norm = stored_allowlist(hosts, tid)  # logs each dropped entry (redacted) with the tenant id
+        hosts = raw
+        if isinstance(raw, str):
+            try:
+                hosts = json.loads(raw)
+            except ValueError:
+                hosts = None
+        # logs each dropped entry (redacted) with the tenant id; a non-list value becomes [] (tenant id logged)
+        norm = stored_allowlist(hosts, tid)
         if norm != hosts:
             # never log the raw entries: legacy values may carry userinfo, paths or query strings
-            log.warning("http allowlist normalized tenant=%s dropped=%d hosts=%s",
-                        tid, len(hosts) - len(norm), norm)
+            dropped = len(hosts) - len(norm) if isinstance(hosts, list) else "all"
+            log.warning("http allowlist normalized tenant=%s dropped=%s hosts=%s", tid, dropped, norm)
             conn.execute(sa.text("UPDATE tenants SET workflow_http_allowlist = CAST(:v AS JSON) WHERE id = :id"),
                          {"v": json.dumps(norm), "id": tid})
 

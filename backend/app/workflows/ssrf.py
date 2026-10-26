@@ -125,15 +125,20 @@ def _redacted(raw) -> str:
     """Safe-to-log form of a stored entry: its bare host part, never userinfo/path/query; else a short hash."""
     s = raw if isinstance(raw, str) else repr(raw)
     host = _host_part(s)
-    if _LOGGABLE.fullmatch(host):
+    if "@" not in s and _LOGGABLE.fullmatch(host):  # anything with userinfo is hashed, however it's shaped
         return host
     return f"<len={len(s)} sha256={hashlib.sha256(s.encode()).hexdigest()[:8]}>"
 
 
 def stored_allowlist(entries, tenant_id=None) -> List[str]:
     """The tenant's stored allowlist in normalized form; invalid legacy entries are dropped and logged."""
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        logger.warning("http allowlist: stored value is not a list, ignoring it tenant=%s", tenant_id)
+        return []
     out = set()
-    for raw in entries or []:
+    for raw in entries:
         e = stored_entry(raw)
         if e is None:
             logger.warning("http allowlist: dropping invalid entry tenant=%s host=%s", tenant_id, _redacted(raw))
@@ -145,10 +150,10 @@ def stored_allowlist(entries, tenant_id=None) -> List[str]:
 def host_on_allowlist(host: Optional[str], allowlist) -> bool:
     """Case- and trailing-dot-insensitive match against the tenant HTTP allowlist. `*.suffix` matches strict
     subdomains. Stored legacy entries match as their normalized form (`stored_entry`); invalid ones never do."""
-    if not host:
+    if not host or not isinstance(allowlist, (list, tuple)):
         return False
     h = host.strip().rstrip(".").lower()
-    for e in filter(None, (stored_entry(x) for x in (allowlist or []))):
+    for e in filter(None, (stored_entry(x) for x in allowlist)):
         if e.startswith("*.") and h.endswith(e[1:]) and h != e[2:]:
             return True
         if h == e:
