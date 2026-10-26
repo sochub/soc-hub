@@ -133,9 +133,11 @@ async def read_user_me(
         .order_by(Tenant.id)
     )
     pairs = rows.all()
+    # Deactivated tenants are not offered to members (the super admin keeps them: break-glass).
     memberships = [
         MembershipOut(tenant_id=t.id, tenant_name=t.name, tenant_slug=t.slug, role=m.role)
         for m, t in pairs
+        if current_user.is_super_admin or t.is_active is not False
     ]
     mfa_required = any(t.require_mfa for _, t in pairs)
     if current_user.is_super_admin and not mfa_required:  # super admins can enter every tenant
