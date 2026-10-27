@@ -8,6 +8,7 @@ import SlackCard from './SlackCard';
 import AIProviderCard from './AIProviderCard';
 import ThreatIntelCard from './ThreatIntelCard';
 import SecretsCard from './SecretsCard';
+import TicketingCard from './TicketingCard';
 import PageContainer from '../../components/layout/PageContainer';
 
 interface Webhook { id: number; name: string; key_prefix: string; created_at: string; needs_rotation?: boolean; }
@@ -135,6 +136,7 @@ export default function Integrations() {
                     <SecretsCard key={me?.active_tenant_id ?? 'none'} tenantId={me?.active_tenant_id ?? null} />
 
                     <SlackCard />
+                    <TicketingCard key={`t${me?.active_tenant_id ?? 'none'}`} tenantId={me?.active_tenant_id ?? null} />
 
                     <HttpAllowlistCard />
                 </div>

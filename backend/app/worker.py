@@ -25,7 +25,7 @@ celery_app.conf.update(
 # The worker process only ever imports this module, so `@celery_app.task`
 # never registers anything unless we import the task modules here too —
 # without this, `.delay()` calls silently fail with "unregistered task".
-import app.tasks.jira  # noqa: E402,F401
+import app.tasks.ticketing  # noqa: E402,F401
 import app.tasks.triage  # noqa: E402,F401
 import app.tasks.sla  # noqa: E402,F401
 import app.tasks.workflows  # noqa: E402,F401
@@ -54,6 +54,10 @@ celery_app.conf.beat_schedule = {
     "run-workflow-schedules": {
         "task": "app.tasks.workflows.run_schedules_task",
         "schedule": 60.0,
+    },
+    "sync-tickets": {
+        "task": "app.tasks.ticketing.sync_tickets_task",
+        "schedule": 300.0,
     },
     "prune-notifications": {
         "task": "app.tasks.notifications.prune_notifications_task",

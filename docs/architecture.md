@@ -31,7 +31,7 @@
 | `models/` | SQLAlchemy ORM models |
 | `schemas/` | Pydantic request/response models |
 | `ai/` | Provider-agnostic LLM layer (LiteLLM): providers, tenant config, AWS credentials |
-| `services/` | AI service (copilot/triage prompts), SAML, email, Jira integrations |
+| `services/` | AI service (copilot/triage prompts), SAML, email, ticket sync (Jira, HaloPSA, ConnectWise) |
 | `utils/` | Audit logging, role resolution, copilot heuristics |
 | `scripts/` | CLI: create super-admin, reset MFA, seed incidents, seed playbooks, demo fixtures |
 | `alembic/` | Database migrations |

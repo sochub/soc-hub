@@ -36,6 +36,7 @@ from app.models.case_triage import CaseTriageResult
 from app.models.ioc import IOC
 from app.models.playbook import IR_PHASES, PlaybookTemplate
 from app.models.suppression_rule import SuppressionRule
+from app.models.ticket_connection import TicketConnection
 from app.models.tenant import Tenant
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.oauth.tokens import OAuthPrincipal
@@ -50,7 +51,8 @@ from app.schemas.playbook import PlaybookTemplateCreate, PlaybookTemplateUpdate
 from app.schemas.suppression import SuppressionCreate, SuppressionPreview
 from app.schemas.workflow import DryRunIn, RunSummary, WorkflowIn
 from app.services import (alert_service, case_records, case_service, enrichment_service, ioc_service,
-                          playbook_service, suppression_service, task_service, workflow_service)
+                          playbook_service, suppression_service, task_service, ticket_sync,
+                          workflow_service)
 from app.services.artifact_types import BUILTIN_KEYS, UnknownArtifactType, not_private
 from app.services.milestones import MilestoneConflict, case_milestones, set_milestones
 from app.tasks.triage import run_case_triage_task
@@ -97,6 +99,8 @@ MIN_ROLE: dict[str, str] = {
     "update_workflow": "admin", "dry_run_workflow": "admin",
     # alert suppression
     "list_suppressions": "viewer", "preview_suppression": "viewer", "create_suppression": "analyst",
+    # ticketing
+    "get_case_ticket": "viewer", "create_case_ticket": "analyst",
 }
 
 
@@ -1134,6 +1138,41 @@ async def create_suppression(db: AsyncSession, p: OAuthPrincipal, name: str, con
     await db.refresh(rule)
     return {**_suppression(rule), "url": f"{settings.FRONTEND_URL}/alerts/suppressions",
             "note": "Saved disabled. A person must review and enable it in SOC Hub."}
+
+
+# ── ticketing ────────────────────────────────────────────────────
+
+
+def _ticket(link) -> Optional[dict]:
+    if link is None:
+        return None
+    return {"provider": link.system, "external_id": link.external_id, "url": link.url,
+            "remote_status": link.remote_status, "remote_closed": link.remote_closed,
+            "last_synced_at": _iso(link.last_synced_at)}
+
+
+@tool
+async def get_case_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
+    """The case's linked Jira/HaloPSA/ConnectWise ticket (status as of the last sync), if any."""
+    c = await _case(db, p, case_id)
+    return {"case_id": c.id, "ticket": _ticket(await ticket_sync.link_for(db, c.id, p.tenant_id))}
+
+
+@tool
+async def create_case_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
+    """Open a ticket for the case in the organization's ticketing system (title, description and severity
+    come from the case) and link it. Fails when ticketing isn't set up or the case already has one."""
+    c = await _case(db, p, case_id)
+    conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == p.tenant_id))).scalars().first()
+    if conn is None or not conn.enabled:
+        raise ToolError("Ticketing is not set up for this organization")
+    try:
+        link = await ticket_sync.create_ticket(db, conn=conn, case=c, user_id=p.user.id)
+    except ticket_sync.TicketError as e:
+        raise ToolError(str(e)) from None
+    await db.commit()
+    await db.refresh(link)
+    return {"case_id": c.id, "ticket": _ticket(link), "url": case_url(c.id)}
 
 
 # ── enrichment & triage ──────────────────────────────────────────

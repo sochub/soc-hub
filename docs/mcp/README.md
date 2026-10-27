@@ -98,6 +98,8 @@ ids return "Not found". List tools default to 25 rows (maximum 100) with `offset
 | `cancel_workflow_run` | analyst | Cancel a running or waiting run. |
 | `list_suppressions` | viewer | Alert suppression rules with their hit counts. |
 | `preview_suppression` | viewer | How many of the last 500 alerts some conditions would have matched. |
+| `get_case_ticket` | viewer | The case's linked Jira/HaloPSA/ConnectWise ticket and its last synced status. |
+| `create_case_ticket` | analyst | Open a ticket for the case in the organization's ticketing system and link it. |
 | `create_suppression` | analyst | Draft a suppression rule. **Always saved disabled**: a person enables it in Alerts → Suppressions. |
 
 **Admin authoring** (the tool re-checks the admin role itself, not only the server gate):
