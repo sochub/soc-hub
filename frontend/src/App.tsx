@@ -13,6 +13,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import RequireRole from './components/auth/RequireRole';
 import Login from './features/auth/Login';
 import AcceptInvitation from './features/auth/AcceptInvitation';
+import VerifyPage from './features/verify/VerifyPage';
 import OAuthConsent from './features/auth/OAuthConsent';
 import { GuestForgotPage, GuestLinkPage, GuestLoginPage, GuestRegisterPage, GuestResetPage, GuestSsoPage } from './features/guest-portal/GuestAuthPages';
 import { GuestCasePage, GuestHomePage } from './features/guest-portal/GuestCasePages';
@@ -68,6 +69,7 @@ function App() {
           <Routes>
             <Route path="/login" element={DEMO ? <Navigate to="/" replace /> : <Login />} />
             <Route path="/invite/:token" element={<AcceptInvitation />} />
+            <Route path="/verify/:token" element={<VerifyPage />} />
             <Route path="/guest/link" element={<GuestLinkPage />} />
             <Route path="/guest/link/:token" element={<GuestLinkPage />} />
             <Route path="/guest/login" element={<GuestLoginPage />} />

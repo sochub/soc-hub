@@ -19,6 +19,7 @@ NODE_TYPES = {
     "alert_dismiss":       {"required": [], "raw": [], "alert_only": True},
     "alert_create":        {"required": ["source", "external_id", "title"], "raw": ["payload"], "alert_only": False},
     "containment_guard":   {"required": ["action", "target_kind", "target"], "raw": [], "alert_only": False},
+    "email_ask_user":      {"required": ["email", "message"], "raw": [], "alert_only": False},
 }
 
 MAX_NODES = 50

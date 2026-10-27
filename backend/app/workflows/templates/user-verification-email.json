@@ -1,0 +1,124 @@
+{
+  "key": "user-verification-email",
+  "name": "Ask the user by email: was this you?",
+  "vendor": "Identity",
+  "kind": "triage",
+  "description": "When an identity alert names a user, emails them \"was this you?\". Yes dismisses the alert; no, or no answer within an hour, promotes it into a high case grouped by user.",
+  "trigger_type": "alert.ingested",
+  "trigger_filter": "(alert.source == 'okta' and ((alert.payload.get('actor') or {}).get('alternateId') or '') != '') or (alert.source == 'entra-id' and (alert.payload.get('userPrincipalName') or '') != '') or (alert.source == 'm365-defender' and (alert.payload.get('evidence') or []) | selectattr('userAccount', 'defined') | map(attribute='userAccount') | select | selectattr('userPrincipalName', 'defined') | map(attribute='userPrincipalName') | select | list | length > 0)",
+  "params": [],
+  "secrets": [],
+  "setup": "## Before you start\n- This server must send email (`SMTP_HOST`, `SMTP_FROM_EMAIL`, see the configuration guide) and `FRONTEND_URL` must be the address users can open: the email links to `/verify/<token>` there.\n- The user gets one email with an **Answer** button. Opening the page records nothing (mail scanners open links); the user picks an answer there. The link works once and expires with the question (1 hour; change `timeout_hours` on the ask step, up to 168).\n\n## How it works\n- An Okta, Entra ID Protection or Microsoft 365 Defender alert that names a user asks that user **\"{{ alert.title }} (reported by {{ alert.source }}). Was this you?\"** with two answers: *It was me* or *It wasn't me*.\n- *It was me*: the alert is dismissed with the user's confirmation as the reason.\n- *It wasn't me*, or no answer before the time limit: the alert is promoted into a **high** case grouped by user (24 hours), with a note saying what the user answered. Nothing is closed on silence.\n- Use it **instead of** *Identity alerts: group by user into a case* for the same sources, or disable one of them: both act on the same alerts.\n- Pair it with a containment workflow (manual, on the case) rather than containing on a *No* automatically: a user who clicks the wrong button shouldn't lock themselves out.\n\n## Caveats\n- The question goes to the address the alert names; an attacker who controls that mailbox or Slack account could answer *Yes*. Keep it for low-to-medium alerts and use suppression rules or containment guardrails for the rest.\n- The alert title is shown to the user as plain text.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "ask",
+        "type": "email_ask_user",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "email": "{{ ((alert.payload.get('actor') or {}).get('alternateId') if alert.source == 'okta' else (alert.payload.get('userPrincipalName') if alert.source == 'entra-id' else ((alert.payload.get('evidence') or []) | selectattr('userAccount', 'defined') | map(attribute='userAccount') | select | selectattr('userPrincipalName', 'defined') | map(attribute='userPrincipalName') | select | first | default('')))) or '' }}",
+          "message": "{{ alert.title }} (reported by {{ alert.source }}). Was this you?",
+          "buttons": [
+            "It was me",
+            "It wasn't me"
+          ],
+          "timeout_hours": "1"
+        }
+      },
+      {
+        "id": "confirmed",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.ask.output.response == 'It was me'"
+        }
+      },
+      {
+        "id": "dismiss",
+        "type": "alert_dismiss",
+        "position": {
+          "x": 40,
+          "y": 400
+        },
+        "config": {
+          "reason": "Confirmed by the user ({{ steps.ask.output.responder_email or 'unknown' }})"
+        }
+      },
+      {
+        "id": "promote",
+        "type": "alert_promote",
+        "position": {
+          "x": 460,
+          "y": 400
+        },
+        "config": {
+          "mode": "group",
+          "title": "Unconfirmed activity: {{ alert.title }}",
+          "severity": "high",
+          "tags": "identity, user-verification",
+          "group_key": "user:{{ ((alert.payload.get('actor') or {}).get('alternateId') if alert.source == 'okta' else (alert.payload.get('userPrincipalName') if alert.source == 'entra-id' else ((alert.payload.get('evidence') or []) | selectattr('userAccount', 'defined') | map(attribute='userAccount') | select | selectattr('userPrincipalName', 'defined') | map(attribute='userPrincipalName') | select | first | default('')))) or '' }}",
+          "window_hours": "24"
+        }
+      },
+      {
+        "id": "note",
+        "type": "case_add_note",
+        "position": {
+          "x": 460,
+          "y": 520
+        },
+        "config": {
+          "content": "User verification for alert #{{ alert.id }}: {{ 'no answer within the time limit' if steps.ask.output.timed_out else 'the user answered \"' ~ steps.ask.output.response ~ '\"' }}.",
+          "case_id": "{{ steps.promote.output.case_id }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "ask",
+        "source_handle": null
+      },
+      {
+        "id": "e2",
+        "source": "ask",
+        "target": "confirmed",
+        "source_handle": null
+      },
+      {
+        "id": "e3",
+        "source": "confirmed",
+        "target": "dismiss",
+        "source_handle": "true"
+      },
+      {
+        "id": "e4",
+        "source": "confirmed",
+        "target": "promote",
+        "source_handle": "false"
+      },
+      {
+        "id": "e5",
+        "source": "promote",
+        "target": "note",
+        "source_handle": null
+      }
+    ]
+  }
+}

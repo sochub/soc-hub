@@ -177,3 +177,25 @@ def send_guest_digest_email(to_email: str, *, tenant_name: str, case_id: int, ca
     </body></html>"""
     return _send_email(to_email, f"{tenant_name}: {n} update{'s' if n != 1 else ''} on case #{case_id}", body,
                        log_recipient=False)
+
+
+def send_user_verification_email(to_email: str, *, org_name: str, message: str, link: str, hours: float) -> bool:
+    """"Was this you?" for a workflow's email_ask_user step. Fixed wording around the escaped question; the
+    link opens a page where the user picks an answer (opening it records nothing, so mail scanners can't)."""
+    if not _smtp_configured():
+        logger.info("SMTP not configured — skipping user verification email")
+        return False
+    org, msg, href = html.escape(org_name), html.escape(message).replace("\n", "<br>"), html.escape(link)
+    left = f"{int(hours)} hour{'s' if int(hours) != 1 else ''}" if hours >= 1 else f"{int(hours * 60)} minutes"
+    body = f"""
+    <html><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2>Security check from {org}</h2>
+      <p>The {org} security team needs to confirm some activity on your account:</p>
+      <blockquote style="border-left:3px solid #ccc;margin:0;padding:8px 12px;">{msg}</blockquote>
+      <p><a href="{href}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:6px;">Answer</a></p>
+      <p style="color:#666;font-size:12px;">The link works once and expires in {left}. If you didn't expect this,
+      tell your security team; never share passwords or codes with anyone.</p>
+    </body></html>"""
+    return _send_email(to_email, f"{org_name}: please confirm recent activity on your account", body,
+                       log_recipient=False)

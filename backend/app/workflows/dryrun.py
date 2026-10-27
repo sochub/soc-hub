@@ -19,7 +19,7 @@ def dry_run_behaviour(node: dict) -> str:
 
 
 def simulated_output(node: dict, rendered_input: dict, dry_run_mocks: dict) -> dict:
-    if node["type"] == "slack_ask_user":
+    if node["type"] in ("slack_ask_user", "email_ask_user"):
         from app.services.slack_service import parse_button_labels
         try:
             labels = parse_button_labels(rendered_input.get("buttons"))
@@ -29,7 +29,8 @@ def simulated_output(node: dict, rendered_input: dict, dry_run_mocks: dict) -> d
         if answer == "timeout":
             out = {"response": None, "timed_out": True}
         else:
-            out = {"response": answer or (labels or ["Yes", "No"])[0], "timed_out": False}
+            default = ["Yes", "No"] if node["type"] == "slack_ask_user" else ["It was me", "It wasn't me"]
+            out = {"response": answer or (labels or default)[0], "timed_out": False}
         return {**out, "responder_slack_id": None, "responder_email": None, "simulated": True, "would_do": rendered_input}
     mocks = (dry_run_mocks or {}).get("mocks") or {}
     if node["id"] in mocks:
