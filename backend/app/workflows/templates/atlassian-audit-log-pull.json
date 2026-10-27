@@ -1,0 +1,138 @@
+{
+  "key": "atlassian-audit-log-pull",
+  "name": "Atlassian: pull organization audit log",
+  "vendor": "Atlassian",
+  "kind": "ingest",
+  "description": "Every 5 minutes, reads new Atlassian organization audit-log events (sign-ins, admin, user and policy changes across Jira, Confluence and the org) and creates one info alert per event. Add suppression rules for the actions you don't need.",
+  "trigger_type": "schedule",
+  "trigger_filter": "*/5 * * * *",
+  "params": [
+    {
+      "key": "ATLASSIAN_ORG_ID",
+      "label": "Organization ID",
+      "placeholder": "a1b2c3d4-e5f6-...",
+      "help": "Shown when you create the API key (also in the admin.atlassian.com URL)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "ATLASSIAN_ADMIN_API_KEY",
+      "description": "Atlassian organization admin API key (sent as `Authorization: Bearer <key>`). Atlassian Administration > Settings > API keys.",
+      "hosts": [
+        "api.atlassian.com"
+      ]
+    }
+  ],
+  "setup": "### Atlassian side\n1. admin.atlassian.com > your organization > **Settings > API keys > Create API key**. A key **with scopes** needs the audit-log read scope; a key without scopes can call every admin API, so prefer scopes. Keys last at most one year.\n2. Copy the **API key** and the **Organization ID** (shown once).\n\n### Here\n1. Settings > Secrets: add `ATLASSIAN_ADMIN_API_KEY` (allowed host `api.atlassian.com`).\n2. Install with `ATLASSIAN_ORG_ID`.\n\n### What it does\n`GET https://api.atlassian.com/admin/v1/orgs/<org>/events-stream?from=<previous run, epoch ms>&limit=200&sortOrder=asc` (the polling endpoint; Atlassian rate-limits audit-log calls per minute). Each event becomes an alert with source `atlassian`, external id = the event `id`, title = `<action> by <actor email or name>` and severity **info**: Atlassian events carry no severity, so triage them with suppression rules (e.g. `payload.attributes.action equals <noisy action>`). Only the first 200 new events per run are read; a busy org may need a shorter interval.\n\nDocs relied on:\n- Admin API keys: https://support.atlassian.com/organization-administration/docs/manage-an-organization-with-the-admin-apis/\n- Organization REST API (OpenAPI): https://developer.atlassian.com/cloud/admin/organization/rest/intro/\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "pull",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://api.atlassian.com/admin/v1/orgs/%%ATLASSIAN_ORG_ID%%/events-stream?from={{ trigger.since_ms }}&limit=200&sortOrder=asc",
+          "headers": {
+            "Accept": "application/json",
+            "Authorization": "Bearer {{ secrets.ATLASSIAN_ADMIN_API_KEY }}"
+          }
+        },
+        "retries": 2
+      },
+      {
+        "id": "ok",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "expression": "steps.pull.output.status == 200 and steps.pull.output.body is mapping"
+        }
+      },
+      {
+        "id": "each",
+        "type": "for_each",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "items": "steps.pull.output.body.get('data') or []",
+          "concurrency": 5,
+          "max_items": 200
+        },
+        "size": {
+          "width": 420,
+          "height": 200
+        }
+      },
+      {
+        "id": "create",
+        "type": "alert_create",
+        "position": {
+          "x": 40,
+          "y": 60
+        },
+        "config": {
+          "source": "atlassian",
+          "external_id": "{{ loop.item.id }}",
+          "title": "{{ (loop.item.attributes or {}).get('action') or 'event' }} by {{ ((loop.item.attributes or {}).get('actor') or {}).get('email') or ((loop.item.attributes or {}).get('actor') or {}).get('name') or 'unknown actor' }}",
+          "severity": "info",
+          "payload": "loop.item"
+        },
+        "parent_id": "each"
+      },
+      {
+        "id": "failed",
+        "type": "fail",
+        "position": {
+          "x": 520,
+          "y": 400
+        },
+        "config": {
+          "message": "Atlassian audit-log pull failed: HTTP {{ steps.pull.output.status }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_pull",
+        "source": "start",
+        "target": "pull",
+        "source_handle": null
+      },
+      {
+        "id": "e_pull_ok",
+        "source": "pull",
+        "target": "ok",
+        "source_handle": null
+      },
+      {
+        "id": "e_ok_each",
+        "source": "ok",
+        "target": "each",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_ok_failed",
+        "source": "ok",
+        "target": "failed",
+        "source_handle": "false"
+      }
+    ]
+  }
+}

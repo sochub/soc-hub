@@ -278,3 +278,73 @@ def test_mcp_ticket_tools(monkeypatch):
         with pytest.raises(ToolError):
             await tools.get_case_ticket(db, _p(other, t2), case_id=cid)
     _run(body)
+
+
+def test_jira_service_account_oauth(monkeypatch):
+    """Service account: token from auth.atlassian.com (client credentials, once per client), Jira calls through
+    api.atlassian.com/ex/jira/<cloud id>, browse links on the site."""
+    calls = []
+
+    async def fake(conn, allowlist, method, path, *, headers, json_body=None, form=None, url=None):
+        calls.append((method, url or path, headers, form, json_body))
+        if url == ticket_sync.ATLASSIAN_TOKEN_URL:
+            return {"access_token": "sa-token", "expires_in": 3600}
+        if method == "POST" and (url or "").endswith("/issue"):
+            return {"id": "1", "key": "SEC-9"}
+        if "?fields=status" in (url or ""):
+            return {"fields": {"status": {"name": "Done", "statusCategory": {"key": "done"}}}}
+        return {"id": "5"}
+    monkeypatch.setattr(ticket_sync, "_call", fake)
+
+    async def run():
+        from types import SimpleNamespace
+        conn = SimpleNamespace(id=1, tenant_id=1, provider="jira", base_url="https://acme.atlassian.net", push_notes=False,
+                               settings={"deployment": "service_account", "cloud_id": "11223344-aaaa-bbbb-cccc-556677889900",
+                                         "project_key": "SEC"},
+                               credentials_enc=ticket_sync.encrypt_credentials({"client_id": "cid", "client_secret": "cs"}))
+        cl = ticket_sync.client(conn, [])
+        t = await cl.create("T", "D", "high")
+        assert t == {"external_id": "SEC-9", "key": "SEC-9", "url": "https://acme.atlassian.net/browse/SEC-9"}
+        assert await cl.status("SEC-9") == {"status": "Done", "closed": True}
+        token_calls = [c for c in calls if c[1] == ticket_sync.ATLASSIAN_TOKEN_URL]
+        assert len(token_calls) == 1 and token_calls[0][3] == {"grant_type": "client_credentials", "client_id": "cid",
+                                                              "client_secret": "cs"}
+        api = [c for c in calls if c[1] != ticket_sync.ATLASSIAN_TOKEN_URL]
+        assert api[0][1] == "https://api.atlassian.com/ex/jira/11223344-aaaa-bbbb-cccc-556677889900/rest/api/3/issue"
+        assert all(c[2]["Authorization"] == "Bearer sa-token" for c in api)
+    asyncio.run(run())
+
+
+def test_service_account_settings_validation():
+    async def go():
+        await engine.dispose()
+        h = secrets.token_hex(3)
+        async with AsyncSessionLocal() as db:
+            t = Tenant(name="sa", slug=f"sa-{h}")
+            u = User(email=f"sa-{h}@example.test", hashed_password=get_password_hash(secrets.token_hex(8)), is_active=True)
+            db.add_all([t, u])
+            await db.commit()
+            tid, uid = t.id, u.id
+        app.dependency_overrides[deps.require_admin] = lambda: u
+        app.dependency_overrides[deps.get_effective_tenant_id] = lambda: tid
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+                body = {"provider": "jira", "base_url": "https://acme.atlassian.net",
+                        "settings": {"deployment": "service_account", "project_key": "SEC"},
+                        "credentials": {"client_id": "cid", "client_secret": "cs"}}
+                r = await c.put("/api/v1/ticketing/connection", json=body)
+                assert r.status_code == 422 and "cloud_id" in r.text, r.text
+                r = await c.put("/api/v1/ticketing/connection", json={**body, "settings": {**body["settings"], "cloud_id": "../../admin"}})
+                assert r.status_code == 422, r.text
+                r = await c.put("/api/v1/ticketing/connection", json={**body, "settings": {**body["settings"], "cloud_id": "11223344-aaaa"}})
+                assert r.status_code == 200 and r.json()["settings"]["deployment"] == "service_account", r.text
+        finally:
+            app.dependency_overrides.clear()
+            async with AsyncSessionLocal() as db:
+                await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tid))
+                await db.execute(delete(TicketConnection).where(TicketConnection.tenant_id == tid))
+                await db.execute(delete(User).where(User.id == uid))
+                await db.execute(delete(Tenant).where(Tenant.id == tid))
+                await db.commit()
+            await engine.dispose()
+    asyncio.run(go())

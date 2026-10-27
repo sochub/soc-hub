@@ -1,0 +1,330 @@
+{
+  "key": "atlassian-suspend-user",
+  "name": "Atlassian: suspend user access",
+  "vendor": "Atlassian",
+  "kind": "response",
+  "description": "Run from a case: find the case's user in your Atlassian organization by email and suspend their access to every Atlassian app (Jira, Confluence, ...) through the admin API. Their roles and groups come back when access is restored.",
+  "trigger_type": "manual",
+  "trigger_filter": null,
+  "params": [
+    {
+      "key": "ATLASSIAN_ORG_ID",
+      "label": "Organization ID",
+      "placeholder": "a1b2c3d4-e5f6-...",
+      "help": "Shown when you create the API key (also in the admin.atlassian.com URL)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "ATLASSIAN_ADMIN_API_KEY",
+      "description": "Atlassian organization admin API key (sent as `Authorization: Bearer <key>`). Atlassian Administration > Settings > API keys.",
+      "hosts": [
+        "api.atlassian.com"
+      ]
+    }
+  ],
+  "setup": "### Atlassian side\n1. admin.atlassian.com > **Settings > API keys > Create API key**. Use a key **without scopes** for now: Atlassian's scoped keys don't yet cover the v2 suspend endpoint (ID-9217). Keep it in Secrets only, and rotate it within a year.\n2. Copy the **API key** and **Organization ID**.\n\n### Case side\nThe user is the case's `username` attribute (custom artifact type) or its first email artifact.\n\n### How it works\n1. **Containment guard**: protected users and the caps in Settings > Integrations > Containment guardrails apply.\n2. `POST /admin/v2/orgs/<org>/directories/-/users/search` with `{\"emails\": [<user>], \"limit\": 2}`: exactly one match is required.\n3. `GET /admin/v2/orgs/<org>/directories?accountId=<id>`, then `POST /admin/v2/orgs/<org>/directories/<first directory>/users/<id>/suspend` (Atlassian answers **204**). An org with several directories gets the first one suspended; the note lists how many there are.\n4. A note records the statuses; run from a case task, the task gets the result and is ticked on success.\n\nUndo: admin.atlassian.com > Directory > Users > the user > **Restore access** (or `POST .../users/<id>/restore`).\n\nDocs relied on:\n- Admin API keys: https://support.atlassian.com/organization-administration/docs/manage-an-organization-with-the-admin-apis/\n- Organization REST API (OpenAPI): https://developer.atlassian.com/cloud/admin/organization/rest/intro/\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "has_target",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "expression": "((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) != '' and '@' in ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim)"
+        }
+      },
+      {
+        "id": "no_target",
+        "type": "case_add_note",
+        "position": {
+          "x": 560,
+          "y": 280
+        },
+        "config": {
+          "content": "Atlassian suspend skipped: no user email on the case. Add a `username` attribute or an email artifact and run it again."
+        }
+      },
+      {
+        "id": "task_no_target",
+        "type": "case_task_complete",
+        "position": {
+          "x": 560,
+          "y": 400
+        },
+        "config": {
+          "result": "No user email on the case.",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "guard",
+        "type": "containment_guard",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "action": "Suspend user (Atlassian)",
+          "target_kind": "user",
+          "target": "{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}",
+          "release_hint": "admin.atlassian.com > Directory > Users > Restore access."
+        }
+      },
+      {
+        "id": "find",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://api.atlassian.com/admin/v2/orgs/%%ATLASSIAN_ORG_ID%%/directories/-/users/search",
+          "headers": {
+            "Accept": "application/json",
+            "Authorization": "Bearer {{ secrets.ATLASSIAN_ADMIN_API_KEY }}",
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "emails": [
+              "{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}"
+            ],
+            "limit": 2
+          }
+        }
+      },
+      {
+        "id": "one_user",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "expression": "steps.find.output.status == 200 and steps.find.output.body is mapping and (steps.find.output.body.get('data') or []) | length == 1"
+        }
+      },
+      {
+        "id": "not_found",
+        "type": "case_add_note",
+        "position": {
+          "x": 560,
+          "y": 640
+        },
+        "config": {
+          "content": "Atlassian suspend not sent: no single Atlassian account matches {{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }} (search HTTP {{ steps.find.output.status }})."
+        }
+      },
+      {
+        "id": "task_not_found",
+        "type": "case_task_complete",
+        "position": {
+          "x": 560,
+          "y": 760
+        },
+        "config": {
+          "result": "No single Atlassian account matches the user (search HTTP {{ steps.find.output.status }}).",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "dirs",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 640
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://api.atlassian.com/admin/v2/orgs/%%ATLASSIAN_ORG_ID%%/directories?accountId={{ steps.find.output.body.data[0].accountId | urlencode }}",
+          "headers": {
+            "Accept": "application/json",
+            "Authorization": "Bearer {{ secrets.ATLASSIAN_ADMIN_API_KEY }}"
+          }
+        }
+      },
+      {
+        "id": "has_dir",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 760
+        },
+        "config": {
+          "expression": "steps.dirs.output.status == 200 and steps.dirs.output.body is mapping and (steps.dirs.output.body.get('data') or []) | length > 0"
+        }
+      },
+      {
+        "id": "no_dir",
+        "type": "case_add_note",
+        "position": {
+          "x": 560,
+          "y": 880
+        },
+        "config": {
+          "content": "Atlassian suspend not sent: no directory found for the account (HTTP {{ steps.dirs.output.status }})."
+        }
+      },
+      {
+        "id": "task_no_dir",
+        "type": "case_task_complete",
+        "position": {
+          "x": 560,
+          "y": 1000
+        },
+        "config": {
+          "result": "No Atlassian directory found for the account (HTTP {{ steps.dirs.output.status }}).",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "suspend",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 880
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://api.atlassian.com/admin/v2/orgs/%%ATLASSIAN_ORG_ID%%/directories/{{ steps.dirs.output.body.data[0].directoryId | urlencode }}/users/{{ steps.find.output.body.data[0].accountId | urlencode }}/suspend",
+          "headers": {
+            "Accept": "application/json",
+            "Authorization": "Bearer {{ secrets.ATLASSIAN_ADMIN_API_KEY }}"
+          }
+        }
+      },
+      {
+        "id": "result",
+        "type": "case_add_note",
+        "position": {
+          "x": 250,
+          "y": 1000
+        },
+        "config": {
+          "content": "Atlassian suspend for {{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}: search HTTP {{ steps.find.output.status }}, suspend HTTP {{ steps.suspend.output.status }} ({{ (steps.dirs.output.body.get('data') or []) | length }} directory/ies; the first was used)."
+        }
+      },
+      {
+        "id": "task_result",
+        "type": "case_task_complete",
+        "position": {
+          "x": 250,
+          "y": 1120
+        },
+        "config": {
+          "result": "Atlassian access suspended for {{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }} (HTTP {{ steps.suspend.output.status }}).",
+          "result_status": "{{ 'ok' if steps.suspend.output.status < 300 else 'failed' }}",
+          "complete": "{{ steps.suspend.output.status < 300 }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "has_target",
+        "source_handle": null
+      },
+      {
+        "id": "e2",
+        "source": "has_target",
+        "target": "guard",
+        "source_handle": "true"
+      },
+      {
+        "id": "e3",
+        "source": "has_target",
+        "target": "no_target",
+        "source_handle": "false"
+      },
+      {
+        "id": "e3b",
+        "source": "no_target",
+        "target": "task_no_target",
+        "source_handle": null
+      },
+      {
+        "id": "e4",
+        "source": "guard",
+        "target": "find",
+        "source_handle": null
+      },
+      {
+        "id": "e5",
+        "source": "find",
+        "target": "one_user",
+        "source_handle": null
+      },
+      {
+        "id": "e6",
+        "source": "one_user",
+        "target": "dirs",
+        "source_handle": "true"
+      },
+      {
+        "id": "e7",
+        "source": "one_user",
+        "target": "not_found",
+        "source_handle": "false"
+      },
+      {
+        "id": "e7b",
+        "source": "not_found",
+        "target": "task_not_found",
+        "source_handle": null
+      },
+      {
+        "id": "e8",
+        "source": "dirs",
+        "target": "has_dir",
+        "source_handle": null
+      },
+      {
+        "id": "e9",
+        "source": "has_dir",
+        "target": "suspend",
+        "source_handle": "true"
+      },
+      {
+        "id": "e10",
+        "source": "has_dir",
+        "target": "no_dir",
+        "source_handle": "false"
+      },
+      {
+        "id": "e10b",
+        "source": "no_dir",
+        "target": "task_no_dir",
+        "source_handle": null
+      },
+      {
+        "id": "e11",
+        "source": "suspend",
+        "target": "result",
+        "source_handle": null
+      },
+      {
+        "id": "e12",
+        "source": "result",
+        "target": "task_result",
+        "source_handle": null
+      }
+    ]
+  }
+}

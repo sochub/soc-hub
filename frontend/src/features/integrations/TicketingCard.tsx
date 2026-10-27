@@ -34,6 +34,9 @@ const CREDS: Record<Provider, Field[]> = {
         { key: 'private_key', label: 'Private key', secret: true }, { key: 'client_id', label: 'Client ID', hint: 'from developer.connectwise.com' },
     ],
 };
+// Jira through an Atlassian service account (OAuth 2.0 client credentials): no person's token involved.
+const SA_CREDS: Field[] = [{ key: 'client_id', label: 'Service account client ID' }, { key: 'client_secret', label: 'Client secret', secret: true }];
+const SA_CLOUD_ID: Field = { key: 'cloud_id', label: 'Cloud ID', hint: 'https://<site>.atlassian.net/_edge/tenant_info → cloudId' };
 const errText = (e: unknown, fb: string): string => {
     const d: unknown = isAxiosError(e) ? e.response?.data?.detail : undefined;
     if (typeof d === 'string') return d;
@@ -59,14 +62,18 @@ export default function TicketingCard({ tenantId }: { tenantId: number | null })
     const set = (patch: Partial<typeof form>) => { setDraft({ ...form, ...patch }); setMsg(null); };
     const host = (u: string) => { try { return new URL(u).hostname.toLowerCase(); } catch { return u; } };
     // Saved credentials only apply to the same provider at the same host (the backend enforces it too).
-    const sameProvider = !!data && data.provider === form.provider && host(data.base_url) === host(form.base_url);
-    const credFields = CREDS[form.provider].filter((f) => !(form.provider === 'jira' && form.deployment === 'datacenter' && f.key === 'email'));
+    const sameProvider = !!data && data.provider === form.provider && host(data.base_url) === host(form.base_url)
+        && (data.settings?.deployment ?? 'cloud') === (form.provider === 'jira' ? form.deployment : (data.settings?.deployment ?? 'cloud'));
+    const serviceAccount = form.provider === 'jira' && form.deployment === 'service_account';
+    const credFields = serviceAccount ? SA_CREDS
+        : CREDS[form.provider].filter((f) => !(form.provider === 'jira' && form.deployment === 'datacenter' && f.key === 'email'));
+    const settingFields = serviceAccount ? [...SETTINGS.jira, SA_CLOUD_ID] : SETTINGS[form.provider];
 
     const save = useMutation({
         mutationFn: async () => {
             const anyCred = Object.values(form.creds).some((v) => v.trim());
             const settings = Object.fromEntries(Object.entries({ ...form.settings, ...(form.provider === 'jira' ? { deployment: form.deployment } : {}) })
-                .filter(([k, v]) => v !== '' && v != null && (SETTINGS[form.provider].some((f) => f.key === k) || k === 'deployment')));
+                .filter(([k, v]) => v !== '' && v != null && (settingFields.some((f) => f.key === k) || k === 'deployment')));
             return (await api.put('/ticketing/connection', {
                 provider: form.provider, base_url: form.base_url, settings, enabled: form.enabled,
                 auto_create_min_severity: form.auto || null, push_notes: form.push_notes,
@@ -107,14 +114,16 @@ export default function TicketingCard({ tenantId }: { tenantId: number | null })
                 {form.provider === 'jira' && (
                     <label className="text-xs text-fg-2 space-y-1">Deployment
                         <select value={form.deployment} onChange={(e) => set({ deployment: e.target.value })} className={input}>
-                            <option value="cloud">Cloud</option><option value="datacenter">Data Center / Server</option>
+                            <option value="cloud">Cloud: account email + API token</option>
+                            <option value="service_account">Cloud: service account (OAuth 2.0)</option>
+                            <option value="datacenter">Data Center / Server</option>
                         </select>
                     </label>
                 )}
                 <label className="text-xs text-fg-2 space-y-1 sm:col-span-2">Base URL
                     <input value={form.base_url} onChange={(e) => set({ base_url: e.target.value })} placeholder={URL_HINT[form.provider]} className={input} />
                 </label>
-                {SETTINGS[form.provider].map((f) => (
+                {settingFields.map((f) => (
                     <label key={f.key} className="text-xs text-fg-2 space-y-1">{f.label}{f.optional && ' (optional)'}
                         <input value={form.settings[f.key] ?? ''} placeholder={f.hint} onChange={(e) => set({ settings: { ...form.settings, [f.key]: e.target.value } })} className={input} />
                     </label>

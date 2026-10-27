@@ -176,8 +176,11 @@ async def run_due_schedules(now: datetime) -> List[int]:
                 continue
             if not cron_matches(wf.trigger_filter or "", minute):
                 continue
-            since = (await _schedule_since(db, wf.id, now)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            since_dt = await _schedule_since(db, wf.id, now)
+            since = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            # since_ms: the same instant as UNIX epoch milliseconds, for APIs that filter that way (Atlassian admin)
             payload = {"event": "schedule", "fired_at": now.isoformat(), "since": since,
+                       "since_ms": int(since_dt.timestamp() * 1000),
                        "case_id": None, "alert_id": None, "changes": {}}
             run = await create_run(db, wf, trigger_payload=payload, case_id=None, alert_id=None, depth=0)
             wf.last_fired_at = now
