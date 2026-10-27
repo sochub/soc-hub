@@ -18,6 +18,8 @@ class CaseTask(Base):
     source_template_id = Column(Integer, ForeignKey("playbook_templates.id", ondelete="SET NULL"), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    workflow_id = Column(Integer, ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)  # run from the task
+    last_run_id = Column(Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     case = relationship("Case", back_populates="tasks")

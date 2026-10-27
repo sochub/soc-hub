@@ -45,5 +45,7 @@ class PlaybookTaskTemplate(Base):
     title = Column(String, nullable=False)
     description = Column(Text)
     order = Column(Integer, nullable=False, default=0)
+    # A tenant's manual workflow an analyst can run from the task once the playbook is on a case.
+    workflow_id = Column(Integer, ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)
 
     template = relationship("PlaybookTemplate", back_populates="tasks")

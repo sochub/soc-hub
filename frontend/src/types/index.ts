@@ -23,6 +23,7 @@ export interface PlaybookTaskTemplate {
   title: string;
   description?: string | null;
   order: number;
+  workflow_id?: number | null;  // a manual workflow run from the task once the playbook is on a case
 }
 
 export interface PlaybookTemplate {
@@ -86,6 +87,11 @@ export interface CaseTask {
   completed_at?: string | null;
   completed_by?: number | null;
   created_at: string;
+  workflow_id?: number | null;
+  workflow_name?: string | null;
+  workflow_runnable?: boolean;
+  last_run_id?: number | null;
+  last_run_status?: string | null;
 }
 
 export interface CaseEvent {

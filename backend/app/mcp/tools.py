@@ -101,6 +101,7 @@ MIN_ROLE: dict[str, str] = {
     "list_suppressions": "viewer", "preview_suppression": "viewer", "create_suppression": "analyst",
     # ticketing
     "get_case_ticket": "viewer", "create_case_ticket": "analyst",
+    "run_case_task_workflow": "analyst",
 }
 
 
@@ -205,9 +206,16 @@ def _ioc(i: IOC, verdict: Optional[str] = None) -> dict:
             "enrichment_verdict": verdict, "created_at": _iso(i.created_at)}
 
 
-def _task(t: CaseTask) -> dict:
-    return {"id": t.id, "phase": t.phase, "title": t.title, "description": t.description, "status": t.status,
-            "completed_at": _iso(t.completed_at)}
+def _task(t) -> dict:
+    """A CaseTask, or a task_service.task_rows() dict (adds the linked workflow and its last run)."""
+    g = t.get if isinstance(t, dict) else (lambda k: getattr(t, k, None))
+    out = {"id": g("id"), "phase": g("phase"), "title": g("title"), "description": g("description"),
+           "status": g("status"), "completed_at": _iso(g("completed_at"))}
+    if g("workflow_id"):
+        out |= {"workflow_id": g("workflow_id"), "workflow_name": g("workflow_name"),
+                "workflow_runnable": g("workflow_runnable"), "last_run_id": g("last_run_id"),
+                "last_run_status": g("last_run_status")}
+    return out
 
 
 async def _case(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> Case:
@@ -554,7 +562,23 @@ async def list_case_tasks(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> 
     c = await _case(db, p, case_id)
     tasks = (await db.execute(select(CaseTask).where(CaseTask.case_id == c.id)
                               .order_by(CaseTask.order, CaseTask.id))).scalars().all()
-    return {"case_id": c.id, "url": case_url(c.id), "tasks": [_task(t) for t in tasks]}
+    return {"case_id": c.id, "url": case_url(c.id), "tasks": [_task(t) for t in await task_service.task_rows(db, tasks)]}
+
+
+@tool
+async def run_case_task_workflow(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id: int) -> dict:
+    """Run the workflow a case task links (see list_case_tasks: workflow_runnable). Returns the run id; poll it
+    with get_workflow_run."""
+    c = await _case(db, p, case_id)
+    t = (await db.execute(select(CaseTask).where(CaseTask.id == task_id, CaseTask.case_id == c.id,
+                                                 CaseTask.tenant_id == p.tenant_id))).scalars().first()
+    if t is None:
+        raise ToolError("Not found")
+    run = await task_service.run_task_workflow(db, case=c, task=t, user_id=p.user.id)
+    run_id = run.id
+    await db.commit()
+    advance_run_task.delay(run_id)
+    return {"run_id": run_id, "case_id": c.id, "task_id": task_id}
 
 
 @tool

@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, Plus, Trash2, BookText, ChevronDown } from 'lucide-react';
+import { Check, Plus, Trash2, BookText, ChevronDown, Play, Workflow as WorkflowIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { CaseTask, PlaybookSummary, User } from '../../types';
 import { PHASES, PHASE_LABEL, PHASE_COLOR } from '../playbooks/phases';
+
+const RUNNING = ['pending', 'running', 'waiting'];
 
 export default function CaseTasks({ caseId }: { caseId: number }) {
     const qc = useQueryClient();
@@ -24,6 +27,8 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
     const { data: tasks = [], isLoading } = useQuery({
         queryKey: key,
         queryFn: async () => (await api.get(`/cases/${caseId}/tasks`)).data as CaseTask[],
+        // follow a task's workflow run until it settles
+        refetchInterval: (q) => ((q.state.data as CaseTask[] | undefined) ?? []).some((t) => RUNNING.includes(t.last_run_status ?? '')) ? 3000 : false,
     });
     const { data: playbooks = [] } = useQuery({
         queryKey: ['playbooks', 'mine'],
@@ -37,6 +42,15 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
         qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
         qc.invalidateQueries({ queryKey: ['audit-logs', 'case', String(caseId)] });
     };
+    const [runError, setRunError] = useState<{ id: number; text: string } | null>(null);
+    const runTask = useMutation({
+        mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/run`),
+        onSuccess: () => { setRunError(null); invalidate(); },
+        onError: (err: { response?: { data?: { detail?: unknown } } }, t) => {
+            const d = err?.response?.data?.detail;
+            setRunError({ id: t.id, text: typeof d === 'string' ? d : 'Could not start the workflow' });
+        },
+    });
     const toggle = useMutation({
         mutationFn: async (t: CaseTask) => api.put(`/cases/${caseId}/tasks/${t.id}`, { status: t.status === 'done' ? 'todo' : 'done' }),
         onSuccess: invalidate,
@@ -120,6 +134,25 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                         <div className="flex-1 min-w-0">
                                             <p className={cn('text-sm', t.status === 'done' ? 'text-muted line-through' : 'text-fg')}>{t.title}</p>
                                             {t.description && <p className="text-xs text-fg-3">{t.description}</p>}
+                                            {t.workflow_id && (
+                                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                                                    <span className="inline-flex items-center gap-1 text-fg-2"><WorkflowIcon size={12} className="text-accent" />{t.workflow_name ?? 'workflow removed'}</span>
+                                                    {canEdit && t.workflow_runnable && (
+                                                        <button onClick={() => runTask.mutate(t)} disabled={runTask.isPending || RUNNING.includes(t.last_run_status ?? '')}
+                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm bg-accent text-on-accent font-medium hover:bg-accent-hover disabled:opacity-50">
+                                                            <Play size={11} /> {t.last_run_id ? 'Run again' : 'Run'}
+                                                        </button>
+                                                    )}
+                                                    {t.workflow_id && !t.workflow_runnable && t.workflow_name && <span className="text-muted">disabled: an admin enables it in Workflows</span>}
+                                                    {t.last_run_id && (
+                                                        <Link to={`/workflows/runs/${t.last_run_id}`} className={cn('hover:underline',
+                                                            t.last_run_status === 'succeeded' ? 'text-emerald-400' : t.last_run_status === 'failed' ? 'text-severity-critical' : 'text-fg-3')}>
+                                                            last run: {t.last_run_status ?? 'unknown'}
+                                                        </Link>
+                                                    )}
+                                                    {runError?.id === t.id && <span role="alert" className="text-severity-critical">{runError.text}</span>}
+                                                </div>
+                                            )}
                                         </div>
                                         {canEdit && (
                                             <button onClick={() => remove.mutate(t.id)}

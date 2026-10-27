@@ -94,6 +94,10 @@ ones they want and own editable copies. Applying a playbook to a case fills in
 Lessons Learned) with a progress tracker. Super-admins author new marketplace
 templates; tenant admins author their own. See [playbooks](playbooks/A-playbooks-design.md).
 
+
+**Task automations.** A task in your own playbook can link a manual workflow (e.g. *Contain host* on the
+"Isolate the host" task). When the playbook is applied to a case, the task shows the workflow and a **Run** button;
+the tab follows the run and links to it. Running doesn't tick the task: check the result, then mark it done.
 ## Threat-intel enrichment
 
 IOCs and artifacts are looked up in VirusTotal, URLhaus, ThreatFox, RDAP and crt.sh

@@ -8,6 +8,7 @@ class TaskTemplateIn(BaseModel):
     title: str
     description: Optional[str] = None
     order: int = 0
+    workflow_id: Optional[int] = None  # a manual workflow of this tenant
 
 
 class TaskTemplateOut(TaskTemplateIn):
