@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.oauth import routes as oauth
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -19,6 +19,7 @@ api_router.include_router(sessions.router, prefix="/users", tags=["sessions"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(cases.router, prefix="/cases", tags=["cases"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
+api_router.include_router(suppressions.router, prefix="/suppressions", tags=["suppressions"])
 api_router.include_router(artifacts.router, prefix="/artifacts", tags=["artifacts"])
 api_router.include_router(artifact_types.router, prefix="/artifact-types", tags=["artifacts"])
 api_router.include_router(integrations.router, prefix="/integrations", tags=["integrations"])

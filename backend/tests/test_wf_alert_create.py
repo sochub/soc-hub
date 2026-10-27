@@ -11,6 +11,7 @@ import app.db.base  # noqa: F401
 from app.db.session import AsyncSessionLocal, engine
 from app.models.audit_log import AuditLog
 from app.models.case import Alert
+from app.models.suppression_rule import SuppressionRule
 from app.models.tenant import Tenant
 from app.workflows import dryrun
 from app.workflows.nodes import NodeContext, NodeError
@@ -65,6 +66,17 @@ async def _scenario(monkeypatch):
         bogus = await run(tids[0], {**cfg, "external_id": "E-2", "severity": "bogus"})
         alert_ids.append(bogus["alert_id"])
         assert bogus["severity_defaulted"] is True
+        # a matching suppression rule dismisses the new alert and nothing is emitted
+        async with AsyncSessionLocal() as db:
+            rule = SuppressionRule(tenant_id=tids[1], name="okta noise",
+                                   conditions=[{"field": "source", "op": "equals", "value": "okta"}])
+            db.add(rule)
+            await db.commit()
+            rule_id = rule.id
+        n_emitted = len(emitted)
+        quiet = await run(tids[1], {**cfg, "external_id": "E-3"})
+        alert_ids.append(quiet["alert_id"])
+        assert quiet["suppressed_by_rule"] == rule_id and len(emitted) == n_emitted
         async with AsyncSessionLocal() as db:
             rows = {a.id: a for a in (await db.execute(select(Alert).where(Alert.id.in_(alert_ids)))).scalars()}
             assert rows[bogus["alert_id"]].severity == "medium"
@@ -86,6 +98,7 @@ async def _scenario(monkeypatch):
             if ids:
                 await db.execute(delete(AuditLog).where(AuditLog.entity_type == "alert", AuditLog.entity_id.in_(ids)))
                 await db.execute(delete(Alert).where(Alert.id.in_(ids)))
+                await db.execute(delete(SuppressionRule).where(SuppressionRule.tenant_id.in_(tids)))
             if tids:
                 await db.execute(delete(Tenant).where(Tenant.id.in_(tids)))
             await db.commit()

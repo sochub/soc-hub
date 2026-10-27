@@ -72,6 +72,7 @@ class Alert(AlertBase):
     owner_id: Optional[int] = None
     case_id: Optional[int] = None
     dismiss_reason: Optional[str] = None
+    suppression_rule_id: Optional[int] = None
     created_at: datetime
 
     class Config:

@@ -160,6 +160,25 @@ senders can safely retry. Consequences:
   that want each firing recorded must make `external_id` unique per firing
   (e.g. append a timestamp or occurrence id).
 
+### Suppression rules
+
+**Alerts → Suppressions** holds rules for known noise (a VPN egress range, an approved scanner, a service
+account). A rule is a list of conditions that must all hold: `source`, `title`, `severity` or `payload.<path>`
+(list items by index), compared case-insensitively with equals, is not, contains, starts with, ends with, or
+in CIDR. Regular expressions are not supported.
+
+- A **new** alert (webhook or the `alert_create` workflow node) that matches an enabled, unexpired rule is
+  stored as **dismissed**, links to the rule (`suppression_rule_id`, "Suppressed by rule #N"), and emits no
+  `alert.ingested`, so it starts no workflows. Nothing is dropped.
+- Rules expire after 7, 30 or 90 days, or never. **Preview** shows how many of the last 500 alerts a rule
+  would have matched, and warns when that is most of them.
+- **Suppress similar** on an alert opens a rule pre-filled with its source and title, and its payload fields
+  as suggestions.
+- A rule that has suppressed anything keeps its hit count and can't be deleted or have its conditions
+  changed, only disabled (create a new rule instead). Creating, changing, deleting and every suppression are
+  in the audit log.
+- Analysts and admins manage rules; viewers can read them.
+
 ## Profile and two-factor authentication
 
 Each user has a Profile page: name, job title, time zone, photo (shown across the

@@ -18,6 +18,7 @@ interface Alert {
     severity: string;
     owner_id: number | null;
     case_id: number | null;
+    suppression_rule_id?: number | null;
     created_at: string;
 }
 
@@ -197,6 +198,10 @@ export default function AlertsList() {
                                     <td className="px-4 py-2.5 font-medium text-fg">{a.title}</td>
                                     <td className="px-4 py-2.5">
                                         <span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
+                                        {a.suppression_rule_id && (
+                                            <Link to="/alerts/suppressions" title="Dismissed at ingest by a suppression rule"
+                                                className="ml-1.5 text-[10px] text-muted hover:text-fg-2">rule #{a.suppression_rule_id}</Link>
+                                        )}
                                     </td>
                                     <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>
                                     <td className="px-4 py-2.5">
@@ -204,9 +209,14 @@ export default function AlertsList() {
                                             <div className="flex items-center gap-2">
                                                 <button onClick={() => setPromoting(a)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent text-on-accent hover:bg-accent-hover flex items-center gap-1"><CheckCircle size={12} />Promote</button>
                                                 <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 flex items-center gap-1"><X size={12} />Dismiss</button>
+                                                <Link to={`/alerts/suppressions?from_alert=${a.id}`} title="Create a suppression rule pre-filled from this alert"
+                                                    className="text-xs text-fg-3 hover:text-fg hover:underline whitespace-nowrap">Suppress similar</Link>
                                             </div>
                                         ) : a.case_id ? (
                                             <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
+                                        ) : !a.suppression_rule_id ? (
+                                            <Link to={`/alerts/suppressions?from_alert=${a.id}`} title="Create a suppression rule pre-filled from this alert"
+                                                className="text-xs text-fg-3 hover:text-fg hover:underline">Suppress similar</Link>
                                         ) : <span className="text-xs text-muted">—</span>}
                                     </td>
                                 </tr>
