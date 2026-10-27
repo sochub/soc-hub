@@ -21,14 +21,16 @@ def _is_admin(user: User) -> bool:
 
 
 async def _task_counts(db: AsyncSession, template_ids: List[int]) -> dict:
+    """{template_id: (tasks, tasks linking a workflow)}."""
     if not template_ids:
         return {}
     rows = await db.execute(
-        select(PlaybookTaskTemplate.template_id, func.count())
+        select(PlaybookTaskTemplate.template_id, func.count(),
+               func.count(PlaybookTaskTemplate.workflow_id))
         .where(PlaybookTaskTemplate.template_id.in_(template_ids))
         .group_by(PlaybookTaskTemplate.template_id)
     )
-    return {tid: c for tid, c in rows.all()}
+    return {tid: (c, w) for tid, c, w in rows.all()}
 
 
 async def _imported_source_ids(db: AsyncSession, tenant_id: int) -> set:
@@ -61,7 +63,7 @@ async def list_marketplace(
         PlaybookTemplateSummary(
             id=t.id, tenant_id=t.tenant_id, name=t.name, category=t.category,
             description=t.description, is_system=t.is_system, source_template_id=t.source_template_id,
-            task_count=counts.get(t.id, 0), already_imported=t.id in imported,
+            task_count=counts.get(t.id, (0, 0))[0], already_imported=t.id in imported,
         )
         for t in templates
     ]
@@ -85,7 +87,8 @@ async def list_tenant_templates(
         PlaybookTemplateSummary(
             id=t.id, tenant_id=t.tenant_id, name=t.name, category=t.category,
             description=t.description, is_system=t.is_system,
-            source_template_id=t.source_template_id, task_count=counts.get(t.id, 0), status=t.status,
+            source_template_id=t.source_template_id, task_count=counts.get(t.id, (0, 0))[0],
+            workflow_count=counts.get(t.id, (0, 0))[1], status=t.status,
         )
         for t in templates
     ]

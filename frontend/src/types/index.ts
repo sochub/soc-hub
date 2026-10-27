@@ -48,6 +48,7 @@ export interface PlaybookSummary {
   is_system: boolean;
   source_template_id?: number | null;
   task_count: number;
+  workflow_count?: number;  // tasks that link a workflow
   status?: 'draft' | 'published';
   already_imported?: boolean;
 }

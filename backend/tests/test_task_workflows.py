@@ -65,6 +65,8 @@ async def _scenario(monkeypatch):
             assert r.status_code == 200, r.text
             pid = r.json()["id"]
             assert r.json()["tasks"][0]["workflow_id"] == w_ok
+            card = next(x for x in (await c.get("/api/v1/playbooks/")).json() if x["id"] == pid)
+            assert (card["task_count"], card["workflow_count"]) == (2, 1)
             role["v"] = "analyst"
             tasks = (await c.post(f"/api/v1/cases/{cid}/apply-playbook/{pid}")).json()
             iso = next(x for x in tasks if x["title"] == "Isolate the host")

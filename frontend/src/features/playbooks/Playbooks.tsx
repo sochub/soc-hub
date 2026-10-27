@@ -158,7 +158,11 @@ export default function Playbooks() {
                                 </div>
                                 {t.description && <p className="text-xs text-fg-3 mt-2 line-clamp-2 flex-1">{t.description}</p>}
                                 <div className="mt-3 flex items-center justify-between">
-                                    <span className="num text-[11px] text-fg-3">{t.task_count} tasks</span>
+                                    <span className="num text-[11px] text-fg-3">
+                                        {t.task_count} task{t.task_count === 1 ? '' : 's'}
+                                        {!t.is_system && <> · <span className={(t.workflow_count ?? 0) > 0 ? 'text-accent' : undefined}>
+                                            {t.workflow_count ?? 0} workflow{t.workflow_count === 1 ? '' : 's'}</span></>}
+                                    </span>
                                     <div className="flex items-center gap-2">
                                         {t.status === 'draft' && canManage && (
                                             <button onClick={() => publishMutation.mutate(t.id)} disabled={publishMutation.isPending}
