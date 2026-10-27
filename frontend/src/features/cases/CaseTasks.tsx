@@ -134,6 +134,14 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                         <div className="flex-1 min-w-0">
                                             <p className={cn('text-sm', t.status === 'done' ? 'text-muted line-through' : 'text-fg')}>{t.title}</p>
                                             {t.description && <p className="text-xs text-fg-3">{t.description}</p>}
+                                            {t.result && (
+                                                <p className={cn('mt-1 text-xs border-l-2 pl-2',
+                                                    t.result_status === 'failed' ? 'border-red-500 text-severity-critical'
+                                                        : t.result_status === 'warning' ? 'border-amber-500 text-severity-medium' : 'border-emerald-500 text-emerald-400')}
+                                                    title={t.result_at ? `Recorded ${new Date(t.result_at).toLocaleString()}` : undefined}>
+                                                    {t.result}
+                                                </p>
+                                            )}
                                             {t.workflow_id && (
                                                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                                                     <span className="inline-flex items-center gap-1 text-fg-2"><WorkflowIcon size={12} className="text-accent" />{t.workflow_name ?? 'workflow removed'}</span>

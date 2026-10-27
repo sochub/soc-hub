@@ -76,6 +76,15 @@ Use them in templates:
 - `alert_promote`: `mode` `new` | `link` | `group`, see below. Output `{case_id, created}`. Sets the run's case, so later nodes act on the promoted case.
 - `alert_dismiss`: optional templated `reason`. Sets `alert.status = dismissed` and stores the reason.
 - `alert_create`: creates a `pending` alert from data a workflow pulled (e.g. a vendor API on a schedule). `source` (1-100 chars), `external_id` (1-255), `title` (cut to 500), `severity` (`critical`/`high`/`medium`/`low`/`info`; empty or anything else becomes `medium`, and an unknown value adds `severity_defaulted: true` to the output), `payload` (expression, no `{{ }}`, that evaluates to an object or list of at most 256 KB, e.g. `loop.item`). Idempotent on (tenant, `source`, `external_id`) like the webhook: an event seen twice (overlapping schedule windows) returns the existing alert with `created: false` and does not fire `alert.ingested` again. Output `{alert_id, created}`. A new alert fires `alert.ingested` (counts toward the loop guard). Allowed in any workflow.
+- `case_task_complete` ("Complete task"): records a result on a case task and ticks it. It applies to the task the
+  run was started from (**Run** on a task linked to the workflow); otherwise to the task named `task_title` on the
+  case (case-insensitive, open tasks first); otherwise it does nothing, so any workflow can end with it. `result`
+  (templated text shown on the task, e.g. `User answered: {{ steps.ask.output.response }}`), `result_status` (`ok`,
+  `warning` or `failed`, templatable; it colours the result), `complete` (default true; `false` records the result and
+  leaves the task open). Adds an activity entry; ticking writes the usual "Task completed" entry and audit row. Output
+  `{task_id, completed, result_status}`. Every built-in response template ends with it: a successful action ticks the
+  task, a skipped or failed one records why and leaves it open. The template *Ask the user on Slack to confirm (for a
+  case task)* records the user's answer (ok / failed for *It wasn't me* / warning and open when there's no answer).
 - `email_ask_user`: like `slack_ask_user`, by email, for people who aren't on Slack. `email`, `message` (plain
   text, shown escaped), optional `buttons` (comma-separated, ≤ 5, each ≤ 75 characters; default *It was me* /
   *It wasn't me*) and `timeout_hours` (≤ 168, default 1). Needs SMTP and `FRONTEND_URL`. The email has one

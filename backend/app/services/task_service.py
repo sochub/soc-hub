@@ -40,7 +40,8 @@ async def task_rows(db: AsyncSession, tasks) -> list:
     for t in tasks:
         w = wfs.get(t.workflow_id)
         out.append({c: getattr(t, c) for c in ("id", "case_id", "phase", "title", "description", "status", "order",
-                                                "completed_at", "completed_by", "created_at", "workflow_id", "last_run_id")}
+                                                "completed_at", "completed_by", "created_at", "workflow_id", "last_run_id",
+                                                "result", "result_status", "result_at")}
                    | {"workflow_name": w.name if w else None,
                       "workflow_runnable": bool(w and w.enabled and w.trigger_type == "manual"),
                       "last_run_status": runs.get(t.last_run_id)})

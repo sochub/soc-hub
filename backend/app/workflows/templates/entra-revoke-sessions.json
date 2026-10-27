@@ -32,7 +32,7 @@
       ]
     }
   ],
-  "setup": "### Entra side\n1. Entra admin center > App registrations > **New registration** (single tenant, no redirect URI).\n2. API permissions > Add a permission > Microsoft Graph > **Application permissions**: `User.RevokeSessions.All`, `User.EnableDisableAccount.All`, `User.Read.All`.\n3. Click **Grant admin consent for <tenant>** (application permissions do nothing until an admin consents).\n4. Certificates & secrets > **New client secret**; copy the secret *value* (not its ID). Note its expiry date.\n5. Use a separate app registration from the read-only pull app. `User.EnableDisableAccount.All` + `User.Read.All` is the least-privileged pair for changing `accountEnabled`; drop both if you never disable accounts.\n6. To disable users who hold Entra admin roles, Microsoft also requires the app to hold a sufficiently privileged admin role (see *Who can perform sensitive actions*); without it Graph answers 403 for those users.\n\n### Here\n1. Settings > Secrets: add the client ID and client secret below. Each must allow **both** `login.microsoftonline.com` (token request) and `graph.microsoft.com` (API call): the OAuth token is bound to the same hosts as the secrets that obtained it.\n2. Install with `AZURE_TENANT_ID` = the Directory (tenant) ID.\n\nToken: `POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token` with `grant_type=client_credentials`, `scope=https://graph.microsoft.com/.default` ([client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow)). The token is cached per worker until shortly before it expires and never stored.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact, used as the user principal name. With no target it only writes a note.\n1. `POST https://graph.microsoft.com/v1.0/users/<upn>/revokeSignInSessions` (2xx = done; revocation can take a few minutes; external/guest users are not affected because they sign in through their home tenant).\n2. Only if the case has the tag `entra-disable`: `PATCH https://graph.microsoft.com/v1.0/users/<upn>` with `{\"accountEnabled\": false}` (204 = done). Re-enable by patching `true`.\n3. Note with both HTTP statuses.\n\nDocs: [revokeSignInSessions](https://learn.microsoft.com/en-us/graph/api/user-revokesigninsessions?view=graph-rest-1.0), [Update user](https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0), [Who can perform sensitive actions](https://learn.microsoft.com/en-us/graph/api/resources/users?view=graph-rest-1.0#who-can-perform-sensitive-actions).\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n",
+  "setup": "### Entra side\n1. Entra admin center > App registrations > **New registration** (single tenant, no redirect URI).\n2. API permissions > Add a permission > Microsoft Graph > **Application permissions**: `User.RevokeSessions.All`, `User.EnableDisableAccount.All`, `User.Read.All`.\n3. Click **Grant admin consent for <tenant>** (application permissions do nothing until an admin consents).\n4. Certificates & secrets > **New client secret**; copy the secret *value* (not its ID). Note its expiry date.\n5. Use a separate app registration from the read-only pull app. `User.EnableDisableAccount.All` + `User.Read.All` is the least-privileged pair for changing `accountEnabled`; drop both if you never disable accounts.\n6. To disable users who hold Entra admin roles, Microsoft also requires the app to hold a sufficiently privileged admin role (see *Who can perform sensitive actions*); without it Graph answers 403 for those users.\n\n### Here\n1. Settings > Secrets: add the client ID and client secret below. Each must allow **both** `login.microsoftonline.com` (token request) and `graph.microsoft.com` (API call): the OAuth token is bound to the same hosts as the secrets that obtained it.\n2. Install with `AZURE_TENANT_ID` = the Directory (tenant) ID.\n\nToken: `POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token` with `grant_type=client_credentials`, `scope=https://graph.microsoft.com/.default` ([client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow)). The token is cached per worker until shortly before it expires and never stored.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact, used as the user principal name. With no target it only writes a note.\n1. `POST https://graph.microsoft.com/v1.0/users/<upn>/revokeSignInSessions` (2xx = done; revocation can take a few minutes; external/guest users are not affected because they sign in through their home tenant).\n2. Only if the case has the tag `entra-disable`: `PATCH https://graph.microsoft.com/v1.0/users/<upn>` with `{\"accountEnabled\": false}` (204 = done). Re-enable by patching `true`.\n3. Note with both HTTP statuses.\n\nDocs: [revokeSignInSessions](https://learn.microsoft.com/en-us/graph/api/user-revokesigninsessions?view=graph-rest-1.0), [Update user](https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0), [Who can perform sensitive actions](https://learn.microsoft.com/en-us/graph/api/resources/users?view=graph-rest-1.0#who-can-perform-sensitive-actions).\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n\n## Playbook tasks\nRun from a case task (a playbook task linked to this workflow), the last step records the outcome on the task and ticks it when the action succeeded; a skipped or failed attempt is recorded and the task stays open. Run any other way, that step does nothing.\n",
   "graph": {
     "nodes": [
       {
@@ -149,6 +149,32 @@
           "target": "{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}",
           "release_hint": "Sessions can't be restored; if the account was also disabled, set accountEnabled back to true."
         }
+      },
+      {
+        "id": "task_no_target",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 380
+        },
+        "config": {
+          "result": "Entra containment skipped: no target user. Add a `username` attribute (custom artifact type) or an email artifact to the case and run it again.",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "task_result",
+        "type": "case_task_complete",
+        "position": {
+          "x": 250,
+          "y": 720
+        },
+        "config": {
+          "result": "Entra containment for {{ (case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim }}: revokeSignInSessions HTTP {{ steps.revoke.output.status }}, disable account: {{ ((steps.get('disable') or {}).get('output') or {}).get('status', 'not requested') }}.",
+          "result_status": "{{ 'ok' if steps.revoke.output.status < 300 else 'failed' }}",
+          "complete": "{{ steps.revoke.output.status < 300 }}"
+        }
       }
     ],
     "edges": [
@@ -198,6 +224,18 @@
         "id": "e_guard",
         "source": "guard",
         "target": "revoke",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_no_target",
+        "source": "no_target",
+        "target": "task_no_target",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_result",
+        "source": "result",
+        "target": "task_result",
         "source_handle": null
       }
     ]

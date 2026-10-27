@@ -93,6 +93,9 @@ export interface CaseTask {
   workflow_runnable?: boolean;
   last_run_id?: number | null;
   last_run_status?: string | null;
+  result?: string | null;           // set by a workflow's "Complete task" step
+  result_status?: 'ok' | 'warning' | 'failed' | null;
+  result_at?: string | null;
 }
 
 export interface CaseEvent {

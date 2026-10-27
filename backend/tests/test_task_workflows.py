@@ -157,3 +157,97 @@ def test_mcp_run_case_task_workflow(monkeypatch):
         await db.execute(delete(Workflow).where(Workflow.id == wf_id))
         await db.commit()
     _run(body)
+
+
+async def _complete_scenario():
+    from types import SimpleNamespace
+
+    import pytest
+
+    from app.workflows.nodes import NodeContext, NodeError
+    from app.workflows.nodes.cases import run_case_task_complete
+    await engine.dispose()
+    h = secrets.token_hex(3)
+    async with AsyncSessionLocal() as db:
+        t = Tenant(name="tc", slug=f"tc-{h}")
+        db.add(t)
+        await db.flush()
+        wf = Workflow(tenant_id=t.id, name="Ask", trigger_type="manual", enabled=True, graph=GRAPH)
+        case = Case(title="incident", tenant_id=t.id)
+        db.add_all([wf, case])
+        await db.flush()
+        run = WorkflowRun(tenant_id=t.id, workflow_id=wf.id, workflow_version=1, status="running", graph_snapshot={},
+                          case_id=case.id)
+        db.add(run)
+        await db.flush()
+        confirm = CaseTask(case_id=case.id, tenant_id=t.id, title="Confirm with the user", last_run_id=run.id)
+        other = CaseTask(case_id=case.id, tenant_id=t.id, title="Reset password")
+        db.add_all([confirm, other])
+        await db.commit()
+        tid, cid, wid, rid, confirm_id, other_id = t.id, case.id, wf.id, run.id, confirm.id, other.id
+
+    async def step(config, run_id=None, case_id=cid):
+        async with AsyncSessionLocal() as db:
+            r = SimpleNamespace(id=run_id if run_id is not None else rid, tenant_id=tid, case_id=case_id)
+            out = await run_case_task_complete(NodeContext(db=db, run=r, step=None, node={}, ctx={}), config)
+            await db.commit()
+            return out
+
+    try:
+        out = await step({"result": "User answered: It was me", "result_status": "ok", "complete": "True"})
+        assert out == {"task_id": confirm_id, "completed": True, "result_status": "ok"}
+        # not started from a task and no title: a no-op, never an error
+        assert (await step({"result": "x"}, run_id=-1))["task_id"] is None
+        assert (await step({"result": "x"}, case_id=None))["task_id"] is None
+        # by title, recording a failure without ticking
+        out = await step({"task_title": "reset PASSWORD", "result": "Okta returned 403", "result_status": "failed",
+                          "complete": "false"}, run_id=-1)
+        assert out == {"task_id": other_id, "completed": False, "result_status": "failed"}
+        with pytest.raises(NodeError):
+            await step({"result_status": "great"})
+        async with AsyncSessionLocal() as db:
+            c1, c2 = await db.get(CaseTask, confirm_id), await db.get(CaseTask, other_id)
+            assert c1.status == "done" and c1.result == "User answered: It was me" and c1.result_status == "ok"
+            assert c1.completed_by is None and c1.result_at is not None
+            assert c2.status == "todo" and c2.result_status == "failed"
+            notes = (await db.execute(select(TimelineEvent.content).where(TimelineEvent.case_id == cid))).scalars().all()
+            assert any("Automation result for **Confirm with the user** (ok)" in n for n in notes)
+            assert any("Task completed: **Confirm with the user**" in n for n in notes)
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(CaseTask).where(CaseTask.case_id == cid))
+            await db.execute(delete(WorkflowRun).where(WorkflowRun.id == rid))
+            await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tid))
+            await db.execute(delete(TimelineEvent).where(TimelineEvent.case_id == cid))
+            await db.execute(delete(Case).where(Case.id == cid))
+            await db.execute(delete(Workflow).where(Workflow.id == wid))
+            await db.execute(delete(Tenant).where(Tenant.id == tid))
+            await db.commit()
+        await engine.dispose()
+
+
+def test_case_task_complete_node():
+    asyncio.run(_complete_scenario())
+
+
+def test_templates_record_on_tasks():
+    import json
+    from pathlib import Path
+    from app.workflows.templating import eval_expr
+    root = Path(__file__).resolve().parents[1] / "app" / "workflows" / "templates"
+    for p in root.glob("*.json"):
+        d = json.loads(p.read_text())
+        if d["kind"] != "response":
+            continue
+        g = d["graph"]
+        srcs = {e["source"] for e in g["edges"]}
+        ends = [n for n in g["nodes"] if n["id"] not in srcs]
+        assert ends and all(n["type"] == "case_task_complete" for n in ends), p.name
+    d = json.loads((root / "task-confirm-with-user-slack.json").read_text())
+    rec = next(n for n in d["graph"]["nodes"] if n["id"] == "record")["config"]
+    strip = lambda s: s.strip()[2:-2]  # noqa: E731  "{{ expr }}" -> expr
+    for out, want in (({"response": "It was me", "timed_out": False}, ("ok", True)),
+                      ({"response": "It wasn't me", "timed_out": False}, ("failed", True)),
+                      ({"response": None, "timed_out": True}, ("warning", False))):
+        ctx = {"steps": {"ask": {"output": out}}}
+        assert (eval_expr(strip(rec["result_status"]), ctx), eval_expr(strip(rec["complete"]), ctx)) == want

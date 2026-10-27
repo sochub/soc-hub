@@ -1,0 +1,105 @@
+{
+  "key": "task-confirm-with-user-slack",
+  "name": "Ask the user on Slack to confirm (for a case task)",
+  "vendor": "Slack",
+  "kind": "triage",
+  "description": "Run from a case task such as \"Confirm the activity with the user\": DMs the case's user on Slack, then records their answer on the task (It was me / It wasn't me / no answer) and ticks it.",
+  "trigger_type": "manual",
+  "trigger_filter": null,
+  "params": [],
+  "secrets": [],
+  "setup": "## Before you start\n- Connect Slack (Settings > Integrations > Slack, scope `users:read.email`).\n- The user is the case's `username` attribute (custom artifact type) or its first email artifact.\n- Link this workflow to a playbook task (Playbooks > edit > *Run workflow* on the task), apply the playbook and press **Run** on the task.\n\n## What the task shows\n- *It was me*: result **ok**, task ticked.\n- *It wasn't me*: result **failed** (red), task ticked: the question was answered; escalate from the case.\n- No answer in 4 hours (change `timeout_hours` on the ask step): result **warning**, task left open.\n- No user on the case: result **failed**, task left open.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "has_user",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "expression": "((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) != ''"
+        }
+      },
+      {
+        "id": "no_user",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 280
+        },
+        "config": {
+          "result": "No user to ask: add a `username` attribute or an email artifact to the case.",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "ask",
+        "type": "slack_ask_user",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "email": "{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}",
+          "message": "Your security team is checking recent activity on your account (case: {{ case.title }}). Was this you?",
+          "buttons": [
+            "It was me",
+            "It wasn't me"
+          ],
+          "timeout_hours": "4"
+        }
+      },
+      {
+        "id": "record",
+        "type": "case_task_complete",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "result": "{{ 'No answer within the time limit' if steps.ask.output.timed_out else 'User answered: ' ~ steps.ask.output.response }}",
+          "result_status": "{{ 'warning' if steps.ask.output.timed_out else ('ok' if steps.ask.output.response == 'It was me' else 'failed') }}",
+          "complete": "{{ not steps.ask.output.timed_out }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "has_user",
+        "source_handle": null
+      },
+      {
+        "id": "e2",
+        "source": "has_user",
+        "target": "ask",
+        "source_handle": "true"
+      },
+      {
+        "id": "e3",
+        "source": "has_user",
+        "target": "no_user",
+        "source_handle": "false"
+      },
+      {
+        "id": "e4",
+        "source": "ask",
+        "target": "record",
+        "source_handle": null
+      }
+    ]
+  }
+}

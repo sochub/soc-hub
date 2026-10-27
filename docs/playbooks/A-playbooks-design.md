@@ -83,8 +83,10 @@ A task in a **tenant** playbook can link one of the tenant's **manual** workflow
 link onto the case task (`case_tasks.workflow_id`). In the case **Tasks** tab the task shows the workflow and a
 **Run** button: `POST /cases/{id}/tasks/{task_id}/run` starts it on the case like a manual run (analysts and admins;
 the workflow must be enabled, otherwise the task says so), records `last_run_id`, adds an activity entry and an
-audit row, and the tab follows the run until it settles, linking to the run. Running never completes the task: the
-analyst checks the result and ticks it. Links are validated (a manual workflow of the same tenant) on playbook
+audit row, and the tab follows the run until it settles, linking to the run. Running doesn't complete the task by
+itself: a workflow step **Complete task** (`case_task_complete`) does, with a result shown on the task (all built-in
+response templates end with one; failed attempts record why and leave the task open). Without that step the analyst
+checks the run and ticks it. Links are validated (a manual workflow of the same tenant) on playbook
 create/update and on ad-hoc tasks (`workflow_id` on create; `workflow_id: null` on update unlinks). MCP:
 `list_case_tasks` shows the link and last run, `run_case_task_workflow` runs it.
 

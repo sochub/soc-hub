@@ -20,6 +20,10 @@ class CaseTask(Base):
     completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     workflow_id = Column(Integer, ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)  # run from the task
     last_run_id = Column(Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True)
+    # Set by a case_task_complete workflow step: what the automation found (e.g. "User answered: It was me").
+    result = Column(Text, nullable=True)
+    result_status = Column(String(16), nullable=True)  # ok | warning | failed
+    result_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     case = relationship("Case", back_populates="tasks")

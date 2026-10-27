@@ -34,6 +34,9 @@ class CaseTaskOut(BaseModel):
     workflow_runnable: bool = False  # enabled + manual: the Run button works
     last_run_id: Optional[int] = None
     last_run_status: Optional[str] = None
+    result: Optional[str] = None
+    result_status: Optional[str] = None
+    result_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
