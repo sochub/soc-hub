@@ -35,7 +35,10 @@ def test_protected_match():
     assert protected_match("host", "DC-01", PROTECTED) and not protected_match("host", "ws-01", PROTECTED)
     assert protected_match("ip", "10.0.0.7", PROTECTED) and not protected_match("ip", "10.0.1.7", PROTECTED)
     assert protected_match("host", "pay-prod-db", PROTECTED) and protected_match("user", "x-prod-db", PROTECTED)
-    assert not protected_match("ip", "not-an-ip", PROTECTED)
+    # ranges that overlap a protected range, mapped IPv6 and junk are all refused
+    assert protected_match("ip", "10.0.0.0/8", PROTECTED) and protected_match("ip", "::ffff:10.0.0.5", PROTECTED)
+    assert protected_match("ip", "not-an-ip", PROTECTED) and protected_match("ip", "not-an-ip", [])
+    assert not protected_match("ip", "203.0.113.0/24", PROTECTED)
 
 
 def test_every_response_template_is_guarded():

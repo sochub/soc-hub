@@ -33,10 +33,25 @@ async def policy(db: AsyncSession, tenant_id: int) -> dict:
             "protected": row.protected or []}
 
 
+def _net(raw: str):
+    """An address or range as a network, IPv4-mapped IPv6 folded to IPv4. Raises ValueError."""
+    n = ipaddress.ip_network(raw.strip(), strict=False)
+    mapped = n.network_address.ipv4_mapped if n.version == 6 else None
+    if mapped is not None and n.prefixlen >= 96:
+        n = ipaddress.ip_network(f"{mapped}/{n.prefixlen - 96}", strict=False)
+    return n
+
+
 def protected_match(kind: str, target: str, protected: list) -> Optional[dict]:
     """The first protected entry covering this target: host/user patterns are case-insensitive globs, ip
-    entries are an address or CIDR, kind "any" matches every kind."""
+    entries are an address or CIDR (a target range that overlaps one counts), kind "any" matches every kind."""
     t = target.strip().lower()
+    tnet = None
+    if kind == "ip":
+        try:
+            tnet = _net(t)
+        except ValueError:
+            return {"kind": "ip", "pattern": "(not an IP address or range)"}  # fail closed
     for p in protected:
         if p.get("kind") not in (kind, "any"):
             continue
@@ -45,10 +60,11 @@ def protected_match(kind: str, target: str, protected: list) -> Optional[dict]:
             continue
         if kind == "ip" and p.get("kind") == "ip":
             try:
-                if ipaddress.ip_address(t) in ipaddress.ip_network(pat, strict=False):
-                    return p
+                pnet = _net(pat)
             except ValueError:
-                continue
+                continue  # validated on save; a bad stored entry can't match anything
+            if tnet.version == pnet.version and tnet.overlaps(pnet):
+                return p
         elif fnmatch.fnmatchcase(t, pat):
             return p
     return None
