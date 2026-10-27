@@ -57,7 +57,9 @@ export default function TicketingCard({ tenantId }: { tenantId: number | null })
         deployment: data?.settings?.deployment ?? 'cloud',
     };
     const set = (patch: Partial<typeof form>) => { setDraft({ ...form, ...patch }); setMsg(null); };
-    const sameProvider = !!data && data.provider === form.provider;
+    const host = (u: string) => { try { return new URL(u).hostname.toLowerCase(); } catch { return u; } };
+    // Saved credentials only apply to the same provider at the same host (the backend enforces it too).
+    const sameProvider = !!data && data.provider === form.provider && host(data.base_url) === host(form.base_url);
     const credFields = CREDS[form.provider].filter((f) => !(form.provider === 'jira' && form.deployment === 'datacenter' && f.key === 'email'));
 
     const save = useMutation({

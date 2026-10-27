@@ -34,7 +34,7 @@ SETTING_KEYS = {"project_key", "issue_type", "deployment", "tenant", "tickettype
 class ConnectionIn(BaseModel):
     provider: str
     base_url: str = Field(max_length=500)
-    credentials: Optional[Dict[str, str]] = None  # omitted = keep the stored ones (same provider only)
+    credentials: Optional[Dict[str, str]] = None  # omitted = keep the stored ones (same provider and host only)
     settings: Dict[str, Any] = {}
     enabled: bool = True
     auto_create_min_severity: Optional[str] = None
@@ -112,8 +112,12 @@ async def put_connection(
     if body.provider == "jira" and body.settings.get("deployment") != "datacenter":
         need_creds = need_creds | {"email"}
     missing = sorted(k for k in need_settings if not str(body.settings.get(k) or "").strip())
-    if body.credentials is None and (conn is None or conn.provider != body.provider):
-        raise HTTPException(status_code=422, detail="credentials are required for a new provider")
+    # Stored credentials only carry over to the same provider at the same host: otherwise an admin could point
+    # the saved secrets at a host of their choosing and press Test.
+    same_target = conn is not None and conn.provider == body.provider and \
+        (urlparse(conn.base_url).hostname or "").lower() == (urlparse(body.base_url).hostname or "").lower()
+    if body.credentials is None and not same_target:
+        raise HTTPException(status_code=422, detail="credentials are required when the provider or host changes")
     if body.credentials is not None:
         missing += sorted(k for k in need_creds if not (body.credentials.get(k) or "").strip())
     if missing:

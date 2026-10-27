@@ -91,9 +91,13 @@ async def _scenario(monkeypatch):
             r = await c.put("/api/v1/ticketing/connection", json=body)
             assert r.status_code == 200, r.text
             assert "s3cret" not in r.text and r.json()["has_credentials"] and r.json()["base_url"] == "https://acme.atlassian.net"
-            # keep the stored credentials when omitted (same provider)
+            # keep the stored credentials when omitted (same provider and host) …
             r = await c.put("/api/v1/ticketing/connection", json={**body, "credentials": None, "push_notes": False})
             assert r.status_code == 200, r.text
+            # … but never carry them to another host
+            r = await c.put("/api/v1/ticketing/connection", json={**body, "credentials": None,
+                                                                   "base_url": "https://attacker.example"})
+            assert r.status_code == 422 and "host" in r.text, r.text
             assert (await c.post("/api/v1/ticketing/connection/test")).json() == {"ok": True}
 
             # manual create for a low-severity case; a second create is refused
