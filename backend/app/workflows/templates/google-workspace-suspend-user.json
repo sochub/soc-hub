@@ -24,7 +24,7 @@
       ]
     }
   ],
-  "setup": "### Why a separate service account\nPulling alerts needs only `apps.alerts`; containment needs `admin.directory.user`, which can change any user (passwords, admin flags, suspension). Keeping it on its own service account and secret means a leaked pull key cannot sign out or suspend anyone, and you can revoke the containment delegation independently.\n\n### Google Cloud side\n1. In a Google Cloud project: APIs & Services > Library > enable **Admin SDK API**.\n2. IAM & Admin > Service accounts > **Create service account** (no project roles needed), separate from the alert reader. Keys > Add key > **JSON**.\n3. Copy its **OAuth 2 Client ID** (numeric) from the Details page.\n\n### Admin console side (super admin)\n1. Security > Access and data control > API controls > **Manage Domain Wide Delegation** > Add new: the client ID, OAuth scopes `https://www.googleapis.com/auth/admin.directory.user.security,https://www.googleapis.com/auth/admin.directory.user`, Authorize (up to 24 h to apply). If you never suspend, authorise only the first scope: each call asks only for its own scope.\n2. Pick the admin to impersonate (`ADMIN_EMAIL`): a Super Admin, or (least privilege) a custom role with **Users: Read** and **Users: Update > Suspend users**, and **Security > User Security Management** (sign-in cookie reset). A delegated admin cannot act on users above their own role (e.g. super admins).\n\n### Here\n1. Settings > Secrets: add `GWS_RESPONSE_SA_KEY` with the whole JSON key file, allowed hosts `oauth2.googleapis.com` **and** `admin.googleapis.com`.\n2. Install with `ADMIN_EMAIL`.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact, used as the Google `userKey` (primary or alias email). With no target it only writes a note.\n1. `POST https://admin.googleapis.com/admin/directory/v1/users/<email>/signOut` (scope `admin.directory.user.security`; empty body, 2xx = done): ends the user's web and device sessions and resets sign-in cookies. It does not change the password, so pair it with a password reset when credentials are compromised.\n2. Only if the case has the tag `gws-suspend`: `PUT https://admin.googleapis.com/admin/directory/v1/users/<email>` with `{\"suspended\": true}` (scope `admin.directory.user`; `update` keeps fields that are not sent, and Google recommends it over `patch`). Un-suspend by sending `false` or in the Admin console.\n3. Note with both HTTP statuses.\n\nDocs: [users.signOut](https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/signOut), [users.update](https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/update), [Domain-wide delegation](https://developers.google.com/workspace/admin/directory/v1/guides/delegation), [Sign a user out](https://support.google.com/a/answer/178854).",
+  "setup": "### Why a separate service account\nPulling alerts needs only `apps.alerts`; containment needs `admin.directory.user`, which can change any user (passwords, admin flags, suspension). Keeping it on its own service account and secret means a leaked pull key cannot sign out or suspend anyone, and you can revoke the containment delegation independently.\n\n### Google Cloud side\n1. In a Google Cloud project: APIs & Services > Library > enable **Admin SDK API**.\n2. IAM & Admin > Service accounts > **Create service account** (no project roles needed), separate from the alert reader. Keys > Add key > **JSON**.\n3. Copy its **OAuth 2 Client ID** (numeric) from the Details page.\n\n### Admin console side (super admin)\n1. Security > Access and data control > API controls > **Manage Domain Wide Delegation** > Add new: the client ID, OAuth scopes `https://www.googleapis.com/auth/admin.directory.user.security,https://www.googleapis.com/auth/admin.directory.user`, Authorize (up to 24 h to apply). If you never suspend, authorise only the first scope: each call asks only for its own scope.\n2. Pick the admin to impersonate (`ADMIN_EMAIL`): a Super Admin, or (least privilege) a custom role with **Users: Read** and **Users: Update > Suspend users**, and **Security > User Security Management** (sign-in cookie reset). A delegated admin cannot act on users above their own role (e.g. super admins).\n\n### Here\n1. Settings > Secrets: add `GWS_RESPONSE_SA_KEY` with the whole JSON key file, allowed hosts `oauth2.googleapis.com` **and** `admin.googleapis.com`.\n2. Install with `ADMIN_EMAIL`.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact, used as the Google `userKey` (primary or alias email). With no target it only writes a note.\n1. `POST https://admin.googleapis.com/admin/directory/v1/users/<email>/signOut` (scope `admin.directory.user.security`; empty body, 2xx = done): ends the user's web and device sessions and resets sign-in cookies. It does not change the password, so pair it with a password reset when credentials are compromised.\n2. Only if the case has the tag `gws-suspend`: `PUT https://admin.googleapis.com/admin/directory/v1/users/<email>` with `{\"suspended\": true}` (scope `admin.directory.user`; `update` keeps fields that are not sent, and Google recommends it over `patch`). Un-suspend by sending `false` or in the Admin console.\n3. Note with both HTTP statuses.\n\nDocs: [users.signOut](https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/signOut), [users.update](https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/update), [Domain-wide delegation](https://developers.google.com/workspace/admin/directory/v1/guides/delegation), [Sign a user out](https://support.google.com/a/answer/178854).\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n",
   "graph": {
     "nodes": [
       {
@@ -124,6 +124,20 @@
         "config": {
           "content": "Google Workspace containment for {{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}: signOut HTTP {{ steps.signout.output.status }}, suspend: {{ ((steps.get('suspend') or {}).get('output') or {}).get('status', 'not requested') }}."
         }
+      },
+      {
+        "id": "guard",
+        "type": "containment_guard",
+        "position": {
+          "x": 0,
+          "y": 210
+        },
+        "config": {
+          "action": "Sign out / suspend user (Google Workspace)",
+          "target_kind": "user",
+          "target": "{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}",
+          "release_hint": "If suspended, unsuspend the user in the Admin console."
+        }
       }
     ],
     "edges": [
@@ -142,7 +156,7 @@
       {
         "id": "e_has_target_signout",
         "source": "has_target",
-        "target": "signout",
+        "target": "guard",
         "source_handle": "true"
       },
       {
@@ -167,6 +181,12 @@
         "id": "e_suspend_result",
         "source": "suspend",
         "target": "result",
+        "source_handle": null
+      },
+      {
+        "id": "e_guard",
+        "source": "guard",
+        "target": "signout",
         "source_handle": null
       }
     ]

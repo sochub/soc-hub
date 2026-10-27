@@ -19,6 +19,7 @@ import TriagePanel from './TriagePanel';
 import FollowButton from './FollowButton';
 import WarRoomPill from './WarRoomPill';
 import CaseTicket from './CaseTicket';
+import CaseContainment from './CaseContainment';
 import OpenWarRoomModal from './OpenWarRoomModal';
 import WarRoomSuggestions from './WarRoomSuggestions';
 import IncidentOverview from './IncidentOverview';
@@ -418,6 +419,7 @@ export default function CaseDetail() {
                                     ) : (
                                         <p className="text-sm text-muted">No artifacts yet. Add the IPs, domains, hashes and other evidence you find.</p>
                                     )}
+                                    {id && <div className="pt-4"><CaseContainment caseId={parseInt(id)} canEdit={canSeeGuests} /></div>}
                                     {id && <div className="pt-4"><CaseAssets caseId={parseInt(id)} /></div>}
                                 </div>
                             )}

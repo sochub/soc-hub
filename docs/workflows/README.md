@@ -76,6 +76,16 @@ Use them in templates:
 - `alert_promote`: `mode` `new` | `link` | `group`, see below. Output `{case_id, created}`. Sets the run's case, so later nodes act on the promoted case.
 - `alert_dismiss`: optional templated `reason`. Sets `alert.status = dismissed` and stores the reason.
 - `alert_create`: creates a `pending` alert from data a workflow pulled (e.g. a vendor API on a schedule). `source` (1-100 chars), `external_id` (1-255), `title` (cut to 500), `severity` (`critical`/`high`/`medium`/`low`/`info`; empty or anything else becomes `medium`, and an unknown value adds `severity_defaulted: true` to the output), `payload` (expression, no `{{ }}`, that evaluates to an object or list of at most 256 KB, e.g. `loop.item`). Idempotent on (tenant, `source`, `external_id`) like the webhook: an event seen twice (overlapping schedule windows) returns the existing alert with `created: false` and does not fire `alert.ingested` again. Output `{alert_id, created}`. A new alert fires `alert.ingested` (counts toward the loop guard). Allowed in any workflow.
+- `containment_guard`: put it right before any step that isolates a host, suspends a user or blocks an IP. `action`
+  (label), `target_kind` (`host`, `user` or `ip`), templated `target`, optional `release_hint` (how to undo it at the
+  vendor). It checks the tenant's **containment guardrails** (Settings → Integrations): targets on the protected list
+  (case-insensitive globs for hosts and users, address or CIDR for IPs, `any` for every kind) are refused, as are
+  actions past the tenant's 24-hour cap or a new target past the per-case cap (re-containing a target already on the
+  case is fine). Allowed: the action is recorded on the case (**Artifacts & assets → Containment**, plus an activity
+  entry) and the run goes on with `{allowed: true, action_id, target}`. Refused: the refusal is recorded and noted
+  on the case, and the step fails with the reason, which stops the run. In a dry run it checks the policy and records
+  nothing. Guards of one tenant are serialised, so caps hold under concurrent runs. Every built-in response template
+  has one.
 
 Every non-trigger step must have an incoming edge; a disconnected step means the workflow cannot be enabled.
 

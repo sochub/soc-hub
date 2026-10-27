@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX } from 'lucide-react';
+import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck } from 'lucide-react';
 import type { TriggerType } from './types';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
@@ -121,6 +121,16 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'group_key', label: 'Group key (group)', kind: 'text', placeholder: 'host:{{ alert.payload.host }}' },
             { key: 'window_hours', label: 'Group window (hours)', kind: 'number', placeholder: '24' },
             { key: 'case_id', label: 'Case ID (link)', kind: 'text' },
+        ],
+    },
+    {
+        type: 'containment_guard', label: 'Containment guard', category: 'Logic', icon: ShieldCheck, sideEffect: true,
+        fields: [
+            { key: 'action', label: 'Action', kind: 'text', required: true, placeholder: 'Contain host (CrowdStrike)' },
+            { key: 'target_kind', label: 'Target kind', kind: 'select', options: ['host', 'user', 'ip'], required: true },
+            { key: 'target', label: 'Target', kind: 'text', required: true, placeholder: "{{ case.attributes.get('hostname', '') }}",
+              help: 'Put this before the step that contains. Protected targets and the daily / per-case caps (Settings → Integrations → Containment guardrails) stop the run; allowed actions are listed on the case' },
+            { key: 'release_hint', label: 'How to undo', kind: 'text', placeholder: 'Lift containment in the Falcon console' },
         ],
     },
     {
