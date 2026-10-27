@@ -37,6 +37,7 @@ from app.models.ioc import IOC
 from app.models.playbook import IR_PHASES, PlaybookTemplate
 from app.models.suppression_rule import SuppressionRule
 from app.models.ticket_connection import TicketConnection
+from app.models.containment import ContainmentAction
 from app.models.tenant import Tenant
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.oauth.tokens import OAuthPrincipal
@@ -51,8 +52,9 @@ from app.schemas.playbook import PlaybookTemplateCreate, PlaybookTemplateUpdate
 from app.schemas.suppression import SuppressionCreate, SuppressionPreview
 from app.schemas.workflow import DryRunIn, RunSummary, WorkflowIn
 from app.services import (alert_service, case_records, case_service, enrichment_service, ioc_service,
-                          playbook_service, suppression_service, task_service, ticket_sync,
+                          playbook_service, portfolio, suppression_service, task_service, ticket_sync,
                           workflow_service)
+from app.services import containment as containment_service
 from app.services.artifact_types import BUILTIN_KEYS, UnknownArtifactType, not_private
 from app.services.milestones import MilestoneConflict, case_milestones, set_milestones
 from app.tasks.triage import run_case_triage_task
@@ -101,7 +103,11 @@ MIN_ROLE: dict[str, str] = {
     "list_suppressions": "viewer", "preview_suppression": "viewer", "create_suppression": "analyst",
     # ticketing
     "get_case_ticket": "viewer", "create_case_ticket": "analyst",
-    "run_case_task_workflow": "analyst",
+    "run_case_task_workflow": "analyst", "sync_case_ticket": "analyst",
+    "update_suppression": "analyst",
+    # containment guardrails and the client summary
+    "get_containment_policy": "viewer", "list_containment_actions": "viewer", "release_containment_action": "analyst",
+    "get_client_summary": "viewer",
 }
 
 
@@ -215,6 +221,8 @@ def _task(t) -> dict:
         out |= {"workflow_id": g("workflow_id"), "workflow_name": g("workflow_name"),
                 "workflow_runnable": g("workflow_runnable"), "last_run_id": g("last_run_id"),
                 "last_run_status": g("last_run_status")}
+    if g("result_status"):
+        out |= {"result": g("result"), "result_status": g("result_status"), "result_at": _iso(g("result_at"))}
     return out
 
 
@@ -584,8 +592,10 @@ async def run_case_task_workflow(db: AsyncSession, p: OAuthPrincipal, case_id: i
 @tool
 async def update_task(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id: int, status: Optional[str] = None,
                       title: Optional[str] = None, description: Optional[str] = None,
-                      phase: Optional[str] = None) -> dict:
-    """Update a case task: status "todo" or "done", title, description or phase."""
+                      phase: Optional[str] = None, workflow_id: Optional[int] = None,
+                      unlink_workflow: bool = False) -> dict:
+    """Update a case task: status "todo" or "done", title, description or phase. workflow_id links a manual
+    workflow of this organization (run it with run_case_task_workflow); unlink_workflow=true removes the link."""
     c = await _case(db, p, case_id)
     t = (await db.execute(select(CaseTask).where(
         CaseTask.id == task_id, CaseTask.case_id == c.id, CaseTask.tenant_id == p.tenant_id))).scalars().first()
@@ -593,12 +603,19 @@ async def update_task(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id
         raise ToolError("Not found")
     if status is not None and status not in ("todo", "done"):
         raise ToolError('status must be "todo" or "done"')
+    if unlink_workflow or (workflow_id is not None and workflow_id != t.workflow_id):
+        new = None if unlink_workflow else workflow_id
+        await task_service.check_task_workflows(db, p.tenant_id, [new])
+        await create_audit_log(db=db, entity_type="case", entity_id=c.id, action="task_workflow_linked",
+                               tenant_id=p.tenant_id, user_id=p.user.id,
+                               changes={"task": t.title, "workflow_id": {"from": t.workflow_id, "to": new}})
+        t.workflow_id = new
     await task_service.update_case_task(db, case=c, task=t, user_id=p.user.id,
                                         data={"status": status, "title": title, "description": description,
                                               "phase": phase})
     await db.commit()
     await db.refresh(t)
-    return _task(t)
+    return _task((await task_service.task_rows(db, [t]))[0])
 
 
 def _playbook_query(p: OAuthPrincipal):
@@ -953,18 +970,19 @@ async def delete_case_asset(db: AsyncSession, p: OAuthPrincipal, case_id: int, a
 
 @tool
 async def add_case_task(db: AsyncSession, p: OAuthPrincipal, case_id: int, title: str,
-                        phase: str = "identification", description: Optional[str] = None) -> dict:
+                        phase: str = "identification", description: Optional[str] = None,
+                        workflow_id: Optional[int] = None) -> dict:
     """Add a response task (status todo) at the end of the case's task list. phase: identification (default),
-    containment, eradication, recovery, lessons_learned."""
+    containment, eradication, recovery, lessons_learned. workflow_id: a manual workflow to run from the task."""
     if phase not in IR_PHASES:
         raise ToolError(f"phase must be one of {', '.join(IR_PHASES)}")
     c = await _case(db, p, case_id)
     body = CaseTaskCreate(**_fields(title=title, phase=phase, description=description))
     t = await task_service.add_case_task(db, case=c, phase=body.phase, title=body.title, description=body.description,
-                                         user_id=p.user.id)
+                                         user_id=p.user.id, workflow_id=workflow_id)
     await db.commit()
     await db.refresh(t)
-    return {**_task(t), "case_id": c.id}
+    return {**_task((await task_service.task_rows(db, [t]))[0]), "case_id": c.id}
 
 
 @tool
@@ -1197,6 +1215,98 @@ async def create_case_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int) 
     await db.commit()
     await db.refresh(link)
     return {"case_id": c.id, "ticket": _ticket(link), "url": case_url(c.id)}
+
+
+@tool
+async def sync_case_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
+    """Pull the case ticket's status and new comments now (and push notes, if the organization enabled that)."""
+    c = await _case(db, p, case_id)
+    conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == p.tenant_id))).scalars().first()
+    link = await ticket_sync.link_for(db, c.id, p.tenant_id)
+    if conn is None or not conn.enabled or link is None or link.connection_id != conn.id:
+        raise ToolError("This case has no synced ticket")
+    try:
+        await ticket_sync.sync_link(db, ticket_sync.client(conn, await ticket_sync._allowlist(db, p.tenant_id)),
+                                    conn, link, c)
+    except ticket_sync.TicketError as e:
+        raise ToolError(str(e)) from None
+    await db.commit()
+    await db.refresh(link)
+    return {"case_id": c.id, "ticket": _ticket(link)}
+
+
+@tool
+async def update_suppression(db: AsyncSession, p: OAuthPrincipal, suppression_id: int, enabled: Optional[bool] = None,
+                             name: Optional[str] = None, reason: Optional[str] = None,
+                             expires_in_days: Optional[int] = None) -> dict:
+    """Change a suppression rule's name, reason or expiry (1-365 days from now), or disable it (enabled=false).
+    Enabling a rule is left to a person in SOC Hub. Conditions can't change here: draft a new rule."""
+    if enabled is True:
+        raise ToolError("Enabling a suppression rule is done by a person in SOC Hub (Alerts > Suppressions)")
+    if expires_in_days is not None and not 1 <= expires_in_days <= 365:
+        raise ToolError("expires_in_days must be 1-365")
+    rule = await suppression_service.get_rule(db, p.tenant_id, suppression_id)
+    data = {k: v for k, v in (("enabled", enabled), ("name", name), ("reason", reason)) if v is not None}
+    if expires_in_days is not None:
+        data["expires_at"] = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
+    await suppression_service.update_rule(db, rule=rule, user_id=p.user.id, data=data)
+    await db.commit()
+    await db.refresh(rule)
+    return _suppression(rule)
+
+
+@tool
+async def get_containment_policy(db: AsyncSession, p: OAuthPrincipal) -> dict:
+    """The organization's containment guardrails: protected hosts/users/IPs, daily cap, per-case cap. Changing
+    them is an admin action in SOC Hub (Settings > Integrations), not available here."""
+    return await containment_service.policy(db, p.tenant_id)
+
+
+@tool
+async def list_containment_actions(db: AsyncSession, p: OAuthPrincipal, case_id: Optional[int] = None,
+                                   status: Optional[str] = None) -> dict:
+    """Automated containment recorded by containment guards: active, blocked (refused by policy, with the reason)
+    or released. Filter by case_id and/or status."""
+    q = select(ContainmentAction).where(ContainmentAction.tenant_id == p.tenant_id)
+    if case_id is not None:
+        q = q.where(ContainmentAction.case_id == (await _case(db, p, case_id)).id)
+    if status:
+        q = q.where(ContainmentAction.status == status)
+    rows = (await db.execute(q.order_by(ContainmentAction.id.desc()).limit(200))).scalars().all()
+    return {"actions": [{"id": a.id, "case_id": a.case_id, "action": a.action, "target_kind": a.target_kind,
+                         "target": a.target, "status": a.status, "reason": a.reason, "release_hint": a.release_hint,
+                         "created_at": _iso(a.created_at), "released_at": _iso(a.released_at)} for a in rows]}
+
+
+@tool
+async def release_containment_action(db: AsyncSession, p: OAuthPrincipal, action_id: int) -> dict:
+    """Record that an active containment was lifted at the vendor (see its release_hint); frees the case's slot.
+    This only records it: undo the containment in the vendor's console first."""
+    a = (await db.execute(select(ContainmentAction).where(
+        ContainmentAction.id == action_id, ContainmentAction.tenant_id == p.tenant_id))).scalars().first()
+    if a is None:
+        raise ToolError("Not found")
+    if a.status != "active":
+        raise ToolError(f"This action is {a.status}, not active")
+    a.status, a.released_at, a.released_by = "released", datetime.now(timezone.utc), p.user.id
+    if a.case_id:
+        db.add(TimelineEvent(case_id=a.case_id, user_id=p.user.id, event_type="containment_released",
+                             content=f"Containment released: {a.action} on {a.target_kind} {a.target}."))
+    await create_audit_log(db=db, entity_type="containment_action", entity_id=a.id, action="released",
+                           tenant_id=p.tenant_id, user_id=p.user.id, changes={"target": a.target})
+    await db.commit()
+    return {"id": action_id, "status": "released"}
+
+
+@tool
+async def get_client_summary(db: AsyncSession, p: OAuthPrincipal, days: int = 7) -> dict:
+    """This organization's summary for the last `days` (1-90): cases opened/resolved with outcomes, MTTR, SLA
+    breaches, alerts received/promoted/dismissed/suppressed, notable cases, plus a ready-to-send text."""
+    if not 1 <= days <= 90:
+        raise ToolError("days must be 1-90")
+    t = await db.get(Tenant, p.tenant_id)
+    d = await portfolio.digest(db, t, days)
+    return {**{k: (_iso(v) if isinstance(v, datetime) else v) for k, v in d.items()}, "text": portfolio.digest_text(d)}
 
 
 # ── enrichment & triage ──────────────────────────────────────────

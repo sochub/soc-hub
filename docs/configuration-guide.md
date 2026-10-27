@@ -11,6 +11,10 @@ the error you are looking at means. For the full list of environment variables s
 - [5. Slack](#5-slack)
 - [6. AI copilot](#6-ai-copilot)
 - [7. Uploads and storage](#7-uploads-and-storage)
+- [8. Ticketing / PSA](#8-ticketing--psa)
+- [9. Containment guardrails](#9-containment-guardrails)
+- [10. Email: "was this you?" and weekly client summaries](#10-email-was-this-you-and-weekly-client-summaries)
+- [11. Alert suppression](#11-alert-suppression)
 - [Quick health check](#quick-health-check)
 
 ## 1. Before the first boot
@@ -185,6 +189,63 @@ More symptoms are in the [Slack troubleshooting table](slack/setup.md#troublesho
 - Local storage writes to the `attachments_data` volume as **uid 10001**. If you bind-mount a host folder
   instead, `chown -R 10001 <folder>` or uploads fail with permission errors.
 - `STORAGE_BACKEND=s3` requires `S3_BUCKET`; the backend won't start without it.
+
+## 8. Ticketing / PSA
+
+**Settings → Integrations → Ticketing / PSA** (admins), one connection per organization:
+
+![Ticketing / PSA connection card](images/config-ticketing.png)
+
+| Provider | Base URL | Credentials | Settings |
+|---|---|---|---|
+| Jira Cloud | `https://<site>.atlassian.net` | account email + API token | project key, issue type (default Task) |
+| Jira Data Center | your Jira URL | personal access token | project key, issue type |
+| HaloPSA | `https://<instance>.halopsa.com` | API application client ID + secret (client credentials) | ticket type ID, client ID, Halo tenant (hosted Halo) |
+| ConnectWise Manage | `https://<region>.myconnectwise.net/v4_6_release/apis/3.0` | company ID, public + private key, clientId | service board ID, company identifier |
+
+- **Test** signs in and reads the project or board; nothing is created.
+- Credentials are write-only. Leaving them blank on save keeps the stored ones, but only for the same provider at
+  the same host: change the host and you must enter them again.
+- **Create tickets automatically for** a severity and above only applies to cases created after you turn it on.
+- **Post analyst notes to the ticket** is off by default because PSA tickets are often visible to the client. When on,
+  notes go as internal notes in HaloPSA and ConnectWise.
+- The sync runs every 5 minutes on the Celery beat (`sync-tickets`); errors show on the card ("Last sync: …").
+- Hosts on private addresses need the tenant's HTTP allowlist and `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST`, as for
+  workflows. The old `JIRA_URL` / `JIRA_USER` / `JIRA_API_TOKEN` variables are ignored.
+
+## 9. Containment guardrails
+
+![Containment guardrails card](images/config-containment.png)
+
+**Settings → Integrations → Containment guardrails** (admins). Defaults apply until you save: 25 automated actions
+per 24 hours and 5 contained targets per case, nothing protected.
+
+- **Never contain automatically**, one per line: `user ceo@acme.com  # VIP`, `host dc-*`, `ip 10.0.0.0/24`,
+  `any *-prod-db`. An IP target that is a range overlapping a protected range, or isn't a valid address, is refused.
+- A refused action stops the workflow run and adds a note to the case saying why; nothing is sent to the vendor.
+- Turning **Enforce guardrails** off lets every guarded step through (actions are still listed on the case).
+- Your own workflows get the same protection by adding a **Containment guard** step before the step that acts.
+
+## 10. Email: "was this you?" and weekly client summaries
+
+Both need outgoing email: `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL` (and `SMTP_USER` / `SMTP_PASSWORD` when your
+relay needs them) in `backend/.env`, and `FRONTEND_URL` set to the address people open in a browser.
+
+- **Ask user (email)** steps and the *Ask the user by email: was this you?* template email a link to
+  `FRONTEND_URL/verify/<token>`. If `FRONTEND_URL` is wrong the link is dead and the question times out. Without SMTP
+  the step fails with "email is not set up on this server".
+- **Weekly client summaries** (Portfolio → a client's summary → *Change recipients*, that client's admins): the beat
+  task checks hourly and sends at most once a week per client. Without SMTP nothing is sent and nothing retries
+  every hour.
+
+## 11. Alert suppression
+
+![Suppression rules](images/suppressions.png)
+
+**Alerts → Suppressions** (analysts and admins). Before saving a rule, press **Preview**: it shows how many of the last
+500 alerts it would have caught and warns when that's most of them. Give every rule an expiry unless the noise is
+permanent. A rule that has suppressed alerts can only be disabled, not edited or deleted, so its history stays
+explainable; create a new rule instead. Rules drafted by AI clients over MCP arrive disabled.
 
 ## Quick health check
 
