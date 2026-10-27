@@ -10,7 +10,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
-from app.services import alert_service
+from app.services import alert_service, suppression_service
 from app.workflows.events import emit_event
 
 router = APIRouter()
@@ -31,7 +31,8 @@ async def ingest_alert(
     Idempotent on ``(tenant, source, external_id)``: re-posting an alert that
     already exists returns the existing row and does not re-emit
     ``alert.ingested``. ``ON CONFLICT DO NOTHING`` makes concurrent duplicates
-    safe — exactly one insert wins.
+    safe — exactly one insert wins. A new alert matching an active suppression
+    rule is stored dismissed and emits nothing.
     """
     inserted_id = (await db.execute(
         insert(Alert)
@@ -47,11 +48,14 @@ async def ingest_alert(
         .on_conflict_do_nothing(constraint="uq_alerts_tenant_source_external")
         .returning(Alert.id)
     )).scalar()
-    await db.commit()
     if inserted_id is not None:
         alert = (await db.execute(select(Alert).where(Alert.id == inserted_id))).scalars().one()
-        emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
+        suppressed = await suppression_service.apply(db, alert)
+        await db.commit()
+        if suppressed is None:
+            emit_event(webhook.tenant_id, "alert.ingested", alert_id=alert.id)
         return alert
+    await db.commit()
     # Duplicate: return the existing alert for this natural key.
     return (await db.execute(
         select(Alert).where(
@@ -88,6 +92,16 @@ async def _get_alert(db: AsyncSession, alert_id: int, tenant_id: int) -> Alert:
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     return alert
+
+
+@router.get("/{alert_id}", response_model=case_schema.Alert)
+async def read_alert(
+    alert_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    return await _get_alert(db, alert_id, tenant_id)
 
 
 @router.patch("/{alert_id}", response_model=case_schema.Alert)

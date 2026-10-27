@@ -6,6 +6,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.case import Alert, Case, CaseSeverity, CaseStatus
+from app.services import suppression_service
 from app.services.case_service import add_alert_artifacts, create_case_record
 from app.utils.audit import create_audit_log
 from app.workflows.events import emit_event
@@ -143,16 +144,22 @@ async def run_alert_create(nctx: NodeContext, config: dict) -> dict:
         .on_conflict_do_nothing(constraint="uq_alerts_tenant_source_external").returning(Alert.id)
     )).scalar()
     created = alert_id is not None
+    suppressed = None
     if created:
         await create_audit_log(db=nctx.db, entity_type="alert", entity_id=alert_id, action="created_by_workflow",
                                tenant_id=tenant_id, user_id=None,
                                changes={"source": source, "external_id": external_id, "by": "automation"})
-        depth = nctx.run.depth + 1
-        nctx.after_commit.append(lambda: emit_event(tenant_id, "alert.ingested", alert_id=alert_id, depth=depth))
+        alert = (await nctx.db.execute(select(Alert).where(Alert.id == alert_id))).scalars().one()
+        suppressed = await suppression_service.apply(nctx.db, alert)
+        if suppressed is None:  # suppressed noise starts no workflows
+            depth = nctx.run.depth + 1
+            nctx.after_commit.append(lambda: emit_event(tenant_id, "alert.ingested", alert_id=alert_id, depth=depth))
     else:
         alert_id = (await nctx.db.execute(select(Alert.id).where(
             Alert.tenant_id == tenant_id, Alert.source == source, Alert.external_id == external_id))).scalar_one()
     out = {"alert_id": alert_id, "created": created}
+    if suppressed is not None:
+        out["suppressed_by_rule"] = suppressed.id
     if raw_sev and raw_sev not in _ALERT_SEVERITIES:
         out["severity_defaulted"] = True
     return out

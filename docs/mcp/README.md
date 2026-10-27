@@ -96,6 +96,9 @@ ids return "Not found". List tools default to 25 rows (maximum 100) with `offset
 | `resolve_triage_item` | analyst | Record a triage proposal as confirmed or dismissed. |
 | `list_workflow_runs` | viewer | Workflow runs filtered by workflow, case, status or dry run. |
 | `cancel_workflow_run` | analyst | Cancel a running or waiting run. |
+| `list_suppressions` | viewer | Alert suppression rules with their hit counts. |
+| `preview_suppression` | viewer | How many of the last 500 alerts some conditions would have matched. |
+| `create_suppression` | analyst | Draft a suppression rule. **Always saved disabled**: a person enables it in Alerts → Suppressions. |
 
 **Admin authoring** (the tool re-checks the admin role itself, not only the server gate):
 
@@ -128,6 +131,7 @@ is code that runs on its own, so over MCP:
   a request. Other nodes are simulated exactly as in the app.
 
 Playbooks are only task lists that an analyst applies by hand, so an admin may publish them over MCP.
+Suppression rules hide alerts, so `create_suppression` saves them disabled for the same reason as workflows.
 Guests (people invited to a single case) can never use MCP.
 
 ### Not available over MCP

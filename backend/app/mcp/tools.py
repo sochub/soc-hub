@@ -12,7 +12,7 @@ never execute HTTP requests (``execute_in_dry_run`` is refused).
 import functools
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, List, Optional
 
@@ -35,6 +35,7 @@ from app.models.case_task import CaseTask
 from app.models.case_triage import CaseTriageResult
 from app.models.ioc import IOC
 from app.models.playbook import IR_PHASES, PlaybookTemplate
+from app.models.suppression_rule import SuppressionRule
 from app.models.tenant import Tenant
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.oauth.tokens import OAuthPrincipal
@@ -46,9 +47,10 @@ from app.schemas.case_task import CaseTaskCreate
 from app.schemas.case_triage import CaseTriageOut
 from app.schemas.ioc import IOCCreate, IOCUpdate
 from app.schemas.playbook import PlaybookTemplateCreate, PlaybookTemplateUpdate
+from app.schemas.suppression import SuppressionCreate, SuppressionPreview
 from app.schemas.workflow import DryRunIn, RunSummary, WorkflowIn
 from app.services import (alert_service, case_records, case_service, enrichment_service, ioc_service,
-                          playbook_service, task_service, workflow_service)
+                          playbook_service, suppression_service, task_service, workflow_service)
 from app.services.artifact_types import BUILTIN_KEYS, UnknownArtifactType, not_private
 from app.services.milestones import MilestoneConflict, case_milestones, set_milestones
 from app.tasks.triage import run_case_triage_task
@@ -93,6 +95,8 @@ MIN_ROLE: dict[str, str] = {
     "create_playbook": "admin", "update_playbook": "admin", "delete_playbook": "admin", "publish_playbook": "admin",
     "list_workflows": "viewer", "get_workflow": "viewer", "validate_workflow": "viewer", "create_workflow": "admin",
     "update_workflow": "admin", "dry_run_workflow": "admin",
+    # alert suppression
+    "list_suppressions": "viewer", "preview_suppression": "viewer", "create_suppression": "analyst",
 }
 
 
@@ -1085,6 +1089,51 @@ async def similar_alerts(db: AsyncSession, p: OAuthPrincipal, alert_id: int) -> 
     a = await _alert(db, p, alert_id)
     rows = await alert_service.similar_alerts(db, alert=a, tenant_id=p.tenant_id)
     return {"alert_id": a.id, "alerts": [_alert_summary(x) for x in rows]}
+
+
+# ── alert suppression ────────────────────────────────────────────
+
+
+def _suppression(r: SuppressionRule) -> dict:
+    return {"id": r.id, "name": r.name, "reason": r.reason, "conditions": r.conditions, "enabled": r.enabled,
+            "expires_at": _iso(r.expires_at), "hit_count": r.hit_count, "last_hit_at": _iso(r.last_hit_at)}
+
+
+@tool
+async def list_suppressions(db: AsyncSession, p: OAuthPrincipal) -> dict:
+    """The tenant's alert suppression rules with how many alerts each has dismissed."""
+    rows = (await db.execute(select(SuppressionRule).where(SuppressionRule.tenant_id == p.tenant_id)
+                             .order_by(SuppressionRule.id.desc()))).scalars().all()
+    return {"suppressions": [_suppression(r) for r in rows], "url": f"{settings.FRONTEND_URL}/alerts/suppressions"}
+
+
+@tool
+async def preview_suppression(db: AsyncSession, p: OAuthPrincipal, conditions: List[dict]) -> dict:
+    """How many of the last 500 alerts these conditions would have suppressed, with a sample. conditions:
+    [{field, op, value}], all must match; field is source, title, severity or payload.<dotted.path>; op is
+    equals, not_equals, contains, starts_with, ends_with or in_cidr (case-insensitive)."""
+    data = SuppressionPreview(conditions=conditions)
+    return await suppression_service.preview(db, p.tenant_id, [c.model_dump() for c in data.conditions])
+
+
+@tool
+async def create_suppression(db: AsyncSession, p: OAuthPrincipal, name: str, conditions: List[dict],
+                             reason: Optional[str] = None, expires_in_days: Optional[int] = 30,
+                             alert_id: Optional[int] = None) -> dict:
+    """Draft a suppression rule (conditions as in preview_suppression; build them from values that appear on
+    a real alert, e.g. alert_id's). It is saved DISABLED: a person reviews and enables it in SOC Hub.
+    expires_in_days: 1-365, or null for no expiry."""
+    if expires_in_days is not None and not 1 <= expires_in_days <= 365:
+        raise ToolError("expires_in_days must be 1-365 or null")
+    expires = datetime.now(timezone.utc) + timedelta(days=expires_in_days) if expires_in_days else None
+    data = SuppressionCreate(name=name, reason=reason, conditions=conditions, enabled=False, expires_at=expires,
+                             created_from_alert_id=alert_id)
+    rule = await suppression_service.create_rule(db, tenant_id=p.tenant_id, user_id=p.user.id,
+                                                 data=data.model_dump())
+    await db.commit()
+    await db.refresh(rule)
+    return {**_suppression(rule), "url": f"{settings.FRONTEND_URL}/alerts/suppressions",
+            "note": "Saved disabled. A person must review and enable it in SOC Hub."}
 
 
 # ── enrichment & triage ──────────────────────────────────────────

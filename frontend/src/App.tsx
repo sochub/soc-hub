@@ -25,6 +25,7 @@ const MyQueue = lazy(() => import('./features/queue/MyQueue'));
 const CasesList = lazy(() => import('./features/cases/CasesList'));
 const CaseDetail = lazy(() => import('./features/cases/CaseDetail'));
 const AlertsList = lazy(() => import('./features/alerts/AlertsList'));
+const SuppressionsList = lazy(() => import('./features/alerts/SuppressionsList'));
 const ArtifactsList = lazy(() => import('./features/artifacts/ArtifactsList'));
 const IOCList = lazy(() => import('./features/iocs/IOCList'));
 const ArtifactMindMap = lazy(() => import('./features/artifacts/ArtifactMindMap'));
@@ -83,7 +84,13 @@ function App() {
                 <Route path="queue" element={<MyQueue />} />
                 <Route path="cases" element={<CasesList />} />
                 <Route path="cases/:id" element={<CaseDetail />} />
-                <Route path="alerts" element={<AlertsList />} />
+                <Route path="alerts" element={<HubLayout title="alerts" tabs={[
+                  { label: 'Alerts', to: '/alerts', end: true },
+                  { label: 'Suppressions', to: '/alerts/suppressions' },
+                ]} />}>
+                  <Route index element={<AlertsList />} />
+                  <Route path="suppressions" element={<SuppressionsList />} />
+                </Route>
                 <Route path="observables" element={<HubLayout title="observables" tabs={[
                   { label: 'Artifacts', to: '/observables', end: true },
                   { label: 'IOCs', to: '/observables/iocs' },

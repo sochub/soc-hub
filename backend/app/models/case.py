@@ -89,6 +89,8 @@ class Alert(Base):
     dismiss_reason = Column(Text, nullable=True)
     severity = Column(String, nullable=False, default="medium", server_default="medium", index=True)
     owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Set when a suppression rule dismissed the alert at ingest.
+    suppression_rule_id = Column(Integer, ForeignKey("suppression_rules.id", ondelete="SET NULL"), nullable=True, index=True)
 
     case_id = Column(Integer, ForeignKey("cases.id"), nullable=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
