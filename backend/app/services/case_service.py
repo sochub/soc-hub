@@ -149,6 +149,16 @@ async def edit_timeline_note(db: AsyncSession, *, case: Case, event: TimelineEve
     return event
 
 
+async def delete_timeline_note(db: AsyncSession, *, case: Case, event: TimelineEvent, user_id: Optional[int]) -> None:
+    """Delete an activity entry; the case audit keeps what it said and who wrote it. The caller checks who may."""
+    await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="note_deleted",
+                           tenant_id=case.tenant_id, user_id=user_id,
+                           changes={"entry_id": event.id, "event_type": event.event_type, "author_id": event.user_id,
+                                    "content": event.content})
+    await db.delete(event)
+    await db.flush()
+
+
 async def add_artifact_to_case(db: AsyncSession, *, case: Case, artifact_type: ArtifactType, value: str,
                                description: Optional[str], user_id: Optional[int], isolated: bool = False,
                                custom_type=None) -> Artifact:
@@ -186,16 +196,29 @@ async def add_artifact_by_key(db: AsyncSession, *, case: Case, key: str, value: 
                                       user_id=user_id, isolated=isolated, custom_type=custom)
 
 
-async def update_artifact(db: AsyncSession, *, artifact: Artifact, data: dict) -> Artifact:
+def _artifact_audit(artifact: Artifact) -> dict:
+    """What an audit row may say about an artifact: private (workflow-only) values stay out of the log."""
+    return {"type": artifact.type_key} if artifact.is_private else {"type": artifact.type_key, "value": artifact.value}
+
+
+async def update_artifact(db: AsyncSession, *, artifact: Artifact, data: dict, user_id: Optional[int] = None) -> Artifact:
     """Apply ``ArtifactUpdate.model_dump(exclude_unset=True)``; ``artifact_type`` is a type key. Raises
-    UnknownArtifactType."""
+    UnknownArtifactType. Audited as ``artifact``/``update`` with from/to per changed field."""
     data = dict(data)
+    before = {"type": artifact.type_key, **{f: getattr(artifact, f) for f in data if f != "artifact_type"}}
     if "artifact_type" in data:
         atype, custom = await resolve_type(db, artifact.tenant_id, data.pop("artifact_type"))
         artifact.artifact_type, artifact.custom_type_id, artifact.custom_type = atype, (custom.id if custom else None), custom
     for field, value in data.items():
         setattr(artifact, field, value)
     await db.flush()
+    after = {"type": artifact.type_key, **{f: getattr(artifact, f) for f in data}}
+    changes = {f: {"from": before[f], "to": after[f]} for f in after if before.get(f) != after[f]}
+    if artifact.is_private:
+        changes = {f: "changed" for f in changes}  # never log a private value
+    if changes:
+        await create_audit_log(db=db, entity_type="artifact", entity_id=artifact.id, action="update",
+                               tenant_id=artifact.tenant_id, user_id=user_id, changes=changes)
     return artifact
 
 
@@ -203,6 +226,9 @@ async def delete_artifact(db: AsyncSession, *, artifact: Artifact, user_id: Opti
     """Delete the artifact and all its case links; each linked case gets an ``artifact_removed`` entry."""
     linked_case_ids = (await db.execute(
         select(CaseArtifact.case_id).where(CaseArtifact.artifact_id == artifact.id))).scalars().all()
+    await create_audit_log(db=db, entity_type="artifact", entity_id=artifact.id, action="delete",
+                           tenant_id=artifact.tenant_id, user_id=user_id,
+                           changes={**_artifact_audit(artifact), "case_ids": list(linked_case_ids)})
     if not artifact.is_private:  # private values never reach the timeline
         for cid in linked_case_ids:
             db.add(TimelineEvent(case_id=cid, user_id=user_id, event_type="artifact_removed",
@@ -218,6 +244,9 @@ async def unlink_artifact(db: AsyncSession, *, artifact: Artifact, case_id: int,
     if not junction:
         raise HTTPException(status_code=404, detail="Artifact is not linked to this case")
     await db.delete(junction)
+    await create_audit_log(db=db, entity_type="case", entity_id=case_id, action="artifact_removed",
+                           tenant_id=artifact.tenant_id, user_id=user_id,
+                           changes={**_artifact_audit(artifact), "artifact_id": artifact.id})
     if not artifact.is_private:  # private values never reach the timeline
         db.add(TimelineEvent(case_id=case_id, user_id=user_id, event_type="artifact_removed",
                              content=f"Removed artifact: {artifact.value} ({artifact.type_key})"))

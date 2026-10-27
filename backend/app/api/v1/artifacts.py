@@ -172,7 +172,8 @@ async def update_artifact(
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     try:
-        await case_service.update_artifact(db, artifact=artifact, data=artifact_in.model_dump(exclude_unset=True))
+        await case_service.update_artifact(db, artifact=artifact, data=artifact_in.model_dump(exclude_unset=True),
+                                          user_id=current_user.id)
     except UnknownArtifactType as e:
         raise HTTPException(status_code=422, detail=f"Unknown artifact type '{e}'")
     await db.commit()
@@ -263,6 +264,8 @@ async def remove_artifact_from_case(
     artifact = result.scalars().first()
     if not artifact or artifact.is_private:  # private types are workflow-only
         raise HTTPException(status_code=404, detail="Artifact not found")
+    if not (await db.execute(select(Case.id).where(Case.id == case_id, Case.tenant_id == tenant_id))).first():
+        raise HTTPException(status_code=404, detail="Case not found")
 
     await case_service.unlink_artifact(db, artifact=artifact, case_id=case_id, user_id=current_user.id)
     await db.commit()

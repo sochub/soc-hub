@@ -236,7 +236,7 @@ async def update_template(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     t = await _get_editable_template(db, template_id, tenant_id, current_user)
-    return await playbook_service.update_template(db, template=t, data=body)
+    return await playbook_service.update_template(db, template=t, data=body, user_id=current_user.id)
 
 
 @router.delete("/{template_id}", status_code=204)
@@ -248,4 +248,4 @@ async def delete_template(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> None:
     t = await _get_editable_template(db, template_id, tenant_id, current_user)
-    await playbook_service.delete_template(db, template=t)
+    await playbook_service.delete_template(db, template=t, user_id=current_user.id)
