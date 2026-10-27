@@ -4,7 +4,7 @@ import Avatar from '../Avatar';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard, ShieldAlert, Settings, Bell, Database, Share2, LogOut,
-    Inbox, Menu, X, PanelLeftClose, PanelLeftOpen, BookText, Code, Workflow, Search,
+    Inbox, Menu, X, PanelLeftClose, PanelLeftOpen, BookText, Code, Workflow, Search, Building2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useQuery } from '@tanstack/react-query';
@@ -20,6 +20,7 @@ const NAV_GROUPS = [
     { label: 'operate', items: [
         { icon: LayoutDashboard, label: 'Overview', path: '/' },
         { icon: Inbox, label: 'My Queue', path: '/queue' },
+        { icon: Building2, label: 'Portfolio', path: '/portfolio', multiTenant: true },
         { icon: ShieldAlert, label: 'Cases', path: '/cases' },
         { icon: Bell, label: 'Alerts', path: '/alerts' },
     ] },
@@ -138,7 +139,7 @@ export default function Layout() {
                             {(showLabels || mobileOpen)
                                 ? <p className="label-mono px-4 pt-2 pb-1.5">{group.label}</p>
                                 : <div className="mx-4 my-2 border-t border-line hidden lg:block" />}
-                            {group.items.map((item) => {
+                            {group.items.filter((i) => !('multiTenant' in i) || !!currentUser?.is_super_admin || (currentUser?.memberships?.length ?? 0) > 1).map((item) => {
                                 const Icon = item.icon;
                                 const isActive = location.pathname === item.path
                                     || (item.path !== '/' && location.pathname.startsWith(item.path));

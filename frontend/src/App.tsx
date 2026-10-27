@@ -26,6 +26,7 @@ const CasesList = lazy(() => import('./features/cases/CasesList'));
 const CaseDetail = lazy(() => import('./features/cases/CaseDetail'));
 const AlertsList = lazy(() => import('./features/alerts/AlertsList'));
 const SuppressionsList = lazy(() => import('./features/alerts/SuppressionsList'));
+const Portfolio = lazy(() => import('./features/portfolio/Portfolio'));
 const ArtifactsList = lazy(() => import('./features/artifacts/ArtifactsList'));
 const IOCList = lazy(() => import('./features/iocs/IOCList'));
 const ArtifactMindMap = lazy(() => import('./features/artifacts/ArtifactMindMap'));
@@ -82,6 +83,7 @@ function App() {
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="queue" element={<MyQueue />} />
+                <Route path="portfolio" element={<Portfolio />} />
                 <Route path="cases" element={<CasesList />} />
                 <Route path="cases/:id" element={<CaseDetail />} />
                 <Route path="alerts" element={<HubLayout title="alerts" tabs={[
