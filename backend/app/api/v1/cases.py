@@ -11,6 +11,7 @@ from app.api import deps
 from app.models.case import Case, TimelineEvent
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
+from app.services import case_delete
 from app.services.slack_service import SlackError, load_integration
 from app.schemas import case as case_schema
 from app.services.case_service import (
@@ -198,6 +199,9 @@ async def read_case(
         raise HTTPException(status_code=404, detail="Case not found")
     await _attach_sla(db, tenant_id, [case])
     case.milestones = await case_milestones(db, case)
+    if case.owner_id:
+        owner = await db.get(User, case.owner_id)
+        case.owner_name = (owner.full_name or owner.email) if owner else None
     return case
 
 @router.put("/{case_id}/milestones")
@@ -221,6 +225,36 @@ async def update_milestones(
         raise HTTPException(status_code=422, detail=str(e))
     await db.commit()
     return ms
+
+
+@router.get("/{case_id}/delete-preview")
+async def case_delete_preview(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    current_user: User = Depends(deps.require_admin),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """What deleting the case removes, keeps and can't undo (admins only)."""
+    return await case_delete.delete_preview(db, await _tenant_case(db, tenant_id, case_id))
+
+
+@router.delete("/{case_id}", status_code=204)
+async def delete_case(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    confirm: int = Query(..., description="The case id again: guards against deleting the wrong case"),
+    current_user: User = Depends(deps.require_admin),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Response:
+    """Permanently delete a case (admins only). Alerts return to the queue; artifacts and IOCs stay in the tenant."""
+    if confirm != case_id:
+        raise HTTPException(status_code=422, detail="confirm must repeat the case id")
+    keys = await case_delete.delete_case(db, await _tenant_case(db, tenant_id, case_id), current_user.id)
+    await db.commit()
+    await case_delete.remove_evidence(keys)
+    return Response(status_code=204)
 
 
 @router.put("/{case_id}", response_model=case_schema.Case)

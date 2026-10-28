@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { CaseTask, PlaybookSummary, User } from '../../types';
 import { PHASES, PHASE_LABEL, PHASE_COLOR } from '../playbooks/phases';
+import AssigneeSelect from './AssigneeSelect';
 
 const RUNNING = ['pending', 'running', 'waiting'];
 
@@ -15,6 +16,8 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
     const [newTitle, setNewTitle] = useState('');
     const [newPhase, setNewPhase] = useState('identification');
     const [applyId, setApplyId] = useState<string>('');
+    const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+    const [assignError, setAssignError] = useState<{ id: number; text: string } | null>(null);
 
     const { data: me } = useQuery({
         queryKey: ['currentUser'],
@@ -75,7 +78,16 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
     });
     const remove = useMutation({
         mutationFn: async (id: number) => api.delete(`/cases/${caseId}/tasks/${id}`),
-        onSuccess: invalidate,
+        onSuccess: () => { setConfirmDelete(null); invalidate(); },
+    });
+    const assign = useMutation({
+        mutationFn: async ({ t, assignee_id }: { t: CaseTask; assignee_id: number | null }) =>
+            api.put(`/cases/${caseId}/tasks/${t.id}`, { assignee_id }),
+        onSuccess: () => { setAssignError(null); invalidate(); },
+        onError: (e: { response?: { data?: { detail?: unknown } } }, { t }) => {
+            const d = e?.response?.data?.detail;
+            setAssignError({ id: t.id, text: typeof d === 'string' ? d : 'Could not assign the task' });
+        },
     });
     const add = useMutation({
         mutationFn: async () => api.post(`/cases/${caseId}/tasks`, { phase: newPhase, title: newTitle }),
@@ -152,6 +164,15 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                         <div className="flex-1 min-w-0">
                                             <p className={cn('text-sm', t.status === 'done' ? 'text-muted line-through' : 'text-fg')}>{t.title}</p>
                                             {t.description && <p className="text-xs text-fg-3">{t.description}</p>}
+                                            {canEdit ? (
+                                                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                                                    <span>Assignee</span>
+                                                    <AssigneeSelect label={`Assignee of ${t.title}`} value={t.assignee_id} currentName={t.assignee_name}
+                                                        disabled={assign.isPending && assign.variables?.t.id === t.id}
+                                                        onChange={(v) => assign.mutate({ t, assignee_id: v })} />
+                                                    {assignError?.id === t.id && <span role="alert" className="text-severity-critical">{assignError.text}</span>}
+                                                </div>
+                                            ) : t.assignee_name && <p className="mt-1 text-xs text-muted">Assignee: {t.assignee_name}</p>}
                                             {t.result && (
                                                 <p className={cn('mt-1 text-xs border-l-2 pl-2',
                                                     t.result_status === 'failed' ? 'border-red-500 text-severity-critical'
@@ -202,12 +223,20 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                                 </div>
                                             )}
                                         </div>
-                                        {canEdit && (
-                                            <button onClick={() => remove.mutate(t.id)}
-                                                className="opacity-0 group-hover:opacity-100 text-muted hover:text-severity-critical shrink-0">
+                                        {canEdit && (confirmDelete === t.id ? (
+                                            <span role="alert" className="flex items-center gap-1.5 text-xs shrink-0">
+                                                <span className="text-fg-2">Delete task{t.ticket ? ' (its ticket stays open)' : ''}?</span>
+                                                <button onClick={() => remove.mutate(t.id)} disabled={remove.isPending}
+                                                    className="px-2 py-0.5 rounded-sm bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">Delete</button>
+                                                <button onClick={() => setConfirmDelete(null)}
+                                                    className="px-2 py-0.5 rounded-sm border border-line-strong text-fg-2 hover:bg-raised">Cancel</button>
+                                            </span>
+                                        ) : (
+                                            <button onClick={() => setConfirmDelete(t.id)} aria-label={`Delete task ${t.title}`}
+                                                className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted hover:text-severity-critical shrink-0">
                                                 <Trash2 size={14} />
                                             </button>
-                                        )}
+                                        ))}
                                     </li>
                                 ))}
                             </ul>

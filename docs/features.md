@@ -10,16 +10,25 @@ Create and work security cases with severity/status, tags, a description, attach
   ticket comments and status, containment, and system changes. **Add note** (stamped now) and **Add event** (dated
   when it happened; the category picker explains each category). Filter by **All / Story / Notes & changes**, by
   text (`category:`, `tag:`, `artifact:`…) or **Pinned**; export to CSV; **Suggest** drafts events from alerts and notes.
-- **Tasks**: phase-grouped playbook tasks. A task can link a workflow: **Run** starts it on the case, and a workflow's
-  *Complete task* step records the outcome on the task (colour-coded) and ticks it.
+- **Tasks**: phase-grouped playbook tasks. Each task can optionally be **assigned** to an analyst or admin (they are
+  notified and follow the case; reassign or set it back to *Unassigned* any time). A task can link a workflow:
+  **Run** starts it on the case, and a workflow's *Complete task* step records the outcome on the task
+  (colour-coded) and ticks it. Deleting a task asks first.
 - **Artifacts & assets**: one **Add** dialog asks which you're adding: an **artifact** (evidence of the attacker: IP,
   domain, hash…, enrichable, promotable to an IOC) or an **asset** (a host, account or service of yours, with its
   compromise status). The **Containment** list shows what automations contained, refused or released.
 - **Evidence**, **Guests**, **Report**, **Automation**, **Audit**, and **Network**: the investigation graph limited to
   this case and whatever its artifacts and IOCs connect to (two hops).
 
-The case header shows the SLA, AI triage, the Slack war room and, when ticketing is set up, the linked ticket
-(**Create ticket**, status, **Sync now**).
+The case header shows the SLA, AI triage, the Slack war room and the **owner**: analysts and admins reassign the case
+from the owner picker (or set it to *Unassigned*); the new owner is notified.
+
+**Deleting a case** (admins only): the trash button opens a warning that lists what goes with the case (tasks,
+activity, evidence files, artifact links, guest invitations, ticket links) and what can't be undone outside SOC Hub:
+containment still active (deleting doesn't release a host, user or IP), evidence removed from storage, tickets that
+stay open, a Slack war room that isn't archived, guests losing access. Type the case number to confirm. Artifacts and
+IOCs stay in the organization, the case's alerts go back to the Alerts queue as pending, and the audit log keeps a
+`case_deleted` record with the counts.
 
 ![Case Activity: Add note, Add event and the story filters](images/case-timeline.png)
 ![Case tasks: workflow results and Run](images/case-tasks.png)

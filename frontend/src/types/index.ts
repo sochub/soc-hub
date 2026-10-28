@@ -97,6 +97,8 @@ export interface CaseTask {
   result_status?: 'ok' | 'warning' | 'failed' | null;
   result_at?: string | null;
   ticket?: { label: string; external_id: string; url: string | null; remote_status: string | null; remote_closed: boolean } | null;
+  assignee_id?: number | null;     // optional
+  assignee_name?: string | null;
 }
 
 export interface CaseEvent {

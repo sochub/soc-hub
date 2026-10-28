@@ -140,6 +140,16 @@ async def on_case_update(db, case: Case, changes: dict, actor_id: Optional[int])
     await _guarded(db, case, "case_update", body)
 
 
+async def on_task_assigned(db, case: Case, task, assignee_id: int, actor_id: Optional[int]) -> None:
+    async def body():
+        await _follow(db, case, assignee_id)
+        if assignee_id == actor_id:
+            return []
+        name = await _actor_name(db, actor_id)
+        return [_add(db, case, assignee_id, "assigned", f"{name} assigned you task \"{task.title}\" on case #{case.id}", actor_id)]
+    await _guarded(db, case, "task_assigned", body)
+
+
 async def on_case_created(db, case: Case, actor_id: Optional[int]) -> None:
     if not case.owner_id:
         return

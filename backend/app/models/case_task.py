@@ -18,6 +18,7 @@ class CaseTask(Base):
     source_template_id = Column(Integer, ForeignKey("playbook_templates.id", ondelete="SET NULL"), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    assignee_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)  # optional
     workflow_id = Column(Integer, ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)  # run from the task
     last_run_id = Column(Integer, ForeignKey("workflow_runs.id", ondelete="SET NULL"), nullable=True)
     # Set by a case_task_complete workflow step: what the automation found (e.g. "User answered: It was me").

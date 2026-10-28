@@ -50,7 +50,7 @@ async def add_task(
     case = await _get_case(db, case_id, tenant_id)
     task = await task_service.add_case_task(db, case=case, phase=body.phase, title=body.title,
                                             description=body.description, user_id=current_user.id,
-                                            workflow_id=body.workflow_id)
+                                            workflow_id=body.workflow_id, assignee_id=body.assignee_id)
     await db.commit()
     await db.refresh(task)
     return (await task_service.task_rows(db, [task]))[0]
@@ -80,6 +80,8 @@ async def update_task(
                                tenant_id=tenant_id, user_id=current_user.id,
                                changes={"task": task.title, "workflow_id": {"from": task.workflow_id, "to": body.workflow_id}})
         task.workflow_id = body.workflow_id  # null unlinks
+    if "assignee_id" in body.model_fields_set:
+        await task_service.assign_task(db, case=case, task=task, assignee_id=body.assignee_id, user_id=current_user.id)
     await task_service.update_case_task(db, case=case, task=task, data=body.model_dump(), user_id=current_user.id)
     await db.commit()
     await db.refresh(task)

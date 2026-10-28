@@ -2,7 +2,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Shield, MessageSquare, ArrowLeft, Hash, Calendar, Plus, Globe, FileText, Mail, Server, Monitor, User as UserIcon, Edit, Link2, Unlink, ShieldAlert } from 'lucide-react';
+import { Shield, MessageSquare, ArrowLeft, Hash, Calendar, Plus, Globe, FileText, Mail, Server, Monitor, User as UserIcon, Edit, Link2, Unlink, ShieldAlert, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useState } from 'react';
@@ -17,6 +17,8 @@ import CaseEvidence from './CaseEvidence';
 import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
 import FollowButton from './FollowButton';
+import AssigneeSelect from './AssigneeSelect';
+import DeleteCaseModal from './DeleteCaseModal';
 import WarRoomPill from './WarRoomPill';
 import CaseContainment from './CaseContainment';
 import OpenWarRoomModal from './OpenWarRoomModal';
@@ -116,6 +118,15 @@ export default function CaseDetail() {
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
     const canWarRoom = isAdmin || me?.role === 'analyst';
     const [showWarRoom, setShowWarRoom] = useState(false);
+    const [showDelete, setShowDelete] = useState(false);
+    const reassign = useMutation({
+        mutationFn: async (owner_id: number | null) => api.put(`/cases/${id}`, { owner_id }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['case', id] });
+            queryClient.invalidateQueries({ queryKey: ['cases'] });
+            queryClient.invalidateQueries({ queryKey: ['audit-logs', 'case', id] });
+        },
+    });
     const { data: slackCfg } = useQuery({
         queryKey: ['war-room-settings'],
         queryFn: async () => (await api.get('/slack/war-room-settings')).data as { configured: boolean; war_room_name_template: string | null },
@@ -253,7 +264,12 @@ export default function CaseDetail() {
                                 </span>
                                 <span className="flex items-center gap-1.5">
                                     <Shield size={12} />
-                                    Owner: System
+                                    Owner:
+                                    {canWarRoom ? (
+                                        <AssigneeSelect label="Case owner" value={caseData.owner_id} currentName={caseData.owner_name}
+                                            disabled={reassign.isPending} onChange={(v) => reassign.mutate(v)} className="font-mono" />
+                                    ) : <span>{caseData.owner_name ?? 'Unassigned'}</span>}
+                                    {reassign.isError && <span role="alert" className="text-severity-critical">could not reassign</span>}
                                 </span>
                             </div>
                         </div>
@@ -264,7 +280,14 @@ export default function CaseDetail() {
                         >
                             <Edit size={20} />
                         </button>
+                        {isAdmin && (
+                            <button onClick={() => setShowDelete(true)} aria-label="Delete case" title="Delete case"
+                                className="p-2 text-fg-3 hover:text-severity-critical hover:bg-raised rounded-lg transition-colors">
+                                <Trash2 size={20} />
+                            </button>
+                        )}
                     </div>
+                    {id && isAdmin && <DeleteCaseModal caseId={parseInt(id)} title={caseData.title} open={showDelete} onClose={() => setShowDelete(false)} />}
 
                     <div className="glass-panel p-5 rounded-xl mb-6 bg-panel">
                         <h3 className="text-xs font-bold text-muted mb-2 uppercase tracking-wider flex items-center gap-2">
