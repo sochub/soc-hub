@@ -25,6 +25,11 @@ _CASE_UPDATES = {
     "assign": ("Assigned", lambda user: {"owner_id": user.id}),
     "close": ("Closed", lambda user: {"status": CaseStatus.CLOSED}),
 }
+_ALREADY = {
+    "ack": "Case #{case_id} is already acknowledged.",
+    "assign": "Case #{case_id} is already assigned to you.",
+    "close": "Case #{case_id} is already closed.",
+}
 
 
 async def _ephemeral(payload: dict, text: str) -> None:
@@ -86,7 +91,9 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
         card = case_card(case, (owner.full_name or owner.email) if owner else None,
                          note=f"{label} by {slack_escape(payload['user'].get('name') or 'a responder')}")
     if not changes:
-        return  # nothing changed (e.g. already in that state): don't announce it
+        # Already in that state: say so, a silent no-op reads as a broken button.
+        await _ephemeral(payload, _ALREADY[action].format(case_id=case_id))
+        return
     emit_event(tenant_id, "case.updated", case_id=case_id, changes=changes)
     if payload.get("response_url"):
         # Redraw the clicked card in place (works for channel, DM and ephemeral messages alike).

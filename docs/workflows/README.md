@@ -174,7 +174,7 @@ In the mrkdwn fields (`slack_post_message.text`, `slack_ask_user.message`) every
 
 ### `slack_post_message`
 
-Config: `channel` (blank uses the integration's default channel), `text` (templated, mrkdwn), `include_case_buttons` (`yes`/`no`; adds Acknowledge / Assign to me / Close buttons for the run's case). Output `{channel, ts}`. The bot must be in the channel (`/invite @sochub`).
+Config: `channel` (blank uses the integration's default channel), `text` (templated, mrkdwn), `include_case_buttons` (`yes`/`no`; adds Acknowledge / Assign to me / Assign… / Add note / War room / Close buttons for the run's case). Output `{channel, ts}`. The bot must be in the channel (`/invite @sochub`).
 
 ### `slack_ask_user`
 

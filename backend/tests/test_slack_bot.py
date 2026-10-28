@@ -88,14 +88,20 @@ async def _scenario(monkeypatch):
                  hashed_password=get_password_hash(secrets.token_urlsafe(16)))
         db.add(u)
         await db.flush()
-        db.add(TenantMembership(user_id=u.id, tenant_id=t.id, role="analyst"))
+        mate = User(email=f"mate-{h}@example.com", full_name="Bubba Blue", is_active=True,
+                    hashed_password=get_password_hash(secrets.token_urlsafe(16)))
+        db.add(mate)
+        await db.flush()
+        db.add_all([TenantMembership(user_id=u.id, tenant_id=t.id, role="analyst"),
+                    TenantMembership(user_id=mate.id, tenant_id=t.id, role="analyst"),
+                    TenantMembership(user_id=mate.id, tenant_id=other.id, role="viewer")])
         db.add(SlackIntegration(tenant_id=t.id, team_id=team, bot_token_enc=encrypt("xoxb-x"),
                                 signing_secret_enc=encrypt(SECRET), alert_channel="C_ALERTS", alert_min_severity="high"))
         mine = Case(title="Beacon to update-portal.example", description="d", tenant_id=t.id, severity=CaseSeverity.HIGH)
         foreign = Case(title="other tenant", description="d", tenant_id=other.id, severity=CaseSeverity.LOW)
         db.add_all([mine, foreign])
         await db.commit()
-        ids = SimpleNamespace(t=t.id, other=other.id, user=u.id, case=mine.id, foreign=foreign.id)
+        ids = SimpleNamespace(t=t.id, other=other.id, user=u.id, mate=mate.id, case=mine.id, foreign=foreign.id)
 
     now = str(int(time.time()))
     try:
@@ -146,6 +152,27 @@ async def _scenario(monkeypatch):
             assert "https://slack.example/p1" in made[0].description
             assert any(a[1] == "case.created" for a, _ in events)
 
+            # --- Assign…: picker lists the tenant's analysts, submission hands the case over ---
+            calls.clear()
+            click = {"type": "block_actions", "team": {"id": team}, "user": {"id": "UANALYST"}, "trigger_id": "trig",
+                     "actions": [{"action_id": "case_assignto", "value": f"case:{ids.t}:{ids.case}:assignto"}]}
+            await submit(click)
+            view = calls[0][1]["view"]
+            assert view["callback_id"] == ui.ASSIGN_CASE
+            assert [o["text"]["text"] for o in view["blocks"][0]["element"]["options"]] == ["Bubba Blue", "Jenny Curran"]
+
+            def assign(uid, user="UANALYST"):
+                return {"type": "view_submission", "team": {"id": team}, "user": {"id": user}, "view": {
+                    "callback_id": ui.ASSIGN_CASE, "private_metadata": json.dumps({"t": ids.t, "c": ids.case}),
+                    "state": {"values": {"owner": {"v": {"selected_option": {"value": str(uid)}}}}}}}
+
+            assert (await submit(assign(ids.mate))).status_code == 200
+            async with AsyncSessionLocal() as db:
+                assert (await db.get(Case, ids.case)).owner_id == ids.mate
+            for bad in (999999999, "x"):  # not a member here, or junk
+                assert (await submit(assign(bad))).json()["errors"] == {"owner": "Pick an analyst or admin of this tenant."}
+            assert (await submit(assign(ids.mate, user="USTRANGER"))).json()["response_action"] == "errors"
+
             # --- events: URL verification and App Home ---
             chal = json.dumps({"type": "url_verification", "challenge": "abc"}).encode()
             assert (await post("/api/v1/slack/events", chal, "application/json")).json() == {"challenge": "abc"}
@@ -176,7 +203,7 @@ async def _scenario(monkeypatch):
                 await db.execute(delete(model).where(model.case_id.in_(case_ids)))
             await db.execute(delete(Case).where(Case.tenant_id.in_([ids.t, ids.other])))
             await db.execute(delete(Tenant).where(Tenant.id.in_([ids.t, ids.other])))
-            await db.execute(delete(User).where(User.id == ids.user))
+            await db.execute(delete(User).where(User.id.in_([ids.user, ids.mate])))
             await db.commit()
         await engine.dispose()
 
