@@ -28,3 +28,6 @@ class Tenant(Base):
     report_disclaimer = Column(Text, nullable=True)
     report_logo = Column(LargeBinary, nullable=True)
     report_logo_mime = Column(String(16), nullable=True)
+    # Weekly client summary (app/services/portfolio.py), emailed to these addresses; [] = off.
+    digest_recipients = Column(JSON, nullable=False, default=list, server_default="[]")
+    digest_last_sent_at = Column(DateTime(timezone=True), nullable=True)

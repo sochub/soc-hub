@@ -26,6 +26,7 @@ celery_app.conf.update(
 # never registers anything unless we import the task modules here too —
 # without this, `.delay()` calls silently fail with "unregistered task".
 import app.tasks.ticketing  # noqa: E402,F401
+import app.tasks.portfolio  # noqa: E402,F401
 import app.tasks.triage  # noqa: E402,F401
 import app.tasks.sla  # noqa: E402,F401
 import app.tasks.workflows  # noqa: E402,F401
@@ -54,6 +55,10 @@ celery_app.conf.beat_schedule = {
     "run-workflow-schedules": {
         "task": "app.tasks.workflows.run_schedules_task",
         "schedule": 60.0,
+    },
+    "send-client-digests": {
+        "task": "app.tasks.portfolio.send_client_digests_task",
+        "schedule": 3600.0,
     },
     "sync-tickets": {
         "task": "app.tasks.ticketing.sync_tickets_task",

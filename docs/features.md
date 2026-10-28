@@ -34,6 +34,22 @@ One account can belong to **many tenants** with a **different role per tenant**.
 The active tenant rides in the JWT; switch it from the sidebar picker
 (`POST /auth/switch-tenant`). All data is row-isolated by `tenant_id`.
 
+
+### Portfolio (MSSP view)
+
+Users who belong to more than one tenant get **Portfolio** in the sidebar: one card per client (open cases,
+SLA breached and at risk, unassigned, pending alerts, 30-day MTTR, oldest open case) and one queue of every
+client's open cases, ordered SLA-breached first, then severity, then age. Opening a case of another client
+switches the active tenant first, with the same checks as the tenant switcher.
+
+- Only tenants this session could switch into right now appear: a client that requires SSO or two-factor the
+  session doesn't have is left out (the page says how many), as are deactivated tenants. Super admins, who
+  can switch into any tenant, see every active tenant (the first 100 by name) and appear in the portfolio's
+  platform audit like any other read.
+- **Client summary** (the document icon on a card): the last 7, 30 or 90 days of cases opened and resolved
+  with outcomes, MTTR, SLA breaches, alerts received/promoted/dismissed/suppressed and notable cases, as text
+  to copy into an email or report. That client's admins can set up to 10 recipients for a **weekly email** of
+  the 7-day summary (sent hourly-checked, at most once a week; the first one within the hour).
 ## Investigation Copilot
 
 A global, context-aware assistant. It runs on the configured AI provider, which is
