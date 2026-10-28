@@ -176,6 +176,15 @@ senders can safely retry. Consequences:
   that want each firing recorded must make `external_id` unique per firing
   (e.g. append a timestamp or occurrence id).
 
+### "Was this you?" user verification
+
+Two built-in workflows (**Workflows → templates**, kind triage) ask the user an identity alert names whether the
+activity was theirs: **Ask the user by email** (`email_ask_user`) and **Ask the user on Slack** (`slack_ask_user`).
+*It was me* dismisses the alert with the user's confirmation as the reason; *It wasn't me*, or no answer within
+an hour, promotes it into a high case grouped by user with a note saying what happened. Silence never closes an
+alert. Use one of them instead of *Identity alerts: group by user into a case* for the same sources. Someone who
+controls the user's mailbox or Slack can answer *It was me*, so keep it for low-to-medium alerts.
+
 ### Suppression rules
 
 **Alerts → Suppressions** holds rules for known noise (a VPN egress range, an approved scanner, a service

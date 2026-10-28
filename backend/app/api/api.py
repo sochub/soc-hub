@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.oauth import routes as oauth
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, ticketing, portfolio, containment, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, ticketing, portfolio, containment, user_verification, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -26,6 +26,7 @@ api_router.include_router(integrations.router, prefix="/integrations", tags=["in
 api_router.include_router(ticketing.router, tags=["ticketing"])
 api_router.include_router(portfolio.router, prefix="/portfolio", tags=["portfolio"])
 api_router.include_router(containment.router, prefix="/containment", tags=["containment"])
+api_router.include_router(user_verification.router, prefix="/user-verification", tags=["user-verification"])
 api_router.include_router(copilot.router, prefix="/copilot", tags=["copilot"])
 api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["audit-logs"])
 api_router.include_router(tenants.router, prefix="/tenants", tags=["tenants"])

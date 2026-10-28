@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck } from 'lucide-react';
+import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck, Mail } from 'lucide-react';
 import type { TriggerType } from './types';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
@@ -54,6 +54,16 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'message', label: 'Question (mrkdwn)', kind: 'textarea', required: true, placeholder: 'Did you just sign in from {{ alert.payload.country }}?' },
             { key: 'buttons', label: 'Buttons (comma-separated, \u2264 5)', kind: 'text', placeholder: 'Yes, No', help: "Branch on steps.<id>.output.response == 'No' or steps.<id>.output.timed_out" },
             { key: 'timeout_hours', label: 'Timeout (hours, \u2264 168)', kind: 'number', placeholder: '24' },
+        ],
+    },
+    {
+        type: 'email_ask_user', label: 'Ask user (email)', category: 'Logic', icon: Mail, sideEffect: true,
+        fields: [
+            { key: 'email', label: 'User email', kind: 'text', required: true, placeholder: '{{ alert.payload.user_email }}' },
+            { key: 'message', label: 'Question (plain text)', kind: 'textarea', required: true, placeholder: 'Sign-in from {{ alert.payload.country }}. Was this you?' },
+            { key: 'buttons', label: 'Answers (comma-separated, \u2264 5)', kind: 'text', placeholder: "It was me, It wasn't me",
+              help: "The user answers on a one-time page linked from the email. Branch on steps.<id>.output.response or steps.<id>.output.timed_out" },
+            { key: 'timeout_hours', label: 'Timeout (hours, \u2264 168)', kind: 'number', placeholder: '1' },
         ],
     },
     {
