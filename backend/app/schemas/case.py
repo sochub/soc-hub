@@ -219,6 +219,7 @@ class Case(CaseBase):
     sla_resolution_status: Optional[str] = None
     sla_resolution_due_at: Optional[datetime] = None
     sla_overall_status: Optional[str] = None
+    owner_name: Optional[str] = None  # set on the single-case read
     # Detail endpoint only (app.services.milestones.case_milestones).
     milestones: Optional[dict] = None
     # War room: columns, plus url/silent computed by the endpoint (cases._attach_war_room).

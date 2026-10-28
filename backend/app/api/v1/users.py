@@ -84,6 +84,23 @@ async def mentionable_users(
                            has_avatar=bool(u.avatar_key), avatar_version=avatar_version(u.avatar_key)) for u in rows.scalars().all()]
 
 
+@router.get("/assignable", response_model=List[MentionableUser])
+async def assignable_users(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Active analysts and admins of the active tenant: who a case or task can be assigned to."""
+    rows = await db.execute(
+        select(User).join(TenantMembership, TenantMembership.user_id == User.id)
+        .where(TenantMembership.tenant_id == tenant_id, TenantMembership.role.in_(["admin", "analyst"]),
+               User.is_active.is_(True))
+        .order_by(User.full_name, User.id).limit(500)  # ponytail: one page; a picker search when a tenant outgrows it
+    )
+    return [MentionableUser(id=u.id, name=u.full_name or (u.email or "").split("@")[0], email=u.email,
+                           has_avatar=bool(u.avatar_key), avatar_version=avatar_version(u.avatar_key)) for u in rows.scalars().all()]
+
+
 @router.post("/", response_model=UserSchema)
 async def create_user(
     *,

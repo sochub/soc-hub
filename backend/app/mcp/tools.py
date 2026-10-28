@@ -222,6 +222,8 @@ def _task(t) -> dict:
         out |= {"workflow_id": g("workflow_id"), "workflow_name": g("workflow_name"),
                 "workflow_runnable": g("workflow_runnable"), "last_run_id": g("last_run_id"),
                 "last_run_status": g("last_run_status")}
+    if g("assignee_id"):
+        out |= {"assignee_id": g("assignee_id"), "assignee_name": g("assignee_name")}
     if g("result_status"):
         out |= {"result": g("result"), "result_status": g("result_status"), "result_at": _iso(g("result_at"))}
     if g("ticket"):
@@ -596,9 +598,11 @@ async def run_case_task_workflow(db: AsyncSession, p: OAuthPrincipal, case_id: i
 async def update_task(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id: int, status: Optional[str] = None,
                       title: Optional[str] = None, description: Optional[str] = None,
                       phase: Optional[str] = None, workflow_id: Optional[int] = None,
-                      unlink_workflow: bool = False) -> dict:
+                      unlink_workflow: bool = False, assignee_id: Optional[int] = None,
+                      unassign: bool = False) -> dict:
     """Update a case task: status "todo" or "done", title, description or phase. workflow_id links a manual
-    workflow of this organization (run it with run_case_task_workflow); unlink_workflow=true removes the link."""
+    workflow of this organization (run it with run_case_task_workflow); unlink_workflow=true removes the link.
+    assignee_id assigns the task to an analyst or admin of this organization (optional); unassign=true clears it."""
     c = await _case(db, p, case_id)
     t = (await db.execute(select(CaseTask).where(
         CaseTask.id == task_id, CaseTask.case_id == c.id, CaseTask.tenant_id == p.tenant_id))).scalars().first()
@@ -613,6 +617,9 @@ async def update_task(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id
                                tenant_id=p.tenant_id, user_id=p.user.id,
                                changes={"task": t.title, "workflow_id": {"from": t.workflow_id, "to": new}})
         t.workflow_id = new
+    if unassign or assignee_id is not None:
+        await task_service.assign_task(db, case=c, task=t, assignee_id=None if unassign else assignee_id,
+                                       user_id=p.user.id)
     await task_service.update_case_task(db, case=c, task=t, user_id=p.user.id,
                                         data={"status": status, "title": title, "description": description,
                                               "phase": phase})
@@ -974,15 +981,16 @@ async def delete_case_asset(db: AsyncSession, p: OAuthPrincipal, case_id: int, a
 @tool
 async def add_case_task(db: AsyncSession, p: OAuthPrincipal, case_id: int, title: str,
                         phase: str = "identification", description: Optional[str] = None,
-                        workflow_id: Optional[int] = None) -> dict:
+                        workflow_id: Optional[int] = None, assignee_id: Optional[int] = None) -> dict:
     """Add a response task (status todo) at the end of the case's task list. phase: identification (default),
-    containment, eradication, recovery, lessons_learned. workflow_id: a manual workflow to run from the task."""
+    containment, eradication, recovery, lessons_learned. workflow_id: a manual workflow to run from the task.
+    assignee_id (optional): an analyst or admin of this organization to assign it to."""
     if phase not in IR_PHASES:
         raise ToolError(f"phase must be one of {', '.join(IR_PHASES)}")
     c = await _case(db, p, case_id)
     body = CaseTaskCreate(**_fields(title=title, phase=phase, description=description))
     t = await task_service.add_case_task(db, case=c, phase=body.phase, title=body.title, description=body.description,
-                                         user_id=p.user.id, workflow_id=workflow_id)
+                                         user_id=p.user.id, workflow_id=workflow_id, assignee_id=assignee_id)
     await db.commit()
     await db.refresh(t)
     return {**_task((await task_service.task_rows(db, [t]))[0]), "case_id": c.id}

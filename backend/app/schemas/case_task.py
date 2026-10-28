@@ -8,6 +8,7 @@ class CaseTaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
     workflow_id: Optional[int] = None  # a manual workflow the analyst can run from the task
+    assignee_id: Optional[int] = None  # optional; an analyst or admin of the tenant
 
 
 class CaseTaskUpdate(BaseModel):
@@ -16,6 +17,7 @@ class CaseTaskUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None  # 'todo' | 'done'
     workflow_id: Optional[int] = None  # sent explicitly as null: unlink
+    assignee_id: Optional[int] = None  # sent explicitly as null: unassign
 
 
 class CaseTaskOut(BaseModel):
@@ -28,6 +30,8 @@ class CaseTaskOut(BaseModel):
     order: int
     completed_at: Optional[datetime] = None
     completed_by: Optional[int] = None
+    assignee_id: Optional[int] = None
+    assignee_name: Optional[str] = None
     created_at: datetime
     workflow_id: Optional[int] = None
     workflow_name: Optional[str] = None

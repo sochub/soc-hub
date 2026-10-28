@@ -11,6 +11,8 @@ from fastapi import HTTPException
 
 from app.models.case import Case, TimelineEvent
 from app.models.case_task import CaseTask
+from app.models.membership import TenantMembership
+from app.models.user import User
 from app.models.playbook import PlaybookTemplate
 from app.models.workflow import Workflow, WorkflowRun
 from app.utils.audit import create_audit_log
@@ -39,15 +41,18 @@ async def task_rows(db: AsyncSession, tasks) -> list:
     from app.api.v1.ticketing import link_out
     from app.models.case import CaseLink
     task_ids = [t.id for t in tasks]
+    people_ids = {t.assignee_id for t in tasks if t.assignee_id}
+    people = dict((await db.execute(select(User.id, func.coalesce(User.full_name, User.email)).where(
+        User.id.in_(people_ids)))).all()) if people_ids else {}
     tickets = {lk.task_id: link_out(lk) for lk in (await db.execute(select(CaseLink).where(
         CaseLink.task_id.in_(task_ids or [-1]), CaseLink.connection_id.isnot(None)))).scalars()}
     out = []
     for t in tasks:
         w = wfs.get(t.workflow_id)
         out.append({c: getattr(t, c) for c in ("id", "case_id", "phase", "title", "description", "status", "order",
-                                                "completed_at", "completed_by", "created_at", "workflow_id", "last_run_id",
+                                                "completed_at", "completed_by", "assignee_id", "created_at", "workflow_id", "last_run_id",
                                                 "result", "result_status", "result_at")}
-                   | {"workflow_name": w.name if w else None,
+                   | {"workflow_name": w.name if w else None, "assignee_name": people.get(t.assignee_id),
                       "workflow_runnable": bool(w and w.enabled and w.trigger_type == "manual"),
                       "last_run_status": runs.get(t.last_run_id), "ticket": tickets.get(t.id)})
     return out
@@ -77,8 +82,37 @@ async def run_task_workflow(db: AsyncSession, *, case: Case, task: CaseTask, use
     return run
 
 
+async def assignable_ids(db: AsyncSession, tenant_id: int) -> set:
+    """Active analysts and admins of the tenant: who a case or task can be handed to."""
+    return set((await db.execute(select(User.id).join(TenantMembership, TenantMembership.user_id == User.id).where(
+        TenantMembership.tenant_id == tenant_id, TenantMembership.role.in_(["admin", "analyst"]),
+        User.is_active.is_(True)))).scalars())
+
+
+async def assign_task(db: AsyncSession, *, case: Case, task: CaseTask, assignee_id, user_id: int) -> None:
+    """Assign (or with None, unassign) a task. 422 unless the assignee is an active analyst or admin here.
+
+    Timeline + audit entry, and the new assignee follows the case and is notified (not when assigning yourself)."""
+    if assignee_id == task.assignee_id:
+        return
+    if assignee_id is not None and assignee_id not in await assignable_ids(db, case.tenant_id):
+        raise HTTPException(status_code=422, detail="A task can only be assigned to an active analyst or admin of this organization")
+    before, task.assignee_id = task.assignee_id, assignee_id
+    name = (await db.execute(select(func.coalesce(User.full_name, User.email)).where(User.id == assignee_id))).scalar() \
+        if assignee_id else None
+    db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="task",
+                         content=f"Task **{task.title}** assigned to {name}" if name else f"Task **{task.title}** unassigned"))
+    await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="task_assigned",
+                           tenant_id=case.tenant_id, user_id=user_id,
+                           changes={"task": task.title, "assignee_id": {"from": before, "to": assignee_id}})
+    await db.flush()
+    if assignee_id:
+        from app.notifications import service as notify
+        await notify.on_task_assigned(db, case, task, assignee_id, user_id)
+
+
 async def add_case_task(db: AsyncSession, *, case: Case, phase: str, title: str, description, user_id: int,
-                        workflow_id=None) -> CaseTask:
+                        workflow_id=None, assignee_id=None) -> CaseTask:
     """Append a 'todo' task at the end of the case's task order; audit ``task_added``."""
     await check_task_workflows(db, case.tenant_id, [workflow_id])
     max_order = (await db.execute(select(func.max(CaseTask.order)).where(CaseTask.case_id == case.id))).scalar() or 0
@@ -88,6 +122,8 @@ async def add_case_task(db: AsyncSession, *, case: Case, phase: str, title: str,
     await db.flush()
     await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="task_added",
                            tenant_id=case.tenant_id, user_id=user_id, changes={"title": task.title, "phase": task.phase})
+    if assignee_id is not None:
+        await assign_task(db, case=case, task=task, assignee_id=assignee_id, user_id=user_id)
     return task
 
 
