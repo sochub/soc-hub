@@ -41,7 +41,13 @@ _MENTION = re.compile(r"@\[([^\]]+)\]\(user:\d+\)")
 
 
 class TicketError(Exception):
-    """Shown to admins as the connection's last_error and to analysts when a ticket action fails."""
+    """Shown to admins as the connection's last_error and to analysts when a ticket action fails.
+
+    Every message is written here (provider, HTTP status, path): never a remote response body or exception text."""
+
+
+HOST_REFUSED = ("The ticketing host can't be reached from SOC Hub: it doesn't resolve, or it resolves to a private "
+                "address that isn't on this organization's HTTP allowlist.")
 
 
 # ── HTTP ─────────────────────────────────────────────────────────
@@ -56,7 +62,9 @@ async def _call(conn: TicketConnection, allowlist: list, method: str, path: str,
     try:
         ip = await asyncio.to_thread(assert_url_allowed, target_url, allowlist)
     except SSRFError as e:
-        raise TicketError(str(e)) from None
+        # The guard's text names the resolved address: log it, never hand internal network details to a tenant.
+        logger.info("ticketing host refused for tenant %s: %s", getattr(conn, "tenant_id", None), e)
+        raise TicketError(HOST_REFUSED) from None
     headers = {**headers, "Host": parsed.netloc.decode("ascii"), "Accept": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
