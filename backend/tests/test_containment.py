@@ -41,10 +41,14 @@ def test_protected_match():
     assert not protected_match("ip", "203.0.113.0/24", PROTECTED)
 
 
+# Undo templates lift a containment: guarding them would spend the caps and refuse releasing a protected device.
+RELEASES = {"defender-release-device.json"}
+
+
 def test_every_response_template_is_guarded():
     for p in TEMPLATES.glob("*.json"):
         d = json.loads(p.read_text())
-        if d.get("kind") != "response":
+        if d.get("kind") != "response" or p.name in RELEASES:
             continue
         g = d["graph"]
         guard = [n for n in g["nodes"] if n["type"] == "containment_guard"]
