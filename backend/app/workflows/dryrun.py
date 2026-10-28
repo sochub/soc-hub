@@ -11,7 +11,7 @@ _STUBS = {
 
 
 def dry_run_behaviour(node: dict) -> str:
-    if node["type"] in _READ_ONLY:
+    if node["type"] in _READ_ONLY or node["type"] == "containment_guard":  # the guard records nothing in a dry run
         return "execute"
     if node["type"] == "http_request" and node.get("execute_in_dry_run"):
         return "execute"

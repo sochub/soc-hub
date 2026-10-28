@@ -23,7 +23,7 @@
       ]
     }
   ],
-  "setup": "## Cloudflare side\n1. API token with **Account > Account Firewall Access Rules > Edit** for this account. Store it as `CLOUDFLARE_API_TOKEN`, allowed host `api.cloudflare.com`.\n\n## How it works\n- The IP is the case's first `ip` artifact. An IPv4/IPv6 address or a range (IPv4 /16 or /24, IPv6 /32, /48 or /64) is accepted; Cloudflare rejects anything else.\n- `POST https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/firewall/access_rules/rules` with `{\"mode\": \"block\", \"configuration\": {\"target\": \"ip\" | \"ip6\" | \"ip_range\", \"value\": <ip>}, \"notes\": \"Blocked from case #<id>: <title>\"}`. The rule applies to all zones in the account.\n- A note records the HTTP status and the new rule id. HTTP 400 usually means the IP is already in a rule or the value is not a valid IP; see the run history.\n- Unblock from Security > WAF > Tools (IP Access rules) or `DELETE /accounts/<id>/firewall/access_rules/rules/<rule id>`.\n\n## Why IP Access rules\nIP Access rules are not deprecated and work on every plan with one call. Cloudflare recommends WAF custom rules with an IP list for new blocking setups; if you already block through a list referenced by a custom rule, replace the request with `POST /accounts/<id>/rules/lists/<list id>/items` (`[{\"ip\": <ip>, \"comment\": ...}]`, permission *Account Filter Lists Edit*).\n\nDocs: [IP Access rules](https://developers.cloudflare.com/waf/tools/ip-access-rules/), [Create an account IP Access rule](https://developers.cloudflare.com/api/resources/firewall/subresources/access_rules/methods/create/), [Token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).\n",
+  "setup": "## Cloudflare side\n1. API token with **Account > Account Firewall Access Rules > Edit** for this account. Store it as `CLOUDFLARE_API_TOKEN`, allowed host `api.cloudflare.com`.\n\n## How it works\n- The IP is the case's first `ip` artifact. An IPv4/IPv6 address or a range (IPv4 /16 or /24, IPv6 /32, /48 or /64) is accepted; Cloudflare rejects anything else.\n- `POST https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/firewall/access_rules/rules` with `{\"mode\": \"block\", \"configuration\": {\"target\": \"ip\" | \"ip6\" | \"ip_range\", \"value\": <ip>}, \"notes\": \"Blocked from case #<id>: <title>\"}`. The rule applies to all zones in the account.\n- A note records the HTTP status and the new rule id. HTTP 400 usually means the IP is already in a rule or the value is not a valid IP; see the run history.\n- Unblock from Security > WAF > Tools (IP Access rules) or `DELETE /accounts/<id>/firewall/access_rules/rules/<rule id>`.\n\n## Why IP Access rules\nIP Access rules are not deprecated and work on every plan with one call. Cloudflare recommends WAF custom rules with an IP list for new blocking setups; if you already block through a list referenced by a custom rule, replace the request with `POST /accounts/<id>/rules/lists/<list id>/items` (`[{\"ip\": <ip>, \"comment\": ...}]`, permission *Account Filter Lists Edit*).\n\nDocs: [IP Access rules](https://developers.cloudflare.com/waf/tools/ip-access-rules/), [Create an account IP Access rule](https://developers.cloudflare.com/api/resources/firewall/subresources/access_rules/methods/create/), [Token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n",
   "graph": {
     "nodes": [
       {
@@ -92,6 +92,20 @@
         "config": {
           "content": "Cloudflare account IP Access rule (block, all zones) for {{ ((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) }}: HTTP {{ steps.block.output.status }}{{ (' (created, rule ' ~ ((steps.block.output.body.get('result') or {}).get('id') or '?') ~ ')') if steps.block.output.status == 200 and steps.block.output.body is mapping and steps.block.output.body.get('success') else ' (not created: check the token permission, whether the IP is already blocked, and the response in the run history)' }}."
         }
+      },
+      {
+        "id": "guard",
+        "type": "containment_guard",
+        "position": {
+          "x": 0,
+          "y": 220
+        },
+        "config": {
+          "action": "Block IP (Cloudflare)",
+          "target_kind": "ip",
+          "target": "{{ ((case.artifacts | selectattr('type', 'equalto', 'ip') | map(attribute='value') | first | default('')) | trim) }}",
+          "release_hint": "Delete the IP access rule in Cloudflare (Security > WAF > Tools > IP Access Rules)."
+        }
       }
     ],
     "edges": [
@@ -104,7 +118,7 @@
       {
         "id": "e_has_ip_block",
         "source": "has_ip",
-        "target": "block",
+        "target": "guard",
         "source_handle": "true"
       },
       {
@@ -117,6 +131,12 @@
         "id": "e_block_done",
         "source": "block",
         "target": "done",
+        "source_handle": null
+      },
+      {
+        "id": "e_guard",
+        "source": "guard",
+        "target": "block",
         "source_handle": null
       }
     ]

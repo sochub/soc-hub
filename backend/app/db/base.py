@@ -20,6 +20,7 @@ from app.models.case_event import CaseEvent  # noqa: F401
 from app.models.case_asset import CaseAsset  # noqa: F401
 from app.models.suppression_rule import SuppressionRule  # noqa: F401
 from app.models.ticket_connection import TicketConnection  # noqa: F401
+from app.models.containment import ContainmentAction, ContainmentPolicy  # noqa: F401
 from app.models.tenant_sso_config import TenantSSOConfig  # noqa: F401
 from app.models.case_triage import CaseTriageResult  # noqa: F401
 from app.models.sla_policy import SLAPolicy  # noqa: F401
