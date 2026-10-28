@@ -125,11 +125,20 @@ class CaseLink(Base):
     __tablename__ = "case_links"
 
     id = Column(Integer, primary_key=True, index=True)
-    case_id = Column(Integer, ForeignKey("cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
-    system = Column(String)  # e.g., "Jira", "ServiceNow"
+    system = Column(String)  # e.g., "jira", "halopsa", "connectwise"
     external_id = Column(String) # e.g., "SEC-123"
     url = Column(String)
+    # Ticket sync (app/services/ticket_sync.py): NULL connection_id = a plain link that is never synced.
+    connection_id = Column(Integer, ForeignKey("ticket_connections.id", ondelete="SET NULL"), nullable=True, index=True)
+    remote_status = Column(String, nullable=True)
+    remote_closed = Column(Boolean, nullable=False, default=False, server_default="false")
+    remote_cursor = Column(String, nullable=True)  # last remote comment id imported
+    pushed_note_id = Column(Integer, nullable=True)  # last timeline_events.id pushed to the ticket
+    pushed_case_status = Column(String, nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     case = relationship("Case", back_populates="links")
 

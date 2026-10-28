@@ -18,6 +18,7 @@ import CaseReport from './CaseReport';
 import TriagePanel from './TriagePanel';
 import FollowButton from './FollowButton';
 import WarRoomPill from './WarRoomPill';
+import CaseTicket from './CaseTicket';
 import OpenWarRoomModal from './OpenWarRoomModal';
 import WarRoomSuggestions from './WarRoomSuggestions';
 import IncidentOverview from './IncidentOverview';
@@ -235,6 +236,7 @@ export default function CaseDetail() {
                                         <Hash size={12} /> Open war room
                                     </button>
                                 )}
+                                {id && <CaseTicket caseId={parseInt(id)} canEdit={canWarRoom} />}
                                 {caseData.outcome && (
                                     <span className="px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border border-line text-fg-2 tracking-wider">
                                         {caseData.outcome.replace(/_/g, ' ')}

@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     # tenant), not a single global key — see app.api.deps.get_webhook_from_key.
 
     # Jira Integration
+    # Deprecated and ignored: ticketing is configured per tenant (Settings → Ticketing). Kept so an
+    # existing .env that still sets them doesn't fail to load.
     JIRA_URL: str | None = None
     JIRA_USER: str | None = None
     JIRA_API_TOKEN: str | None = None

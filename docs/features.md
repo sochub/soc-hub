@@ -179,6 +179,25 @@ in CIDR. Regular expressions are not supported.
   in the audit log.
 - Analysts and admins manage rules; viewers can read them.
 
+## Ticketing (Jira, HaloPSA, ConnectWise)
+
+An admin connects one ticketing system per organization in **Settings → Integrations → Ticketing / PSA**:
+Jira Cloud or Data Center, HaloPSA, or ConnectWise Manage. Credentials are encrypted and never shown again;
+**Test** signs in and reads the configured project or board without creating anything.
+
+- **Create**: the case header shows **Create ticket** (analysts and admins). Optionally, cases created after
+  you turn it on get a ticket automatically at or above a chosen severity.
+- **Pull** (every 5 minutes, or **Sync now** on the case): the ticket's status and new comments land in the
+  case Activity as `ticket_status` and `ticket_comment` entries. A closed ticket never closes the case; the
+  entry says so and leaves the decision to the analyst.
+- **Push**: when the case is resolved or closed, a comment with the outcome is posted to the ticket. Analyst
+  notes are posted only if **Post analyst notes to the ticket** is on (internal notes in HaloPSA and
+  ConnectWise, normal comments in Jira); guest notes and imported ticket comments are never posted back.
+- Removing the connection keeps each case's ticket link but stops syncing. Sync errors appear on the card.
+
+The provider calls follow each vendor's public API documentation and have not yet been run against live
+accounts.
+
 ## Profile and two-factor authentication
 
 Each user has a Profile page: name, job title, time zone, photo (shown across the

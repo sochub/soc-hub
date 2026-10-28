@@ -774,9 +774,13 @@ in-app notification is additional.
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`. When
 unset, invitation links are returned in the API/UI instead of emailed.
 
-## Jira (optional)
+## Ticketing (Jira, HaloPSA, ConnectWise)
 
-`JIRA_URL`, `JIRA_USER`, `JIRA_API_TOKEN`.
+Configured per organization by an admin in **Settings → Integrations → Ticketing / PSA**, not by environment
+variables. The old `JIRA_URL`, `JIRA_USER` and `JIRA_API_TOKEN` are ignored (still accepted so an existing
+`.env` loads). Requests go through the same outbound guard as workflow HTTP calls: https only, and a private
+address only when the host is on the tenant's HTTP allowlist and `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST` is set.
+The sync job runs every 5 minutes on the Celery beat (`sync-tickets`).
 
 ## Profile and two-factor authentication
 

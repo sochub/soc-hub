@@ -425,15 +425,22 @@ async def test_external_notification_skipped_for_inactive_tenant(ids, monkeypatc
 
 
 @scenario
-async def test_jira_task_skips_inactive_tenant(ids, monkeypatch):
-    from app.services.jira_service import JiraService
-    from app.tasks import jira
-    created = []
-    monkeypatch.setattr(JiraService, "create_issue_sync", lambda self, t, d: created.append(t) or {"key": "X-1"})
+async def test_ticket_sync_skips_inactive_tenant(ids, monkeypatch):
+    from app.models.ticket_connection import TicketConnection
+    from app.services import ticket_sync
+    from app.tasks import ticketing
+    synced = []
+
+    async def fake_sync(db, conn):
+        synced.append(conn.tenant_id)
+        return {"created": 0, "synced": 0, "errors": []}
+    monkeypatch.setattr(ticket_sync, "sync_tenant", fake_sync)
     async with AsyncSessionLocal() as db:
         dead = await tenant(db, ids, active=False)
+        db.add(TicketConnection(tenant_id=dead.id, provider="jira", base_url="https://x.atlassian.net",
+                                credentials_enc=ticket_sync.encrypt_credentials({}), settings={}))
         await db.commit()
         d = dead.id
     await engine.dispose()  # the sync task body runs its own loop: pooled connections must not cross loops
-    res = await asyncio.to_thread(jira.create_jira_ticket_task.run, 1, "t", "d", d)
-    assert created == [] and res is None
+    await asyncio.to_thread(ticketing.sync_tickets_task.run)
+    assert d not in synced

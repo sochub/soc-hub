@@ -90,7 +90,7 @@ def test_reencrypt_covers_every_enc_column():
         ("slack_integrations", "bot_token_enc"), ("slack_integrations", "signing_secret_enc"),
         ("slack_integrations", "app_token_enc"), ("tenant_ai_configs", "credentials_enc"),
         ("tenant_sso_configs", "oidc_client_secret_enc"), ("tenant_secrets", "value_enc"),
-        ("tenant_enrichment_configs", "credentials_enc"),
+        ("tenant_enrichment_configs", "credentials_enc"), ("ticket_connections", "credentials_enc"),
     }, found
 
 
