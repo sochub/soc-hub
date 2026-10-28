@@ -151,7 +151,7 @@ def digest_text(d: dict) -> str:
         f"{d['alerts_dismissed']}, of which suppressed as known noise {d['alerts_suppressed']})",
     ]
     if d["notable"]:
-        lines += ["", "Notable cases:"] + [f"- #{n['case_id']} [{n['severity']}] {n['title']} ({n['status']})"
+        lines += ["", "Notable cases:"] + [f"- #{n['case_id']} [{n['severity']}] {n['title']} ({n['status'].replace('_', ' ')})"
                                           for n in d["notable"]]
     return "\n".join(lines)
 

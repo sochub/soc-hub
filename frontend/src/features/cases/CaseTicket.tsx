@@ -23,7 +23,7 @@ export default function CaseTicket({ caseId, canEdit }: { caseId: number; canEdi
     const err = create.error ?? sync.error;
     if (!data || (!data.ticket && !(data.configured && canEdit))) return null;
     const t = data.ticket;
-    const pill = 'inline-flex items-center gap-1 rounded-sm border border-line-strong px-2.5 py-0.5 text-xs text-fg-2';
+    const pill = 'inline-flex items-center gap-1 whitespace-nowrap rounded-sm border border-line-strong px-2.5 py-0.5 text-xs text-fg-2';
     return (
         <span className="inline-flex items-center gap-1.5">
             {t ? (

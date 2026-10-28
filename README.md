@@ -28,8 +28,16 @@ leaves your infrastructure) and proposes actions you explicitly approve.
   - It runs on a local LLM (Ollama) by default, or on the AI provider you configure per tenant.
   - It **proposes actions** that you confirm before anything is written.
 - 🧠 **AI triage**: every new case gets a suggested severity, tags, playbook, related cases and next steps.
+- 🗂️ **One Activity feed per case**: the incident glance, investigation events, notes and system changes in one story.
+  - **Artifacts & assets** in one tab, and a per-case **network graph**.
 - 📋 **Playbooks**: a **marketplace** of MITRE-mapped IR playbooks.
   - Applying one fills the case with phase-grouped task checklists.
+  - A task can link a workflow: **Run** it from the case, and the workflow records its result on the task and ticks it.
+- 🔇 **Alert suppression**: expiring, auditable rules for known noise, with a preview and "Suppress similar".
+- 🎫 **Ticketing / PSA sync**: Jira, HaloPSA and ConnectWise, per tenant and two-way (status and comments come back).
+- 🏢 **Portfolio (MSSP)**: one queue and metrics across every client you work in, plus weekly client summaries.
+- 🛡️ **Containment guardrails**: protected VIPs/servers/ranges, daily and per-case caps, and a release ledger for automated containment.
+- 🙋 **"Was this you?"**: ask the user by email or Slack; their answer dismisses the alert or opens a case.
 - 🧪 **Threat-intel enrichment**: IOCs and artifacts are checked against VirusTotal, URLhaus, ThreatFox, RDAP and crt.sh.
   - Enrichment respects TLP, and private values never leave your network.
 - 📎 **Evidence**: file attachments on cases.
@@ -38,7 +46,9 @@ leaves your infrastructure) and proposes actions you explicitly approve.
   - Includes TTD/TTC/TTR and swimlane timeline charts.
   - Exports to PDF or JSON with TLP marking.
 - ⚙️ **Workflows**: a visual workflow builder with conditions, loops, case and alert actions, and HTTP requests.
-  - Includes Slack messages and "ask a person" buttons, plus dry runs.
+  - Includes Slack messages, "ask a person" over Slack or email, containment guards, task completion, and dry runs.
+  - Templates for CrowdStrike, SentinelOne, Microsoft, Okta, Google Workspace, Cloudflare, AWS, Wiz and more.
+- 🔌 **AI clients (MCP)**: connect Claude Code, Claude Desktop or Cursor; anything they create that could act on its own is saved disabled.
 - 🔑 **Workflow secrets**: encrypted credentials bound to allowed hosts.
   - They're inserted only at send time and redacted from run history.
 - 🔔 **Collaboration**: `@mentions` in comments, case following, and an in-app notification bell.
@@ -69,17 +79,45 @@ Drag cases across status columns, see what needs you in **My Queue**, and press
 
 <img src="docs/images/command-palette.png" alt="Command palette" width="900" />
 
-### 🗂️ Cases: AI triage, timeline and @mentions
+### 🗂️ Cases: one Activity feed, artifacts & assets, network
 
-Each case opens with its AI triage, its SLA status and a **Follow** toggle.
-In comments you can mention a teammate by typing `@`.
+Each case opens with its AI triage, SLA status, linked ticket and a **Follow** toggle. **Activity** puts the incident
+glance on top of one chronological story: investigation events, notes (type `@` to mention a teammate), ticket
+comments, containment and status changes.
 
-<img src="docs/images/case-overview.png" alt="Case overview with AI triage and follow" width="900" />
+<img src="docs/images/case-overview.png" alt="Case overview with ticket, SLA and the incident glance" width="900" />
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/case-timeline.png" alt="Case timeline with a highlighted @mention" /></td>
+<td width="50%"><img src="docs/images/case-timeline.png" alt="Activity feed: Add note, Add event, story filters" /></td>
 <td width="50%"><img src="docs/images/mentions.png" alt="@mention autocomplete in a comment" /></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/case-artifacts-assets.png" alt="Artifacts, containment ledger and assets in one tab" /></td>
+<td width="50%"><img src="docs/images/case-network.png" alt="The investigation graph scoped to the case" /></td>
+</tr>
+</table>
+
+### 🔇 Alerts and suppression
+
+Known noise is auto-dismissed at ingest by expiring, auditable rules. **Suppress similar** on an alert pre-fills one.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/alerts.png" alt="Alerts with Promote, Dismiss and Suppress similar" /></td>
+<td width="50%"><img src="docs/images/suppressions.png" alt="Suppression rules with hit counts and expiry" /></td>
+</tr>
+</table>
+
+### 🏢 Portfolio for MSSPs
+
+Every client you work in: SLA breaches, unassigned work, pending alerts and MTTR per client, one merged queue, and a
+copyable or weekly-emailed client summary.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/portfolio.png" alt="Portfolio: client cards and the merged queue" /></td>
+<td width="50%"><img src="docs/images/portfolio-summary.png" alt="Client summary for the last 7 days" /></td>
 </tr>
 </table>
 
@@ -103,12 +141,26 @@ as a TLP-marked PDF or as JSON.
 
 <img src="docs/images/investigation-graph.png" alt="Investigation graph" width="900" />
 
-### ⚙️ Workflows
+### ⚙️ Workflows, guardrails and ticketing
 
 A visual workflow editor with typed node inspectors, dry runs and run history.
-Steps include Slack "ask a person" prompts, HTTP calls and case actions.
+Steps include Slack or email "ask a person" prompts, HTTP calls, case actions, containment guards and
+**Complete task**. Containment is checked against protected targets and caps; tickets sync with Jira, HaloPSA or
+ConnectWise.
 
 <img src="docs/images/automations-editor.png" alt="Workflow editor" width="900" />
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/config-ticketing.png" alt="Ticketing / PSA connection" /></td>
+<td width="50%"><img src="docs/images/config-containment.png" alt="Containment guardrails" /></td>
+</tr>
+</table>
+
+**"Was this you?"**: the user answers on a one-time page linked from an email (or in Slack), and the workflow
+dismisses the alert or opens a case.
+
+<img src="docs/images/verify.png" alt="Was this you? answer page" width="560" />
 
 ### 🤖 AI copilot: you confirm every proposed action
 
@@ -124,9 +176,13 @@ Steps include Slack "ask a person" prompts, HTTP calls and case actions.
 <table>
 <tr>
 <td width="50%"><img src="docs/images/playbooks-marketplace.png" alt="Playbook marketplace" /></td>
-<td width="50%"><img src="docs/images/case-tasks.png" alt="Phase-grouped case tasks" /></td>
+<td width="50%"><img src="docs/images/playbook-editor.png" alt="Playbook editor: link a workflow to a task" /></td>
 </tr>
 </table>
+
+A task can link a workflow. On the case, **Run** starts it, and the workflow records its result on the task:
+
+<img src="docs/images/case-tasks.png" alt="Case tasks with workflow results and Run buttons" width="900" />
 
 ### 🗃️ Cases, IOCs & artifacts
 

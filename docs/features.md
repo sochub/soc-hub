@@ -2,23 +2,43 @@
 
 ## Cases & investigation
 
-Create and work security cases with severity/status, tags, a description, an
-activity **timeline**, attached **artifacts** and **IOCs**, and an **audit trail**.
-Cases gain a **Tasks** tab when a playbook is applied.
+Create and work security cases with severity/status, tags, a description, attached **artifacts**, **assets** and
+**IOCs**, and an **audit trail**. A case has these tabs:
+
+- **Activity**: the incident glance on top, then one chronological feed of everything: investigation events (what
+  happened, dated when it happened, with an ATT&CK category), notes and comments (@mentions, guest sharing, edit),
+  ticket comments and status, containment, and system changes. **Add note** (stamped now) and **Add event** (dated
+  when it happened; the category picker explains each category). Filter by **All / Story / Notes & changes**, by
+  text (`category:`, `tag:`, `artifact:`…) or **Pinned**; export to CSV; **Suggest** drafts events from alerts and notes.
+- **Tasks**: phase-grouped playbook tasks. A task can link a workflow: **Run** starts it on the case, and a workflow's
+  *Complete task* step records the outcome on the task (colour-coded) and ticks it.
+- **Artifacts & assets**: one **Add** dialog asks which you're adding: an **artifact** (evidence of the attacker: IP,
+  domain, hash…, enrichable, promotable to an IOC) or an **asset** (a host, account or service of yours, with its
+  compromise status). The **Containment** list shows what automations contained, refused or released.
+- **Evidence**, **Guests**, **Report**, **Automation**, **Audit**, and **Network**: the investigation graph limited to
+  this case and whatever its artifacts and IOCs connect to (two hops).
+
+The case header shows the SLA, AI triage, the Slack war room and, when ticketing is set up, the linked ticket
+(**Create ticket**, status, **Sync now**).
+
+![Case Activity: Add note, Add event and the story filters](images/case-timeline.png)
+![Case tasks: workflow results and Run](images/case-tasks.png)
+![Artifacts, containment and assets](images/case-artifacts-assets.png)
 
 **Incident milestones.** Every case has four milestones: **First seen**, **Detected**, **Contained** and
 **Recovered**. Each is computed from case data (earliest IOC or alert, case creation, last completed containment
 task, resolution) until an analyst declares an exact time. Declare them from **Edit milestones** on the glance,
-the report's Milestones panel, a Timeline event's **Set as…** menu, or the **Incident started** field when
+the report's Milestones panel, an investigation event's **Set as…** menu, or the **Incident started** field when
 creating a case (it is only used if you change it from "now"). The glance, the report and the TTD/TTC/TTR
 durations all read the same values. Saving a time that would put milestones out of order is refused; an
 inconsistency that already existed in the computed values never blocks an unrelated edit.
 
-**Incident at a glance** (Activity tab) shows the incident on one time axis: milestone markers, status phases and
-only the items you chose. Status and severity changes always appear; investigation events appear when pinned
-(the flag on the event); activity entries appear when pinned from the **Timeline** tab. A declared First seen
-earlier than the case adds a "before case" phase. The **Timeline** tab lists investigation events and activity
-entries together, filterable by **All / Investigation / Activity** and **Pinned**.
+**Incident at a glance** (top of the Activity tab) shows the incident on one time axis: milestone markers, status
+phases and only the items you chose. Status and severity changes always appear; investigation events and notes
+appear when pinned (the flag or pin on the entry). A declared First seen earlier than the case adds a "before case"
+phase. Clicking an item scrolls the feed to it.
+
+![Incident at a glance: milestones, status phases and pinned items](images/case-glance.png)
 
 ## Multi-tenancy
 
@@ -36,6 +56,8 @@ The active tenant rides in the JWT; switch it from the sidebar picker
 
 
 ### Portfolio (MSSP view)
+
+![Portfolio](images/portfolio.png)
 
 Users who belong to more than one tenant get **Portfolio** in the sidebar: one card per client (open cases,
 SLA breached and at risk, unassigned, pending alerts, 30-day MTTR, oldest open case) and one queue of every
@@ -160,7 +182,8 @@ An interactive force-directed map of **cases ◉, artifacts ▢, and IOCs ◇**.
 **value-match bridges** connect an IOC to an artifact sharing the same value —
 surfacing cross-case correlation at a glance. Filter by node type / severity /
 threat, search, toggle "connected only", zoom, pan, drag nodes, and click any node
-for a detail dossier with links into cases.
+for a detail dossier with links into cases. A case's **Network** tab shows the same graph limited to that case and
+what its artifacts and IOCs connect to.
 
 ## Alert ingestion
 
@@ -190,6 +213,8 @@ alert. Use one of them instead of *Identity alerts: group by user into a case* f
 controls the user's mailbox or Slack can answer *It was me*, so keep it for low-to-medium alerts.
 
 ### Suppression rules
+
+![Suppression rules](images/suppressions.png)
 
 **Alerts → Suppressions** holds rules for known noise (a VPN egress range, an approved scanner, a service
 account). A rule is a list of conditions that must all hold: `source`, `title`, `severity` or `payload.<path>`
@@ -227,6 +252,22 @@ Jira Cloud or Data Center, HaloPSA, or ConnectWise Manage. Credentials are encry
 The provider calls follow each vendor's public API documentation and have not yet been run against live
 accounts.
 
+## Automated containment guardrails
+
+![Containment guardrails](images/config-containment.png)
+
+**Settings → Integrations → Containment guardrails** (admins) limits what automations may contain:
+
+- **Never contain automatically**: one entry per line, `host|user|ip|any pattern  # note`. Host and user patterns are
+  case-insensitive with `*` wildcards (`dc-*`, `ceo@acme.com`); `ip` takes an address or CIDR range, and a target range
+  that overlaps it counts.
+- **Actions per 24 hours** for the whole organization (default 25) and **contained targets per case** (default 5).
+
+Every built-in response workflow (CrowdStrike, SentinelOne, Cloudflare, Entra ID, Google Workspace, Okta) checks them
+in a **containment guard** step before acting. A refused action stops the run and adds a note to the case. The case's
+**Artifacts & assets → Containment** list shows active, refused and released actions with how to undo each;
+**Mark released** records the undo and frees the case's slot.
+
 ## Profile and two-factor authentication
 
 Each user has a Profile page: name, job title, time zone, photo (shown across the
@@ -250,7 +291,9 @@ super admins never sign in through a tenant IdP. See [sso/oidc.md](sso/oidc.md) 
 ## AI clients (MCP)
 
 Tenant admins can switch on **Settings -> AI clients (MCP)** so members connect Claude Code, Claude Desktop or
-Cursor to `<PUBLIC_BASE_URL>/mcp`. After a browser sign-in and consent (with a tenant picker), the client gets 26
-tools to read alerts and cases, add notes, artifacts and IOCs, promote alerts, apply playbooks and run manual
-workflows, always with the signed-in person's live role. Writes show "via MCP" in the case Activity tab and as
+Cursor to `<PUBLIC_BASE_URL>/mcp`. After a browser sign-in and consent (with a tenant picker), the client gets 76
+tools covering an analyst's day-to-day work (alerts, cases, notes, investigation events, artifacts, assets, IOCs,
+tasks and their workflows, enrichment, triage, suppression drafts, tickets, containment records, the client summary)
+and admin authoring of playbooks and workflows, always with the signed-in person's live role. Anything that can hide
+alerts or run on its own (workflows, suppression rules) is saved **disabled** for a person to review and enable. Writes show "via MCP" in the case Activity tab and as
 `mcp.<tool>` audit entries; users and admins can revoke connected apps. See [mcp/README.md](mcp/README.md).

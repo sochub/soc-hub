@@ -205,7 +205,7 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
                 {MILESTONES.map(({ key, label: name }) => (
                     <span key={key} className="inline-flex items-center gap-1"><span className="h-2 w-0.5" style={{ background: MILESTONE_COLOR[key] }} />{name}</span>
                 ))}
-                <span className="text-muted">· pin entries in the Timeline tab to show them here</span>
+                <span className="text-muted">· pin entries in the feed below to show them here</span>
             </div>
         </section>
     );
