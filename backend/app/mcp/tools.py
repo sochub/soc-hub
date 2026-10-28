@@ -38,6 +38,7 @@ from app.models.playbook import IR_PHASES, PlaybookTemplate
 from app.models.suppression_rule import SuppressionRule
 from app.models.ticket_connection import TicketConnection
 from app.models.containment import ContainmentAction
+from app.api.v1.ticketing import link_out
 from app.models.tenant import Tenant
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.oauth.tokens import OAuthPrincipal
@@ -102,8 +103,8 @@ MIN_ROLE: dict[str, str] = {
     # alert suppression
     "list_suppressions": "viewer", "preview_suppression": "viewer", "create_suppression": "analyst",
     # ticketing
-    "get_case_ticket": "viewer", "create_case_ticket": "analyst",
-    "run_case_task_workflow": "analyst", "sync_case_ticket": "analyst",
+    "create_task_ticket": "analyst", "sync_task_ticket": "analyst",
+    "run_case_task_workflow": "analyst",
     "update_suppression": "analyst",
     # containment guardrails and the client summary
     "get_containment_policy": "viewer", "list_containment_actions": "viewer", "release_containment_action": "analyst",
@@ -223,6 +224,8 @@ def _task(t) -> dict:
                 "last_run_status": g("last_run_status")}
     if g("result_status"):
         out |= {"result": g("result"), "result_status": g("result_status"), "result_at": _iso(g("result_at"))}
+    if g("ticket"):
+        out["ticket"] = {k: (_iso(v) if isinstance(v, datetime) else v) for k, v in g("ticket").items()}
     return out
 
 
@@ -1185,54 +1188,48 @@ async def create_suppression(db: AsyncSession, p: OAuthPrincipal, name: str, con
 # ── ticketing ────────────────────────────────────────────────────
 
 
-def _ticket(link) -> Optional[dict]:
-    if link is None:
-        return None
-    return {"provider": link.system, "external_id": link.external_id, "url": link.url,
-            "remote_status": link.remote_status, "remote_closed": link.remote_closed,
-            "last_synced_at": _iso(link.last_synced_at)}
-
-
-@tool
-async def get_case_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
-    """The case's linked Jira/HaloPSA/ConnectWise ticket (status as of the last sync), if any."""
+async def _task_and_conn(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id: int):
     c = await _case(db, p, case_id)
-    return {"case_id": c.id, "ticket": _ticket(await ticket_sync.link_for(db, c.id, p.tenant_id))}
-
-
-@tool
-async def create_case_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
-    """Open a ticket for the case in the organization's ticketing system (title, description and severity
-    come from the case) and link it. Fails when ticketing isn't set up or the case already has one."""
-    c = await _case(db, p, case_id)
+    t = (await db.execute(select(CaseTask).where(CaseTask.id == task_id, CaseTask.case_id == c.id,
+                                                 CaseTask.tenant_id == p.tenant_id))).scalars().first()
+    if t is None:
+        raise ToolError("Not found")
     conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == p.tenant_id))).scalars().first()
     if conn is None or not conn.enabled:
         raise ToolError("Ticketing is not set up for this organization")
-    try:
-        link = await ticket_sync.create_ticket(db, conn=conn, case=c, user_id=p.user.id)
-    except ticket_sync.TicketError as e:
-        raise ToolError(str(e)) from None
-    await db.commit()
-    await db.refresh(link)
-    return {"case_id": c.id, "ticket": _ticket(link), "url": case_url(c.id)}
+    return c, t, conn
 
 
 @tool
-async def sync_case_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
-    """Pull the case ticket's status and new comments now (and push notes, if the organization enabled that)."""
-    c = await _case(db, p, case_id)
-    conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == p.tenant_id))).scalars().first()
-    link = await ticket_sync.link_for(db, c.id, p.tenant_id)
-    if conn is None or not conn.enabled or link is None or link.connection_id != conn.id:
-        raise ToolError("This case has no synced ticket")
+async def create_task_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id: int) -> dict:
+    """Open a ticket for one case task in the organization's ticketing system (Jira/HaloPSA/ConnectWise) and link
+    it. Closing the ticket later ticks the task; ticking the task posts its result on the ticket."""
+    c, t, conn = await _task_and_conn(db, p, case_id, task_id)
     try:
-        await ticket_sync.sync_link(db, ticket_sync.client(conn, await ticket_sync._allowlist(db, p.tenant_id)),
-                                    conn, link, c)
+        link = await ticket_sync.create_ticket(db, conn=conn, case=c, task=t, user_id=p.user.id)
     except ticket_sync.TicketError as e:
         raise ToolError(str(e)) from None
     await db.commit()
     await db.refresh(link)
-    return {"case_id": c.id, "ticket": _ticket(link)}
+    return {"case_id": c.id, "task_id": task_id, "ticket": link_out(link), "url": case_url(c.id)}
+
+
+@tool
+async def sync_task_ticket(db: AsyncSession, p: OAuthPrincipal, case_id: int, task_id: int) -> dict:
+    """Pull a task ticket's status and new comments now (a closed ticket ticks the task) and post the task's result
+    if it was ticked."""
+    c, t, conn = await _task_and_conn(db, p, case_id, task_id)
+    link = (await ticket_sync.links_for_case(db, c.id, p.tenant_id)).get(t.id)
+    if link is None or link.connection_id != conn.id:
+        raise ToolError("This task has no synced ticket")
+    try:
+        await ticket_sync.sync_link(db, ticket_sync.client(conn, await ticket_sync._allowlist(db, p.tenant_id)),
+                                    conn, link, c, t)
+    except ticket_sync.TicketError as e:
+        raise ToolError(str(e)) from None
+    await db.commit()
+    await db.refresh(link)
+    return {"case_id": c.id, "task_id": task_id, "ticket": link_out(link)}
 
 
 @tool

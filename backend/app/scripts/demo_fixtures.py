@@ -233,13 +233,19 @@ async def new_features(c: httpx.AsyncClient, tid: int, hero_ids: list[int]) -> N
             a.status, a.suppression_rule_id = "dismissed", first_rule
             a.dismiss_reason = f"Suppressed by rule #{first_rule}: {rules[0][0]}"
         conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == tid))).scalars().one()
-        for i, cid in enumerate(hero_ids):
-            db.add(CaseLink(case_id=cid, tenant_id=tid, connection_id=conn.id, system="jira", external_id=f"SEC-{41 + i}",
-                            url=f"https://greenbow.atlassian.net/browse/SEC-{41 + i}",
-                            remote_status="Done" if i < 2 else "In Progress", remote_closed=i < 2, last_synced_at=now))
-            db.add(TimelineEvent(case_id=cid, event_type="ticket_comment", content=(
-                f"**Mrs. Gump** in Jira SEC-{41 + i}:\n\nThank you, Forrest. Mama always said life was like a box of "
-                "chocolates; let us know when the boat laptop is clean.")))
+        n = 41
+        for cid in hero_ids:  # tickets belong to tasks: the password reset goes to IT in Jira
+            for t in (await db.execute(select(CaseTask).where(CaseTask.case_id == cid, CaseTask.title.like("Reset credentials%"))
+                                       .order_by(CaseTask.id))).scalars():
+                done = t.status == "done"
+                db.add(CaseLink(case_id=cid, task_id=t.id, tenant_id=tid, connection_id=conn.id, system="jira",
+                                external_id=f"SEC-{n}", url=f"https://greenbow.atlassian.net/browse/SEC-{n}",
+                                remote_status="Done" if done else "In Progress", remote_closed=done, last_synced_at=now,
+                                pushed_case_status=t.status))
+                db.add(TimelineEvent(case_id=cid, event_type="ticket_comment", content=(
+                    f"**Bubba Blue** in Jira SEC-{n} (task *{t.title}*):\n\nCaptain's password is reset; MFA re-enrolled "
+                    "on the boat tablet. Waiting for him to sign in again.")))
+                n += 1
         main = hero_ids[-1]
         for kind, target, action, status, reason in (
                 ("host", "SHRIMP-BOAT-01", "Contain host (CrowdStrike)", "active", None),
@@ -274,7 +280,8 @@ async def capture(c: httpx.AsyncClient, case_ids: list[int]) -> dict:
               "/notifications/", "/notifications/unread-count", "/tenants/", "/tenants/sla-policies", "/artifact-types/",
               "/ai/info", "/enrichment/config", "/audit-logs", "/audit-logs/facets", "/tenants/current/report-branding",
               "/tenants/current/security", "/tenants/current/guests", "/openapi.json",
-              "/suppressions/", "/ticketing/connection", "/containment/policy", "/containment/actions", "/portfolio/"]
+              "/suppressions/", "/ticketing/connection", "/ticketing/status", "/containment/policy", "/containment/actions",
+              "/portfolio/"]
     per_case = ["/cases/{id}", "/artifacts/case/{id}", "/cases/{id}/tasks", "/cases/{id}/events", "/cases/{id}/assets",
                 "/cases/{id}/attachments", "/cases/{id}/follow", "/cases/{id}/report", "/audit-logs/case/{id}",
                 "/cases/{id}/report/charts/lifecycle.svg", "/cases/{id}/report/charts/timeline.svg", "/cases/{id}/ticket"]

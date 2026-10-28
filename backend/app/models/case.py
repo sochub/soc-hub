@@ -130,7 +130,9 @@ class CaseLink(Base):
     system = Column(String)  # e.g., "jira", "halopsa", "connectwise"
     external_id = Column(String) # e.g., "SEC-123"
     url = Column(String)
-    # Ticket sync (app/services/ticket_sync.py): NULL connection_id = a plain link that is never synced.
+    # Ticket sync (app/services/ticket_sync.py): one ticket per case task. NULL connection_id or task_id = a plain
+    # link that is never synced.
+    task_id = Column(Integer, ForeignKey("case_tasks.id", ondelete="CASCADE"), nullable=True, index=True)
     connection_id = Column(Integer, ForeignKey("ticket_connections.id", ondelete="SET NULL"), nullable=True, index=True)
     remote_status = Column(String, nullable=True)
     remote_closed = Column(Boolean, nullable=False, default=False, server_default="false")

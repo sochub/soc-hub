@@ -17,7 +17,8 @@ from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.audit_log import AuditLog
-from app.models.case import Case, CaseLink, CaseSeverity, CaseStatus, TimelineEvent
+from app.models.case import Case, CaseLink, CaseSeverity, CaseStatus, TimelineEvent  # noqa: F401
+from app.models.case_task import CaseTask
 from app.models.tenant import Tenant
 from app.models.ticket_connection import TicketConnection
 from app.models.user import User
@@ -65,13 +66,18 @@ async def _scenario(monkeypatch):
                     hashed_password=get_password_hash(secrets.token_hex(8)), is_active=True)
         db.add_all([t, t2, user])
         await db.flush()
-        old = Case(title="before the connection", tenant_id=t.id, severity=CaseSeverity.CRITICAL,
-                   created_at=datetime.now(timezone.utc) - timedelta(days=2))
-        manual = Case(title="Phishing at ACME", tenant_id=t.id, severity=CaseSeverity.LOW, description="bad mail")
+        case = Case(title="Phishing at ACME", tenant_id=t.id, severity=CaseSeverity.HIGH, description="bad mail")
         foreign = Case(title="other tenant", tenant_id=t2.id)
-        db.add_all([old, manual, foreign])
+        db.add_all([case, foreign])
+        await db.flush()
+        isolate = CaseTask(case_id=case.id, tenant_id=t.id, phase="containment", title="Isolate the laptop",
+                           description="Network-contain WS-01")
+        reset = CaseTask(case_id=case.id, tenant_id=t.id, phase="eradication", title="Reset the password")
+        ftask = CaseTask(case_id=foreign.id, tenant_id=t2.id, title="theirs")
+        db.add_all([isolate, reset, ftask])
         await db.commit()
-        tid, t2id, uid, old_id, manual_id, foreign_id = t.id, t2.id, user.id, old.id, manual.id, foreign.id
+        tid, t2id, uid, cid, fid = t.id, t2.id, user.id, case.id, foreign.id
+        isolate_id, reset_id, ftask_id = isolate.id, reset.id, ftask.id
 
     def deny():
         raise HTTPException(status_code=403, detail="Insufficient permissions")
@@ -79,7 +85,7 @@ async def _scenario(monkeypatch):
     app.dependency_overrides[deps.get_effective_tenant_id] = lambda: tid
     app.dependency_overrides[deps.require_admin] = lambda: user if role["v"] == "admin" else deny()
     app.dependency_overrides[deps.require_analyst_or_above] = lambda: user if role["v"] != "viewer" else deny()
-    case_ids = [old_id, manual_id, foreign_id]
+    case_ids = [cid, fid]
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             assert (await c.get("/api/v1/ticketing/connection")).json() is None
@@ -92,7 +98,7 @@ async def _scenario(monkeypatch):
             assert r.status_code == 200, r.text
             assert "s3cret" not in r.text and r.json()["has_credentials"] and r.json()["base_url"] == "https://acme.atlassian.net"
             # keep the stored credentials when omitted (same provider and host) …
-            r = await c.put("/api/v1/ticketing/connection", json={**body, "credentials": None, "push_notes": False})
+            r = await c.put("/api/v1/ticketing/connection", json={**body, "credentials": None})
             assert r.status_code == 200, r.text
             # … but never carry them to another host
             r = await c.put("/api/v1/ticketing/connection", json={**body, "credentials": None,
@@ -100,86 +106,89 @@ async def _scenario(monkeypatch):
             assert r.status_code == 422 and "host" in r.text, r.text
             assert (await c.post("/api/v1/ticketing/connection/test")).json() == {"ok": True}
 
-            # manual create for a low-severity case; a second create is refused
-            r = await c.post(f"/api/v1/cases/{manual_id}/ticket")
+            # a ticket per task: the task's title and the case go in the ticket
+            r = await c.post(f"/api/v1/cases/{cid}/tasks/{isolate_id}/ticket")
             assert r.status_code == 201, r.text
             assert r.json()["external_id"] == "SEC-1" and r.json()["url"] == "https://acme.atlassian.net/browse/SEC-1"
-            created = next(b for m, p, b in fake.calls if p.endswith("/issue"))
-            assert created["fields"]["project"] == {"key": "SEC"} and "[SOC Hub #" in created["fields"]["summary"]
-            assert (await c.post(f"/api/v1/cases/{manual_id}/ticket")).status_code == 502
-            assert (await c.post(f"/api/v1/cases/{foreign_id}/ticket")).status_code == 404
+            created = next(b for m, p, b in fake.calls if p.endswith("/issue"))["fields"]
+            assert created["summary"] == f"[SOC Hub #{cid}] Isolate the laptop" and created["project"] == {"key": "SEC"}
+            assert "Network-contain WS-01" in ticket_sync._adf_text(created["description"])
+            assert (await c.post(f"/api/v1/cases/{cid}/tasks/{isolate_id}/ticket")).status_code == 502  # once
+            assert (await c.post(f"/api/v1/cases/{fid}/tasks/{ftask_id}/ticket")).status_code == 404
+            assert (await c.post(f"/api/v1/cases/{cid}/tasks/{ftask_id}/ticket")).status_code == 404
+            tasks = {x["id"]: x for x in (await c.get(f"/api/v1/cases/{cid}/tasks")).json()}
+            assert tasks[isolate_id]["ticket"]["external_id"] == "SEC-1" and tasks[reset_id]["ticket"] is None
 
-            # an analyst note before push_notes is on is not pushed later
-            async with AsyncSessionLocal() as db:
-                db.add(TimelineEvent(case_id=manual_id, user_id=uid, event_type="comment", content="early @[Bo](user:1)"))
-                await db.commit()
+            # pull: status and comments
             fake.status = ("In Progress", False)
-            fake.comments = [{"id": "11", "author": {"displayName": "Client Carl"},
-                              "body": {"type": "doc", "content": [{"type": "paragraph", "content": [
-                                  {"type": "text", "text": "Is the mailbox safe?"}]}]}}]
-            r = await c.post(f"/api/v1/cases/{manual_id}/ticket/sync")
+            fake.comments = [{"id": "11", "author": {"displayName": "IT Ivan"}, "body": {"type": "doc", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Laptop is off the network"}]}]}}]
+            r = await c.post(f"/api/v1/cases/{cid}/tasks/{isolate_id}/ticket/sync")
             assert r.status_code == 200 and r.json()["remote_status"] == "In Progress", r.text
             assert pushed(fake) == []
-
-        # periodic job: auto-creates only new cases at/above the floor, then syncs
-        async with AsyncSessionLocal() as db:
-            hot = Case(title="Ransomware", tenant_id=tid, severity=CaseSeverity.CRITICAL)
-            mild = Case(title="Spam", tenant_id=tid, severity=CaseSeverity.MEDIUM)
-            db.add_all([hot, mild])
-            await db.commit()
-            case_ids += [hot.id, mild.id]
-            hot_id = hot.id
-            conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == tid))).scalar_one()
-            conn.push_notes = True
-            await db.commit()
-            db.add(TimelineEvent(case_id=manual_id, user_id=uid, event_type="comment", content="Reset done @[Bo](user:1)"))
-            db.add(TimelineEvent(case_id=manual_id, event_type="ticket_comment", content="echo"))  # never pushed
-            mc = await db.get(Case, manual_id)
-            mc.status, mc.outcome = CaseStatus.RESOLVED, "true_positive"
-            await db.commit()
+            # closing the ticket ticks the task, with the ticket as its result
             fake.status = ("Done", True)
-            fake.comments.append({"id": "12", "author": {"displayName": "Jira"}, "body": "[SOC Hub] our own echo"})
+            r = await c.post(f"/api/v1/cases/{cid}/tasks/{isolate_id}/ticket/sync")
+            assert r.json()["remote_closed"] is True
+            done = {x["id"]: x for x in (await c.get(f"/api/v1/cases/{cid}/tasks")).json()}[isolate_id]
+            assert done["status"] == "done" and done["result"] == "Closed in Jira SEC-1 (Done)" and done["result_status"] == "ok"
+            assert pushed(fake) == []  # closed there: nothing to tell the ticket
+
+            # ticking a task in SOC Hub posts its result on the ticket
+            r = await c.post(f"/api/v1/cases/{cid}/tasks/{reset_id}/ticket")
+            assert r.json()["external_id"] == "SEC-2"
+            async with AsyncSessionLocal() as db:
+                rt = await db.get(CaseTask, reset_id)
+                rt.result, rt.result_status = "Password reset by @[Bo](user:1)", "ok"
+                await db.commit()
+            assert (await c.put(f"/api/v1/cases/{cid}/tasks/{reset_id}", json={"status": "done"})).status_code == 200
+            fake.status, fake.comments = ("To Do", False), []
+            await c.post(f"/api/v1/cases/{cid}/tasks/{reset_id}/ticket/sync")
+            flat = [ticket_sync._adf_text(b["body"]) for b in pushed(fake)]
+            assert flat == ["[SOC Hub] Task completed: Password reset by @Bo"], flat
+            await c.post(f"/api/v1/cases/{cid}/tasks/{reset_id}/ticket/sync")
+            assert len(pushed(fake)) == 1  # posted once
+
+            role["v"] = "viewer"
+            assert (await c.post(f"/api/v1/cases/{cid}/tasks/{reset_id}/ticket/sync")).status_code == 403
+            role["v"] = "admin"
+
+        # periodic job: auto-creates tickets for tasks added after the setting, on open cases at/above the floor
+        async with AsyncSessionLocal() as db:
+            db.add(CaseTask(case_id=cid, tenant_id=tid, title="Hunt for the same sender"))
+            low = Case(title="low", tenant_id=tid, severity=CaseSeverity.LOW)
+            db.add(low)
+            await db.flush()
+            case_ids.append(low.id)
+            db.add(CaseTask(case_id=low.id, tenant_id=tid, title="Ignored: low case"))
+            await db.commit()
+            conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == tid))).scalar_one()
             r = await ticket_sync.sync_tenant(db, conn)
             assert r["created"] == 1 and r["errors"] == [], r
         async with AsyncSessionLocal() as db:
-            links = {lk.case_id: lk for lk in (await db.execute(select(CaseLink).where(CaseLink.tenant_id == tid))).scalars()}
-            assert set(links) == {manual_id, hot_id}  # not the old critical case, not the medium one
-            assert links[manual_id].remote_closed and links[manual_id].remote_cursor == "12"
-            texts = [b["body"] for b in pushed(fake)]
-            flat = [ticket_sync._adf_text(x) for x in texts]
-            assert any("Reset done @Bo" in x and "Ana Analyst" in x for x in flat), flat
-            assert any("Case resolved (outcome: true positive)" in x for x in flat), flat
-            assert not any("early" in x or "echo" in x for x in flat), flat
+            links = (await db.execute(select(CaseLink).where(CaseLink.tenant_id == tid))).scalars().all()
+            titles = {(await db.get(CaseTask, lk.task_id)).title for lk in links}
+            assert titles == {"Isolate the laptop", "Reset the password", "Hunt for the same sender"}, titles
             events = (await db.execute(select(TimelineEvent.event_type, TimelineEvent.content).where(
-                TimelineEvent.case_id == manual_id))).all()
-            imported = [ct for et, ct in events if et == "ticket_comment" and "Client Carl" in ct]
-            assert len(imported) == 1 and "Is the mailbox safe?" in imported[0]
-            assert not any("our own echo" in ct for _, ct in events)
+                TimelineEvent.case_id == cid))).all()
+            assert any(et == "ticket_comment" and "IT Ivan" in ct and "Isolate the laptop" in ct for et, ct in events)
             assert any(et == "ticket_status" and "Done" in ct for et, ct in events)
-            # sync again: nothing new is pushed or imported
-            n_calls = len(pushed(fake))
-            conn = (await db.execute(select(TicketConnection).where(TicketConnection.tenant_id == tid))).scalar_one()
-            await ticket_sync.sync_tenant(db, conn)
-            assert len(pushed(fake)) == n_calls
             acts = set((await db.execute(select(AuditLog.action).where(AuditLog.tenant_id == tid))).scalars())
             assert {"create", "update", "ticket_created"} <= acts, acts
-
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             role["v"] = "analyst"
             assert (await c.get("/api/v1/ticketing/connection")).status_code == 403
-            assert (await c.get(f"/api/v1/cases/{manual_id}/ticket")).json()["ticket"]["external_id"] == "SEC-1"
-            role["v"] = "viewer"
-            assert (await c.post(f"/api/v1/cases/{manual_id}/ticket/sync")).status_code == 403
             role["v"] = "admin"
             assert (await c.delete("/api/v1/ticketing/connection")).status_code == 204
-            t = (await c.get(f"/api/v1/cases/{manual_id}/ticket")).json()
-            assert t["configured"] is False and t["ticket"] is None  # link kept, no longer synced
+            tasks = (await c.get(f"/api/v1/cases/{cid}/tasks")).json()
+            assert all(x["ticket"] is None for x in tasks)  # links kept, no longer synced
     finally:
         app.dependency_overrides.clear()
         async with AsyncSessionLocal() as db:
             await db.execute(delete(AuditLog).where(AuditLog.tenant_id.in_([tid, t2id])))
             await db.execute(delete(TimelineEvent).where(TimelineEvent.case_id.in_(case_ids)))
             await db.execute(delete(CaseLink).where(CaseLink.case_id.in_(case_ids)))
+            await db.execute(delete(CaseTask).where(CaseTask.case_id.in_(case_ids)))
             await db.execute(delete(TicketConnection).where(TicketConnection.tenant_id.in_([tid, t2id])))
             await db.execute(delete(Case).where(Case.id.in_(case_ids)))
             await db.execute(delete(User).where(User.id == uid))
@@ -265,18 +274,30 @@ def test_mcp_ticket_tools(monkeypatch):
         t, t2 = await make_tenant(db, ids), await make_tenant(db, ids)
         user, other = await _member(db, ids, t), await _member(db, ids, t2)
         cid = (await make_case(db, ids, t)).id
+        task = CaseTask(case_id=cid, tenant_id=t.id, title="Isolate")
+        db.add(task)
+        await db.commit()
+        task_id = task.id
         p = _p(user, t)
         with pytest.raises(ToolError):
-            await tools.create_case_ticket(db, p, case_id=cid)  # not set up
+            await tools.create_task_ticket(db, p, case_id=cid, task_id=task_id)  # not set up
         db.add(TicketConnection(tenant_id=t.id, provider="jira", base_url="https://acme.atlassian.net",
                                 credentials_enc=ticket_sync.encrypt_credentials({"email": "e", "token": "t"}),
                                 settings={"project_key": "SEC"}))
         await db.commit()
-        r = await tools.create_case_ticket(db, p, case_id=cid)
+        r = await tools.create_task_ticket(db, p, case_id=cid, task_id=task_id)
         assert r["ticket"]["external_id"] == "SEC-1"
-        assert (await tools.get_case_ticket(db, p, case_id=cid))["ticket"]["external_id"] == "SEC-1"
+        listed = (await tools.list_case_tasks(db, p, case_id=cid))["tasks"][0]
+        assert listed["ticket"]["external_id"] == "SEC-1"
+        fake.status = ("Done", True)
+        await tools.sync_task_ticket(db, p, case_id=cid, task_id=task_id)
+        assert (await tools.list_case_tasks(db, p, case_id=cid))["tasks"][0]["status"] == "done"
         with pytest.raises(ToolError):
-            await tools.get_case_ticket(db, _p(other, t2), case_id=cid)
+            await tools.sync_task_ticket(db, _p(other, t2), case_id=cid, task_id=task_id)
+        await db.refresh(user)
+        await db.execute(delete(CaseLink).where(CaseLink.case_id == cid))
+        await db.execute(delete(CaseTask).where(CaseTask.case_id == cid))
+        await db.commit()
     _run(body)
 
 
