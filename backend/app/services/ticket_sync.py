@@ -102,45 +102,64 @@ def _adf_text(node: Any) -> str:
 # comments -> [{id, author, text}] (oldest first, newer than `after`); add_comment -> None.
 
 
+ATLASSIAN_TOKEN_URL = "https://auth.atlassian.com/oauth/token"
+ATLASSIAN_API = "https://api.atlassian.com"
+
+
 class Jira:
-    """Jira Cloud (REST v3, email + API token) or Data Center (REST v2, personal access token)."""
+    """Jira Cloud (REST v3) with a person's email + API token, or with an Atlassian service account's OAuth 2.0
+    client credentials (calls go to api.atlassian.com/ex/jira/<cloud id>); or Data Center (REST v2, personal access
+    token). Links always point at the site (base_url)."""
 
     def __init__(self, conn, creds, allowlist):
         self.conn, self.creds, self.allowlist = conn, creds, allowlist
-        self.dc = conn.settings.get("deployment") == "datacenter"
+        mode = conn.settings.get("deployment") or "cloud"
+        self.dc, self.sa = mode == "datacenter", mode == "service_account"
         self.api = "rest/api/2" if self.dc else "rest/api/3"
+        self._token = None
 
-    def _headers(self):
+    async def _headers(self):
+        if self.sa:
+            if self._token is None:
+                d = await _call(self.conn, self.allowlist, "POST", "", headers={}, url=ATLASSIAN_TOKEN_URL, form={
+                    "grant_type": "client_credentials", "client_id": self.creds.get("client_id", ""),
+                    "client_secret": self.creds.get("client_secret", "")})
+                self._token = (d or {}).get("access_token")
+                if not self._token:
+                    raise TicketError("Atlassian did not return an access token for the service account")
+            return {"Authorization": f"Bearer {self._token}"}
         if self.dc:
             return {"Authorization": f"Bearer {self.creds.get('token', '')}"}
         raw = f"{self.creds.get('email', '')}:{self.creds.get('token', '')}".encode()
         return {"Authorization": "Basic " + base64.b64encode(raw).decode()}
 
+    async def _req(self, method, path, json_body=None):
+        """A Jira REST call: on the site, or through api.atlassian.com for a service account."""
+        url = (f"{ATLASSIAN_API}/ex/jira/{self.conn.settings.get('cloud_id', '')}/{self.api}/{path}" if self.sa else None)
+        return await _call(self.conn, self.allowlist, method, f"{self.api}/{path}", headers=await self._headers(),
+                           json_body=json_body, url=url)
+
     def _body(self, text):
         return text if self.dc else _adf(text)
 
     async def check(self):
-        await _call(self.conn, self.allowlist, "GET", f"{self.api}/project/{self.conn.settings['project_key']}",
-                    headers=self._headers())
+        await self._req("GET", f"project/{self.conn.settings['project_key']}")
 
     async def create(self, title, description, severity):
         fields = {"project": {"key": self.conn.settings["project_key"]}, "summary": title[:250],
                   "description": self._body(description),
                   "issuetype": {"name": self.conn.settings.get("issue_type") or "Task"}}
-        d = await _call(self.conn, self.allowlist, "POST", f"{self.api}/issue", headers=self._headers(),
-                        json_body={"fields": fields})
+        d = await self._req("POST", "issue", json_body={"fields": fields})
         return {"external_id": str(d["key"]), "key": str(d["key"]),
                 "url": f"{self.conn.base_url.rstrip('/')}/browse/{d['key']}"}
 
     async def status(self, ext):
-        d = await _call(self.conn, self.allowlist, "GET", f"{self.api}/issue/{ext}?fields=status",
-                        headers=self._headers())
+        d = await self._req("GET", f"issue/{ext}?fields=status")
         st = (d.get("fields") or {}).get("status") or {}
         return {"status": st.get("name"), "closed": (st.get("statusCategory") or {}).get("key") == "done"}
 
     async def comments(self, ext, after):
-        d = await _call(self.conn, self.allowlist, "GET",
-                        f"{self.api}/issue/{ext}/comment?orderBy=created&maxResults=100", headers=self._headers())
+        d = await self._req("GET", f"issue/{ext}/comment?orderBy=created&maxResults=100")
         out = []
         for c in (d or {}).get("comments", []):
             if after and int(c["id"]) <= int(after):
@@ -151,8 +170,7 @@ class Jira:
         return out
 
     async def add_comment(self, ext, text):
-        d = await _call(self.conn, self.allowlist, "POST", f"{self.api}/issue/{ext}/comment",
-                        headers=self._headers(), json_body={"body": self._body(text)})
+        d = await self._req("POST", f"issue/{ext}/comment", json_body={"body": self._body(text)})
         return str((d or {}).get("id") or "")
 
 

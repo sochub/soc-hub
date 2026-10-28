@@ -2,6 +2,7 @@
 
 The connection is admin-only and never returns credentials. Creating or syncing a case's ticket is an analyst
 action. The periodic job in app/tasks/ticketing.py does the rest (auto-create, pull, push)."""
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
@@ -27,8 +28,9 @@ REQUIRED = {
     "halopsa": ({"client_id", "client_secret"}, set()),
     "connectwise": ({"company_id", "public_key", "private_key", "client_id"}, {"board_id", "company_identifier"}),
 }
-SETTING_KEYS = {"project_key", "issue_type", "deployment", "tenant", "tickettype_id", "client_id",
+SETTING_KEYS = {"project_key", "issue_type", "deployment", "cloud_id", "tenant", "tickettype_id", "client_id",
                 "closed_status_ids", "board_id", "company_identifier"}
+JIRA_DEPLOYMENTS = ("cloud", "service_account", "datacenter")
 
 
 class ConnectionIn(BaseModel):
@@ -109,15 +111,24 @@ async def put_connection(
 ) -> Any:
     conn = await _conn(db, tenant_id)
     need_creds, need_settings = REQUIRED[body.provider]
-    if body.provider == "jira" and body.settings.get("deployment") != "datacenter":
-        need_creds = need_creds | {"email"}
+    if body.provider == "jira":
+        mode = body.settings.get("deployment") or "cloud"
+        if mode not in JIRA_DEPLOYMENTS:
+            raise HTTPException(status_code=422, detail=f"deployment must be one of {', '.join(JIRA_DEPLOYMENTS)}")
+        if mode == "service_account":  # OAuth 2.0 client credentials of an Atlassian service account
+            need_creds, need_settings = {"client_id", "client_secret"}, need_settings | {"cloud_id"}
+            if body.settings.get("cloud_id") and not re.fullmatch(r"[A-Za-z0-9-]{8,64}", str(body.settings["cloud_id"])):
+                raise HTTPException(status_code=422, detail="cloud_id must be the site's cloud ID (letters, digits, dashes)")
+        elif mode == "cloud":
+            need_creds = need_creds | {"email"}
     missing = sorted(k for k in need_settings if not str(body.settings.get(k) or "").strip())
     # Stored credentials only carry over to the same provider at the same host: otherwise an admin could point
     # the saved secrets at a host of their choosing and press Test.
     same_target = conn is not None and conn.provider == body.provider and \
-        (urlparse(conn.base_url).hostname or "").lower() == (urlparse(body.base_url).hostname or "").lower()
+        (urlparse(conn.base_url).hostname or "").lower() == (urlparse(body.base_url).hostname or "").lower() and \
+        (conn.settings or {}).get("deployment") == body.settings.get("deployment")  # auth mode: other credentials
     if body.credentials is None and not same_target:
-        raise HTTPException(status_code=422, detail="credentials are required when the provider or host changes")
+        raise HTTPException(status_code=422, detail="credentials are required when the provider, host or Jira sign-in type changes")
     if body.credentials is not None:
         missing += sorted(k for k in need_creds if not (body.credentials.get(k) or "").strip())
     if missing:

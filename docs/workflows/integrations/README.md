@@ -16,6 +16,8 @@ How pulls behave: each run reads from the last **successful** run (at most 24 h 
 
 | Vendor | Kind | Template | Secrets | Parameters |
 |---|---|---|---|---|
+| Atlassian | ingest | `atlassian-audit-log-pull`: Atlassian: pull organization audit log | ATLASSIAN_ADMIN_API_KEY | ATLASSIAN_ORG_ID |
+| Atlassian | response | `atlassian-suspend-user`: Atlassian: suspend user access | ATLASSIAN_ADMIN_API_KEY | ATLASSIAN_ORG_ID |
 | AWS | ingest | `aws-guardduty-findings-pull`: AWS GuardDuty: pull findings | AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY | AWS_REGION, DETECTOR_ID |
 | AWS | ingest | `aws-securityhub-findings-pull`: AWS Security Hub: pull findings | AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY | AWS_REGION |
 | Cloudflare | ingest | `cloudflare-audit-logs-pull`: Cloudflare: pull security-relevant audit logs | CLOUDFLARE_API_TOKEN | ACCOUNT_ID |
@@ -30,6 +32,8 @@ How pulls behave: each run reads from the last **successful** run (at most 24 h 
 | Google | ingest | `google-workspace-alerts-pull`: Google Workspace: pull Alert Center alerts | GWS_SA_KEY | ADMIN_EMAIL |
 | Google | response | `google-workspace-suspend-user`: Google Workspace: sign out (and optionally suspend) user | GWS_RESPONSE_SA_KEY | ADMIN_EMAIL |
 | Identity | triage | `identity-alerts-to-case`: Identity alerts: group by user into a case | - | PLAYBOOK_ID |
+| Identity | triage | `user-verification-email`: Ask the user by email: was this you? | - (needs SMTP) | - |
+| Identity | triage | `user-verification-slack`: Ask the user on Slack: was this you? | - (needs Slack) | - |
 | Microsoft | ingest | `entra-risk-detections-pull`: Entra ID Protection: pull risk detections | MS_CLIENT_ID, MS_CLIENT_SECRET | AZURE_TENANT_ID |
 | Microsoft | ingest | `m365-defender-alerts-pull`: Microsoft 365 Defender: pull alerts | MS_CLIENT_ID, MS_CLIENT_SECRET | AZURE_TENANT_ID |
 | Microsoft | ingest | `sentinel-incidents-pull`: Microsoft Sentinel: pull incidents | SENTINEL_CLIENT_ID, SENTINEL_CLIENT_SECRET | AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, RESOURCE_GROUP, WORKSPACE_NAME |
@@ -39,6 +43,7 @@ How pulls behave: each run reads from the last **successful** run (at most 24 h 
 | Okta | response | `okta-suspend-user`: Okta: suspend user | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
 | Okta | response | `okta-reset-authenticators`: Okta: reset authenticators | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
 | Proofpoint | ingest | `proofpoint-tap-pull`: Proofpoint TAP: pull delivered threats and permitted clicks | PROOFPOINT_PRINCIPAL, PROOFPOINT_SECRET | - |
+| Slack | triage | `task-confirm-with-user-slack`: Ask the user on Slack to confirm (for a case task) | - (needs Slack) | - |
 | SentinelOne | ingest | `sentinelone-threats-pull`: SentinelOne: pull threats | S1_API_TOKEN | S1_CONSOLE |
 | SentinelOne | response | `sentinelone-disconnect-agent`: SentinelOne: disconnect agent from network | S1_API_TOKEN | S1_CONSOLE |
 | Wiz | ingest | `wiz-issues-pull`: Wiz: pull issues | WIZ_CLIENT_ID, WIZ_CLIENT_SECRET | WIZ_API_HOST |

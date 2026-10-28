@@ -199,11 +199,20 @@ More symptoms are in the [Slack troubleshooting table](slack/setup.md#troublesho
 | Provider | Base URL | Credentials | Settings |
 |---|---|---|---|
 | Jira Cloud | `https://<site>.atlassian.net` | account email + API token | project key, issue type (default Task) |
+| Jira Cloud (service account) | `https://<site>.atlassian.net` (used for links) | service account OAuth 2.0 client ID + secret | project key, issue type, **cloud ID** |
 | Jira Data Center | your Jira URL | personal access token | project key, issue type |
 | HaloPSA | `https://<instance>.halopsa.com` | API application client ID + secret (client credentials) | ticket type ID, client ID, Halo tenant (hosted Halo) |
 | ConnectWise Manage | `https://<region>.myconnectwise.net/v4_6_release/apis/3.0` | company ID, public + private key, clientId | service board ID, company identifier |
 
 - **Test** signs in and reads the project or board; nothing is created.
+- **Jira service account** (recommended for Cloud: no person's token): in admin.atlassian.com create a **service
+  account**, give it access to the Jira project, then **Create credentials > OAuth 2.0** with the Jira scopes for
+  reading and writing issues and comments. Paste the client ID and secret. The **cloud ID** is the `cloudId` value
+  at `https://<site>.atlassian.net/_edge/tenant_info`. SOC Hub gets a 60-minute token from
+  `auth.atlassian.com/oauth/token` and calls `api.atlassian.com/ex/jira/<cloud ID>/rest/api/3`; ticket links still
+  point at your site.
+- The Atlassian **organization admin API key** can't read or create Jira issues. It's for the *Atlassian: pull
+  organization audit log* and *Atlassian: suspend user access* workflow templates (Workflows → templates).
 - Credentials are write-only. Leaving them blank on save keeps the stored ones, but only for the same provider at
   the same host: change the host and you must enter them again.
 - **Create tickets automatically for** a severity and above only applies to cases created after you turn it on.

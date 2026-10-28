@@ -236,7 +236,8 @@ in CIDR. Regular expressions are not supported.
 ## Ticketing (Jira, HaloPSA, ConnectWise)
 
 An admin connects one ticketing system per organization in **Settings → Integrations → Ticketing / PSA**:
-Jira Cloud or Data Center, HaloPSA, or ConnectWise Manage. Credentials are encrypted and never shown again;
+Jira Cloud (a person's API token, or an Atlassian **service account** with OAuth 2.0 credentials) or Data Center,
+HaloPSA, or ConnectWise Manage. Credentials are encrypted and never shown again;
 **Test** signs in and reads the configured project or board without creating anything.
 
 - **Create**: the case header shows **Create ticket** (analysts and admins). Optionally, cases created after
