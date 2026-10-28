@@ -215,9 +215,10 @@ More symptoms are in the [Slack troubleshooting table](slack/setup.md#troublesho
   organization audit log* and *Atlassian: suspend user access* workflow templates (Workflows → templates).
 - Credentials are write-only. Leaving them blank on save keeps the stored ones, but only for the same provider at
   the same host: change the host and you must enter them again.
-- **Create tickets automatically for** a severity and above only applies to cases created after you turn it on.
-- **Post analyst notes to the ticket** is off by default because PSA tickets are often visible to the client. When on,
-  notes go as internal notes in HaloPSA and ConnectWise.
+- Tickets are per **case task** (Tasks tab → **Create ticket**). **Create task tickets automatically for** a
+  severity and above only applies to open tasks added after you turn it on.
+- Only the task's own text and its result go to the ticket (PSA tickets are often visible to the client): case
+  notes are never posted.
 - The sync runs every 5 minutes on the Celery beat (`sync-tickets`); errors show on the card ("Last sync: …").
 - Hosts on private addresses need the tenant's HTTP allowlist and `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST`, as for
   workflows. The old `JIRA_URL` / `JIRA_USER` / `JIRA_API_TOKEN` variables are ignored.

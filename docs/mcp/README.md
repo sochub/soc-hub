@@ -99,14 +99,13 @@ ids return "Not found". List tools default to 25 rows (maximum 100) with `offset
 | `list_suppressions` | viewer | Alert suppression rules with their hit counts. |
 | `preview_suppression` | viewer | How many of the last 500 alerts some conditions would have matched. |
 | `run_case_task_workflow` | analyst | Run the workflow a case task links (from its playbook); poll it with `get_workflow_run`. |
-| `sync_case_ticket` | analyst | Pull the case ticket's status and new comments now (and push notes when the organization enabled that). |
 | `update_suppression` | analyst | Rename, re-explain, change the expiry of, or **disable** a suppression rule. Enabling is left to a person; conditions can't change (draft a new rule). |
 | `get_containment_policy` | viewer | The containment guardrails: protected hosts/users/IPs, daily cap, per-case cap (read-only; admins change them in SOC Hub). |
 | `list_containment_actions` | viewer | Automated containment recorded by guards: active, blocked (with the reason) or released, by case and status. |
 | `release_containment_action` | analyst | Record that an active containment was undone at the vendor (frees the case's slot). It doesn't call the vendor. |
 | `get_client_summary` | viewer | This organization's summary for the last 1-90 days (cases, outcomes, MTTR, SLA breaches, alerts incl. suppressed, notable cases) with a ready-to-send text. |
-| `get_case_ticket` | viewer | The case's linked Jira/HaloPSA/ConnectWise ticket and its last synced status. |
-| `create_case_ticket` | analyst | Open a ticket for the case in the organization's ticketing system and link it. |
+| `create_task_ticket` | analyst | Open a Jira/HaloPSA/ConnectWise ticket for one case task and link it (`list_case_tasks` shows each task's ticket). |
+| `sync_task_ticket` | analyst | Pull a task ticket's status and comments now: a closed ticket ticks the task; a ticked task posts its result on the ticket. |
 | `create_suppression` | analyst | Draft a suppression rule. **Always saved disabled**: a person enables it in Alerts → Suppressions. |
 
 **Admin authoring** (the tool re-checks the admin role itself, not only the server gate):

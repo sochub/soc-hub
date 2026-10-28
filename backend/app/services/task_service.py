@@ -36,6 +36,11 @@ async def task_rows(db: AsyncSession, tasks) -> list:
     wfs = {w.id: w for w in (await db.execute(select(Workflow).where(Workflow.id.in_(wf_ids)))).scalars()} if wf_ids else {}
     runs = dict((await db.execute(select(WorkflowRun.id, WorkflowRun.status).where(
         WorkflowRun.id.in_(run_ids)))).all()) if run_ids else {}
+    from app.api.v1.ticketing import link_out
+    from app.models.case import CaseLink
+    task_ids = [t.id for t in tasks]
+    tickets = {lk.task_id: link_out(lk) for lk in (await db.execute(select(CaseLink).where(
+        CaseLink.task_id.in_(task_ids or [-1]), CaseLink.connection_id.isnot(None)))).scalars()}
     out = []
     for t in tasks:
         w = wfs.get(t.workflow_id)
@@ -44,7 +49,7 @@ async def task_rows(db: AsyncSession, tasks) -> list:
                                                 "result", "result_status", "result_at")}
                    | {"workflow_name": w.name if w else None,
                       "workflow_runnable": bool(w and w.enabled and w.trigger_type == "manual"),
-                      "last_run_status": runs.get(t.last_run_id)})
+                      "last_run_status": runs.get(t.last_run_id), "ticket": tickets.get(t.id)})
     return out
 
 

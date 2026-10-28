@@ -102,8 +102,9 @@ export default function TicketingCard({ tenantId }: { tenantId: number | null })
                 <span className="ml-auto label-mono">{data ? `${LABEL[data.provider]}${data.enabled ? '' : ' · disabled'}` : 'not connected'}</span>
             </div>
             <p className="text-xs text-fg-3">
-                Open a ticket for a case and keep both sides in step: every 5 minutes SOC Hub pulls the ticket's status and comments into
-                the case activity, and posts a comment when the case is resolved. A closed ticket never closes the case.
+                One ticket per case task, kept in step every 5 minutes: closing the ticket ticks the task (with the ticket as its result),
+                ticket comments land in the case activity, and ticking the task posts its result on the ticket. Analysts open tickets from
+                the case's Tasks tab.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <label className="text-xs text-fg-2 space-y-1">Provider
@@ -135,21 +136,18 @@ export default function TicketingCard({ tenantId }: { tenantId: number | null })
                             onChange={(e) => set({ creds: { ...form.creds, [f.key]: e.target.value } })} className={input} />
                     </label>
                 ))}
-                <label className="text-xs text-fg-2 space-y-1">Create tickets automatically for
+                <label className="text-xs text-fg-2 space-y-1">Create task tickets automatically for
                     <select value={form.auto} onChange={(e) => set({ auto: e.target.value })} className={input}>
-                        <option value="">No case (create by hand)</option>
-                        <option value="critical">Critical cases</option>
-                        <option value="high">High and critical cases</option>
-                        <option value="medium">Medium and above</option>
-                        <option value="low">Low and above</option>
-                        <option value="info">Every case</option>
+                        <option value="">No task (create by hand)</option>
+                        <option value="critical">Tasks of critical cases</option>
+                        <option value="high">Tasks of high and critical cases</option>
+                        <option value="medium">Tasks of medium cases and above</option>
+                        <option value="low">Tasks of low cases and above</option>
+                        <option value="info">Every task</option>
                     </select>
-                    <span className="block text-muted">Only cases created after you turn this on.</span>
+                    <span className="block text-muted">Only open tasks added after you turn this on.</span>
                 </label>
                 <div className="text-xs text-fg-2 space-y-2 pt-4">
-                    <label className="flex items-center gap-2"><input type="checkbox" checked={form.push_notes} onChange={(e) => set({ push_notes: e.target.checked })} />
-                        Post analyst notes to the ticket</label>
-                    <span className="block text-muted">As internal notes in HaloPSA and ConnectWise; as normal comments in Jira. Off by default: clients may see PSA tickets.</span>
                     <label className="flex items-center gap-2"><input type="checkbox" checked={form.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> Sync enabled</label>
                 </div>
             </div>

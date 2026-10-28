@@ -1,10 +1,10 @@
 """Two-way case <-> ticket sync with a tenant's Jira, HaloPSA or ConnectWise Manage.
 
-One periodic job (``sync_tenant``) does everything by polling, so no case/note code path needs a hook:
-- creates tickets for new cases at/above ``auto_create_min_severity``;
-- pulls each linked ticket's status and new comments into the case activity (``ticket_status`` /
-  ``ticket_comment`` entries; a closed ticket never closes the case);
-- pushes new analyst notes (when ``push_notes``) as internal notes, and a resolved/closed case as a comment.
+Tickets belong to case **tasks** (one ticket per task), not to whole cases. One periodic job (``sync_tenant``)
+does everything by polling, so no task code path needs a hook:
+- creates tickets for new open tasks of cases at/above ``auto_create_min_severity``;
+- pulls each ticket's status (closing the ticket ticks its task) and new comments (into the case activity);
+- posts a ticked task's result on its ticket (and a note when it's reopened).
 
 Every request goes to the connection's base URL through the SSRF guard, pinned to the vetted IP, https only.
 Provider payloads follow each vendor's public API docs; they have not been run against live accounts.
@@ -19,12 +19,12 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.case import Case, CaseLink, CaseStatus, TimelineEvent
+from app.models.case_task import CaseTask
 from app.models.tenant import Tenant
 from app.models.ticket_connection import TicketConnection
 from app.utils.audit import create_audit_log
@@ -34,7 +34,6 @@ from app.workflows.ssrf import HTTPS_ONLY, SSRFError, assert_url_allowed
 logger = logging.getLogger(__name__)
 
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
-NOTE_TYPES = ("comment", "investigation", "containment", "remediation", "other")  # pushed when push_notes
 MAX_TEXT = 30_000
 MAX_NEW_COMMENTS = 50  # per link per sync
 MAX_AUTO_CREATE = 20  # per tenant per sync
@@ -300,52 +299,62 @@ async def _allowlist(db: AsyncSession, tenant_id: int) -> list:
 # ── operations ───────────────────────────────────────────────────
 
 
-def _description(case: Case) -> str:
-    return (f"{case.description or ''}\n\nSeverity: {getattr(case.severity, 'value', case.severity)}\n"
-            f"SOC Hub case #{case.id}: {settings.FRONTEND_URL}/cases/{case.id}")[:MAX_TEXT]
+def _description(case: Case, task: CaseTask) -> str:
+    phase = task.phase.replace("_", " ")
+    return (f"{task.description or ''}\n\nIncident response task ({phase}) of SOC Hub case #{case.id}: {case.title}\n"
+            f"Severity: {getattr(case.severity, 'value', case.severity)}\n"
+            f"{settings.FRONTEND_URL}/cases/{case.id}")[:MAX_TEXT]
 
 
-async def link_for(db: AsyncSession, case_id: int, tenant_id: int) -> Optional[CaseLink]:
-    return (await db.execute(select(CaseLink).where(
-        CaseLink.case_id == case_id, CaseLink.tenant_id == tenant_id, CaseLink.connection_id.isnot(None))
-        .order_by(CaseLink.id.desc()))).scalars().first()
+async def links_for_case(db: AsyncSession, case_id: int, tenant_id: int) -> dict:
+    """{task_id: CaseLink} for the case's synced task tickets."""
+    rows = (await db.execute(select(CaseLink).where(
+        CaseLink.case_id == case_id, CaseLink.tenant_id == tenant_id, CaseLink.task_id.isnot(None),
+        CaseLink.connection_id.isnot(None)))).scalars().all()
+    return {lk.task_id: lk for lk in rows}
 
 
-async def create_ticket(db: AsyncSession, *, conn, case: Case, user_id: Optional[int], cl=None) -> CaseLink:
-    """Open a ticket for the case and link it. Raises TicketError; flushes; the caller commits."""
-    if await link_for(db, case.id, case.tenant_id):
-        raise TicketError("This case already has a ticket")
+async def create_ticket(db: AsyncSession, *, conn, case: Case, task: CaseTask, user_id: Optional[int],
+                        cl=None) -> CaseLink:
+    """Open a ticket for one case task and link it. Raises TicketError; flushes; the caller commits."""
+    if task.id in await links_for_case(db, case.id, case.tenant_id):
+        raise TicketError("This task already has a ticket")
     cl = cl or client(conn, await _allowlist(db, conn.tenant_id))
     try:
-        t = await cl.create(f"[SOC Hub #{case.id}] {case.title}", _description(case), case.severity)
+        t = await cl.create(f"[SOC Hub #{case.id}] {task.title}", _description(case, task), case.severity)
     except (KeyError, TypeError, ValueError, IndexError):
         raise TicketError(f"{conn.provider} returned an unexpected response when creating the ticket") from None
-    max_note = (await db.execute(select(func.max(TimelineEvent.id)).where(TimelineEvent.case_id == case.id))).scalar()
-    link = CaseLink(case_id=case.id, tenant_id=case.tenant_id, connection_id=conn.id, system=conn.provider,
-                    external_id=t["external_id"], url=t["url"], pushed_note_id=max_note,
-                    pushed_case_status=getattr(case.status, "value", case.status))
+    link = CaseLink(case_id=case.id, task_id=task.id, tenant_id=case.tenant_id, connection_id=conn.id,
+                    system=conn.provider, external_id=t["external_id"], url=t["url"], pushed_case_status=task.status)
     db.add(link)
     label = PROVIDER_LABEL[conn.provider]
     db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="ticket_linked",
-                         content=f"{label} ticket {t['key']} created" + (f": {t['url']}" if t["url"] else "")))
+                         content=f"{label} ticket {t['key']} created for task **{task.title}**"
+                                 + (f": {t['url']}" if t["url"] else "")))
     await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="ticket_created",
                            tenant_id=case.tenant_id, user_id=user_id,
-                           changes={"provider": conn.provider, "ticket": t["key"]},
+                           changes={"provider": conn.provider, "ticket": t["key"], "task": task.title},
                            actor=None if user_id else "ticket_sync")
     await db.flush()
     return link
 
 
-async def sync_link(db: AsyncSession, cl, conn, link: CaseLink, case: Case) -> None:
-    """Pull status + comments, push notes + case resolution for one link. Flushes; the caller commits."""
+async def sync_link(db: AsyncSession, cl, conn, link: CaseLink, case: Case, task: CaseTask) -> None:
+    """One task ticket, both ways. Pull: status (a closed ticket ticks the task, with the ticket as the result) and
+    comments (into the case activity, naming the task). Push: ticking the task posts its result on the ticket.
+    Flushes; the caller commits."""
+    from app.services.task_service import update_case_task
     label, key = PROVIDER_LABEL[conn.provider], link.external_id
     st = await cl.status(link.external_id)
     if st["status"] != link.remote_status or st["closed"] != link.remote_closed:
         if link.remote_status is not None or st["closed"]:  # don't announce the first status we see
-            note = f"{label} ticket {key} is now **{st['status'] or 'unknown'}**"
-            if st["closed"] and case.status not in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
-                note += ". The case is still open: close it here when the work is done."
-            db.add(TimelineEvent(case_id=case.id, event_type="ticket_status", content=note))
+            db.add(TimelineEvent(case_id=case.id, event_type="ticket_status",
+                                 content=f"{label} ticket {key} (task **{task.title}**) is now **{st['status'] or 'unknown'}**"))
+        if st["closed"] and not link.remote_closed and task.status != "done":
+            task.result, task.result_status = f"Closed in {label} {key} ({st['status'] or 'done'})", "ok"
+            task.result_at = datetime.now(timezone.utc)
+            await update_case_task(db, case=case, task=task, data={"status": "done"}, user_id=None)
+            link.pushed_case_status = "done"  # closed there: nothing to tell the ticket
         link.remote_status, link.remote_closed = st["status"], st["closed"]
 
     for c in (await cl.comments(link.external_id, link.remote_cursor))[:MAX_NEW_COMMENTS]:
@@ -353,29 +362,16 @@ async def sync_link(db: AsyncSession, cl, conn, link: CaseLink, case: Case) -> N
             link.remote_cursor = c["id"]
             continue
         db.add(TimelineEvent(case_id=case.id, event_type="ticket_comment",
-                             content=f"**{c['author']}** in {label} {key}:\n\n{c['text'][:MAX_TEXT]}"))
+                             content=f"**{c['author']}** in {label} {key} (task *{task.title}*):\n\n{c['text'][:MAX_TEXT]}"))
         link.remote_cursor = c["id"]
 
-    if conn.push_notes:
-        notes = (await db.execute(select(TimelineEvent).where(
-            TimelineEvent.case_id == case.id, TimelineEvent.id > (link.pushed_note_id or 0),
-            TimelineEvent.event_type.in_(NOTE_TYPES), TimelineEvent.user_id.isnot(None),
-            TimelineEvent.guest_id.is_(None)).options(selectinload(TimelineEvent.user))
-            .order_by(TimelineEvent.id).limit(MAX_NEW_COMMENTS))).scalars().all()
-        for n in notes:
-            who = (n.user.full_name or n.user.email) if n.user else "analyst"
-            await cl.add_comment(link.external_id, f"[SOC Hub] {who} ({n.event_type}):\n{_plain(n.content)}")
-            link.pushed_note_id = n.id
-    else:  # don't push a backlog if notes are switched on later
-        link.pushed_note_id = (await db.execute(select(func.max(TimelineEvent.id)).where(
-            TimelineEvent.case_id == case.id))).scalar()
-
-    status = getattr(case.status, "value", case.status)
-    if status != link.pushed_case_status:
-        if status in ("resolved", "closed"):
-            outcome = f" (outcome: {case.outcome.replace('_', ' ')})" if case.outcome else ""
-            await cl.add_comment(link.external_id, f"[SOC Hub] Case {status}{outcome}.")
-        link.pushed_case_status = status
+    if task.status != link.pushed_case_status:
+        if task.status == "done" and not link.remote_closed:
+            result = f": {_plain(task.result)}" if task.result else ""
+            await cl.add_comment(link.external_id, f"[SOC Hub] Task completed{result}")
+        elif task.status == "todo" and link.pushed_case_status == "done":
+            await cl.add_comment(link.external_id, "[SOC Hub] Task reopened.")
+        link.pushed_case_status = task.status
     link.last_synced_at = datetime.now(timezone.utc)
     await db.flush()
 
@@ -388,7 +384,7 @@ def _reason(e: Exception) -> str:
 
 
 async def sync_tenant(db: AsyncSession, conn: TicketConnection) -> dict:
-    """Auto-create tickets, then sync every linked case until both sides are done. One failing ticket doesn't
+    """Auto-create task tickets, then sync every task ticket until both sides are done. One failing ticket doesn't
     stop the others; errors land in the connection's last_error."""
     snap = snapshot(conn)
     snap.credentials_enc = conn.credentials_enc
@@ -396,33 +392,33 @@ async def sync_tenant(db: AsyncSession, conn: TicketConnection) -> dict:
     created = synced = 0
     errors = []
     if snap.auto_create_min_severity and snap.auto_create_since:
+        # open tasks added after the setting was turned on, of open cases at/above the severity floor
         floor = SEVERITY_RANK.get(snap.auto_create_min_severity, 9)
-        linked = select(CaseLink.case_id).where(CaseLink.tenant_id == snap.tenant_id,
-                                                CaseLink.connection_id.isnot(None))
-        case_ids = (await db.execute(select(Case.id, Case.severity).where(
-            Case.tenant_id == snap.tenant_id, Case.created_at >= snap.auto_create_since,
-            Case.status.notin_([CaseStatus.RESOLVED, CaseStatus.CLOSED]), Case.id.notin_(linked))
-            .order_by(Case.id).limit(MAX_AUTO_CREATE))).all()
-        for case_id, sev in case_ids:
+        linked = select(CaseLink.task_id).where(CaseLink.tenant_id == snap.tenant_id, CaseLink.task_id.isnot(None))
+        rows = (await db.execute(select(CaseTask.id, Case.id, Case.severity).join(Case, Case.id == CaseTask.case_id).where(
+            CaseTask.tenant_id == snap.tenant_id, CaseTask.status == "todo", CaseTask.created_at >= snap.auto_create_since,
+            Case.status.notin_([CaseStatus.RESOLVED, CaseStatus.CLOSED]), CaseTask.id.notin_(linked))
+            .order_by(CaseTask.id).limit(MAX_AUTO_CREATE))).all()
+        for task_id, case_id, sev in rows:
             if SEVERITY_RANK.get(getattr(sev, "value", sev), -1) < floor:
                 continue
             try:
-                await create_ticket(db, conn=snap, case=await db.get(Case, case_id), user_id=None, cl=cl)
+                await create_ticket(db, conn=snap, case=await db.get(Case, case_id), task=await db.get(CaseTask, task_id),
+                                    user_id=None, cl=cl)
                 await db.commit()
                 created += 1
-            except Exception as e:  # one bad case must not stop the rest
+            except Exception as e:  # one bad task must not stop the rest
                 await db.rollback()
-                errors.append(f"case {case_id}: {_reason(e)}")
-    pairs = (await db.execute(select(CaseLink.id, CaseLink.case_id).where(
-        CaseLink.tenant_id == snap.tenant_id, CaseLink.connection_id == snap.id))).all()
-    for link_id, case_id in pairs:
-        link, case = await db.get(CaseLink, link_id), await db.get(Case, case_id)
+                errors.append(f"task {task_id}: {_reason(e)}")
+    rows = (await db.execute(select(CaseLink.id, CaseLink.case_id, CaseLink.task_id).where(
+        CaseLink.tenant_id == snap.tenant_id, CaseLink.connection_id == snap.id, CaseLink.task_id.isnot(None)))).all()
+    for link_id, case_id, task_id in rows:
+        link, case, task = await db.get(CaseLink, link_id), await db.get(Case, case_id), await db.get(CaseTask, task_id)
         ext = link.external_id  # read now: a rollback expires `link`
-        status = getattr(case.status, "value", case.status)
-        if status in ("resolved", "closed") and link.pushed_case_status == status and link.remote_closed:
+        if task.status == "done" and link.pushed_case_status == "done" and link.remote_closed:
             continue  # both sides done
         try:
-            await sync_link(db, cl, snap, link, case)
+            await sync_link(db, cl, snap, link, case, task)
             await db.commit()
             synced += 1
         except Exception as e:

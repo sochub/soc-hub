@@ -37,6 +37,7 @@ class CaseTaskOut(BaseModel):
     result: Optional[str] = None
     result_status: Optional[str] = None
     result_at: Optional[datetime] = None
+    ticket: Optional[dict] = None  # its Jira/HaloPSA/ConnectWise ticket, when ticketing is set up
 
     class Config:
         from_attributes = True

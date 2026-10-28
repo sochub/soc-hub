@@ -40,7 +40,7 @@ class ConnectionIn(BaseModel):
     settings: Dict[str, Any] = {}
     enabled: bool = True
     auto_create_min_severity: Optional[str] = None
-    push_notes: bool = False
+    push_notes: bool = False  # unused since tickets belong to tasks (kept so older clients still validate)
 
     @field_validator("provider")
     @classmethod
@@ -100,6 +100,18 @@ async def get_connection(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     return _out(await _conn(db, tenant_id))
+
+
+@router.get("/ticketing/status")
+async def ticketing_status(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """For every member: is ticketing set up, and with which system (no settings, no credentials)."""
+    conn = await _conn(db, tenant_id)
+    on = bool(conn and conn.enabled)
+    return {"configured": on, "label": PROVIDER_LABEL.get(conn.provider) if on else None}
 
 
 @router.put("/ticketing/connection")
@@ -191,69 +203,72 @@ async def test_connection(
     return {"ok": True}
 
 
-def _link_out(link, provider: Optional[str]) -> Optional[dict]:
+def link_out(link) -> Optional[dict]:
     if link is None:
         return None
     return {"provider": link.system, "label": PROVIDER_LABEL.get(link.system, link.system),
             "external_id": link.external_id, "url": link.url, "remote_status": link.remote_status,
-            "remote_closed": link.remote_closed, "last_synced_at": link.last_synced_at,
-            "syncing": provider is not None}
+            "remote_closed": link.remote_closed, "last_synced_at": link.last_synced_at}
 
 
-@router.get("/cases/{case_id}/ticket")
-async def get_case_ticket(
-    case_id: int,
-    db: AsyncSession = Depends(deps.get_db),
-    current_user: User = Depends(deps.get_current_active_user),
-    tenant_id: int = Depends(deps.get_effective_tenant_id),
-) -> Any:
-    await _case(db, case_id, tenant_id)
-    conn = await _conn(db, tenant_id)
-    link = await ticket_sync.link_for(db, case_id, tenant_id)
-    return {"configured": bool(conn and conn.enabled), "provider": conn.provider if conn else None,
-            "ticket": _link_out(link, conn.provider if conn and conn.enabled else None)}
-
-
-@router.post("/cases/{case_id}/ticket", status_code=201)
-async def create_case_ticket(
-    case_id: int,
-    db: AsyncSession = Depends(deps.get_db),
-    current_user: User = Depends(deps.require_analyst_or_above),
-    tenant_id: int = Depends(deps.get_effective_tenant_id),
-) -> Any:
+async def _task(db: AsyncSession, case_id: int, task_id: int, tenant_id: int):
+    from app.models.case_task import CaseTask
     case = await _case(db, case_id, tenant_id)
+    task = (await db.execute(select(CaseTask).where(
+        CaseTask.id == task_id, CaseTask.case_id == case.id, CaseTask.tenant_id == tenant_id))).scalars().first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return case, task
+
+
+async def _enabled_conn(db: AsyncSession, tenant_id: int) -> TicketConnection:
     conn = await _conn(db, tenant_id)
     if conn is None or not conn.enabled:
         raise HTTPException(status_code=409, detail="Ticketing is not set up for this organization")
-    try:
-        link = await ticket_sync.create_ticket(db, conn=conn, case=case, user_id=current_user.id)
-    except TicketError as e:
-        await db.rollback()
-        raise HTTPException(status_code=502, detail=str(e))
-    await db.commit()
-    await db.refresh(link)
-    return _link_out(link, conn.provider)
+    return conn
 
 
-@router.post("/cases/{case_id}/ticket/sync")
-async def sync_case_ticket(
+@router.post("/cases/{case_id}/tasks/{task_id}/ticket", status_code=201)
+async def create_task_ticket(
     case_id: int,
+    task_id: int,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """Pull status and comments (and push notes, when enabled) for this case now."""
-    case = await _case(db, case_id, tenant_id)
-    conn = await _conn(db, tenant_id)
-    link = await ticket_sync.link_for(db, case_id, tenant_id)
-    if conn is None or not conn.enabled or link is None or link.connection_id != conn.id:
-        raise HTTPException(status_code=409, detail="This case has no synced ticket")
+    """Open a ticket for this case task in the organization's ticketing system and link it."""
+    case, task = await _task(db, case_id, task_id, tenant_id)
+    conn = await _enabled_conn(db, tenant_id)
     try:
-        await ticket_sync.sync_link(db, ticket_sync.client(conn, await ticket_sync._allowlist(db, tenant_id)),
-                                    conn, link, case)
+        link = await ticket_sync.create_ticket(db, conn=conn, case=case, task=task, user_id=current_user.id)
     except TicketError as e:
         await db.rollback()
         raise HTTPException(status_code=502, detail=str(e))
     await db.commit()
     await db.refresh(link)
-    return _link_out(link, conn.provider)
+    return link_out(link)
+
+
+@router.post("/cases/{case_id}/tasks/{task_id}/ticket/sync")
+async def sync_task_ticket(
+    case_id: int,
+    task_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Pull this task ticket's status and comments now (and post the task's result if it was ticked)."""
+    case, task = await _task(db, case_id, task_id, tenant_id)
+    conn = await _enabled_conn(db, tenant_id)
+    link = (await ticket_sync.links_for_case(db, case.id, tenant_id)).get(task.id)
+    if link is None or link.connection_id != conn.id:
+        raise HTTPException(status_code=409, detail="This task has no synced ticket")
+    try:
+        await ticket_sync.sync_link(db, ticket_sync.client(conn, await ticket_sync._allowlist(db, tenant_id)),
+                                    conn, link, case, task)
+    except TicketError as e:
+        await db.rollback()
+        raise HTTPException(status_code=502, detail=str(e))
+    await db.commit()
+    await db.refresh(link)
+    return link_out(link)

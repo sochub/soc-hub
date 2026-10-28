@@ -65,8 +65,8 @@ def test_new_feature_tools():
             await tools.release_containment_action(db, p, action_id=act_id)
 
         # ticket sync needs a synced ticket; summary works for the token's own tenant
-        with pytest.raises(ToolError, match="no synced ticket"):
-            await tools.sync_case_ticket(db, p, case_id=cid)
+        with pytest.raises(ToolError, match="not set up"):
+            await tools.sync_task_ticket(db, p, case_id=cid, task_id=task["id"])
         summary = await tools.get_client_summary(db, p, days=30)
         assert summary["cases_opened"] >= 1 and "security summary" in summary["text"]
         with pytest.raises(ToolError):
@@ -74,7 +74,7 @@ def test_new_feature_tools():
 
         for name in ("get_containment_policy", "list_containment_actions", "get_client_summary"):
             assert tools.MIN_ROLE[name] == "viewer"
-        for name in ("release_containment_action", "update_suppression", "sync_case_ticket"):
+        for name in ("release_containment_action", "update_suppression", "sync_task_ticket", "create_task_ticket"):
             assert tools.MIN_ROLE[name] == "analyst"
         await db.execute(delete(CaseTask).where(CaseTask.case_id == cid))
         await db.execute(delete(ContainmentAction).where(ContainmentAction.id == act_id))

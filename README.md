@@ -34,7 +34,7 @@ leaves your infrastructure) and proposes actions you explicitly approve.
   - Applying one fills the case with phase-grouped task checklists.
   - A task can link a workflow: **Run** it from the case, and the workflow records its result on the task and ticks it.
 - 🔇 **Alert suppression**: expiring, auditable rules for known noise, with a preview and "Suppress similar".
-- 🎫 **Ticketing / PSA sync**: Jira, HaloPSA and ConnectWise, per tenant and two-way (status and comments come back).
+- 🎫 **Ticketing / PSA sync per task**: send one case task to Jira, HaloPSA or ConnectWise; closing the ticket ticks the task, and the task's result goes back to the ticket.
 - 🏢 **Portfolio (MSSP)**: one queue and metrics across every client you work in, plus weekly client summaries.
 - 🛡️ **Containment guardrails**: protected VIPs/servers/ranges, daily and per-case caps, and a release ledger for automated containment.
 - 🙋 **"Was this you?"**: ask the user by email or Slack; their answer dismisses the alert or opens a case.

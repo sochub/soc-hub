@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, Plus, Trash2, BookText, ChevronDown, Play, Workflow as WorkflowIcon } from 'lucide-react';
+import { Check, Plus, Trash2, BookText, ChevronDown, Play, RefreshCw, Ticket, Workflow as WorkflowIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
@@ -43,6 +43,24 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
         qc.invalidateQueries({ queryKey: ['audit-logs', 'case', String(caseId)] });
     };
     const [runError, setRunError] = useState<{ id: number; text: string } | null>(null);
+    const { data: ticketing } = useQuery({
+        queryKey: ['ticketing-status'], staleTime: 300_000,
+        queryFn: async () => (await api.get('/ticketing/status')).data as { configured: boolean; label: string | null },
+    });
+    const ticketErr = (t: CaseTask) => (err: { response?: { data?: { detail?: unknown } } }) => {
+        const d = err?.response?.data?.detail;
+        setRunError({ id: t.id, text: typeof d === 'string' ? d : 'Ticket action failed' });
+    };
+    const createTicket = useMutation({
+        mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/ticket`),
+        onSuccess: () => { setRunError(null); invalidate(); },
+        onError: (e: { response?: { data?: { detail?: unknown } } }, t) => ticketErr(t)(e),
+    });
+    const syncTicket = useMutation({
+        mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/ticket/sync`),
+        onSuccess: () => { setRunError(null); invalidate(); },
+        onError: (e: { response?: { data?: { detail?: unknown } } }, t) => ticketErr(t)(e),
+    });
     const runTask = useMutation({
         mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/run`),
         onSuccess: () => { setRunError(null); invalidate(); },
@@ -141,6 +159,28 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                                     title={t.result_at ? `Recorded ${new Date(t.result_at).toLocaleString()}` : undefined}>
                                                     {t.result}
                                                 </p>
+                                            )}
+                                            {(t.ticket || (ticketing?.configured && canEdit && t.status !== 'done')) && (
+                                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                                                    {t.ticket ? (
+                                                        <span className="inline-flex items-center gap-1 text-fg-2" title={t.ticket.remote_closed ? 'Closed in the ticketing system' : undefined}>
+                                                            <Ticket size={12} className="text-accent" />
+                                                            {t.ticket.url ? <a href={t.ticket.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{t.ticket.label} {t.ticket.external_id}</a>
+                                                                : <span>{t.ticket.label} {t.ticket.external_id}</span>}
+                                                            {t.ticket.remote_status && <span className={cn('text-muted', t.ticket.remote_closed && 'line-through')}>· {t.ticket.remote_status}</span>}
+                                                            {canEdit && (
+                                                                <button onClick={() => syncTicket.mutate(t)} disabled={syncTicket.isPending} aria-label="Sync ticket now" title="Sync now"
+                                                                    className="text-muted hover:text-fg disabled:opacity-50"><RefreshCw size={11} className={syncTicket.isPending && syncTicket.variables?.id === t.id ? 'animate-spin' : ''} /></button>
+                                                            )}
+                                                        </span>
+                                                    ) : (
+                                                        <button onClick={() => createTicket.mutate(t)} disabled={createTicket.isPending}
+                                                            title={`Open a ${ticketing?.label ?? ''} ticket for this task: closing it ticks the task; ticking the task posts its result`}
+                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-line-strong text-fg-2 hover:bg-raised disabled:opacity-50">
+                                                            <Ticket size={11} /> {createTicket.isPending && createTicket.variables?.id === t.id ? 'Creating…' : 'Create ticket'}
+                                                        </button>
+                                                    )}
+                                                </div>
                                             )}
                                             {t.workflow_id && (
                                                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
