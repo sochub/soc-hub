@@ -100,6 +100,9 @@ async def _scenario(monkeypatch):
             c = await fresh(cid)
             assert c.owner_id == aid and await audits(cid) == 2, "assign"
             assert len(events) == 2
+            ephem.clear()
+            await sa._handle_case_action(tid, payload(), tid, cid, "assign")  # already theirs: say so, change nothing
+            assert ephem == [f"Case #{cid} is already assigned to you."] and len(events) == 2 and await audits(cid) == 2
 
             await sa._handle_case_action(tid, payload(), tid, cid, "close")
             c = await fresh(cid)

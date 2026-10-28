@@ -12,10 +12,11 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case, CaseSeverity, CaseStatus, TimelineEvent
+from app.models.membership import TenantMembership
 from app.models.notification import CaseFollower
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
@@ -30,6 +31,7 @@ from app.workflows.templating import slack_escape
 
 logger = logging.getLogger(__name__)
 UNLINKED = "Your Slack account isn't linked to a sochub analyst in this tenant. Ask an admin to invite the email on your Slack profile."
+_FIRST_BLOCK = {ui.CREATE_CASE: "title", ui.ADD_NOTE: "note", ui.ASSIGN_CASE: "owner"}  # where a modal error shows
 _CASE_ID = re.compile(r"#?(\d{1,10})")
 _OPEN = (CaseStatus.NEW, CaseStatus.OPEN, CaseStatus.IN_PROGRESS, CaseStatus.PENDING)
 
@@ -48,6 +50,16 @@ async def _names(db, user_ids) -> dict:
         return {}
     rows = (await db.execute(select(User.id, User.full_name, User.email).where(User.id.in_(ids)))).all()
     return {i: (n or e) for i, n, e in rows}
+
+
+async def _assignees(db, tenant_id: int) -> List[tuple]:
+    """Active analysts and admins of the tenant, the people a case can be handed to."""
+    rows = (await db.execute(
+        select(User.id, User.full_name, User.email).join(TenantMembership, TenantMembership.user_id == User.id)
+        .where(TenantMembership.tenant_id == tenant_id, TenantMembership.role.in_(["admin", "analyst"]),
+               User.is_active == True)  # noqa: E712
+        .order_by(func.lower(func.coalesce(User.full_name, User.email))).limit(100))).all()
+    return [(r.id, r.full_name or r.email) for r in rows]
 
 
 async def _case(db, tenant_id: int, case_id: int) -> Optional[Case]:
@@ -130,12 +142,15 @@ async def open_modal_for(db, integ: SlackIntegration, payload: dict) -> bool:
         return True
     value = action.get("value") or ""
     parts = value.split(":")
-    if len(parts) == 4 and parts[0] == "case" and parts[3] in ("note", "severity"):
+    if len(parts) == 4 and parts[0] == "case" and parts[3] in ("note", "severity", "assignto"):
         if parts[1] != str(tid) or not await linked_user(db, tid, token, payload["user"]["id"]):
             return True
         case = await _case(db, tid, int(parts[2]))
         if case:
-            view = ui.note_modal(tid, case) if parts[3] == "note" else ui.severity_modal(tid, case)
+            if parts[3] == "assignto":
+                view = ui.assign_modal(tid, case, await _assignees(db, tid))
+            else:
+                view = ui.note_modal(tid, case) if parts[3] == "note" else ui.severity_modal(tid, case)
             await slack_call(token, "views.open", trigger_id=trigger, view=view)
         return True
     return False
@@ -163,7 +178,7 @@ async def handle_submission(db, integ: SlackIntegration, payload: dict) -> Optio
     user = await linked_user(db, tid, token, payload["user"]["id"])
     if not user:
         return {"response_action": "errors", "errors": {"title" if view.get("callback_id") == ui.CREATE_CASE else
-                                                        ("note" if view.get("callback_id") == ui.ADD_NOTE else "severity"): UNLINKED}}
+                                                        _FIRST_BLOCK.get(view.get("callback_id"), "severity"): UNLINKED}}
     cb = view.get("callback_id")
 
     if cb == ui.CREATE_CASE:
@@ -195,13 +210,23 @@ async def handle_submission(db, integ: SlackIntegration, payload: dict) -> Optio
 
     case = await _case(db, tid, int(meta.get("c") or 0))
     if not case:
-        return {"response_action": "errors", "errors": {"note" if cb == ui.ADD_NOTE else "severity": "Case not found."}}
+        return {"response_action": "errors", "errors": {_FIRST_BLOCK.get(cb, "severity"): "Case not found."}}
     if cb == ui.ADD_NOTE:
         note = (_input(payload, "note").get("value") or "").strip()
         if not note:
             return {"response_action": "errors", "errors": {"note": "Write something first."}}
         await add_timeline_note(db, case=case, content=note, user_id=user.id)
         await db.commit()
+        return None
+    if cb == ui.ASSIGN_CASE:
+        raw = (_input(payload, "owner").get("selected_option") or {}).get("value") or ""
+        allowed = {uid for uid, _ in await _assignees(db, tid)}
+        if not raw.isdigit() or int(raw) not in allowed:
+            return {"response_action": "errors", "errors": {"owner": "Pick an analyst or admin of this tenant."}}
+        changes = await apply_case_update(db, case=case, update_data={"owner_id": int(raw)}, user_id=user.id)
+        await db.commit()
+        if changes:
+            emit_event(tid, "case.updated", case_id=case.id, changes=changes)
         return None
     if cb == ui.SET_SEVERITY:
         sev = (_input(payload, "severity").get("selected_option") or {}).get("value")

@@ -17,6 +17,7 @@ _DONE = {CaseStatus.RESOLVED, CaseStatus.CLOSED}
 CREATE_CASE = "sochub_create_case"
 ADD_NOTE = "sochub_add_note"
 SET_SEVERITY = "sochub_set_severity"
+ASSIGN_CASE = "sochub_assign_case"
 
 
 def _val(x) -> str:
@@ -70,7 +71,7 @@ def case_card(case, owner: Optional[str] = None, *, note: Optional[str] = None, 
     if case.status not in _DONE:
         if case.status in (CaseStatus.NEW, CaseStatus.OPEN):
             els.append(_btn("Acknowledge", t, c, "ack", "primary"))
-        els += [_btn("Assign to me", t, c, "assign"), _btn("Add note", t, c, "note"), _btn("Severity", t, c, "severity")]
+        els += [_btn("Assign to me", t, c, "assign"), _btn("Assign…", t, c, "assignto"), _btn("Add note", t, c, "note"), _btn("Severity", t, c, "severity")]
         if not case.slack_channel_id:
             els.append(_btn("War room", t, c, "warroom"))
         els.append(_btn("Close", t, c, "close", "danger"))
@@ -141,6 +142,21 @@ def severity_modal(tenant_id: int, case) -> dict:
         "blocks": [{"type": "input", "block_id": "severity", "label": {"type": "plain_text", "text": "Severity"},
                     "element": {"type": "static_select", "action_id": "v", "options": _severity_options(),
                                 "initial_option": _option(_val(case.severity).lower() or "medium")}}],
+    }
+
+
+def assign_modal(tenant_id: int, case, members: List[tuple]) -> dict:
+    """members: (user_id, display name) of the tenant's analysts and admins; Slack caps a select at 100 options."""
+    opts = [{"text": {"type": "plain_text", "text": slack_escape(name)[:75]}, "value": str(uid)} for uid, name in members[:100]]
+    el = {"type": "static_select", "action_id": "v", "options": opts}
+    current = next((o for o in opts if o["value"] == str(case.owner_id)), None)
+    if current:
+        el["initial_option"] = current
+    return {
+        "type": "modal", "callback_id": ASSIGN_CASE, "private_metadata": json.dumps({"t": tenant_id, "c": case.id}),
+        "title": {"type": "plain_text", "text": f"Assign #{case.id:04d}"},
+        "submit": {"type": "plain_text", "text": "Assign"},
+        "blocks": [{"type": "input", "block_id": "owner", "label": {"type": "plain_text", "text": "Owner"}, "element": el}],
     }
 
 
