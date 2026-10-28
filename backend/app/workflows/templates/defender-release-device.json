@@ -1,0 +1,260 @@
+{
+  "key": "defender-release-device",
+  "name": "Microsoft Defender: release device from isolation",
+  "vendor": "Microsoft",
+  "kind": "response",
+  "description": "Run from a case: find the case's device in Microsoft Defender for Endpoint by name and release it from network isolation, then record the result in a case note and on the playbook task.",
+  "trigger_type": "manual",
+  "trigger_filter": null,
+  "params": [
+    {
+      "key": "AZURE_TENANT_ID",
+      "label": "Entra tenant ID",
+      "placeholder": "00000000-0000-0000-0000-000000000000",
+      "help": "Directory (tenant) ID from Entra admin center > Overview."
+    },
+    {
+      "key": "DEFENDER_API_HOST",
+      "label": "Defender API host",
+      "placeholder": "api.security.microsoft.com",
+      "help": "api.security.microsoft.com, or the regional host closest to your tenant: eu.api.security.microsoft.com, us.api.security.microsoft.com, uk.api.security.microsoft.com, au.api.security.microsoft.com. Host only, no https://."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "DEFENDER_CLIENT_ID",
+      "description": "Application (client) ID of the Entra app with WindowsDefenderATP Machine.Isolate.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "%%DEFENDER_API_HOST%%"
+      ]
+    },
+    {
+      "name": "DEFENDER_CLIENT_SECRET",
+      "description": "Client secret value of that app registration.",
+      "hosts": [
+        "login.microsoftonline.com",
+        "%%DEFENDER_API_HOST%%"
+      ]
+    }
+  ],
+  "setup": "## Entra side\n1. Entra admin center > App registrations > **New registration** (single tenant, no redirect URI).\n2. API permissions > Add a permission > **APIs my organization uses** > search **WindowsDefenderATP** > **Application permissions**: `Machine.Read.All` and `Machine.Isolate`.\n3. **Grant admin consent for <tenant>** (application permissions do nothing until an admin consents).\n4. Certificates & secrets > **New client secret**; copy the secret *value*. Note its expiry date.\n\nOne app registration can serve both Defender response workflows (isolate and release) when it has both permissions. It is separate from the Graph app used by *Microsoft 365 Defender: pull alerts* only if you want to keep read and response rights apart.\n\n## Here\n1. Settings > Secrets: add `DEFENDER_CLIENT_ID` and `DEFENDER_CLIENT_SECRET`, each allowed for **both** `login.microsoftonline.com` (token request) and your Defender API host (the OAuth token is bound to the same hosts as the secrets that obtained it).\n2. Install with `AZURE_TENANT_ID` and `DEFENDER_API_HOST`.\n\nToken: `POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`, `grant_type=client_credentials`, `scope=https://api.securitycenter.microsoft.com/.default`. Microsoft requires this legacy audience even on `api.security.microsoft.com`; any other scope answers 403.\n\n## Which device\nThe case's `hostname` attribute (create the custom artifact type `hostname` in Settings > Artifact types and add the device to the case). Without it, the device in the newest Defender alert promoted into the case (`deviceEvidence.deviceDnsName` of a *Microsoft 365 Defender: pull alerts* alert). The name is lowercased and must match Defender's `computerDnsName` **exactly** (often the FQDN, e.g. `ws-01.contoso.com`); a short name that Defender stores as an FQDN finds 0 devices and nothing is sent. Names containing a quote or backslash are refused.\n\n## How it works\n- `find`: `GET /api/machines?$filter=computerDnsName eq '<name>'&$top=2`.\n- `unisolate`: only when exactly one device matches, `POST /api/machines/<id>/unisolate` with `{\"Comment\": \"SOC Hub case #<id>: <title>\"}`. Defender answers **201** with a machine action.\n- A case note records both HTTP statuses and the machine action id. The action finishes when the device checks in; follow it on the device page in security.microsoft.com (Action center).\n\n## Limits\nMicrosoft allows 100 calls per minute and 1,500 per hour for these APIs. A device Defender hasn't seen within the retention period isn't found.\n\n## Playbook tasks\nRun from a case task (a playbook task linked to this workflow), the last step records the outcome on the task and ticks it when Defender accepted the action (HTTP 201); a skipped or refused attempt is recorded and the task stays open.\n\nDocs relied on: [Isolate machine](https://learn.microsoft.com/en-us/defender-endpoint/api/isolate-machine), [Release device from isolation](https://learn.microsoft.com/en-us/defender-endpoint/api/unisolate-machine), [List machines](https://learn.microsoft.com/en-us/defender-endpoint/api/get-machines), [App without a user](https://learn.microsoft.com/en-us/defender-endpoint/api/exposed-apis-create-app-webapp), [deviceEvidence](https://learn.microsoft.com/en-us/graph/api/resources/security-deviceevidence?view=graph-rest-1.0).\n\n## Containment ledger\nReleasing in Defender does not mark the case's containment entry released: do that under **Artifacts & assets → Containment** once the device is back.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "has_host",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "expression": "((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) | length > 0 and ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) | length < 256 and \"'\" not in ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) and '\\\\' not in ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower)"
+        }
+      },
+      {
+        "id": "no_host",
+        "type": "case_add_note",
+        "position": {
+          "x": 520,
+          "y": 280
+        },
+        "config": {
+          "content": "Defender release from isolation not sent: this case has no hostname. Add a `hostname` artifact (the device name as Defender shows it) and run the workflow again."
+        }
+      },
+      {
+        "id": "task_no_host",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 400
+        },
+        "config": {
+          "result": "Defender release from isolation not sent: this case has no hostname. Add a `hostname` artifact (the device name as Defender shows it) and run the workflow again.",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "find",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "method": "GET",
+          "url": "https://%%DEFENDER_API_HOST%%/api/machines?$filter={{ ('computerDnsName eq ' ~ \"'\" ~ ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) ~ \"'\") | urlencode }}&$top=2",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "auth": {
+            "type": "oauth2_client_credentials",
+            "token_url": "https://login.microsoftonline.com/%%AZURE_TENANT_ID%%/oauth2/v2.0/token",
+            "client_id": "{{ secrets.DEFENDER_CLIENT_ID }}",
+            "client_secret": "{{ secrets.DEFENDER_CLIENT_SECRET }}",
+            "scope": "https://api.securitycenter.microsoft.com/.default"
+          }
+        },
+        "retries": 2
+      },
+      {
+        "id": "one_device",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "expression": "steps.find.output.status == 200 and steps.find.output.body is mapping and ((steps.find.output.body.get('value') or []) if steps.find.output.body is mapping else []) | length == 1"
+        }
+      },
+      {
+        "id": "not_found",
+        "type": "case_add_note",
+        "position": {
+          "x": 520,
+          "y": 640
+        },
+        "config": {
+          "content": "Defender release from isolation not sent for {{ ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) }}: device lookup HTTP {{ steps.find.output.status }}, {{ ((steps.find.output.body.get('value') or []) if steps.find.output.body is mapping else []) | length }} devices with that exact name (exactly one is required; use the full name Defender shows, e.g. ws-01.contoso.com)."
+        }
+      },
+      {
+        "id": "task_not_found",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 760
+        },
+        "config": {
+          "result": "Defender release from isolation not sent for {{ ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) }}: device lookup HTTP {{ steps.find.output.status }}, {{ ((steps.find.output.body.get('value') or []) if steps.find.output.body is mapping else []) | length }} devices with that exact name (exactly one is required; use the full name Defender shows, e.g. ws-01.contoso.com).",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "unisolate",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 640
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://%%DEFENDER_API_HOST%%/api/machines/{{ steps.find.output.body.value[0].id | urlencode }}/unisolate",
+          "headers": {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "Comment": "SOC Hub case #{{ case.id }}: {{ case.title[:200] }}"
+          },
+          "auth": {
+            "type": "oauth2_client_credentials",
+            "token_url": "https://login.microsoftonline.com/%%AZURE_TENANT_ID%%/oauth2/v2.0/token",
+            "client_id": "{{ secrets.DEFENDER_CLIENT_ID }}",
+            "client_secret": "{{ secrets.DEFENDER_CLIENT_SECRET }}",
+            "scope": "https://api.securitycenter.microsoft.com/.default"
+          }
+        }
+      },
+      {
+        "id": "done",
+        "type": "case_add_note",
+        "position": {
+          "x": 250,
+          "y": 760
+        },
+        "config": {
+          "content": "Defender release from isolation requested for {{ ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) }} (device {{ steps.find.output.body.value[0].id }}): device lookup HTTP {{ steps.find.output.status }}, unisolate HTTP {{ steps.unisolate.output.status }}{{ ' (accepted, machine action ' ~ (steps.unisolate.output.body.get('id') if steps.unisolate.output.body is mapping else '') ~ ')' if steps.unisolate.output.status == 201 else ' (not accepted: check the Machine.Isolate permission, admin consent and the response in the run history)' }}."
+        }
+      },
+      {
+        "id": "task_done",
+        "type": "case_task_complete",
+        "position": {
+          "x": 250,
+          "y": 880
+        },
+        "config": {
+          "result": "Defender release from isolation requested for {{ ((case.attributes.get('hostname', '') or (((alert.payload.get('evidence') or []) | selectattr('deviceDnsName', 'defined') | first | default({}) if alert and alert.source == 'm365-defender' and alert.payload is mapping else {})).get('deviceDnsName') or '') | trim | lower) }} (device {{ steps.find.output.body.value[0].id }}): device lookup HTTP {{ steps.find.output.status }}, unisolate HTTP {{ steps.unisolate.output.status }}{{ ' (accepted, machine action ' ~ (steps.unisolate.output.body.get('id') if steps.unisolate.output.body is mapping else '') ~ ')' if steps.unisolate.output.status == 201 else ' (not accepted: check the Machine.Isolate permission, admin consent and the response in the run history)' }}.",
+          "result_status": "{{ 'ok' if steps.unisolate.output.status == 201 else 'failed' }}",
+          "complete": "{{ steps.unisolate.output.status == 201 }}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_has_host",
+        "source": "start",
+        "target": "has_host",
+        "source_handle": null
+      },
+      {
+        "id": "e_has_host_no_host",
+        "source": "has_host",
+        "target": "no_host",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_no_host_task_no_host",
+        "source": "no_host",
+        "target": "task_no_host",
+        "source_handle": null
+      },
+      {
+        "id": "e_find_one_device",
+        "source": "find",
+        "target": "one_device",
+        "source_handle": null
+      },
+      {
+        "id": "e_one_device_unisolate",
+        "source": "one_device",
+        "target": "unisolate",
+        "source_handle": "true"
+      },
+      {
+        "id": "e_one_device_not_found",
+        "source": "one_device",
+        "target": "not_found",
+        "source_handle": "false"
+      },
+      {
+        "id": "e_not_found_task_not_found",
+        "source": "not_found",
+        "target": "task_not_found",
+        "source_handle": null
+      },
+      {
+        "id": "e_unisolate_done",
+        "source": "unisolate",
+        "target": "done",
+        "source_handle": null
+      },
+      {
+        "id": "e_done_task_done",
+        "source": "done",
+        "target": "task_done",
+        "source_handle": null
+      },
+      {
+        "id": "e_has_host_find",
+        "source": "has_host",
+        "target": "find",
+        "source_handle": "true"
+      }
+    ]
+  }
+}

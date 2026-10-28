@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +7,9 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.models.playbook import PlaybookTemplate, PlaybookTaskTemplate
 from app.models.user import User
+from app.models.workflow import Workflow
 from app.services import playbook_service
+from app.workflows import templates as wf_templates
 from app.schemas.playbook import (
     PlaybookTemplateCreate, PlaybookTemplateUpdate, PlaybookTemplateOut,
     PlaybookTemplateSummary, PlaybookImportRequest, PlaybookImportResult,
@@ -115,6 +117,21 @@ async def get_template(
     return t
 
 
+async def _linked_workflow(db: AsyncSession, tenant_id: int, playbook: str, task: str) -> Optional[int]:
+    """The tenant's manual workflow installed from the template a catalog task names (newest wins), if any."""
+    from app.scripts.seed_playbooks import WORKFLOW_LINKS
+    key = WORKFLOW_LINKS.get((playbook, task))
+    if not key:
+        return None
+    try:
+        name = wf_templates.get_template(key)["name"]
+    except KeyError:
+        return None
+    return (await db.execute(select(Workflow.id).where(
+        Workflow.tenant_id == tenant_id, Workflow.name == name, Workflow.trigger_type == "manual")
+        .order_by(Workflow.id.desc()).limit(1))).scalar()
+
+
 @router.post("/import", response_model=PlaybookImportResult)
 async def import_templates(
     *,
@@ -150,6 +167,7 @@ async def import_templates(
             db.add(PlaybookTaskTemplate(
                 template_id=copy.id, phase=task.phase, title=task.title,
                 description=task.description, order=task.order,
+                workflow_id=await _linked_workflow(db, tenant_id, src.name, task.title),
             ))
         imported_ids.append(copy.id)
         already.add(tid)

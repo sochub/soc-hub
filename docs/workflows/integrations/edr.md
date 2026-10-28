@@ -1,6 +1,6 @@
-# EDR integrations: CrowdStrike Falcon and SentinelOne
+# EDR integrations: CrowdStrike Falcon, SentinelOne and Microsoft Defender
 
-Five workflow templates (Automations → Templates) pull EDR detections into the Alerts queue, triage them into cases and run containment from a case. Installing a template creates a **disabled** workflow; add the secrets, review the graph, dry-run it, then enable it. Template mechanics (`trigger.since`, `alert_create`, `http_request.auth`) are described in [the workflows README](../README.md).
+Seven workflow templates (Automations → Templates) pull EDR detections into the Alerts queue, triage them into cases and run containment from a case. Installing a template creates a **disabled** workflow; add the secrets, review the graph, dry-run it, then enable it. Template mechanics (`trigger.since`, `alert_create`, `http_request.auth`) are described in [the workflows README](../README.md).
 
 | Template key | Kind | Trigger | What it does |
 |---|---|---|---|
@@ -9,6 +9,8 @@ Five workflow templates (Automations → Templates) pull EDR detections into the
 | `edr-alerts-to-case` | triage | `alert.ingested`, `alert.source in ['crowdstrike', 'sentinelone']` | dismiss low/info; group the rest into one case per host, add the hostname artifact, apply the playbook |
 | `crowdstrike-contain-host` | response | manual (from a case) | find the Falcon device by hostname, network-contain it, note the result |
 | `sentinelone-disconnect-agent` | response | manual (from a case) | find the agent by computer name, disconnect it from the network, note the result |
+| `defender-isolate-device` | response | manual (from a case) | find the Defender for Endpoint device by name, isolate it (full), note the result |
+| `defender-release-device` | response | manual (from a case) | find the device by name, release it from isolation, note the result |
 
 ## CrowdStrike Falcon
 
@@ -167,6 +169,30 @@ Rules:
   - alerts from the same host join the newest open case for that host
   - an alert without a hostname gets its own case (`host:unknown:<external id>`)
 - Then `host_artifact` (`case_add_artifact`, type `hostname`) and `playbook` (`case_apply_playbook`).
+
+## Microsoft Defender for Endpoint
+
+Defender alerts come in through `m365-defender-alerts-pull` (see [Identity and Microsoft 365](identity.md)); these two templates act on the device. The marketplace playbook **Isolate a device (Microsoft Defender)** uses them: import it after installing both workflows and its *Isolate the device in Defender* and *Release the device from isolation* tasks are linked to them, so the analyst runs each from the case's Tasks tab and the result ticks the task.
+
+### Setup
+
+1. Entra admin center > App registrations > **New registration** (single tenant). API permissions > **APIs my organization uses** > **WindowsDefenderATP** > Application permissions `Machine.Read.All` and `Machine.Isolate`, then **Grant admin consent**.
+2. A client secret; secrets `DEFENDER_CLIENT_ID` and `DEFENDER_CLIENT_SECRET`, each allowed for `login.microsoftonline.com` **and** the Defender API host.
+3. Params: `AZURE_TENANT_ID`, and `DEFENDER_API_HOST` = `api.security.microsoft.com` or the regional host (`eu.`, `us.`, `uk.`, `au.api.security.microsoft.com`).
+
+The token uses `scope=https://api.securitycenter.microsoft.com/.default`: Microsoft still requires that audience on `api.security.microsoft.com` and answers 403 to any other.
+
+### Which device
+
+The case's `hostname` attribute, else `deviceEvidence.deviceDnsName` from the newest Defender alert promoted into the case. It is lowercased and must equal Defender's `computerDnsName` exactly (often the FQDN): a short name that Defender stores as an FQDN finds no device and nothing is sent. Names with a quote or backslash are refused.
+
+### How it works
+
+1. `find`: `GET /api/machines?$filter=computerDnsName eq '<name>'&$top=2`.
+2. Only when exactly one device matches: `POST /api/machines/<id>/isolate` with `{"Comment": "SOC Hub case #<id>: <title>", "IsolationType": "Full"}` (or `/unisolate` with the comment). Defender answers **201** with a machine action; the action completes when the device checks in (Action center in security.microsoft.com).
+3. A case note and the playbook task record both statuses and the machine action id; the task is ticked only on 201.
+
+Isolation runs the **containment guard** first (protected devices, daily and per-case caps) and is listed under **Artifacts & assets → Containment**. Releasing in Defender doesn't mark that entry released: do it there. For selective isolation (Outlook, Teams and Skype keep working, Windows 10 1709+) change `IsolationType` to `Selective` in the `isolate` step. Microsoft allows 100 calls per minute and 1,500 per hour.
 
 ## Known ceilings (both vendors)
 

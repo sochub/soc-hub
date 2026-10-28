@@ -37,6 +37,8 @@ How pulls behave: each run reads from the last **successful** run (at most 24 h 
 | Microsoft | ingest | `entra-risk-detections-pull`: Entra ID Protection: pull risk detections | MS_CLIENT_ID, MS_CLIENT_SECRET | AZURE_TENANT_ID |
 | Microsoft | ingest | `m365-defender-alerts-pull`: Microsoft 365 Defender: pull alerts | MS_CLIENT_ID, MS_CLIENT_SECRET | AZURE_TENANT_ID |
 | Microsoft | ingest | `sentinel-incidents-pull`: Microsoft Sentinel: pull incidents | SENTINEL_CLIENT_ID, SENTINEL_CLIENT_SECRET | AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, RESOURCE_GROUP, WORKSPACE_NAME |
+| Microsoft | response | `defender-isolate-device`: Microsoft Defender: isolate device | DEFENDER_CLIENT_ID, DEFENDER_CLIENT_SECRET | AZURE_TENANT_ID, DEFENDER_API_HOST |
+| Microsoft | response | `defender-release-device`: Microsoft Defender: release device from isolation | DEFENDER_CLIENT_ID, DEFENDER_CLIENT_SECRET | AZURE_TENANT_ID, DEFENDER_API_HOST |
 | Microsoft | response | `entra-revoke-sessions`: Entra ID: revoke sign-in sessions (and optionally disable) | ENTRA_RESPONSE_CLIENT_ID, ENTRA_RESPONSE_CLIENT_SECRET | AZURE_TENANT_ID |
 | Okta | ingest | `okta-system-log-pull`: Okta: pull security events | OKTA_READ_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
 | Okta | response | `okta-contain-user`: Okta: suspend user and revoke sessions | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
@@ -51,7 +53,7 @@ How pulls behave: each run reads from the last **successful** run (at most 24 h 
 ## Vendor guides
 
 - [Identity and Microsoft 365](identity.md): Okta, Microsoft 365 Defender, Entra ID
-- [EDR](edr.md): CrowdStrike Falcon, SentinelOne
+- [EDR](edr.md): CrowdStrike Falcon, SentinelOne, Microsoft Defender for Endpoint (response)
 - [Cloud and SaaS](cloud-saas.md): AWS GuardDuty, AWS Security Hub, Microsoft Sentinel, Wiz, Proofpoint TAP, GitHub
 - [Google Workspace](google-workspace.md)
 - [Cloudflare](cloudflare.md)

@@ -15,7 +15,8 @@ from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.models.playbook import PlaybookTemplate, PlaybookTaskTemplate
 
-# Each template: name, category, description, tasks=[(phase, title, description)]
+# Each template: name, category, description, tasks=[(phase, title, description[, workflow template key])].
+# A workflow key links the imported task to the tenant's workflow installed from that template (matched by name).
 CATALOG = [
     {
         "name": "Phishing (T1566)", "category": "phishing",
@@ -190,6 +191,41 @@ CATALOG = [
 ]
 
 
+CATALOG.append({
+    "name": "Isolate a device (Microsoft Defender)", "category": "malware",
+    "description": "Cut a compromised device off the network with Microsoft Defender for Endpoint, clean it, then release it. "
+                   "Install the 'Microsoft Defender: isolate device' and 'release device from isolation' workflows first "
+                   "so the two action tasks can run from the case.",
+    "tasks": [
+        ("identification", "Confirm the device and the alert",
+         "Open the device in security.microsoft.com (Assets > Devices): check the alert, logged-on users and device value. "
+         "Add the device name exactly as Defender shows it (often the FQDN) as the case's `hostname`; alerts pulled from "
+         "Defender already carry it."),
+        ("identification", "Check isolation won't stop a critical service",
+         "Domain controllers, servers and kiosks lose the network too. Protected devices in Containment guardrails are "
+         "refused automatically; decide with the owner before isolating anything else business-critical."),
+        ("containment", "Isolate the device in Defender",
+         "Run the linked workflow: full isolation, the device keeps talking to Defender only. The result lands here.",
+         "defender-isolate-device"),
+        ("containment", "Confirm isolation took effect",
+         "In Defender's Action center the Isolate action shows Succeeded once the device checked in, and the device page "
+         "shows it as isolated."),
+        ("eradication", "Scan and collect evidence",
+         "From the device page: run a full antivirus scan and collect an investigation package; attach it to the case."),
+        ("eradication", "Remove the threat and reset exposed credentials",
+         "Remediate the files and persistence found, and reset passwords of accounts used on the device."),
+        ("recovery", "Release the device from isolation",
+         "Run the linked workflow once the device is clean.", "defender-release-device"),
+        ("recovery", "Mark the containment released",
+         "Under Artifacts & assets > Containment, mark the isolation released so the ledger and caps are right."),
+        ("lessons_learned", "Record the root cause and tune detections",
+         "How the device was compromised and what would have caught it earlier."),
+    ],
+})
+
+WORKFLOW_LINKS = {(t["name"], task[1]): task[3] for t in CATALOG for task in t["tasks"] if len(task) > 3}
+
+
 async def seed() -> None:
     async with AsyncSessionLocal() as db:
         existing = {
@@ -209,7 +245,7 @@ async def seed() -> None:
             )
             db.add(t)
             await db.flush()
-            for i, (phase, title, desc) in enumerate(tmpl["tasks"]):
+            for i, (phase, title, desc, *_) in enumerate(tmpl["tasks"]):
                 db.add(PlaybookTaskTemplate(
                     template_id=t.id, phase=phase, title=title, description=desc, order=i,
                 ))
