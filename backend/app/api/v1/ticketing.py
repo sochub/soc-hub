@@ -1,7 +1,8 @@
-"""Per-tenant ticketing connection (Jira, HaloPSA, ConnectWise) and case <-> ticket links.
+"""Per-tenant ticketing connection (Jira, HaloPSA, ConnectWise) and case task <-> ticket links.
 
-The connection is admin-only and never returns credentials. Creating or syncing a case's ticket is an analyst
+The connection is admin-only and never returns credentials. Creating or syncing a task's ticket is an analyst
 action. The periodic job in app/tasks/ticketing.py does the rest (auto-create, pull, push)."""
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -21,6 +22,7 @@ from app.services.ticket_sync import PROVIDER_LABEL, SEVERITY_RANK, TicketError
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # What each provider needs; values are checked for presence only (the Test button checks they work).
 REQUIRED = {
@@ -198,9 +200,17 @@ async def test_connection(
         raise HTTPException(status_code=404, detail="No ticketing connection")
     try:
         await ticket_sync.client(conn, await ticket_sync._allowlist(db, tenant_id)).check()
-    except (TicketError, KeyError, ValueError) as e:
-        return {"ok": False, "error": str(e) if isinstance(e, TicketError) else f"check your settings ({e})"}
+    except TicketError as e:
+        return {"ok": False, "error": _public(e)}
+    except (KeyError, ValueError):  # a missing or undecryptable setting: details go to the log, not the browser
+        logger.warning("ticketing connection test failed for tenant %s", tenant_id, exc_info=True)
+        return {"ok": False, "error": "Check your settings: a required field is missing or can't be read. Save the connection again."}
     return {"ok": True}
+
+
+def _public(e: TicketError) -> str:
+    """A TicketError's message, which ticket_sync composes itself (see TicketError)."""
+    return e.args[0] if e.args and isinstance(e.args[0], str) else "The ticketing system request failed"
 
 
 def link_out(link) -> Optional[dict]:
@@ -243,7 +253,7 @@ async def create_task_ticket(
         link = await ticket_sync.create_ticket(db, conn=conn, case=case, task=task, user_id=current_user.id)
     except TicketError as e:
         await db.rollback()
-        raise HTTPException(status_code=502, detail=str(e))
+        raise HTTPException(status_code=502, detail=_public(e))
     await db.commit()
     await db.refresh(link)
     return link_out(link)
@@ -268,7 +278,7 @@ async def sync_task_ticket(
                                     conn, link, case, task)
     except TicketError as e:
         await db.rollback()
-        raise HTTPException(status_code=502, detail=str(e))
+        raise HTTPException(status_code=502, detail=_public(e))
     await db.commit()
     await db.refresh(link)
     return link_out(link)
