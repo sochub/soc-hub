@@ -23,6 +23,8 @@ async def create_template(
     db: AsyncSession, *, tenant_id: int, data: PlaybookTemplateCreate, user_id: int, status: str = "published"
 ) -> PlaybookTemplate:
     """Create a tenant playbook template (tasks included) and commit. Drafts are never offered or applied."""
+    from app.services.task_service import check_task_workflows
+    await check_task_workflows(db, tenant_id, [task.workflow_id for task in data.tasks])
     t = PlaybookTemplate(
         tenant_id=tenant_id, name=data.name, category=data.category, description=data.description,
         is_system=False, status=status, created_by=user_id,
@@ -32,7 +34,7 @@ async def create_template(
     for i, task in enumerate(data.tasks):
         db.add(PlaybookTaskTemplate(
             template_id=t.id, phase=task.phase, title=task.title,
-            description=task.description, order=task.order or i,
+            description=task.description, order=task.order or i, workflow_id=task.workflow_id,
         ))
     await db.commit()
     return await _load(db, t.id)
@@ -63,6 +65,9 @@ async def tenant_template(db: AsyncSession, *, tenant_id: int, template_id: int)
 async def update_template(db: AsyncSession, *, template: PlaybookTemplate, data: PlaybookTemplateUpdate,
                           user_id: Optional[int] = None) -> PlaybookTemplate:
     """Set the given fields; ``tasks`` (when not None) replaces every task. Commits. The caller checks ownership."""
+    if data.tasks is not None:
+        from app.services.task_service import check_task_workflows
+        await check_task_workflows(db, template.tenant_id, [task.workflow_id for task in data.tasks])
     t = template
     changes = {f: {"from": getattr(t, f), "to": getattr(data, f)}
                for f in ("name", "category", "description") if getattr(data, f) is not None and getattr(data, f) != getattr(t, f)}
@@ -83,7 +88,7 @@ async def update_template(db: AsyncSession, *, template: PlaybookTemplate, data:
         for i, task in enumerate(data.tasks):
             db.add(PlaybookTaskTemplate(
                 template_id=t.id, phase=task.phase, title=task.title,
-                description=task.description, order=task.order or i,
+                description=task.description, order=task.order or i, workflow_id=task.workflow_id,
             ))
     await db.commit()
     return await _load(db, t.id)

@@ -8,6 +8,7 @@ class TaskTemplateIn(BaseModel):
     title: str
     description: Optional[str] = None
     order: int = 0
+    workflow_id: Optional[int] = None  # a manual workflow of this tenant
 
 
 class TaskTemplateOut(TaskTemplateIn):
@@ -57,6 +58,7 @@ class PlaybookTemplateSummary(BaseModel):
     is_system: bool
     source_template_id: Optional[int] = None
     task_count: int = 0
+    workflow_count: int = 0  # tasks that link a workflow
     status: str = "published"
     already_imported: bool = False
 

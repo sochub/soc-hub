@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Workflow as WorkflowIcon } from 'lucide-react';
 import { api } from '../../api/client';
 import type { PlaybookTemplate, PlaybookTaskTemplate } from '../../types';
 import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
@@ -29,6 +29,15 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
         enabled: !isNew,
     });
 
+    // Tenant playbooks can link a task to a manual workflow (marketplace templates are global: no tenant workflows).
+    const linkable = !marketplace && !template?.is_system;
+    const { data: workflows = [] } = useQuery({
+        queryKey: ['workflows'], enabled: linkable,
+        queryFn: async () => (await api.get('/workflows/')).data as { id: number; name: string; trigger_type: string; enabled: boolean }[],
+    });
+    const manual = workflows.filter((w) => w.trigger_type === 'manual');
+    const wfName = (id?: number | null) => workflows.find((w) => w.id === id)?.name;
+
     // editable when creating, when it's a tenant-owned template (admin), or when a
     // super admin is editing a system/marketplace template
     const editable = isNew || (!!template && canEdit && (!template.is_system || !!isSuperAdmin));
@@ -46,7 +55,8 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
             if (!draft) return;
             const payload = {
                 name: draft.name, category: draft.category, description: draft.description,
-                tasks: draft.tasks.map((t, i) => ({ phase: t.phase, title: t.title, description: t.description ?? '', order: i })),
+                tasks: draft.tasks.map((t, i) => ({ phase: t.phase, title: t.title, description: t.description ?? '', order: i,
+                    workflow_id: linkable ? t.workflow_id ?? null : null })),
             };
             if (isNew && marketplace) await api.post('/playbooks/marketplace', payload);
             else if (isNew) await api.post('/playbooks/', payload);
@@ -81,6 +91,7 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
                                 {tasks.map((t, i) => (
                                     <li key={i} className="text-sm">
                                         <span className="text-fg">{t.title}</span>
+                                        {t.workflow_id && <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-accent"><WorkflowIcon size={11} />{wfName(t.workflow_id) ?? `workflow #${t.workflow_id}`}</span>}
                                         {t.description && <span className="block text-xs text-fg-3">{t.description}</span>}
                                     </li>
                                 ))}
@@ -130,6 +141,15 @@ export default function TemplateModal({ templateId, canEdit, marketplace, isSupe
                                     className="w-full border border-line-strong px-2 py-1 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent" />
                                 <input value={t.description ?? ''} placeholder="Description (optional)" onChange={(e) => updateTask(i, { description: e.target.value })}
                                     className="w-full border border-line px-2 py-1 text-xs text-fg-2 focus:outline-hidden focus:ring-1 focus:ring-accent" />
+                                {linkable && (
+                                    <select value={t.workflow_id ?? ''} aria-label="Automation"
+                                        onChange={(e) => updateTask(i, { workflow_id: e.target.value ? Number(e.target.value) : null })}
+                                        title="Analysts can run this workflow from the task once the playbook is on a case"
+                                        className="w-full border border-line px-2 py-1 text-xs text-fg-2">
+                                        <option value="">No automation</option>
+                                        {manual.map((w) => <option key={w.id} value={w.id}>Run workflow: {w.name}{w.enabled ? '' : ' (disabled)'}</option>)}
+                                    </select>
+                                )}
                             </div>
                             <button onClick={() => removeTask(i)} aria-label="Remove task" className="text-muted hover:text-severity-critical p-1"><Trash2 size={14} /></button>
                         </div>

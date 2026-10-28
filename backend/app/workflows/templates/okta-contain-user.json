@@ -29,7 +29,7 @@
       ]
     }
   ],
-  "setup": "### Okta side\n1. Applications > Create App Integration > **API Services**.\n2. General > Client Credentials > Client authentication **Public key / Private key**. Keep **Require Demonstrating Proof of Possession (DPoP) header in token requests** ON. Add key > **Generate new key**, and copy the private key (JSON or PEM) and its `kid`.\n3. **Okta API Scopes** > Grant `okta.users.manage` AND `okta.users.read` (the user lookup needs read).\n4. **Admin roles** > assign the role: **Organization Administrator** (or Group Administrator scoped to the groups this may act on); Help Desk Administrator cannot suspend users.\n\n### Here\n1. Settings > Secrets: add `OKTA_RESPONSE_PRIVATE_KEY` (paste the private key; allowed host = your Okta domain).\n2. Install with `OKTA_DOMAIN` and `OKTA_CLIENT_ID`. Paste the private key as a JWK (it includes the `kid`); a PEM key has no `kid`, so also set `key_id` in the auth block of each HTTP step.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact. With no target it only writes a note.\n1. `GET /api/v1/users/<login>` (accepts an ID, login or unambiguous short name) to get the user ID; not found > note, nothing else.\n2. `POST /api/v1/users/<id>/lifecycle/suspend` (only works on ACTIVE users; a 400 means it was not active).\n3. `DELETE /api/v1/users/<id>/sessions?oauthTokens=true` (revokes Okta sessions plus OIDC/OAuth tokens; sessions inside downstream apps are not cleared).\n4. Note with both HTTP statuses (200 and 204 are success). Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.\n\nDocs: [Users lifecycle](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserLifecycle/#tag/UserLifecycle/operation/suspendUser), [Revoke user sessions](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserSessions/#tag/UserSessions/operation/revokeUserSessions), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm).\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n",
+  "setup": "### Okta side\n1. Applications > Create App Integration > **API Services**.\n2. General > Client Credentials > Client authentication **Public key / Private key**. Keep **Require Demonstrating Proof of Possession (DPoP) header in token requests** ON. Add key > **Generate new key**, and copy the private key (JSON or PEM) and its `kid`.\n3. **Okta API Scopes** > Grant `okta.users.manage` AND `okta.users.read` (the user lookup needs read).\n4. **Admin roles** > assign the role: **Organization Administrator** (or Group Administrator scoped to the groups this may act on); Help Desk Administrator cannot suspend users.\n\n### Here\n1. Settings > Secrets: add `OKTA_RESPONSE_PRIVATE_KEY` (paste the private key; allowed host = your Okta domain).\n2. Install with `OKTA_DOMAIN` and `OKTA_CLIENT_ID`. Paste the private key as a JWK (it includes the `kid`); a PEM key has no `kid`, so also set `key_id` in the auth block of each HTTP step.\n\n### What it does\nTarget = the case's `username` attribute, else its first `email` artifact. With no target it only writes a note.\n1. `GET /api/v1/users/<login>` (accepts an ID, login or unambiguous short name) to get the user ID; not found > note, nothing else.\n2. `POST /api/v1/users/<id>/lifecycle/suspend` (only works on ACTIVE users; a 400 means it was not active).\n3. `DELETE /api/v1/users/<id>/sessions?oauthTokens=true` (revokes Okta sessions plus OIDC/OAuth tokens; sessions inside downstream apps are not cleared).\n4. Note with both HTTP statuses (200 and 204 are success). Undo with `POST /api/v1/users/<id>/lifecycle/unsuspend`.\n\nDocs: [Users lifecycle](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserLifecycle/#tag/UserLifecycle/operation/suspendUser), [Revoke user sessions](https://developer.okta.com/docs/api/openapi/okta-management/management/tag/UserSessions/#tag/UserSessions/operation/revokeUserSessions), [Admin roles](https://help.okta.com/oie/en-us/Content/Topics/Security/administrators-admin-comparison.htm).\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n\n## Playbook tasks\nRun from a case task (a playbook task linked to this workflow), the last step records the outcome on the task and ticks it when the action succeeded; a skipped or failed attempt is recorded and the task stays open. Run any other way, that step does nothing.\n",
   "graph": {
     "nodes": [
       {
@@ -178,6 +178,45 @@
           "target": "{{ ((case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim) }}",
           "release_hint": "Unsuspend the user in Okta (Directory > People > Unsuspend)."
         }
+      },
+      {
+        "id": "task_no_target",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 380
+        },
+        "config": {
+          "result": "Okta containment skipped: no target user. Add a `username` attribute (custom artifact type) or an email artifact to the case and run it again.",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "task_not_found",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 600
+        },
+        "config": {
+          "result": "Okta containment skipped: user {{ (case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim }} not found in Okta (HTTP {{ steps.lookup.output.status }}).",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "task_result",
+        "type": "case_task_complete",
+        "position": {
+          "x": 250,
+          "y": 820
+        },
+        "config": {
+          "result": "Okta containment for {{ (case.attributes.get('username', '') or (case.artifacts | selectattr('type', 'equalto', 'email') | map(attribute='value') | first | default(''))) | trim }} (id {{ steps.lookup.output.body.id }}): suspend HTTP {{ steps.suspend.output.status }}, revoke sessions HTTP {{ steps.revoke.output.status }}.",
+          "result_status": "{{ 'ok' if steps.suspend.output.status < 300 else 'failed' }}",
+          "complete": "{{ steps.suspend.output.status < 300 }}"
+        }
       }
     ],
     "edges": [
@@ -233,6 +272,24 @@
         "id": "e_guard",
         "source": "guard",
         "target": "lookup",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_no_target",
+        "source": "no_target",
+        "target": "task_no_target",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_not_found",
+        "source": "not_found",
+        "target": "task_not_found",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_result",
+        "source": "result",
+        "target": "task_result",
         "source_handle": null
       }
     ]

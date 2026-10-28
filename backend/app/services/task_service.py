@@ -7,19 +7,78 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi import HTTPException
+
 from app.models.case import Case, TimelineEvent
 from app.models.case_task import CaseTask
 from app.models.playbook import PlaybookTemplate
+from app.models.workflow import Workflow, WorkflowRun
 from app.utils.audit import create_audit_log
 from app.services.war_room_events import queue_card
 from app.utils.playbooks import apply_playbook_to_case
 
 
-async def add_case_task(db: AsyncSession, *, case: Case, phase: str, title: str, description, user_id: int) -> CaseTask:
+async def check_task_workflows(db: AsyncSession, tenant_id: int, workflow_ids) -> None:
+    """422 unless every given id is a manual workflow of this tenant (enabled or not: it is checked again at run)."""
+    ids = {i for i in workflow_ids if i is not None}
+    if not ids:
+        return
+    ok = set((await db.execute(select(Workflow.id).where(
+        Workflow.id.in_(ids), Workflow.tenant_id == tenant_id, Workflow.trigger_type == "manual"))).scalars())
+    if ok != ids:
+        raise HTTPException(status_code=422, detail="A task can only link a manual workflow of this organization")
+
+
+async def task_rows(db: AsyncSession, tasks) -> list:
+    """CaseTaskOut dicts with the linked workflow's name, whether it can run now, and the last run's status."""
+    wf_ids = {t.workflow_id for t in tasks if t.workflow_id}
+    run_ids = {t.last_run_id for t in tasks if t.last_run_id}
+    wfs = {w.id: w for w in (await db.execute(select(Workflow).where(Workflow.id.in_(wf_ids)))).scalars()} if wf_ids else {}
+    runs = dict((await db.execute(select(WorkflowRun.id, WorkflowRun.status).where(
+        WorkflowRun.id.in_(run_ids)))).all()) if run_ids else {}
+    out = []
+    for t in tasks:
+        w = wfs.get(t.workflow_id)
+        out.append({c: getattr(t, c) for c in ("id", "case_id", "phase", "title", "description", "status", "order",
+                                                "completed_at", "completed_by", "created_at", "workflow_id", "last_run_id",
+                                                "result", "result_status", "result_at")}
+                   | {"workflow_name": w.name if w else None,
+                      "workflow_runnable": bool(w and w.enabled and w.trigger_type == "manual"),
+                      "last_run_status": runs.get(t.last_run_id)})
+    return out
+
+
+async def run_task_workflow(db: AsyncSession, *, case: Case, task: CaseTask, user_id: int) -> WorkflowRun:
+    """Start the task's linked workflow on its case (same rules as a manual run). Flushes; the caller commits and
+    queues advance_run_task."""
+    from app.workflows.runtime import start_manual_run
+    wf = (await db.execute(select(Workflow).where(Workflow.id == task.workflow_id,
+                                                  Workflow.tenant_id == case.tenant_id))).scalars().first()
+    if wf is None:
+        raise HTTPException(status_code=409, detail="This task has no workflow to run")
+    if wf.trigger_type != "manual" or not wf.enabled:
+        raise HTTPException(status_code=409, detail=f"The workflow \"{wf.name}\" is disabled: an admin enables it in Workflows")
+    try:
+        run = await start_manual_run(db, wf=wf, case=case, user_id=user_id)
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Only enabled manual workflows can be run by hand") from None
+    task.last_run_id = run.id
+    db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="task",
+                         content=f"Ran **{wf.name}** for task **{task.title}**"))
+    await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="task_workflow_run",
+                           tenant_id=case.tenant_id, user_id=user_id,
+                           changes={"task": task.title, "workflow": wf.name, "run_id": run.id})
+    await db.flush()
+    return run
+
+
+async def add_case_task(db: AsyncSession, *, case: Case, phase: str, title: str, description, user_id: int,
+                        workflow_id=None) -> CaseTask:
     """Append a 'todo' task at the end of the case's task order; audit ``task_added``."""
+    await check_task_workflows(db, case.tenant_id, [workflow_id])
     max_order = (await db.execute(select(func.max(CaseTask.order)).where(CaseTask.case_id == case.id))).scalar() or 0
     task = CaseTask(case_id=case.id, tenant_id=case.tenant_id, phase=phase, title=title, description=description,
-                    status="todo", order=max_order + 1)
+                    status="todo", order=max_order + 1, workflow_id=workflow_id)
     db.add(task)
     await db.flush()
     await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="task_added",

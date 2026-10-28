@@ -23,7 +23,7 @@
       ]
     }
   ],
-  "setup": "## SentinelOne side\n1. Service user (**Settings > Users > Service Users**) whose role may run *Disconnect from network* (e.g. **IR Team** or **SOC**; **Viewer** cannot), scoped to the Account/Site holding the endpoints.\n2. Its API token in the secret `S1_API_TOKEN`, allowed for your console host.\n\n## Case side\nThe target is the case's `hostname` attribute (custom artifact type `hostname`; the *EDR alerts to case* template adds it). Without it, the newest SentinelOne alert promoted into the case is used (`agentRealtimeInfo.agentComputerName`).\n\n## How it works\n- `find`: `GET /web/api/v2.1/agents?computerName__like=<host>&limit=50`.\n- `disconnect`: only when exactly one returned agent has that exact computer name (case-insensitive), `POST /web/api/v2.1/agents/actions/disconnect` with `{\"filter\": {\"ids\": [<agent id>]}}`. The action is sent by agent id, never by a name filter, so a typo or an ignored filter cannot disconnect other agents.\n- A note records the lookup and disconnect statuses and `data.affected`. Reconnect from the console (or `agents/actions/connect`).\n\nTo double-check in your console's API doc: the `computerName__like` filter on `GET /agents`.\n\nDocs relied on: the Management API reference is behind the console login (`https://<console>/api-doc/overview`, API v2.1). Public sources used: public open-source SentinelOne API clients (`/web/api/v2.1/` base, `Authorization: ApiToken <token>`, `threats?createdAt__gt=`, `agents/actions/disconnect` with `{\"filter\": {...}}`) and the PS-SentinelOne module (https://powershellgallery.com/packages/PS-SentinelOne). Double-check against your console's API doc before enabling.\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n",
+  "setup": "## SentinelOne side\n1. Service user (**Settings > Users > Service Users**) whose role may run *Disconnect from network* (e.g. **IR Team** or **SOC**; **Viewer** cannot), scoped to the Account/Site holding the endpoints.\n2. Its API token in the secret `S1_API_TOKEN`, allowed for your console host.\n\n## Case side\nThe target is the case's `hostname` attribute (custom artifact type `hostname`; the *EDR alerts to case* template adds it). Without it, the newest SentinelOne alert promoted into the case is used (`agentRealtimeInfo.agentComputerName`).\n\n## How it works\n- `find`: `GET /web/api/v2.1/agents?computerName__like=<host>&limit=50`.\n- `disconnect`: only when exactly one returned agent has that exact computer name (case-insensitive), `POST /web/api/v2.1/agents/actions/disconnect` with `{\"filter\": {\"ids\": [<agent id>]}}`. The action is sent by agent id, never by a name filter, so a typo or an ignored filter cannot disconnect other agents.\n- A note records the lookup and disconnect statuses and `data.affected`. Reconnect from the console (or `agents/actions/connect`).\n\nTo double-check in your console's API doc: the `computerName__like` filter on `GET /agents`.\n\nDocs relied on: the Management API reference is behind the console login (`https://<console>/api-doc/overview`, API v2.1). Public sources used: public open-source SentinelOne API clients (`/web/api/v2.1/` base, `Authorization: ApiToken <token>`, `threats?createdAt__gt=`, `agents/actions/disconnect` with `{\"filter\": {...}}`) and the PS-SentinelOne module (https://powershellgallery.com/packages/PS-SentinelOne). Double-check against your console's API doc before enabling.\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n\n## Playbook tasks\nRun from a case task (a playbook task linked to this workflow), the last step records the outcome on the task and ticks it when the action succeeded; a skipped or failed attempt is recorded and the task stays open. Run any other way, that step does nothing.\n",
   "graph": {
     "nodes": [
       {
@@ -143,6 +143,45 @@
           "target": "{{ (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) }}",
           "release_hint": "Reconnect the agent from the SentinelOne console (Actions > Reconnect to network)."
         }
+      },
+      {
+        "id": "task_no_host",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 400
+        },
+        "config": {
+          "result": "SentinelOne disconnect not sent: this case has no hostname. Add a `hostname` artifact and run the workflow again.",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "task_not_found",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 640
+        },
+        "config": {
+          "result": "SentinelOne disconnect not sent for {{ (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) }}: agent lookup HTTP {{ steps.find.output.status }}, {{ ((steps.find.output.body.get('data') or []) | map(attribute='computerName', default='') | map('lower') | select('equalto', (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | lower) | list | length) if steps.find.output.body is mapping else 0 }} agents with that exact computer name (exactly one is required).",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "task_done",
+        "type": "case_task_complete",
+        "position": {
+          "x": 250,
+          "y": 760
+        },
+        "config": {
+          "result": "SentinelOne network disconnect requested for {{ (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) }} (agent {% for a in steps.find.output.body.data if (a.get('computerName') or '') | lower == (case.attributes.get('hostname', '') or ((alert.payload.get('agentRealtimeInfo') or {}).get('agentComputerName') or '' if alert and alert.source == 'sentinelone' and alert.payload is mapping else '')) | lower %}{{ a.id }}{% endfor %}): agent lookup HTTP {{ steps.find.output.status }}, disconnect HTTP {{ steps.disconnect.output.status }}, agents affected {{ ((steps.disconnect.output.body.get('data') or {}).get('affected', 'unknown')) if steps.disconnect.output.body is mapping else 'unknown' }}.",
+          "result_status": "{{ 'ok' if steps.disconnect.output.status < 300 else 'failed' }}",
+          "complete": "{{ steps.disconnect.output.status < 300 }}"
+        }
       }
     ],
     "edges": [
@@ -192,6 +231,24 @@
         "id": "e_guard",
         "source": "guard",
         "target": "find",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_no_host",
+        "source": "no_host",
+        "target": "task_no_host",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_not_found",
+        "source": "not_found",
+        "target": "task_not_found",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_done",
+        "source": "done",
+        "target": "task_done",
         "source_handle": null
       }
     ]

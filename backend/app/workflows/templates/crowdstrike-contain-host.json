@@ -30,7 +30,7 @@
       ]
     }
   ],
-  "setup": "## Falcon side\n1. API client (**Support and resources > API clients and keys**) with **Hosts: Read** and **Hosts: Write**. The same client as *CrowdStrike Falcon: pull alerts* works if it also has these scopes.\n2. Secrets `FALCON_CLIENT_ID` and `FALCON_CLIENT_SECRET`, allowed for your API host.\n3. The host's prevention policy must allow network containment (Falcon blocks containment of some server roles unless enabled).\n\n## Case side\nThe target host is the case's `hostname` attribute: create the custom artifact type `hostname` (Settings > Artifact types) and add the host to the case (the *EDR alerts to case* template does this). Without it, the newest CrowdStrike alert promoted into the case is used (`device.hostname`).\n\n## How it works\n- `find`: `GET /devices/queries/devices/v1?filter=hostname:'<host>'&limit=2` (FQL, URL-encoded). Hostnames containing a quote or backslash are refused.\n- `contain`: only when exactly one device matches, `POST /devices/entities/devices-actions/v2?action_name=contain` with `{\"ids\": [<device id>]}`. Falcon answers 202 when the request is accepted; containment completes when the sensor checks in.\n- A note records the lookup and contain statuses. Lift containment from the Falcon console (or `action_name=lift_containment`).\n\nDocs relied on:\n- OAuth2 token (`POST /oauth2/token`, returns **201** with `access_token`, `expires_in` 1799 s): https://developer.crowdstrike.com/api-reference/collections/oauth2/\n- Alerts (`GET /alerts/queries/alerts/v2`, `POST /alerts/entities/alerts/v2` with `composite_ids`): https://developer.crowdstrike.com/api-reference/collections/alerts/\n- Hosts (`GET /devices/queries/devices/v1`, `POST /devices/entities/devices-actions/v2?action_name=contain`): https://developer.crowdstrike.com/api-reference/collections/hosts/\n- Alert FQL fields (`created_timestamp`, `severity` 1-100 bands, `composite_id`, `device.hostname`): https://github.com/CrowdStrike/falcon-mcp/blob/main/falcon_mcp/resources/detections.py\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n",
+  "setup": "## Falcon side\n1. API client (**Support and resources > API clients and keys**) with **Hosts: Read** and **Hosts: Write**. The same client as *CrowdStrike Falcon: pull alerts* works if it also has these scopes.\n2. Secrets `FALCON_CLIENT_ID` and `FALCON_CLIENT_SECRET`, allowed for your API host.\n3. The host's prevention policy must allow network containment (Falcon blocks containment of some server roles unless enabled).\n\n## Case side\nThe target host is the case's `hostname` attribute: create the custom artifact type `hostname` (Settings > Artifact types) and add the host to the case (the *EDR alerts to case* template does this). Without it, the newest CrowdStrike alert promoted into the case is used (`device.hostname`).\n\n## How it works\n- `find`: `GET /devices/queries/devices/v1?filter=hostname:'<host>'&limit=2` (FQL, URL-encoded). Hostnames containing a quote or backslash are refused.\n- `contain`: only when exactly one device matches, `POST /devices/entities/devices-actions/v2?action_name=contain` with `{\"ids\": [<device id>]}`. Falcon answers 202 when the request is accepted; containment completes when the sensor checks in.\n- A note records the lookup and contain statuses. Lift containment from the Falcon console (or `action_name=lift_containment`).\n\nDocs relied on:\n- OAuth2 token (`POST /oauth2/token`, returns **201** with `access_token`, `expires_in` 1799 s): https://developer.crowdstrike.com/api-reference/collections/oauth2/\n- Alerts (`GET /alerts/queries/alerts/v2`, `POST /alerts/entities/alerts/v2` with `composite_ids`): https://developer.crowdstrike.com/api-reference/collections/alerts/\n- Hosts (`GET /devices/queries/devices/v1`, `POST /devices/entities/devices-actions/v2?action_name=contain`): https://developer.crowdstrike.com/api-reference/collections/hosts/\n- Alert FQL fields (`created_timestamp`, `severity` 1-100 bands, `composite_id`, `device.hostname`): https://github.com/CrowdStrike/falcon-mcp/blob/main/falcon_mcp/resources/detections.py\n\n## Containment guardrails\nA **containment guard** step runs before the action: targets protected in **Settings → Integrations → Containment guardrails** (VIPs, domain controllers, critical ranges) are never contained automatically, and the tenant's daily and per-case caps apply. A refusal stops the run and adds a case note; every action is listed on the case under **Artifacts & assets → Containment**, where an analyst marks it released once undone.\n\n## Playbook tasks\nRun from a case task (a playbook task linked to this workflow), the last step records the outcome on the task and ticks it when the action succeeded; a skipped or failed attempt is recorded and the task stays open. Run any other way, that step does nothing.\n",
   "graph": {
     "nodes": [
       {
@@ -156,6 +156,45 @@
           "target": "{{ (case.attributes.get('hostname', '') or ((alert.payload.get('device') or {}).get('hostname') or '' if alert and alert.source == 'crowdstrike' and alert.payload is mapping else '')) }}",
           "release_hint": "Lift containment in the Falcon console, or POST devices-actions/v2?action_name=lift_containment."
         }
+      },
+      {
+        "id": "task_no_host",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 400
+        },
+        "config": {
+          "result": "Falcon containment not sent: this case has no hostname. Add a `hostname` artifact and run the workflow again.",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "task_not_found",
+        "type": "case_task_complete",
+        "position": {
+          "x": 520,
+          "y": 640
+        },
+        "config": {
+          "result": "Falcon containment not sent for {{ (case.attributes.get('hostname', '') or ((alert.payload.get('device') or {}).get('hostname') or '' if alert and alert.source == 'crowdstrike' and alert.payload is mapping else '')) }}: device lookup HTTP {{ steps.find.output.status }}, {{ ((steps.find.output.body.get('resources') or []) if steps.find.output.body is mapping else []) | length }} matching devices (exactly one is required).",
+          "result_status": "failed",
+          "complete": "false"
+        }
+      },
+      {
+        "id": "task_done",
+        "type": "case_task_complete",
+        "position": {
+          "x": 250,
+          "y": 760
+        },
+        "config": {
+          "result": "Falcon network containment requested for {{ (case.attributes.get('hostname', '') or ((alert.payload.get('device') or {}).get('hostname') or '' if alert and alert.source == 'crowdstrike' and alert.payload is mapping else '')) }} (device {{ steps.find.output.body.resources[0] }}): device lookup HTTP {{ steps.find.output.status }}, contain HTTP {{ steps.contain.output.status }}{{ ' (accepted)' if steps.contain.output.status in [200, 202] else ' (not accepted: check the Hosts: Write scope and the response in the run history)' }}.",
+          "result_status": "{{ 'ok' if steps.contain.output.status < 300 else 'failed' }}",
+          "complete": "{{ steps.contain.output.status < 300 }}"
+        }
       }
     ],
     "edges": [
@@ -205,6 +244,24 @@
         "id": "e_guard",
         "source": "guard",
         "target": "find",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_no_host",
+        "source": "no_host",
+        "target": "task_no_host",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_not_found",
+        "source": "not_found",
+        "target": "task_not_found",
+        "source_handle": null
+      },
+      {
+        "id": "e_task_done",
+        "source": "done",
+        "target": "task_done",
         "source_handle": null
       }
     ]

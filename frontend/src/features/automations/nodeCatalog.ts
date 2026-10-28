@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck, Mail } from 'lucide-react';
+import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck, Mail, ListChecks } from 'lucide-react';
 import type { TriggerType } from './types';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
@@ -105,6 +105,16 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'value', label: 'Value', kind: 'text', required: true },
             { key: 'description', label: 'Description', kind: 'text' },
             CASE_ID,
+        ],
+    },
+    {
+        type: 'case_task_complete', label: 'Complete task', category: 'Cases', icon: ListChecks, sideEffect: true,
+        fields: [
+            { key: 'result', label: 'Result', kind: 'textarea', placeholder: "User answered: {{ steps.ask.output.response }}",
+              help: 'Shown on the task. Applies to the case task this run was started from (Run on a task); otherwise the task named below; otherwise nothing happens' },
+            { key: 'result_status', label: 'Result status', kind: 'text', placeholder: "ok, warning, failed or {{ 'ok' if steps.ask.output.response == 'Yes' else 'failed' }}" },
+            { key: 'complete', label: 'Tick the task', kind: 'text', placeholder: 'true', help: 'false records the result and leaves the task open' },
+            { key: 'task_title', label: 'Task title (runs not started from a task)', kind: 'text' },
         ],
     },
     { type: 'case_apply_playbook', label: 'Apply playbook', category: 'Cases', icon: BookText, sideEffect: true,

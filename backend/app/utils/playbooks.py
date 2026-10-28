@@ -43,7 +43,7 @@ async def apply_playbook_to_case(
         db.add(CaseTask(
             case_id=case.id, tenant_id=tenant_id, phase=task.phase, title=task.title,
             description=task.description, status="todo", order=base_order + n,
-            source_template_id=template.id,
+            source_template_id=template.id, workflow_id=task.workflow_id,
         ))
         have.add((task.phase, task.title))
 

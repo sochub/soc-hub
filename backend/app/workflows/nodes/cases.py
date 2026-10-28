@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.models.artifact import Artifact
-from app.models.case import Case, CaseSeverity, CaseStatus
+from app.models.case import Case, CaseSeverity, CaseStatus, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.membership import TenantMembership
 from app.models.user import User
@@ -120,3 +120,44 @@ async def run_case_search(nctx: NodeContext, config: dict) -> dict:
     cases = [{"id": c.id, "title": c.title, "status": c.status.value, "severity": c.severity.value,
               "tags": c.tags or [], "created_at": c.created_at.isoformat() if c.created_at else None} for c in rows]
     return {"cases": cases, "first": cases[0] if cases else None, "count": len(cases)}
+
+
+_RESULT_STATUSES = ("ok", "warning", "failed")
+
+
+def _truthy(v) -> bool:
+    return v if isinstance(v, bool) else str(v).strip().lower() not in ("false", "0", "no", "")
+
+
+@executor("case_task_complete")
+async def run_case_task_complete(nctx: NodeContext, config: dict) -> dict:
+    """Record a result on the case task this run was started from (Run on a task), or on the open task named
+    `task_title`, and tick it unless `complete` is false. No such task: does nothing, so templates can end with it."""
+    from app.models.case_task import CaseTask
+    from app.services.task_service import update_case_task
+    run = nctx.run
+    if not run.case_id:
+        return {"task_id": None, "completed": False, "reason": "this run has no case"}
+    task = (await nctx.db.execute(select(CaseTask).where(
+        CaseTask.case_id == run.case_id, CaseTask.last_run_id == run.id))).scalars().first()
+    title = str(config.get("task_title") or "").strip()
+    if task is None and title:
+        task = (await nctx.db.execute(select(CaseTask).where(
+            CaseTask.case_id == run.case_id, func.lower(CaseTask.title) == title.lower())
+            .order_by(CaseTask.status.desc(), CaseTask.order))).scalars().first()  # 'todo' before 'done'
+    if task is None:
+        return {"task_id": None, "completed": False, "reason": "this run was not started from a task"}
+    status = str(config.get("result_status") or "ok").strip().lower()
+    if status not in _RESULT_STATUSES:
+        raise NodeError(f"result_status must be one of {', '.join(_RESULT_STATUSES)}, got {status!r}")
+    result = str(config.get("result") or "").strip()[:2000]
+    complete = _truthy(config.get("complete", True))
+    task.result, task.result_status, task.result_at = result or None, status, datetime.now(timezone.utc)
+    case = await load_target_case(nctx, {})
+    if result:
+        nctx.db.add(TimelineEvent(case_id=case.id, event_type="task",
+                                  content=f"Automation result for **{task.title}** ({status}): {result}"))
+    if complete and task.status != "done":
+        await update_case_task(nctx.db, case=case, task=task, data={"status": "done"}, user_id=None)
+    await nctx.db.flush()
+    return {"task_id": task.id, "completed": task.status == "done", "result_status": status}
