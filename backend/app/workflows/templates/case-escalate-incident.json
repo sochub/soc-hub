@@ -1,0 +1,82 @@
+{
+  "key": "case-escalate-incident",
+  "name": "Escalate to incident",
+  "vendor": "SOC Hub",
+  "kind": "triage",
+  "description": "Run from a case, or from another workflow's Run workflow step: raise the case to critical, mark it in progress and tagged incident, note why, and alert the Slack channel.",
+  "trigger_type": "manual",
+  "trigger_filter": null,
+  "params": [],
+  "secrets": [],
+  "setup": "## What it does\n1. **Update case**: severity *critical*, status *in progress*, tags `incident` and `escalated`.\n2. **Add note**: *Escalated to an incident* with the reason.\n3. **Slack**: posts to the integration's default channel with the case buttons. Without Slack, delete this step (otherwise the run ends failed after the case was already escalated).\n\n## Calling it from another workflow\nAdd a **Run workflow** step with *Workflow name* `Escalate to incident` and inputs such as `{\"reason\": \"User did not confirm the sign-in\"}`. The reason is `trigger.inputs.reason`; run by hand it says *escalated by hand*. The packaged *Slack: confirm activity with user* template already calls it when the user doesn't confirm.\n\nEnable it after installing: a Run workflow step only starts enabled workflows.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "escalate",
+        "type": "case_update",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "severity": "critical",
+          "status": "in_progress",
+          "add_tags": "incident, escalated"
+        }
+      },
+      {
+        "id": "note",
+        "type": "case_add_note",
+        "position": {
+          "x": 250,
+          "y": 280
+        },
+        "config": {
+          "content": "**Escalated to an incident**: {{ ((trigger.get('inputs') or {}).get('reason') or 'escalated by hand') }}"
+        }
+      },
+      {
+        "id": "notify",
+        "type": "slack_post_message",
+        "position": {
+          "x": 250,
+          "y": 400
+        },
+        "config": {
+          "channel": "",
+          "text": ":rotating_light: Case #{{ case.id }} *{{ case.title }}* was escalated to an incident: {{ ((trigger.get('inputs') or {}).get('reason') or 'escalated by hand') }}",
+          "include_case_buttons": "yes"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_escalate",
+        "source": "start",
+        "target": "escalate",
+        "source_handle": null
+      },
+      {
+        "id": "e_escalate_note",
+        "source": "escalate",
+        "target": "note",
+        "source_handle": null
+      },
+      {
+        "id": "e_note_notify",
+        "source": "note",
+        "target": "notify",
+        "source_handle": null
+      }
+    ]
+  }
+}

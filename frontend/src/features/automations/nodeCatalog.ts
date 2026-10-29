@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck, Mail, ListChecks } from 'lucide-react';
+import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck, Mail, ListChecks, Workflow } from 'lucide-react';
 import type { TriggerType } from './types';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
@@ -151,6 +151,17 @@ export const NODE_DEFS: NodeDef[] = [
             { key: 'target', label: 'Target', kind: 'text', required: true, placeholder: "{{ case.attributes.get('hostname', '') }}",
               help: 'Put this before the step that contains. Protected targets and the daily / per-case caps (Settings → Integrations → Containment guardrails) stop the run; allowed actions are listed on the case' },
             { key: 'release_hint', label: 'How to undo', kind: 'text', placeholder: 'Lift containment in the Falcon console' },
+        ],
+    },
+    {
+        type: 'run_workflow', label: 'Run workflow', category: 'Logic', icon: Workflow, sideEffect: true,
+        fields: [
+            { key: 'workflow_name', label: 'Workflow name', kind: 'text', placeholder: 'Escalate to incident',
+              help: 'Exact name of an enabled manual workflow of this organization. It starts on the same case and runs on its own' },
+            { key: 'workflow_id', label: 'or workflow ID', kind: 'number' },
+            { key: 'inputs', label: 'Inputs (JSON)', kind: 'json', placeholder: '{"reason": "User did not confirm: {{ steps.ask.output.response }}"}',
+              help: 'Available to the started workflow as trigger.inputs' },
+            CASE_ID,
         ],
     },
     {

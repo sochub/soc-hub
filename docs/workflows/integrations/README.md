@@ -45,7 +45,8 @@ How pulls behave: each run reads from the last **successful** run (at most 24 h 
 | Okta | response | `okta-suspend-user`: Okta: suspend user | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
 | Okta | response | `okta-reset-authenticators`: Okta: reset authenticators | OKTA_RESPONSE_PRIVATE_KEY | OKTA_DOMAIN, OKTA_CLIENT_ID |
 | Proofpoint | ingest | `proofpoint-tap-pull`: Proofpoint TAP: pull delivered threats and permitted clicks | PROOFPOINT_PRINCIPAL, PROOFPOINT_SECRET | - |
-| Slack | triage | `task-confirm-with-user-slack`: Ask the user on Slack to confirm (for a case task) | - (needs Slack) | - |
+| Slack | triage | `task-confirm-with-user-slack`: Ask the user on Slack to confirm (for a case task); escalates when not confirmed | - (needs Slack) | - |
+| SOC Hub | triage | `case-escalate-incident`: Escalate to incident (critical, in progress, tagged, noted, Slack alert); called by other workflows | - (Slack step optional) | - |
 | SentinelOne | ingest | `sentinelone-threats-pull`: SentinelOne: pull threats | S1_API_TOKEN | S1_CONSOLE |
 | SentinelOne | response | `sentinelone-disconnect-agent`: SentinelOne: disconnect agent from network | S1_API_TOKEN | S1_CONSOLE |
 | Wiz | ingest | `wiz-issues-pull`: Wiz: pull issues | WIZ_CLIENT_ID, WIZ_CLIENT_SECRET | WIZ_API_HOST |

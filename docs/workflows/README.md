@@ -57,6 +57,14 @@ Use them in templates:
 - `condition`: `expression`. Outputs the boolean on the `true` / `false` handles.
 - `for_each`: container node. `items` (expression evaluating to a list), `concurrency` (default 5, max 20), `max_items` (default 100, hard cap 500; more fails the step). One child run per item; output `{results: [{index, status, steps: {node_id: output}}], succeeded, failed}`.
 
+- `run_workflow` ("Run workflow"): starts another workflow of this organization on the same case (or `case_id`), so
+  workflows can call each other. `workflow_name` (exact name; newest wins if two share it) or `workflow_id`; the
+  target must be an **enabled manual** workflow. Optional `inputs` (JSON object, values templated) reach the started
+  workflow as `trigger.inputs`, next to `trigger.started_by` (`{run_id, workflow_id, workflow_name}` of the caller).
+  The started workflow runs on its own: this step only starts it and outputs `{run_id, workflow_id, workflow_name,
+  case_id}`. Fails the step when the workflow is missing, disabled, the caller itself, or the chain is deeper than 3
+  (see [Loop guard](#loop-guard)). A dry run starts nothing. Example: the *Ask the user on Slack to confirm* template
+  starts **Escalate to incident** when the user doesn't confirm.
 - `fail`: `message` (templated). Stops the run as failed with that message. Use it on the false branch of a status check after a vendor pull, so a 401/429 shows as a failed run and the next schedule re-reads the window.
 
 **Actions**
@@ -79,12 +87,14 @@ Use them in templates:
 - `case_task_complete` ("Complete task"): records a result on a case task and ticks it. It applies to the task the
   run was started from (**Run** on a task linked to the workflow); otherwise to the task named `task_title` on the
   case (case-insensitive, open tasks first); otherwise it does nothing, so any workflow can end with it. `result`
-  (templated text shown on the task, e.g. `User answered: {{ steps.ask.output.response }}`), `result_status` (`ok`,
+  (templated text shown on the task, e.g. `Confirmed by {{ steps.ask.output.email }} on Slack`), `result_status` (`ok`,
   `warning` or `failed`, templatable; it colours the result), `complete` (default true; `false` records the result and
   leaves the task open). Adds an activity entry; ticking writes the usual "Task completed" entry and audit row. Output
   `{task_id, completed, result_status}`. Every built-in response template ends with it: a successful action ticks the
   task, a skipped or failed one records why and leaves it open. The template *Ask the user on Slack to confirm (for a
-  case task)* records the user's answer (ok / failed for *It wasn't me* / warning and open when there's no answer).
+  case task)* records who confirmed: *Confirmed by alice@acme.com on Slack* (ok), *Not confirmed: alice@acme.com
+  answered "It wasn't me" on Slack* (failed), or *No answer from alice@acme.com on Slack within the time limit*
+  (warning, task left open), then runs **Escalate to incident** unless the user confirmed.
 - `email_ask_user`: like `slack_ask_user`, by email, for people who aren't on Slack. `email`, `message` (plain
   text, shown escaped), optional `buttons` (comma-separated, ≤ 5, each ≤ 75 characters; default *It was me* /
   *It wasn't me*) and `timeout_hours` (≤ 168, default 1). Needs SMTP and `FRONTEND_URL`. The email has one
@@ -127,7 +137,7 @@ Admins can dry-run a workflow (even a disabled one) against a case, an alert, or
 
 ## Loop guard
 
-Cases created by an automation emit `case.created` at depth + 1, and updates likewise. Events beyond depth 3 are dropped (with a warning in the worker log), which stops A -> B -> A cycles.
+Cases created by an automation emit `case.created` at depth + 1, and updates likewise. Events beyond depth 3 are dropped (with a warning in the worker log), which stops A -> B -> A cycles. A `run_workflow` step starts its workflow at depth + 1 too and fails past depth 3, and a workflow can't start itself.
 
 ## HTTP allowlist and SSRF
 
@@ -186,7 +196,7 @@ Config:
 - `buttons`: comma-separated labels, for example `Yes, No` (default `Yes, No`). At most 5 buttons; more fails the step.
 - `timeout_hours`: default 24, must be greater than 0 and at most 168. Fractions are fine (`0.02` is about 72 seconds, handy for testing).
 
-Output: `{response, responder_slack_id, responder_email, timed_out}`. While waiting, the step output holds `{target_slack_id, channel, message_ts, buttons}` and the run status is `waiting`.
+Output: `{response, responder_slack_id, responder_email, email, timed_out}` (`email` is the address that was asked, also set when it times out and in dry runs). While waiting, the step output holds `{target_slack_id, channel, message_ts, buttons, email}` and the run status is `waiting`.
 
 Waiting, timeout and cancel behaviour:
 - **Waiting**: the run stays `waiting` and holds no worker. The first valid click resumes the run; the DM is edited to show the answer and later clicks are ignored.

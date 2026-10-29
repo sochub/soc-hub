@@ -318,6 +318,11 @@ def _check_node_config(errors: List[dict], node: dict, trigger_type: str) -> Non
                 v = auth.get(k)
                 if isinstance(v, str) and "{{" not in v and not re.fullmatch(r"[a-z0-9-]{2,32}", v):
                     _err(errors, nid, f"auth.{k} must match [a-z0-9-]{{2,32}}")
+    if node["type"] == "run_workflow":
+        if cfg.get("workflow_id") in (None, "") and not str(cfg.get("workflow_name") or "").strip():
+            _err(errors, nid, "set the workflow to run (workflow_name or workflow_id)")
+        if cfg.get("inputs") not in (None, "") and not isinstance(cfg["inputs"], dict):
+            _err(errors, nid, "inputs must be a JSON object")
     if node["type"] == "slack_ask_user":
         try:
             if len(parse_button_labels(cfg.get("buttons"))) > 5:

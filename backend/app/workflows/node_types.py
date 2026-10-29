@@ -21,6 +21,7 @@ NODE_TYPES = {
     "containment_guard":   {"required": ["action", "target_kind", "target"], "raw": [], "alert_only": False},
     "email_ask_user":      {"required": ["email", "message"], "raw": [], "alert_only": False},
     "case_task_complete":  {"required": [], "raw": [], "alert_only": False},
+    "run_workflow":        {"required": [], "raw": [], "alert_only": False},
 }
 
 MAX_NODES = 50
