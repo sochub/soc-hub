@@ -44,7 +44,7 @@ ValueError: DATABASE_URL uses the local-development default password. ...
 
 ## 2. Single sign-on (SAML)
 
-**Settings → Tenant → Single Sign-On (SAML)** (tenant admins).
+**Settings → Organization → Single Sign-On (SAML)** (organization admins).
 
 ![SSO settings: identity provider fields on the left, service provider values on the right](images/config-sso.png)
 
@@ -123,7 +123,7 @@ the same IdP can silently sign a colleague's browser into their own account. Ass
 
 ## 3. Two-factor authentication
 
-**Settings → Tenant → Two-factor authentication**.
+**Settings → Organization → Two-factor authentication**.
 
 ![Two-factor and case-guest settings](images/config-mfa-guests.png)
 

@@ -28,6 +28,7 @@ from app.models.case import Alert, Case, CaseLink, TimelineEvent
 from app.models.case_task import CaseTask
 from app.models.containment import ContainmentAction
 from app.models.membership import TenantMembership
+from app.models.notification import Notification
 from app.models.playbook import PlaybookTemplate
 from app.models.suppression_rule import SuppressionRule
 from app.models.tenant import Tenant
@@ -265,6 +266,15 @@ async def new_features(c: httpx.AsyncClient, tid: int, hero_ids: list[int]) -> N
                 elif t.status == "done":
                     t.result = "Entra containment for jenny@greenbow.example: sessions revoked (HTTP 204)."
                     t.result_status, t.result_at = "ok", now
+        # The bell's inbox: a mention, an assignment and an SLA breach for Forrest (the demo user).
+        who = {u.email: u.id for u in (await db.execute(select(User).where(User.email.in_([p[1] for p in PEOPLE])))).scalars()}
+        me, jenny, bubba = who[PEOPLE[0][1]], who.get("jenny@greenbow.example"), who.get("bubba@greenbow.example")
+        for minutes, case_id, type_, actor, summary in (
+                (12, main, "mention", jenny, f"Jenny Curran mentioned you on case #{main}"),
+                (95, hero_ids[0], "assigned", bubba, f"Bubba Blue assigned you task \"Reset credentials for any user who entered them\" on case #{hero_ids[0]}"),
+                (300, main, "sla_breach", None, f"Case #{main} breached its resolution SLA")):
+            db.add(Notification(tenant_id=tid, user_id=me, case_id=case_id, type=type_, actor_id=actor, summary=summary,
+                                created_at=now - timedelta(minutes=minutes)))
         await db.commit()
 
 

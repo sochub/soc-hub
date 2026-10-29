@@ -386,7 +386,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                         <FileJson size={14} />{exporting === 'json' ? 'Exporting...' : 'Export JSON'}
                     </button>
                     {dirty && <p className="w-full text-[11px] text-amber-300">Exports use the last saved report. Save first to include your changes.</p>}
-                    <p className="w-full text-[11px] text-muted">Cover logo, colors and disclaimer come from Settings → Tenant → Report branding.</p>
+                    <p className="w-full text-[11px] text-muted">Cover logo, colors and disclaimer come from Settings → Organization → Report branding.</p>
                 </div>
             )}
         </div>

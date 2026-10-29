@@ -58,11 +58,11 @@ export default function Integrations() {
         <PageContainer>
             <div>
                 <h1 className="text-3xl font-bold text-fg tracking-tight">Integrations</h1>
-                <p className="text-fg-3 mt-1">Create webhooks so tools like a SIEM can push alerts into a tenant.</p>
+                <p className="text-fg-3 mt-1">Create webhooks so tools like your SIEM can push alerts into this organization.</p>
             </div>
 
             {!isAdmin ? (
-                <div className="glass-panel p-8 rounded-xl text-center text-fg-3">Ask a tenant admin to manage webhooks.</div>
+                <div className="glass-panel p-8 rounded-xl text-center text-fg-3">Ask an organization admin to manage webhooks.</div>
             ) : (
                 <div className="space-y-6">
                     <div className="glass-panel p-5 rounded-xl border border-line">

@@ -72,7 +72,7 @@ export default function ReportBrandingSection() {
                 <p className="text-xs text-fg-3">Shown on the cover, page headers and disclaimer of exported incident reports.</p>
                 <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
                     <label className="block text-xs text-fg-2">Organization name
-                        <input className={input} maxLength={120} value={form.org_name} placeholder="Defaults to the tenant name"
+                        <input className={input} maxLength={120} value={form.org_name} placeholder="Defaults to the organization name"
                             onChange={(e) => setForm({ ...form, org_name: e.target.value })} />
                     </label>
                     <label className="block text-xs text-fg-2">Accent color

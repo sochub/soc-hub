@@ -331,8 +331,8 @@ export default function Settings() {
     return (
         <PageContainer width="narrow">
             <div>
-                <h1 className="text-xl font-semibold text-fg tracking-tight">Tenant settings</h1>
-                <p className="label-mono mt-1">tenant configuration</p>
+                <h1 className="text-xl font-semibold text-fg tracking-tight">Organization settings</h1>
+                <p className="label-mono mt-1">organization configuration</p>
             </div>
 
             {!isAdmin ? (
@@ -387,7 +387,7 @@ export default function Settings() {
                                     </label>
                                     <p className="text-[11px] text-fg-3 mt-1">
                                         Off by default: only sign-ins started from this site are accepted. Turning it on lets users
-                                        start from the IdP's app dashboard, but also exposes the tenant to login CSRF: anyone with an
+                                        start from the IdP's app dashboard, but also exposes the organization to login CSRF: anyone with an
                                         account at the same IdP can silently sign a colleague's browser into their own account.
                                     </p>
                                 </div>
@@ -442,7 +442,7 @@ export default function Settings() {
                                     </>
                                 )}
                                 <p className="text-[11px] text-muted leading-relaxed pt-1">
-                                    Users sign in via “Sign in with SSO” on the login page using your tenant slug.
+                                    Users sign in via “Sign in with SSO” on the login page using your organization slug.
                                     Send the email as the NameID (format emailAddress) or an <code className="num">email</code> attribute,
                                     and the full name as <code className="num">displayName</code>. Admins can always use the password form on the login page.
                                 </p>

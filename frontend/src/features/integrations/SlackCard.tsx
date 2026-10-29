@@ -55,7 +55,7 @@ export default function SlackCard() {
             </div>
             <div className="text-xs text-fg-3 space-y-1">
                 <p>Create a Slack app from <code className="font-mono">docs/slack/slack-app-manifest.yml</code> (Socket Mode: no public URL needed), then paste the bot token and an app-level token with <code className="font-mono">connections:write</code>.</p>
-                <p>After updating the manifest, reinstall the app to the workspace so new scopes take effect. Existing tenants must do this to open war rooms from a case and to let SOC-bot listen in them.</p>
+                <p>After updating the manifest, reinstall the app to the workspace so new scopes take effect. Existing installations must do this to open war rooms from a case and to let SOC-bot listen in them.</p>
                 <p>In Slack: <code className="font-mono">/sochub new</code>, <code className="font-mono">/sochub case 42</code>, the message menu's “Create sochub case”, and the app's Home tab.</p>
             </div>
             <label className="block"><span className="label-mono">bot token</span>
