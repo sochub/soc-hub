@@ -17,6 +17,7 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
     const [newPhase, setNewPhase] = useState('identification');
     const [applyId, setApplyId] = useState<string>('');
     const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+    const [confirmTicket, setConfirmTicket] = useState<number | null>(null);
     const [assignError, setAssignError] = useState<{ id: number; text: string } | null>(null);
 
     const { data: me } = useQuery({
@@ -56,8 +57,8 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
     };
     const createTicket = useMutation({
         mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/ticket`),
-        onSuccess: () => { setRunError(null); invalidate(); },
-        onError: (e: { response?: { data?: { detail?: unknown } } }, t) => ticketErr(t)(e),
+        onSuccess: () => { setRunError(null); setConfirmTicket(null); invalidate(); },
+        onError: (e: { response?: { data?: { detail?: unknown } } }, t) => { setConfirmTicket(null); ticketErr(t)(e); },
     });
     const syncTicket = useMutation({
         mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/ticket/sync`),
@@ -190,13 +191,23 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                                                     className="text-muted hover:text-fg disabled:opacity-50"><RefreshCw size={11} className={syncTicket.isPending && syncTicket.variables?.id === t.id ? 'animate-spin' : ''} /></button>
                                                             )}
                                                         </span>
-                                                    ) : ticketing?.configured && canEdit && t.status !== 'done' && (
-                                                        <button onClick={() => createTicket.mutate(t)} disabled={createTicket.isPending}
+                                                    ) : ticketing?.configured && canEdit && t.status !== 'done' && (confirmTicket === t.id ? (
+                                                        <span role="alert" className="inline-flex items-center gap-1.5">
+                                                            <span className="text-fg-2">Open a {ticketing?.label ?? ''} ticket for this task?</span>
+                                                            <button onClick={() => createTicket.mutate(t)} disabled={createTicket.isPending}
+                                                                className={cn(PILL, 'border-accent bg-accent text-on-accent font-medium hover:bg-accent-hover disabled:opacity-50')}>
+                                                                {createTicket.isPending ? 'Creating…' : 'Create'}
+                                                            </button>
+                                                            <button onClick={() => setConfirmTicket(null)} disabled={createTicket.isPending}
+                                                                className={cn(PILL, 'hover:bg-raised disabled:opacity-50')}>Cancel</button>
+                                                        </span>
+                                                    ) : (
+                                                        <button onClick={() => setConfirmTicket(t.id)} disabled={createTicket.isPending}
                                                             title={`Open a ${ticketing?.label ?? ''} ticket for this task: closing it ticks the task; ticking the task posts its result`}
                                                             className={cn(PILL, 'hover:bg-raised disabled:opacity-50')}>
-                                                            <Ticket size={12} /> {createTicket.isPending && createTicket.variables?.id === t.id ? 'Creating…' : 'Create ticket'}
+                                                            <Ticket size={12} /> Create ticket
                                                         </button>
-                                                    )}
+                                                    ))}
                                                     {t.workflow_id && (<>
                                                         <span className={PILL}><WorkflowIcon size={12} className="text-accent" />{t.workflow_name ?? 'workflow removed'}</span>
                                                         {canEdit && t.workflow_runnable && (

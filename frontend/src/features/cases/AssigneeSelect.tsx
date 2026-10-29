@@ -28,19 +28,21 @@ export default function AssigneeSelect({ value, currentName, onChange, disabled,
 }) {
     const { data: people = [] } = useAssignable(!disabled);
     const known = value == null || people.some((p) => p.id === value);
+    const shown = value == null ? 'Unassigned' : people.find((p) => p.id === value)?.name ?? currentName ?? `User #${value}`;
+    // The native select covers the whole pill (transparent), so a click anywhere on it opens the list.
     return (
-        <span className={cn(PILL, 'relative pr-6 bg-panel hover:bg-raised focus-within:border-accent',
-            disabled && 'opacity-60', className)}>
+        <span className={cn(PILL, 'relative bg-panel hover:bg-raised focus-within:border-accent focus-within:ring-1 focus-within:ring-accent',
+            disabled ? 'opacity-60' : 'cursor-pointer', className)}>
             <UserRound size={12} className="shrink-0 text-muted" aria-hidden />
+            <span className={cn('max-w-[11rem] truncate', value == null ? 'text-muted' : 'text-fg-2')} aria-hidden>{shown}</span>
+            <ChevronDown size={12} className="shrink-0 text-muted" aria-hidden />
             <select aria-label={label} value={value ?? ''} disabled={disabled}
                 onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-                className={cn('appearance-none bg-transparent text-xs max-w-[11rem] truncate cursor-pointer focus:outline-hidden',
-                    'disabled:cursor-default', value == null ? 'text-muted' : 'text-fg-2')}>
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-default">
                 <option value="">Unassigned</option>
                 {!known && <option value={value!}>{currentName ?? `User #${value}`}</option>}
                 {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <ChevronDown size={12} className="pointer-events-none absolute right-2 text-muted" aria-hidden />
         </span>
     );
 }
