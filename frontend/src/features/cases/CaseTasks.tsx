@@ -6,7 +6,7 @@ import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { CaseTask, PlaybookSummary, User } from '../../types';
 import { PHASES, PHASE_LABEL, PHASE_COLOR } from '../playbooks/phases';
-import AssigneeSelect from './AssigneeSelect';
+import AssigneeSelect, { PILL } from './AssigneeSelect';
 
 const RUNNING = ['pending', 'running', 'waiting'];
 
@@ -17,6 +17,7 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
     const [newPhase, setNewPhase] = useState('identification');
     const [applyId, setApplyId] = useState<string>('');
     const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+    const [confirmTicket, setConfirmTicket] = useState<number | null>(null);
     const [assignError, setAssignError] = useState<{ id: number; text: string } | null>(null);
 
     const { data: me } = useQuery({
@@ -56,8 +57,8 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
     };
     const createTicket = useMutation({
         mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/ticket`),
-        onSuccess: () => { setRunError(null); invalidate(); },
-        onError: (e: { response?: { data?: { detail?: unknown } } }, t) => ticketErr(t)(e),
+        onSuccess: () => { setRunError(null); setConfirmTicket(null); invalidate(); },
+        onError: (e: { response?: { data?: { detail?: unknown } } }, t) => { setConfirmTicket(null); ticketErr(t)(e); },
     });
     const syncTicket = useMutation({
         mutationFn: async (t: CaseTask) => api.post(`/cases/${caseId}/tasks/${t.id}/ticket/sync`),
@@ -164,15 +165,6 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                         <div className="flex-1 min-w-0">
                                             <p className={cn('text-sm', t.status === 'done' ? 'text-muted line-through' : 'text-fg')}>{t.title}</p>
                                             {t.description && <p className="text-xs text-fg-3">{t.description}</p>}
-                                            {canEdit ? (
-                                                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-                                                    <span>Assignee</span>
-                                                    <AssigneeSelect label={`Assignee of ${t.title}`} value={t.assignee_id} currentName={t.assignee_name}
-                                                        disabled={assign.isPending && assign.variables?.t.id === t.id}
-                                                        onChange={(v) => assign.mutate({ t, assignee_id: v })} />
-                                                    {assignError?.id === t.id && <span role="alert" className="text-severity-critical">{assignError.text}</span>}
-                                                </div>
-                                            ) : t.assignee_name && <p className="mt-1 text-xs text-muted">Assignee: {t.assignee_name}</p>}
                                             {t.result && (
                                                 <p className={cn('mt-1 text-xs border-l-2 pl-2',
                                                     t.result_status === 'failed' ? 'border-red-500 text-severity-critical'
@@ -181,10 +173,15 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                                     {t.result}
                                                 </p>
                                             )}
-                                            {(t.ticket || (ticketing?.configured && canEdit && t.status !== 'done')) && (
-                                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                                            {(canEdit || t.assignee_name || t.ticket || t.workflow_id || (ticketing?.configured && canEdit && t.status !== 'done')) && (
+                                                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+                                                    {canEdit ? (
+                                                        <AssigneeSelect label={`Assignee of ${t.title}`} value={t.assignee_id} currentName={t.assignee_name}
+                                                            disabled={assign.isPending && assign.variables?.t.id === t.id}
+                                                            onChange={(v) => assign.mutate({ t, assignee_id: v })} />
+                                                    ) : t.assignee_name && <span className={PILL}>{t.assignee_name}</span>}
                                                     {t.ticket ? (
-                                                        <span className="inline-flex items-center gap-1 text-fg-2" title={t.ticket.remote_closed ? 'Closed in the ticketing system' : undefined}>
+                                                        <span className={PILL} title={t.ticket.remote_closed ? 'Closed in the ticketing system' : undefined}>
                                                             <Ticket size={12} className="text-accent" />
                                                             {t.ticket.url ? <a href={t.ticket.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{t.ticket.label} {t.ticket.external_id}</a>
                                                                 : <span>{t.ticket.label} {t.ticket.external_id}</span>}
@@ -194,32 +191,41 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                                                     className="text-muted hover:text-fg disabled:opacity-50"><RefreshCw size={11} className={syncTicket.isPending && syncTicket.variables?.id === t.id ? 'animate-spin' : ''} /></button>
                                                             )}
                                                         </span>
+                                                    ) : ticketing?.configured && canEdit && t.status !== 'done' && (confirmTicket === t.id ? (
+                                                        <span role="alert" className="inline-flex items-center gap-1.5">
+                                                            <span className="text-fg-2">Open a {ticketing?.label ?? ''} ticket for this task?</span>
+                                                            <button onClick={() => createTicket.mutate(t)} disabled={createTicket.isPending}
+                                                                className={cn(PILL, 'border-accent bg-accent text-on-accent font-medium hover:bg-accent-hover disabled:opacity-50')}>
+                                                                {createTicket.isPending ? 'Creating…' : 'Create'}
+                                                            </button>
+                                                            <button onClick={() => setConfirmTicket(null)} disabled={createTicket.isPending}
+                                                                className={cn(PILL, 'hover:bg-raised disabled:opacity-50')}>Cancel</button>
+                                                        </span>
                                                     ) : (
-                                                        <button onClick={() => createTicket.mutate(t)} disabled={createTicket.isPending}
+                                                        <button onClick={() => setConfirmTicket(t.id)} disabled={createTicket.isPending}
                                                             title={`Open a ${ticketing?.label ?? ''} ticket for this task: closing it ticks the task; ticking the task posts its result`}
-                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-line-strong text-fg-2 hover:bg-raised disabled:opacity-50">
-                                                            <Ticket size={11} /> {createTicket.isPending && createTicket.variables?.id === t.id ? 'Creating…' : 'Create ticket'}
+                                                            className={cn(PILL, 'hover:bg-raised disabled:opacity-50')}>
+                                                            <Ticket size={12} /> Create ticket
                                                         </button>
-                                                    )}
-                                                </div>
-                                            )}
-                                            {t.workflow_id && (
-                                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                                                    <span className="inline-flex items-center gap-1 text-fg-2"><WorkflowIcon size={12} className="text-accent" />{t.workflow_name ?? 'workflow removed'}</span>
-                                                    {canEdit && t.workflow_runnable && (
-                                                        <button onClick={() => runTask.mutate(t)} disabled={runTask.isPending || RUNNING.includes(t.last_run_status ?? '')}
-                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm bg-accent text-on-accent font-medium hover:bg-accent-hover disabled:opacity-50">
-                                                            <Play size={11} /> {t.last_run_id ? 'Run again' : 'Run'}
-                                                        </button>
-                                                    )}
-                                                    {t.workflow_id && !t.workflow_runnable && t.workflow_name && <span className="text-muted">disabled: an admin enables it in Workflows</span>}
-                                                    {t.last_run_id && (
-                                                        <Link to={`/workflows/runs/${t.last_run_id}`} className={cn('hover:underline',
-                                                            t.last_run_status === 'succeeded' ? 'text-emerald-400' : t.last_run_status === 'failed' ? 'text-severity-critical' : 'text-fg-3')}>
-                                                            last run: {t.last_run_status ?? 'unknown'}
-                                                        </Link>
-                                                    )}
-                                                    {runError?.id === t.id && <span role="alert" className="text-severity-critical">{runError.text}</span>}
+                                                    ))}
+                                                    {t.workflow_id && (<>
+                                                        <span className={PILL}><WorkflowIcon size={12} className="text-accent" />{t.workflow_name ?? 'workflow removed'}</span>
+                                                        {canEdit && t.workflow_runnable && (
+                                                            <button onClick={() => runTask.mutate(t)} disabled={runTask.isPending || RUNNING.includes(t.last_run_status ?? '')}
+                                                                className={cn(PILL, 'border-accent bg-accent text-on-accent font-medium hover:bg-accent-hover disabled:opacity-50')}>
+                                                                <Play size={11} /> {t.last_run_id ? 'Run again' : 'Run'}
+                                                            </button>
+                                                        )}
+                                                        {t.workflow_id && !t.workflow_runnable && t.workflow_name && <span className="text-muted">disabled: an admin enables it in Workflows</span>}
+                                                        {t.last_run_id && (
+                                                            <Link to={`/workflows/runs/${t.last_run_id}`} className={cn('hover:underline',
+                                                                t.last_run_status === 'succeeded' ? 'text-emerald-400' : t.last_run_status === 'failed' ? 'text-severity-critical' : 'text-fg-3')}>
+                                                                last run: {t.last_run_status ?? 'unknown'}
+                                                            </Link>
+                                                        )}
+                                                        {runError?.id === t.id && <span role="alert" className="text-severity-critical">{runError.text}</span>}
+                                                    </>)}
+                                                    {assignError?.id === t.id && <span role="alert" className="text-severity-critical">{assignError.text}</span>}
                                                 </div>
                                             )}
                                         </div>
@@ -227,9 +233,9 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                             <span role="alert" className="flex items-center gap-1.5 text-xs shrink-0">
                                                 <span className="text-fg-2">Delete task{t.ticket ? ' (its ticket stays open)' : ''}?</span>
                                                 <button onClick={() => remove.mutate(t.id)} disabled={remove.isPending}
-                                                    className="px-2 py-0.5 rounded-sm bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">Delete</button>
+                                                    className="h-6 px-2.5 rounded-full bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">Delete</button>
                                                 <button onClick={() => setConfirmDelete(null)}
-                                                    className="px-2 py-0.5 rounded-sm border border-line-strong text-fg-2 hover:bg-raised">Cancel</button>
+                                                    className="h-6 px-2.5 rounded-full border border-line-strong text-fg-2 hover:bg-raised">Cancel</button>
                                             </span>
                                         ) : (
                                             <button onClick={() => setConfirmDelete(t.id)} aria-label={`Delete task ${t.title}`}
