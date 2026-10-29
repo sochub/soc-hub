@@ -1,5 +1,10 @@
 # Features
 
+SOC Hub is **case management for security incidents**: the place where people triage, investigate, respond to and
+report on incidents. It is **not a SIEM** and doesn't replace one: it doesn't collect or store logs, search events or
+run detection rules. Alerts from your SIEM, EDR, email security and other tools come in through webhooks or scheduled
+pull workflows, and the work on them happens here.
+
 ## Cases & investigation
 
 Create and work security cases with severity/status, tags, a description, attached **artifacts**, **assets** and
@@ -49,38 +54,41 @@ phase. Clicking an item scrolls the feed to it.
 
 ![Incident at a glance: milestones, status phases and pinned items](images/case-glance.png)
 
-## Multi-tenancy
+## Multiple organizations (optional)
 
-One account can belong to **many tenants** with a **different role per tenant**.
+Most teams use one organization and never see this. It's there for anyone who runs several separate organizations
+(subsidiaries, clients) or wants incidents of some departments kept apart: each organization (a *tenant* in the API)
+has its own cases, alerts, settings and members, and one account can belong to several with a **different role in
+each**.
 
 | Role | Scope | Can |
 |---|---|---|
-| `super_admin` | Global | Manage all tenants, switch into any, create admins, author marketplace playbooks |
-| `admin` | Per tenant | Manage members, configure SSO, import/author playbooks |
-| `analyst` | Per tenant | Create/update cases, artifacts, tasks |
-| `viewer` | Per tenant | Read-only |
+| `super_admin` | Global | Manage all organizations, switch into any, create admins, author marketplace playbooks |
+| `admin` | Per organization | Manage members, configure SSO, import/author playbooks |
+| `analyst` | Per organization | Create/update cases, artifacts, tasks |
+| `viewer` | Per organization | Read-only |
 
-The active tenant rides in the JWT; switch it from the sidebar picker
+The active organization rides in the JWT; switch it from the sidebar picker
 (`POST /auth/switch-tenant`). All data is row-isolated by `tenant_id`.
 
 
-### Portfolio (MSSP view)
+### Organizations view (combined, for people in more than one)
 
-![Portfolio](images/portfolio.png)
+![Organizations view](images/portfolio.png)
 
-Users who belong to more than one tenant get **Portfolio** in the sidebar: one card per client (open cases,
-SLA breached and at risk, unassigned, pending alerts, 30-day MTTR, oldest open case) and one queue of every
-client's open cases, ordered SLA-breached first, then severity, then age. Opening a case of another client
-switches the active tenant first, with the same checks as the tenant switcher.
+Users who belong to more than one organization get **Organizations** in the sidebar: one card per organization
+(open cases, SLA breached and at risk, unassigned, pending alerts, 30-day MTTR, oldest open case) and one queue of
+every organization's open cases, ordered SLA-breached first, then severity, then age. Opening a case of another
+organization switches to it first, with the same checks as the switcher.
 
-- Only tenants this session could switch into right now appear: a client that requires SSO or two-factor the
-  session doesn't have is left out (the page says how many), as are deactivated tenants. Super admins, who
-  can switch into any tenant, see every active tenant (the first 100 by name) and appear in the portfolio's
-  platform audit like any other read.
-- **Client summary** (the document icon on a card): the last 7, 30 or 90 days of cases opened and resolved
-  with outcomes, MTTR, SLA breaches, alerts received/promoted/dismissed/suppressed and notable cases, as text
-  to copy into an email or report. That client's admins can set up to 10 recipients for a **weekly email** of
-  the 7-day summary (sent hourly-checked, at most once a week; the first one within the hour).
+- Only organizations this session could switch into right now appear: one that requires SSO or two-factor the
+  session doesn't have is left out (the page says how many), as are deactivated ones. Super admins, who can switch
+  into any organization, see every active one (the first 100 by name) and appear in the platform audit like any
+  other read.
+- **Summary** (the document icon on a card): the last 7, 30 or 90 days of cases opened and resolved with outcomes,
+  MTTR, SLA breaches, alerts received/promoted/dismissed/suppressed and notable cases, as text to copy into an
+  email or report. That organization's admins can set up to 10 recipients for a **weekly email** of the 7-day
+  summary (checked hourly, sent at most once a week; the first one within the hour).
 ## Investigation Copilot
 
 A global, context-aware assistant. It runs on the configured AI provider, which is

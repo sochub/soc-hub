@@ -20,7 +20,7 @@ const NAV_GROUPS = [
     { label: 'operate', items: [
         { icon: LayoutDashboard, label: 'Overview', path: '/' },
         { icon: Inbox, label: 'My Queue', path: '/queue' },
-        { icon: Building2, label: 'Portfolio', path: '/portfolio', multiTenant: true },
+        { icon: Building2, label: 'Organizations', path: '/portfolio', multiTenant: true },
         { icon: ShieldAlert, label: 'Cases', path: '/cases' },
         { icon: Bell, label: 'Alerts', path: '/alerts' },
     ] },

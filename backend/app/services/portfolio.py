@@ -1,4 +1,4 @@
-"""MSSP portfolio: metrics and one merged queue across the tenants a user works in, plus a per-client digest.
+"""Organizations view: metrics and one merged queue across the tenants a user works in, plus a digest each.
 
 Only tenants this session could switch into right now are included (membership, active tenant, the tenant's
 sign-in method, its MFA requirement): the portfolio never shows data the tenant switcher would refuse.
@@ -99,7 +99,7 @@ async def overview(db: AsyncSession, user: User) -> dict:
 
 
 async def digest(db: AsyncSession, tenant: Tenant, days: int = 7) -> dict:
-    """What happened for one client in the last `days` days."""
+    """What happened in one organization in the last `days` days."""
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=days)
     policy = await load_policy_overrides(db, tenant.id)

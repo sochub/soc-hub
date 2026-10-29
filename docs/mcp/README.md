@@ -147,8 +147,8 @@ Guests (people invited to a single case) can never use MCP.
 
 Tenant, user, membership, invitation, SSO, MFA and session administration; secrets and webhook keys; workflow
 templates, the HTTP allowlist, enabling/disabling/deleting workflows; enabling a suppression rule; changing the
-containment guardrails or the ticketing connection; the cross-tenant Portfolio (an MCP connection acts in one tenant;
-use `get_client_summary` per tenant); the playbook marketplace; attachments; report PDFs; Slack war rooms; following
+containment guardrails or the ticketing connection; the combined Organizations view (an MCP connection acts in one organization;
+use `get_client_summary` for its summary); the playbook marketplace; attachments; report PDFs; Slack war rooms; following
 cases; bulk alert actions (call the single-alert tools); AI timeline suggestions; the guest summary; answering a
 "was this you?" question (only the asked person can); anything for super admins.
 
