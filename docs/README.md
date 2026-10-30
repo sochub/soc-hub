@@ -12,7 +12,7 @@ into the per-subsystem design notes.
 | [Configuration](configuration.md) | Environment variables and security settings |
 | [Configuration guide](configuration-guide.md) | Step-by-step SSO, MFA, guests, Slack and AI setup with screenshots, and what each error means |
 | [Deployment](deployment.md) | Prebuilt images, Fargate, a VPS or Kubernetes |
-| [Features](features.md) | Cases (Activity, tasks, artifacts & assets), copilot, playbooks and task automations, suppression, ticketing, portfolio, containment guardrails, dashboard, graph, multi-tenancy, webhooks |
+| [Features](features.md) | Cases (Activity, tasks, artifacts & assets), copilot, playbooks and task automations, suppression, ticketing, containment guardrails, dashboard, graph, multiple organizations (optional), webhooks |
 | [Slack](slack/setup.md) | Bring-your-own Slack app, Socket Mode, `/sochub` |
 | [Workflows](workflows/README.md) | Automation engine and vendor integrations |
 | [Case guests](guests/README.md) | Inviting outside people to a single case |

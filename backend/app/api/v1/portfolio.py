@@ -1,4 +1,4 @@
-"""MSSP portfolio: one view across the tenants a user works in (see app/services/portfolio.py)."""
+"""Organizations view: one view across the organizations (tenants) a user works in (see app/services/portfolio.py)."""
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query

@@ -2,7 +2,7 @@
 
 # sochub — Case Management
 
-**A multi-tenant Security Operations Center (SOC) case-management platform with a built-in, local-LLM investigation copilot.**
+**Case management for security incidents, with a built-in, local-LLM investigation copilot.**
 
 FastAPI · React 19 · PostgreSQL · Ollama
 
@@ -16,16 +16,20 @@ FastAPI · React 19 · PostgreSQL · Ollama
 
 ---
 
-sochub is an incident-response workbench for security teams. Analysts triage cases,
-attach IOCs and artifacts, work IR playbooks, and visualize how indicators connect
-cases — assisted by an AI copilot that runs entirely on a **local** model (no data
-leaves your infrastructure) and proposes actions you explicitly approve.
+sochub is where a security team works its incidents: analysts triage alerts into cases,
+attach IOCs and artifacts, follow IR playbooks, run response actions, and write the report,
+assisted by an AI copilot that runs entirely on a **local** model (no data leaves your
+infrastructure) and proposes actions you explicitly approve.
+
+> **sochub is case management, not a SIEM, and it doesn't replace one.** It doesn't collect
+> or store logs, search events or run detection rules. Your SIEM, EDR, email security and other
+> tools keep doing the detection; their alerts come in (webhook, or a scheduled pull workflow)
+> and sochub is where people handle the incident from first alert to closed case.
 
 ## Highlights
 
-- 🏢 **Multi-tenant**: one account, many tenants, and a **role per tenant**. Data is isolated per row, and there's an in-app tenant switcher.
 - 🤖 **Investigation Copilot**: a global, context-aware assistant.
-  - It runs on a local LLM (Ollama) by default, or on the AI provider you configure per tenant.
+  - It runs on a local LLM (Ollama) by default, or on the AI provider you configure per organization.
   - It **proposes actions** that you confirm before anything is written.
 - 🧠 **AI triage**: every new case gets a suggested severity, tags, playbook, related cases and next steps.
 - 🗂️ **One Activity feed per case**: the incident glance, investigation events, notes and system changes in one story.
@@ -35,7 +39,6 @@ leaves your infrastructure) and proposes actions you explicitly approve.
   - A task can link a workflow: **Run** it from the case, and the workflow records its result on the task and ticks it.
 - 🔇 **Alert suppression**: expiring, auditable rules for known noise, with a preview and "Suppress similar".
 - 🎫 **Ticketing / PSA sync per task**: send one case task to Jira, HaloPSA or ConnectWise; closing the ticket ticks the task, and the task's result goes back to the ticket.
-- 🏢 **Portfolio (MSSP)**: one queue and metrics across every client you work in, plus weekly client summaries.
 - 🛡️ **Containment guardrails**: protected VIPs/servers/ranges, daily and per-case caps, and a release ledger for automated containment.
 - 🙋 **"Was this you?"**: ask the user by email or Slack; their answer dismisses the alert or opens a case.
 - 🧪 **Threat-intel enrichment**: IOCs and artifacts are checked against VirusTotal, URLhaus, ThreatFox, RDAP and crt.sh.
@@ -43,6 +46,7 @@ leaves your infrastructure) and proposes actions you explicitly approve.
 - 📎 **Evidence**: file attachments on cases.
   - Malware samples are stored in a password-protected ZIP, and each upload is hashed into an artifact.
 - 📝 **Incident reports**: an AI-assisted draft plus analyst editing.
+- 🏢 **Multiple organizations (optional)**: keep separate organizations, or departments whose incidents should stay apart, each with its own data and roles. People who work in more than one switch between them and get a combined view and weekly summaries. A single team never sees any of this.
   - Includes TTD/TTC/TTR and swimlane timeline charts.
   - Exports to PDF or JSON with TLP marking.
 - ⚙️ **Workflows**: a visual workflow builder with conditions, loops, case and alert actions, and HTTP requests.
@@ -54,11 +58,11 @@ leaves your infrastructure) and proposes actions you explicitly approve.
 - 🔔 **Collaboration**: `@mentions` in comments, case following, and an in-app notification bell.
   - Mentions, assignments and SLA breaches also go out by Slack DM or email.
 - 👤 **Profiles & two-factor**: photo, timezone, and a password change that signs out your other sessions.
-  - Authenticator-app MFA, which a tenant can make mandatory.
+  - Authenticator-app MFA, which an organization can make mandatory.
 - 📊 **Telemetry dashboard**: opened-vs-resolved trends, a severity × status heatmap, case aging, MTTR and SLA compliance.
 - 🕸️ **Investigation graph**: a force-directed map of cases, artifacts and IOCs that reveals cross-case correlation.
 - 🔐 **Security first**:
-  - per-webhook API keys and per-tenant SAML SSO;
+  - per-webhook API keys and per-organization SAML SSO;
   - Argon2 password hashing and session revocation;
   - SSRF-guarded automations;
   - security headers and full audit logging.
@@ -109,15 +113,16 @@ Known noise is auto-dismissed at ingest by expiring, auditable rules. **Suppress
 </tr>
 </table>
 
-### 🏢 Portfolio for MSSPs
+### 🏢 Working across organizations (optional)
 
-Every client you work in: SLA breaches, unassigned work, pending alerts and MTTR per client, one merged queue, and a
-copyable or weekly-emailed client summary.
+Only for people who belong to more than one organization, for example separate companies or departments kept apart:
+SLA breaches, unassigned work, pending alerts and MTTR per organization, one combined queue, and a copyable or
+weekly-emailed summary per organization.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/portfolio.png" alt="Portfolio: client cards and the merged queue" /></td>
-<td width="50%"><img src="docs/images/portfolio-summary.png" alt="Client summary for the last 7 days" /></td>
+<td width="50%"><img src="docs/images/portfolio.png" alt="Organizations: one card per organization and the combined queue" /></td>
+<td width="50%"><img src="docs/images/portfolio-summary.png" alt="An organization's summary for the last 7 days" /></td>
 </tr>
 </table>
 
@@ -202,7 +207,7 @@ A task can link a workflow. On the case, **Run** starts it, and the workflow rec
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/users-mfa.png" alt="Users with MFA status" /></td>
-<td width="50%"><img src="docs/images/settings-security.png" alt="Require two-factor for the tenant" /></td>
+<td width="50%"><img src="docs/images/settings-security.png" alt="Require two-factor for the organization" /></td>
 </tr>
 </table>
 
@@ -235,9 +240,9 @@ A task can link a workflow. On the case, **Run** starts it, and the workflow rec
 |---|---|
 | Backend | FastAPI · SQLAlchemy (async) · PostgreSQL (asyncpg) · Alembic |
 | Frontend | React 19 · TypeScript · TanStack Query · React Router v7 · Tailwind CSS · Recharts |
-| Auth | JWT (HS256) with session revocation · Argon2 · TOTP two-factor · per-tenant SAML SSO (python3-saml) |
+| Auth | JWT (HS256) with session revocation · Argon2 · TOTP two-factor · per-organization SAML SSO (python3-saml) |
 | Background | Celery · Redis |
-| AI | Ollama (local, `llama3.2:3b`) or a per-tenant provider |
+| AI | Ollama (local, `llama3.2:3b`) or a per-organization provider |
 | Infra | Docker Compose · multi-arch images on Docker Hub |
 
 ## Quick start
@@ -278,12 +283,12 @@ Full docs live in **[`docs/`](docs/README.md)**:
 | [Architecture](docs/architecture.md) | Components, data model, request flow |
 | [Configuration](docs/configuration.md) | Environment variables, security knobs |
 | [Configuration guide](docs/configuration-guide.md) | SSO attributes, MFA, guests, Slack and AI set up right, with screenshots and error fixes |
-| [Features](docs/features.md) | Copilot, playbooks, dashboard, graph, multi-tenancy |
-| [SAML SSO](docs/sso/saml-design.md) | Per-tenant single sign-on |
+| [Features](docs/features.md) | Cases, copilot, playbooks, automation, dashboard, graph, multiple organizations |
+| [SAML SSO](docs/sso/saml-design.md) | Per-organization single sign-on |
 | [Design notes](docs/README.md#design-notes) | Per-subsystem design records |
 
 ## Status & license
 
-Active development. This is a portfolio/reference implementation — review the
+Active development. This is a reference implementation: review the
 security posture and configuration before any production use. License: _to be
 decided by the repository owner._

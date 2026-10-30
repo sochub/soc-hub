@@ -114,7 +114,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
         && (!spec.plain.includes('api_base') || (form.api_base || null) === data.api_base);
     const input = 'w-full border border-line-strong px-2 py-1.5 text-sm';
     const readOnly = !data.override_allowed;
-    const status = data.source === 'tenant' ? `this tenant · ${data.provider}`
+    const status = data.source === 'tenant' ? `this organization · ${data.provider}`
         : saved && !readOnly ? `saved · disabled · deployment default ${data.deployment.provider}`
         : `deployment default · ${data.deployment.provider}`;
     const trust = data.external_id ? JSON.stringify({
@@ -140,7 +140,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
             {readOnly ? (
                 <div className="space-y-1">
                     <p className="text-sm text-fg-2">Managed by the deployment: <span className="font-mono">{data.deployment.provider} / {data.deployment.model}</span></p>
-                    <p className="text-xs text-fg-3">Per-tenant AI provider overrides are turned off on this deployment.</p>
+                    <p className="text-xs text-fg-3">Per-organization AI provider overrides are turned off on this deployment.</p>
                 </div>
             ) : (
                 <>
@@ -192,7 +192,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                     <div className="flex items-center gap-2 flex-wrap">
                         <button onClick={() => save.mutate()} disabled={save.isPending || !form.model} className="h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50">Save</button>
                         <button onClick={() => test.mutate()} disabled={test.isPending || (!!draft && !form.model)} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test'}</button>
-                        {saved && <button onClick={() => { if (confirm('Remove this tenant\'s AI provider and use the deployment default?')) reset.mutate(); }} disabled={reset.isPending} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">Reset to deployment default</button>}
+                        {saved && <button onClick={() => { if (confirm('Remove this organization\'s AI provider and use the deployment default?')) reset.mutate(); }} disabled={reset.isPending} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">Reset to deployment default</button>}
                         {msg && <span role="status" className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</span>}
                     </div>
                 </>

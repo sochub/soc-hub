@@ -70,7 +70,7 @@ export default function MyQueue() {
             {isLoading ? (
                 <div className="h-40 bg-panel border border-line rounded-lg animate-pulse" />
             ) : (
-                <div className="grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-4 items-start">
+                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-4 items-start">
                     <div className="space-y-4">
                         <Section title="assigned to me" cases={mine} empty="Nothing assigned to you." />
                         <Section title="sla at risk / breached" cases={sla} empty="No SLA pressure. Nice." />

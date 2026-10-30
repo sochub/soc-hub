@@ -75,7 +75,7 @@ export function SecretDialog({ secret, prefill, tenantId, onClose, onSaved }: {
                             <li key={`${h}-${i}`} className={statuses[i] === 'bad' ? 'text-red-300' : 'text-amber-300'}>
                                 <span className="font-mono">{h}</span>: {statuses[i] === 'bad'
                                     ? 'not a valid host pattern (lowercase hostname or *.domain)'
-                                    : 'must be on the tenant HTTP allowlist'}
+                                    : 'must be on the organization HTTP allowlist'}
                             </li>
                         ))}
                     </ul>

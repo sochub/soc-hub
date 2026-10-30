@@ -12,7 +12,7 @@ export default function SettingsHub() {
     const isAdmin = me?.role === 'admin' || !!me?.is_super_admin;
     return (
         <HubLayout title="settings" tabs={[
-            { label: 'Tenant', to: '/settings', end: true },
+            { label: 'Organization', to: '/settings', end: true },
             { label: 'Profile', to: '/settings/profile' },
             { label: 'Integrations', to: '/settings/integrations' },
             { label: 'Users', to: '/settings/users', show: isAdmin },

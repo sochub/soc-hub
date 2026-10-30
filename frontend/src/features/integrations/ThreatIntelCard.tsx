@@ -137,7 +137,7 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
                 <button onClick={() => save.mutate(data)} disabled={save.isPending} className="h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50">Save</button>
                 <button onClick={() => test.mutate()} disabled={test.isPending} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test keys'}</button>
                 {confirmReset ? (
-                    <span className="flex items-center gap-2 text-xs text-fg-2">Remove keys and settings for this tenant?
+                    <span className="flex items-center gap-2 text-xs text-fg-2">Remove keys and settings for this organization?
                         <button onClick={() => reset.mutate()} disabled={reset.isPending} className="h-8 px-3 bg-red-600 text-white text-sm disabled:opacity-50">Reset</button>
                         <button onClick={() => setConfirmReset(false)} className="h-8 px-3 border border-line-strong text-sm">Cancel</button></span>
                 ) : <button onClick={() => setConfirmReset(true)} className="h-8 px-3 border border-line-strong text-sm">Reset to defaults</button>}

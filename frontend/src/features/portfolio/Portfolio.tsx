@@ -52,7 +52,7 @@ function DigestPanel({ tenant, onClose }: { tenant: TenantRow; onClose: () => vo
     return (
         <div className="glass-panel rounded-xl border border-line bg-panel p-4 space-y-3">
             <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-fg">{tenant.name}: client summary</h3>
+                <h3 className="text-sm font-semibold text-fg">{tenant.name}: summary</h3>
                 <select value={days} onChange={(e) => { setDays(Number(e.target.value)); setCopied(false); }} aria-label="Period"
                     className="ml-2 bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg-2">
                     <option value={7}>last 7 days</option><option value={30}>last 30 days</option><option value={90}>last 90 days</option>
@@ -71,14 +71,14 @@ function DigestPanel({ tenant, onClose }: { tenant: TenantRow; onClose: () => vo
                         <button onClick={() => setRecipients(data.recipients.join(', '))} className="text-accent hover:underline">Change recipients</button>
                     ) : (
                         <div className="flex gap-2">
-                            <input value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ciso@client.com, it@client.com (empty = off)"
+                            <input value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ciso@example.com, it@example.com (empty = off)"
                                 aria-label="Recipients" className="flex-1 bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg" />
                             <button onClick={() => save.mutate()} disabled={save.isPending} className="px-2.5 py-1 bg-accent text-on-accent rounded-sm">Save</button>
                             <button onClick={() => setRecipients(null)} className="px-2 py-1 text-fg-3">Cancel</button>
                         </div>
                     ))}
                     {save.isError && <p role="alert" className="text-severity-critical">{apiError(save.error, 'Could not save the recipients.')}</p>}
-                    <p className="text-muted">Sent once a week to these addresses (the first one within the hour). Only this client's admins can change them.</p>
+                    <p className="text-muted">Sent once a week to these addresses (the first one within the hour). Only this organization's admins can change them.</p>
                 </div>
             )}
         </div>
@@ -94,7 +94,7 @@ export default function Portfolio() {
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const { data, isLoading, dataUpdatedAt } = useQuery({ queryKey: ['portfolio'], queryFn: async () => (await api.get('/portfolio/')).data as Overview, refetchInterval: 60_000 });
 
-    // Opening a case of another client switches the active tenant first (same checks as the tenant switcher).
+    // Opening a case of another organization switches the active tenant first (same checks as the tenant switcher).
     const open = async (tenantId: number, path: string) => {
         setSwitchError(null);
         try {
@@ -104,19 +104,19 @@ export default function Portfolio() {
             }
             navigate(path);
         } catch (err) {
-            setSwitchError(apiError(err, 'Could not switch to that client.'));
+            setSwitchError(apiError(err, 'Could not switch to that organization.'));
         }
     };
 
-    if (isLoading || !data) return <PageContainer><p className="font-mono text-xs text-muted">$ loading portfolio…</p></PageContainer>;
+    if (isLoading || !data) return <PageContainer><p className="font-mono text-xs text-muted">$ loading organizations…</p></PageContainer>;
     const queue = tenantFilter === 'all' ? data.queue : data.queue.filter((q) => q.tenant_id === tenantFilter);
     return (
         <PageContainer className="space-y-5">
             <div>
-                <h1 className="text-2xl font-bold text-fg tracking-tight">Portfolio</h1>
+                <h1 className="text-2xl font-bold text-fg tracking-tight">Organizations</h1>
                 <p className="text-fg-3 text-sm mt-0.5">
-                    Every client you work in, and one queue of their open cases: SLA breaches first, then severity, then age.
-                    {data.hidden_tenants > 0 && ` ${data.hidden_tenants} client${data.hidden_tenants > 1 ? 's' : ''} need a different sign-in (SSO or two-factor) and are not shown.`}
+                    Every organization you work in, and one queue of their open cases: SLA breaches first, then severity, then age.
+                    {data.hidden_tenants > 0 && ` ${data.hidden_tenants} organization${data.hidden_tenants > 1 ? 's' : ''} need a different sign-in (SSO or two-factor) and are not shown.`}
                 </p>
             </div>
             {switchError && <p role="alert" className="text-sm text-severity-critical">{switchError}</p>}
@@ -126,7 +126,7 @@ export default function Portfolio() {
                         <div className="flex items-center gap-2">
                             <button onClick={() => open(t.id, '/')} className="text-sm font-semibold text-fg hover:underline truncate">{t.name}</button>
                             <span className="text-[10px] font-mono text-muted">{t.role}</span>
-                            <button onClick={() => setDigestFor(t)} title="Client summary" className="ml-auto text-muted hover:text-fg"><FileText size={14} /></button>
+                            <button onClick={() => setDigestFor(t)} title="Summary" className="ml-auto text-muted hover:text-fg"><FileText size={14} /></button>
                         </div>
                         <dl className="grid grid-cols-3 gap-2 text-xs">
                             <div><dt className="text-muted">Open</dt><dd className="text-fg font-mono">{t.open_cases}</dd></div>
@@ -147,16 +147,16 @@ export default function Portfolio() {
             <div className="space-y-2">
                 <div className="flex items-center gap-2">
                     <h2 className="text-sm font-semibold text-fg-2">Open cases <span className="font-mono text-xs text-muted">{queue.length}{data.queue_total > data.queue.length && ` of ${data.queue_total}`}</span></h2>
-                    <select value={tenantFilter} onChange={(e) => setTenantFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))} aria-label="Client"
+                    <select value={tenantFilter} onChange={(e) => setTenantFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))} aria-label="Organization"
                         className="ml-auto bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg-2">
-                        <option value="all">All clients</option>
+                        <option value="all">All organizations</option>
                         {data.tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
                 </div>
                 <div className="overflow-x-auto rounded-lg border border-line">
                     <table className="w-full text-sm">
                         <thead className="text-[11px] uppercase text-muted bg-surface">
-                            <tr><th className="px-3 py-2 text-left">SLA</th><th className="px-3 py-2 text-left">Severity</th><th className="px-3 py-2 text-left">Client</th>
+                            <tr><th className="px-3 py-2 text-left">SLA</th><th className="px-3 py-2 text-left">Severity</th><th className="px-3 py-2 text-left">Organization</th>
                                 <th className="px-3 py-2 text-left">Case</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-left">Owner</th><th className="px-3 py-2 text-left">Age</th></tr>
                         </thead>
                         <tbody className="divide-y divide-line">

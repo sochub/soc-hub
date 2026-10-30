@@ -44,7 +44,7 @@ ValueError: DATABASE_URL uses the local-development default password. ...
 
 ## 2. Single sign-on (SAML)
 
-**Settings → Tenant → Single Sign-On (SAML)** (tenant admins).
+**Settings → Organization → Single Sign-On (SAML)** (organization admins).
 
 ![SSO settings: identity provider fields on the left, service provider values on the right](images/config-sso.png)
 
@@ -123,7 +123,7 @@ the same IdP can silently sign a colleague's browser into their own account. Ass
 
 ## 3. Two-factor authentication
 
-**Settings → Tenant → Two-factor authentication**.
+**Settings → Organization → Two-factor authentication**.
 
 ![Two-factor and case-guest settings](images/config-mfa-guests.png)
 
@@ -244,8 +244,8 @@ relay needs them) in `backend/.env`, and `FRONTEND_URL` set to the address peopl
 - **Ask user (email)** steps and the *Ask the user by email: was this you?* template email a link to
   `FRONTEND_URL/verify/<token>`. If `FRONTEND_URL` is wrong the link is dead and the question times out. Without SMTP
   the step fails with "email is not set up on this server".
-- **Weekly client summaries** (Portfolio → a client's summary → *Change recipients*, that client's admins): the beat
-  task checks hourly and sends at most once a week per client. Without SMTP nothing is sent and nothing retries
+- **Weekly organization summaries** (Organizations → an organization's summary → *Change recipients*, that
+  organization's admins): the beat task checks hourly and sends at most once a week per organization. Without SMTP nothing is sent and nothing retries
   every hour.
 
 ## 11. Alert suppression

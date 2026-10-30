@@ -73,7 +73,7 @@ export default function TenantSwitcher() {
                 setMfaBlocked(true);
             } else {
                 const d = e.response?.data?.detail;
-                setSwitchError(typeof d === 'string' ? d : 'Could not switch tenant. Try again.');
+                setSwitchError(typeof d === 'string' ? d : 'Could not switch organization. Try again.');
             }
         } finally {
             setBusy(false);
@@ -82,7 +82,7 @@ export default function TenantSwitcher() {
 
     return (
         <div className="px-3 py-3 border-b border-line"><div className="relative">
-            <p className="label-mono mb-1.5 px-1">{isSuper ? 'viewing tenant' : 'tenant'}</p>
+            <p className="label-mono mb-1.5 px-1">{isSuper ? 'viewing organization' : 'organization'}</p>
             <button
                 onClick={() => { setOpen((o) => !o); setMfaBlocked(false); setSwitchError(null); }}
                 disabled={busy}
@@ -92,7 +92,7 @@ export default function TenantSwitcher() {
             >
                 <span className="flex items-center gap-2 min-w-0">
                     <Building2 size={14} className="text-accent shrink-0" />
-                    <span className="truncate font-medium">{active?.name ?? 'Select a tenant'}</span>
+                    <span className="truncate font-medium">{active?.name ?? 'Select an organization'}</span>
                 </span>
                 {busy
                     ? <Loader2 size={14} className="animate-spin text-muted shrink-0" />
