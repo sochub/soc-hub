@@ -3,12 +3,12 @@
   "name": "Ask the user on Slack to confirm (for a case task)",
   "vendor": "Slack",
   "kind": "triage",
-  "description": "Run from a case task such as \"Confirm the activity with the user\": DMs the case's user on Slack, then records their answer on the task (It was me / It wasn't me / no answer) and ticks it.",
+  "description": "Run from a case task such as \"Confirm the activity with the user\": DMs the case's user on Slack and records who confirmed on the task (Confirmed by … / Not confirmed … / no answer). When the user doesn't confirm, it starts the Escalate to incident workflow.",
   "trigger_type": "manual",
   "trigger_filter": null,
   "params": [],
   "secrets": [],
-  "setup": "## Before you start\n- Connect Slack (Settings > Integrations > Slack, scope `users:read.email`).\n- The user is the case's `username` attribute (custom artifact type) or its first email artifact.\n- Link this workflow to a playbook task (Playbooks > edit > *Run workflow* on the task), apply the playbook and press **Run** on the task.\n\n## What the task shows\n- *It was me*: result **ok**, task ticked.\n- *It wasn't me*: result **failed** (red), task ticked: the question was answered; escalate from the case.\n- No answer in 4 hours (change `timeout_hours` on the ask step): result **warning**, task left open.\n- No user on the case: result **failed**, task left open.\n",
+  "setup": "## Before you start\n- Connect Slack (Settings > Integrations > Slack, scope `users:read.email`).\n- The user is the case's `username` attribute (custom artifact type) or its first email artifact.\n- Link this workflow to a playbook task (Playbooks > edit > *Run workflow* on the task), apply the playbook and press **Run** on the task.\n\n## What the task shows\n- *It was me*: **Confirmed by alice@acme.com on Slack** (ok), task ticked.\n- *It wasn't me*: **Not confirmed: alice@acme.com answered \"It wasn't me\" on Slack** (failed, red), task ticked.\n- No answer in 4 hours (change `timeout_hours` on the ask step): **No answer from alice@acme.com on Slack within the time limit** (warning), task left open.\n- No user on the case: result **failed**, task left open.\n\n## Escalation\nWhen the answer isn't *It was me* (including no answer), a **Run workflow** step starts **Escalate to incident** on the same case with the reason as `trigger.inputs.reason`. Install and enable that template too; if it's missing or disabled, the run ends failed with that message after the task result is recorded. To escalate differently, point the step at another manual workflow, or delete it.\n",
   "graph": {
     "nodes": [
       {
@@ -69,9 +69,34 @@
           "y": 400
         },
         "config": {
-          "result": "{{ 'No answer within the time limit' if steps.ask.output.timed_out else 'User answered: ' ~ steps.ask.output.response }}",
+          "result": "{{ ('No answer from ' ~ steps.ask.output.email ~ ' on Slack within the time limit') if steps.ask.output.timed_out else (('Confirmed by ' ~ steps.ask.output.email ~ ' on Slack') if steps.ask.output.response == 'It was me' else ('Not confirmed: ' ~ steps.ask.output.email ~ ' answered \"' ~ steps.ask.output.response ~ '\" on Slack')) }}",
           "result_status": "{{ 'warning' if steps.ask.output.timed_out else ('ok' if steps.ask.output.response == 'It was me' else 'failed') }}",
           "complete": "{{ not steps.ask.output.timed_out }}"
+        }
+      },
+      {
+        "id": "confirmed",
+        "type": "condition",
+        "position": {
+          "x": 250,
+          "y": 520
+        },
+        "config": {
+          "expression": "not steps.ask.output.timed_out and steps.ask.output.response == 'It was me'"
+        }
+      },
+      {
+        "id": "escalate",
+        "type": "run_workflow",
+        "position": {
+          "x": 520,
+          "y": 640
+        },
+        "config": {
+          "workflow_name": "Escalate to incident",
+          "inputs": {
+            "reason": "{{ ('No answer from ' ~ steps.ask.output.email ~ ' on Slack') if steps.ask.output.timed_out else (steps.ask.output.email ~ ' did not confirm the activity on Slack (\"' ~ steps.ask.output.response ~ '\")') }}"
+          }
         }
       }
     ],
@@ -99,6 +124,18 @@
         "source": "ask",
         "target": "record",
         "source_handle": null
+      },
+      {
+        "id": "e_record_confirmed",
+        "source": "record",
+        "target": "confirmed",
+        "source_handle": null
+      },
+      {
+        "id": "e_confirmed_escalate",
+        "source": "confirmed",
+        "target": "escalate",
+        "source_handle": "false"
       }
     ]
   }

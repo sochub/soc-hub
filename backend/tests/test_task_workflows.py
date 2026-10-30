@@ -246,8 +246,17 @@ def test_templates_record_on_tasks():
     d = json.loads((root / "task-confirm-with-user-slack.json").read_text())
     rec = next(n for n in d["graph"]["nodes"] if n["id"] == "record")["config"]
     strip = lambda s: s.strip()[2:-2]  # noqa: E731  "{{ expr }}" -> expr
-    for out, want in (({"response": "It was me", "timed_out": False}, ("ok", True)),
-                      ({"response": "It wasn't me", "timed_out": False}, ("failed", True)),
-                      ({"response": None, "timed_out": True}, ("warning", False))):
-        ctx = {"steps": {"ask": {"output": out}}}
-        assert (eval_expr(strip(rec["result_status"]), ctx), eval_expr(strip(rec["complete"]), ctx)) == want
+    nodes = {n["id"]: n for n in d["graph"]["nodes"]}
+    confirmed = nodes["confirmed"]["config"]["expression"]
+    assert nodes["escalate"]["type"] == "run_workflow" and nodes["escalate"]["config"]["workflow_name"] == "Escalate to incident"
+    assert {"source": "confirmed", "target": "escalate", "source_handle": "false"}.items() <= next(
+        e for e in d["graph"]["edges"] if e["target"] == "escalate").items()
+    a = "alice@acme.com"
+    for out, want in (({"response": "It was me", "timed_out": False}, ("ok", True, f"Confirmed by {a} on Slack", True)),
+                      ({"response": "It wasn't me", "timed_out": False},
+                       ("failed", True, f'Not confirmed: {a} answered "It wasn\'t me" on Slack', False)),
+                      ({"response": None, "timed_out": True},
+                       ("warning", False, f"No answer from {a} on Slack within the time limit", False))):
+        ctx = {"steps": {"ask": {"output": {**out, "email": a}}}}
+        assert (eval_expr(strip(rec["result_status"]), ctx), eval_expr(strip(rec["complete"]), ctx),
+                eval_expr(strip(rec["result"]), ctx), eval_expr(confirmed, ctx)) == want

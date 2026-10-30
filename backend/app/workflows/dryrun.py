@@ -7,6 +7,7 @@ _STUBS = {
     "alert_promote": {"case_id": None, "created": True},
     "alert_create": {"alert_id": None, "created": True},
     "slack_post_message": {"channel": "", "ts": ""},
+    "run_workflow": {"run_id": None, "started": True},
 }
 
 
@@ -31,7 +32,8 @@ def simulated_output(node: dict, rendered_input: dict, dry_run_mocks: dict) -> d
         else:
             default = ["Yes", "No"] if node["type"] == "slack_ask_user" else ["It was me", "It wasn't me"]
             out = {"response": answer or (labels or default)[0], "timed_out": False}
-        return {**out, "responder_slack_id": None, "responder_email": None, "simulated": True, "would_do": rendered_input}
+        return {**out, "responder_slack_id": None, "responder_email": None, "email": rendered_input.get("email"),
+                "simulated": True, "would_do": rendered_input}
     mocks = (dry_run_mocks or {}).get("mocks") or {}
     if node["id"] in mocks:
         base = mocks[node["id"]]

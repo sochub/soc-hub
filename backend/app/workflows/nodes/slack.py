@@ -68,5 +68,6 @@ async def run_ask_user(nctx: NodeContext, config: dict):
         raise NodeError(f"could not ask {email}: {e}")
     nctx.step.wait_token = wait_token
     nctx.step.wait_expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
-    nctx.step.output = {"target_slack_id": user_id, "channel": channel, "message_ts": msg["ts"], "buttons": buttons}
+    nctx.step.output = {"target_slack_id": user_id, "channel": channel, "message_ts": msg["ts"], "buttons": buttons,
+                        "email": email}
     return WAIT

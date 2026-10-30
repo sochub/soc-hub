@@ -48,7 +48,8 @@ async def test_ask_user_sends_and_waits(monkeypatch):
     assert parse_action_value(f"wf:{tok}:0") == ("wf", tok, 0)
     delta = nctx.step.wait_expires_at - before
     assert timedelta(hours=2) <= delta < timedelta(hours=2, seconds=5)
-    assert nctx.step.output == {"target_slack_id": "U1", "channel": "D1", "message_ts": "1.2", "buttons": ["Yes", "No"]}
+    assert nctx.step.output == {"target_slack_id": "U1", "channel": "D1", "message_ts": "1.2", "buttons": ["Yes", "No"],
+                                "email": "a@b.c"}
 
 
 @pytest.mark.asyncio
