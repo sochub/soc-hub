@@ -284,6 +284,26 @@ with "AI endpoint redirect refused". Point `api_base` at the final URL.
   duration, outcome and, on failure, the exception type and HTTP status.
   Prompts, responses, error text and secrets are never logged.
 
+### Untrusted text, answer cache and background calls
+
+- Case, alert and artifact text sent to the model is wrapped in
+  `<data-…>` tags, and a system rule tells the model to treat it as data
+  only. The tag is an HMAC of the content under `SECRET_KEY`, so the person
+  who wrote the content can't close it early.
+- Answers are cached in Redis for 10 minutes. The cache key is a hash of
+  the tenant, provider, model, options and the full prompt, so any change
+  to the case gives a new key. Errors are not cached. When the same prompt
+  is already in flight, for example two analysts opening the same case,
+  the second caller waits for the first answer. Cached answers are case
+  data at rest in Redis for up to 10 minutes.
+- With a local Ollama, the worker (triage, workflows) runs at most one LLM
+  call per Ollama endpoint at a time. Interactive copilot requests skip
+  that queue, so they wait behind one background call at most, not the
+  whole backlog. Cloud providers aren't limited.
+- If Redis is unreachable, calls go straight to the provider.
+- Re-running AI triage while a run for the case is still pending returns
+  that run instead of starting a new one.
+
 ## Threat-intel enrichment
 
 sochub can look up IOCs and artifacts in public threat-intelligence services and

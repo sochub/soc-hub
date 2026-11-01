@@ -1,9 +1,18 @@
 from celery import Celery
+from celery.signals import worker_init
 from app.core.config import settings
 
 import app.db.base  # noqa: F401 — register all models before any task queries the DB
 
 celery_app = Celery("worker", broker=settings.REDIS_URL)
+
+
+# The API process imports this module too (tasks import celery_app), so mark background mode only when a
+# worker actually starts. worker_init fires before the prefork pool forks, so every child inherits it.
+@worker_init.connect
+def _mark_background(**_):
+    from app.ai import llm
+    llm.BACKGROUND = True  # LLM calls here take the shared background slot (see llm._shared)
 
 # Time limits. Every tenant's automation, SLA sweeps, notifications and enrichment share this one worker
 # (and beat runs embedded in it), so no task may hold a pool process indefinitely. At the soft limit Celery

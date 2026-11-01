@@ -1,5 +1,7 @@
 """Single entry point for LLM calls (LiteLLM), with provider-agnostic errors."""
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import time
@@ -14,6 +16,7 @@ import litellm  # noqa: E402
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler  # noqa: E402
 from openai import AsyncOpenAI  # noqa: E402
 
+from app.ai import untrusted
 from app.ai.aws import bedrock_credentials
 from app.ai.errors import AIError, AIUnavailable, scrub
 from app.ai.providers import PROVIDERS, SSRF_GUARDED, ConfigError, ProviderConfig, build_kwargs, missing_fields
@@ -245,7 +248,88 @@ async def complete(messages: List[dict], *, tenant_id: Optional[int], temperatur
         raise
     except Exception:
         raise AIUnavailable("AI configuration lookup failed") from None
-    return await complete_with(cfg, messages, temperature=temperature, json_mode=json_mode, allowlist=allow)
+    messages = untrusted.with_rule(messages)
+    key = _cache_key(cfg, messages, temperature, json_mode)
+    return await _shared(cfg, key, lambda: complete_with(cfg, messages, temperature=temperature,
+                                                         json_mode=json_mode, allowlist=allow))
+
+
+# Set by app.worker: every LLM call made in the Celery worker is background work (triage, workflows).
+BACKGROUND = False
+CACHE_TTL = 600  # identical prompt within 10 min -> reuse the answer (the key covers the whole prompt)
+
+
+def _redis():
+    # Per call, not a module global: Celery tasks run each job in a fresh asyncio.run() loop.
+    import redis.asyncio as aioredis
+    return aioredis.from_url(settings.REDIS_URL, socket_timeout=2, socket_connect_timeout=2,
+                              decode_responses=True)
+
+
+def _cache_key(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float], json_mode: bool) -> str:
+    blob = json.dumps([cfg.provider, cfg.model, cfg.api_base, cfg.source, cfg.tenant_id,
+                       messages, temperature, json_mode], sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+async def _shared(cfg: ProviderConfig, key: str, run) -> str:
+    """Answer cache + in-flight dedup + one background slot per local Ollama.
+
+    - a cached answer for the exact same prompt (same tenant/provider/model) is returned without a call;
+    - if the same prompt is already in flight (two analysts opening the same case), wait for its answer;
+    - worker calls to Ollama take a Redis lock first, so interactive copilot requests (API process, no
+      lock) queue behind at most one background call instead of the whole triage backlog.
+    Redis trouble never blocks AI: every Redis step degrades to "just make the call". Errors aren't cached.
+    """
+    from redis.exceptions import LockError, RedisError
+    hold = int(settings.AI_TIMEOUT_SECONDS) + 30
+    ans_key, run_key = f"llm:ans:{key}", f"llm:run:{key}"
+    r = _redis()
+    owner = False
+    try:
+        try:
+            hit = await r.get(ans_key)
+            if hit is not None:
+                return hit
+            owner = bool(await r.set(run_key, 1, nx=True, ex=hold))
+            if not owner:
+                deadline = time.monotonic() + hold
+                while time.monotonic() < deadline and await r.exists(run_key):
+                    await asyncio.sleep(1)
+                    hit = await r.get(ans_key)
+                    if hit is not None:
+                        return hit
+                # The first caller failed or timed out (nothing cached): make the call ourselves.
+        except (RedisError, OSError):
+            logger.warning("ai cache unavailable; calling the provider directly")
+        lock = None
+        if BACKGROUND and cfg.provider == "ollama":
+            # ponytail: one background call per Ollama endpoint; make it N (a counter) if a GPU box wants more.
+            lock = r.lock(f"llm:bg:{cfg.api_base or 'default'}", timeout=hold)
+            try:
+                await lock.acquire()
+            except (RedisError, OSError):
+                lock = None
+        try:
+            out = await run()
+        finally:
+            if lock is not None:
+                try:
+                    await lock.release()
+                except (LockError, RedisError, OSError):
+                    pass  # expired or Redis gone: the TTL already freed it
+        try:
+            await r.set(ans_key, out, ex=CACHE_TTL)
+        except (RedisError, OSError):
+            pass
+        return out
+    finally:
+        if owner:
+            try:
+                await r.delete(run_key)  # also on failure, so waiters stop waiting
+            except (RedisError, OSError):
+                pass
+        await r.aclose()
 
 
 async def describe(db, tenant_id: Optional[int]) -> dict:

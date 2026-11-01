@@ -11,6 +11,7 @@ from datetime import datetime, timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.ai import llm
+from app.ai.untrusted import fence
 from app.ai.errors import AIError
 from app.models.case_event import EVENT_CATEGORIES
 from app.services.ai_service import _parse_json_reply
@@ -88,7 +89,7 @@ async def from_ai(material: str, tenant_id: int) -> Optional[List[Dict[str, Any]
     """LLM extraction. None when the provider is unavailable or the reply is unusable."""
     try:
         text = await llm.complete([{"role": "system", "content": _SYSTEM},
-                                   {"role": "user", "content": material}],
+                                   {"role": "user", "content": fence(material)}],
                                   tenant_id=tenant_id, temperature=0, json_mode=True)
     except AIError as e:
         logger.info("timeline suggest: AI unavailable (%s)", type(e).__name__)
