@@ -267,7 +267,7 @@ export default function CaseDetail() {
                                     Owner:
                                     {canWarRoom ? (
                                         <AssigneeSelect label="Case owner" value={caseData.owner_id} currentName={caseData.owner_name}
-                                            disabled={reassign.isPending} onChange={(v) => reassign.mutate(v)} className="font-mono" />
+                                            disabled={reassign.isPending} onChange={(v) => reassign.mutate(v)} className="font-sans" />
                                     ) : <span>{caseData.owner_name ?? 'Unassigned'}</span>}
                                     {reassign.isError && <span role="alert" className="text-severity-critical">could not reassign</span>}
                                 </span>
