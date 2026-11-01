@@ -61,7 +61,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
+      - uses: trufflesecurity/trufflehog@c85580b712841eda4c53bc28fc6ace6100e8c16c # v3.99.4
         with:
           path: ./
           base: ${{ github.event.pull_request.base.sha }}
@@ -76,7 +76,7 @@ jobs:
         with:
           persist-credentials: false
       # reporter: local prints to the log and needs no write permissions.
-      - uses: reviewdog/action-actionlint@3cbf14efd750961dba35fccbf00f9e14028cb1f5 # v1.80.2
+      - uses: reviewdog/action-actionlint@48e36f54d8da326b83ab061aee2cc5e01b5ca46f # v1.80.6
         with:
           reporter: local
           filter_mode: nofilter # local has no diff to filter against
