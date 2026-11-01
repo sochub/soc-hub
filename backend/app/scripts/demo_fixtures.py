@@ -74,6 +74,65 @@ COMMENTS = [
 ]
 
 
+def siem_alerts(now: datetime) -> list[dict]:
+    """Alerts as SIEMs actually send them (webhook or a pull workflow): each payload is shaped like that product's
+    output, with Greenbow's fictional users and hosts and documentation-range IPs and example domains."""
+    t = lambda minutes: (now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    return [
+        {"source": "Splunk ES", "external_id": "6E1C3F7A-2B44-4C1D-9E0B-5A8D2F1E7C44@@notable@@a91f0c2e", "minutes": 7,
+         "severity": "high", "title": "Brute force access behavior detected against the Greenbow VPN",
+         "payload": {"search_name": "Access - Brute Force Access Behavior Detected - Rule", "rule_name": "Brute Force Access Behavior Detected",
+                     "security_domain": "access", "urgency": "high", "status_label": "New", "owner": "unassigned",
+                     "src": "198.51.100.23", "dest": "vpn.greenbow.example", "user": "jenny@greenbow.example", "app": "GlobalProtect",
+                     "count": 312, "failure": 309, "success": 3, "orig_time": t(9),
+                     "annotations": {"mitre_attack": ["T1110.003"], "kill_chain_phases": ["Exploitation"]},
+                     "drilldown_search": "| tstats count from datamodel=Authentication where Authentication.src=198.51.100.23 by Authentication.user"}},
+        {"source": "Microsoft Sentinel", "external_id": "c8f2d6e0-41b7-4a5e-8f3c-2d9e7b1a6f30", "minutes": 18,
+         "severity": "critical", "title": "Mass download by a single user from the Greenbow SharePoint (incident 1287)",
+         "payload": {"name": "c8f2d6e0-41b7-4a5e-8f3c-2d9e7b1a6f30", "type": "Microsoft.SecurityInsights/Incidents",
+                     "properties": {"incidentNumber": 1287, "title": "Mass download by a single user", "severity": "High",
+                                    "status": "New", "createdTimeUtc": t(18), "firstActivityTimeUtc": t(41), "lastActivityTimeUtc": t(20),
+                                    "additionalData": {"alertsCount": 2, "tactics": ["Exfiltration", "Collection"],
+                                                       "alertProductNames": ["Microsoft Defender for Cloud Apps"]},
+                                    "description": "lt.dan@greenbow.example downloaded 1,284 files from the 'Shrimp Recipes' site in 20 minutes.",
+                                    "labels": [{"labelName": "insider-risk", "labelType": "User"}],
+                                    "relatedAnalyticRuleIds": ["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/soc/providers/Microsoft.OperationalInsights/workspaces/greenbow-sentinel/providers/Microsoft.SecurityInsights/alertRules/5b7e1c90-mass-download"]}}},
+        {"source": "Elastic Security", "external_id": "b3b0f0d4c3a1e8f2d5c7a9e1b4d6f8a0c2e4f6a8", "minutes": 26,
+         "severity": "high", "title": "Suspicious PowerShell encoded command on SHRIMP-BOAT-02",
+         "payload": {"@timestamp": t(26), "kibana.alert.rule.name": "Suspicious PowerShell Encoded Command",
+                     "kibana.alert.rule.rule_id": "9a1e0a2b-5c3d-4e6f-8a7b-0c1d2e3f4a5b", "kibana.alert.severity": "high",
+                     "kibana.alert.risk_score": 73, "kibana.alert.workflow_status": "open",
+                     "host": {"name": "SHRIMP-BOAT-02", "os": {"family": "windows"}},
+                     "user": {"name": "bubba", "domain": "GREENBOW"},
+                     "process": {"name": "powershell.exe", "command_line": "powershell.exe -NoP -W Hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA",
+                                 "parent": {"name": "WINWORD.EXE"}},
+                     "threat": [{"framework": "MITRE ATT&CK", "tactic": {"id": "TA0002", "name": "Execution"},
+                                 "technique": [{"id": "T1059", "name": "Command and Scripting Interpreter",
+                                                "subtechnique": [{"id": "T1059.001", "name": "PowerShell"}]}]}]}},
+        {"source": "Wazuh", "external_id": "1730197442.4021337", "minutes": 34,
+         "severity": "medium", "title": "sshd brute force on srv-orders-01 (non-existent users)",
+         "payload": {"timestamp": t(34), "rule": {"id": "5712", "level": 10, "description": "sshd: brute force trying to get access to the system. Non existent user.",
+                                                  "groups": ["syslog", "sshd", "authentication_failures"], "firedtimes": 8,
+                                                  "mitre": {"id": ["T1110"], "tactic": ["Credential Access"], "technique": ["Brute Force"]}},
+                     "agent": {"id": "004", "name": "srv-orders-01", "ip": "10.20.4.11"},
+                     "data": {"srcip": "203.0.113.9", "srcuser": "shrimpadmin"},
+                     "full_log": "sshd[2214]: Invalid user shrimpadmin from 203.0.113.9 port 51544",
+                     "location": "/var/log/auth.log"}},
+        {"source": "Splunk ES", "external_id": "0B7D9E21-8F63-4A0C-B1E5-7C2F4A9D3E18@@notable@@4c7e2a90", "minutes": 52,
+         "severity": "medium", "title": "Excessive DNS queries from FRONT-DESK-PC to a single new domain",
+         "payload": {"search_name": "Network - Excessive DNS Queries - Rule", "security_domain": "network", "urgency": "medium",
+                     "src": "10.20.1.42", "src_nt_host": "FRONT-DESK-PC", "query": "x7f3.cdn-track.example.net", "count": 4182,
+                     "unique_subdomains": 3907, "orig_time": t(55), "annotations": {"mitre_attack": ["T1071.004", "T1048"]}}},
+        {"source": "Microsoft Sentinel", "external_id": "5a1f9b3c-77d2-4e08-9c64-1b2a3c4d5e6f", "minutes": 75,
+         "severity": "low", "title": "Inbox rule forwards mail to an external address (incident 1286)",
+         "payload": {"name": "5a1f9b3c-77d2-4e08-9c64-1b2a3c4d5e6f", "type": "Microsoft.SecurityInsights/Incidents",
+                     "properties": {"incidentNumber": 1286, "title": "Suspicious inbox forwarding rule", "severity": "Low",
+                                    "status": "New", "createdTimeUtc": t(75),
+                                    "additionalData": {"alertsCount": 1, "tactics": ["Collection"], "alertProductNames": ["Microsoft Defender for Office 365"]},
+                                    "description": "A rule on jenny@greenbow.example forwards messages containing 'invoice' to bait-orders@mail.example.org."}}},
+    ]
+
+
 def themed_case(i: int) -> tuple[str, str]:
     title, desc = CASES[i % len(CASES)]
     return (title if i < len(CASES) else f"{title} (again)"), desc
@@ -124,6 +183,11 @@ async def setup() -> tuple[int, str]:
             ev.content = COMMENTS[i % len(COMMENTS)]
         for i, alert in enumerate((await db.execute(select(Alert).where(Alert.tenant_id == tid).order_by(Alert.id))).scalars()):
             alert.title = CASES[(i * 2 + 1) % len(CASES)][0]
+        # Pending alerts from the SIEMs, newest first in the Alerts queue.
+        now = datetime.now(timezone.utc)
+        for a in siem_alerts(now):
+            db.add(Alert(tenant_id=tid, source=a["source"], external_id=a["external_id"], title=a["title"], severity=a["severity"],
+                         status="pending", payload=a["payload"], created_at=now - timedelta(minutes=a["minutes"])))
         await db.commit()
         # The API only accepts tokens of a live server-side session.
         owner = (await db.execute(select(User).where(User.email == PEOPLE[0][1]))).scalars().one()
