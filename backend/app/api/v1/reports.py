@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.context import audit_read
 from app.ai import llm
+from app.ai.untrusted import fence
 from app.ai.errors import AIError
 from app.api import deps
 from app.models.case import Case
@@ -215,7 +216,7 @@ async def draft_report(
     rep = await build_report(db, case, full=False, generated_by=current_user)
     await db.commit()  # release the connection before the (slow) provider call
     messages = [{"role": "system", "content": _DRAFT_SYSTEM},
-                {"role": "user", "content": "Case data (JSON):\n" + json.dumps(_draft_input(rep), ensure_ascii=False)}]
+                {"role": "user", "content": "Case data (JSON):\n" + fence(json.dumps(_draft_input(rep), ensure_ascii=False))}]
     try:
         data = _parse_json_reply(await llm.complete(messages, tenant_id=tenant_id, json_mode=True))
     except AIError:

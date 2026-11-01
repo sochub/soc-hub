@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -38,6 +39,18 @@ async def trigger_triage(
     """Kick off (or re-run) AI triage for a case. Returns immediately with a
     pending row; the Celery task fills it in asynchronously."""
     await _get_case(db, case_id, tenant_id)
+    # A run already in flight (another analyst clicked first) is returned instead of paying for a second
+    # one. Pending rows older than the task's hard time limit are dead runs and don't count.
+    # ponytail: two clicks in the same instant can still both start; llm._shared dedups their LLM call.
+    since = datetime.now(timezone.utc) - timedelta(seconds=run_case_triage_task.time_limit or 660)
+    running = (await db.execute(
+        select(CaseTriageResult).where(
+            CaseTriageResult.case_id == case_id, CaseTriageResult.tenant_id == tenant_id,
+            CaseTriageResult.status == "pending", CaseTriageResult.created_at >= since,
+        ).order_by(CaseTriageResult.id.desc()).limit(1)
+    )).scalars().first()
+    if running:
+        return running
     triage = CaseTriageResult(
         case_id=case_id, tenant_id=tenant_id, triggered_by="manual",
         triggered_by_user_id=current_user.id, status="pending",

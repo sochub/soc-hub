@@ -73,6 +73,32 @@ def _no_real_enrichment_enqueue(monkeypatch):
     import app.oauth.routes as oauth_routes
     oauth_fake = _AsyncRedis()
     monkeypatch.setattr(oauth_routes, "_oauth_redis", lambda: oauth_fake)
+    # LLM answer cache / dedup / background slot: a per-test fake, so no test reuses another's answer.
+    import app.ai.llm as llm_mod
+
+    class _LLMRedis(_AsyncRedis):
+        async def exists(self, k):
+            return int(k in self.keys)
+
+        async def aclose(self):
+            pass
+
+        def lock(self, name, timeout=None):
+            r = self
+
+            class _Lock:
+                async def acquire(self):
+                    r.locks.append(name)
+                    return True
+
+                async def release(self):
+                    r.released.append(name)
+            return _Lock()
+
+    llm_fake = _LLMRedis()
+    llm_fake.locks, llm_fake.released = [], []
+    monkeypatch.setattr(llm_mod, "_redis", lambda: llm_fake)
+    monkeypatch.setattr(llm_mod, "BACKGROUND", False)
     yield calls
 
 

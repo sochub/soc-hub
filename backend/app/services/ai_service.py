@@ -5,6 +5,7 @@ import logging
 
 from app.ai import llm
 from app.ai.errors import AIError
+from app.ai.untrusted import fence
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +261,7 @@ class AIService:
                     line += f" — {_sanitize_text(desc, 200)}"
                 parts.append(line)
 
-        return "\n".join(parts)
+        return fence("\n".join(parts))
 
     async def generate_welcome_briefing(self, context: Dict[str, Any]) -> str:
         """Generate a contextual welcome message that briefs the analyst on the case."""
@@ -345,7 +346,7 @@ class AIService:
                 status = c.get("status", "unknown")
                 parts.append(f"  - #{cid} [{sev}/{status}] {title}")
 
-        return "\n".join(parts)
+        return fence("\n".join(parts))
 
     def _static_general_welcome(self, context: Dict[str, Any]) -> str:
         """Fallback general welcome when the AI provider is unavailable."""
@@ -519,7 +520,7 @@ class AIService:
             '"next_steps": "..."}'
         )
         indicators = ", ".join(case_data.get("indicator_values") or []) or "(none yet)"
-        user = (
+        user = fence(
             f"Title: {_sanitize_text(case_data.get('title', ''), 300)}\n"
             f"Description: {_sanitize_text(case_data.get('description') or '', 1500)}\n"
             f"Existing tags: {', '.join(case_data.get('tags') or []) or '(none)'}\n"
