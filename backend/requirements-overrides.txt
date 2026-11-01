@@ -2,4 +2,4 @@
 # filelock 3.x has CVE-2026-112940 / -112913 / -112907 (local TOCTOU symlink/hard-link races); fixed in 4.2.1.
 # litellm>=1.105 declares filelock<4.0 but only uses it in its proxy CLI, which this app never runs;
 # huggingface_hub (the real user) needs >=3.10 and works with 4.x. Drop this file once litellm allows filelock>=4.
-filelock==4.2.1
+filelock==4.2.4
