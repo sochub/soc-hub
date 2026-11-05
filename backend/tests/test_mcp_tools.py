@@ -162,6 +162,7 @@ def test_get_case_caps_timeline():
         await db.commit()
         r = await tools.get_case(db, _p(user, t, "viewer"), case_id=case.id)
         assert len(r["timeline"]) == 50 and r["timeline_total"] == 60
+        assert "acknowledged_at" in r
         assert r["url"].endswith(f"/cases/{case.id}")
     _run(body)
 
@@ -319,9 +320,10 @@ def test_lists_clamp_and_ioc_case_isolation():
         assert len(r["alerts"]) == 3 and all(a["url"] for a in r["alerts"])
         foreign_case = await make_case(db, ids, other)
         await _not_found(tools.add_ioc(db, p, ioc_type="ip_address", value="1.1.1.1", case_id=foreign_case.id))
-        r = await tools.add_ioc(db, p, ioc_type="ip_address", value="1.1.1.1", tlp="green")
+        r = await tools.add_ioc(db, p, ioc_type="ip_address", value="1.1.1.1", tlp="green",
+                                first_seen="2026-10-01T08:30:00Z")
         ids.iocs.append(r["id"])
-        assert r["tlp"] == "green"
+        assert r["tlp"] == "green" and r["first_seen"] == "2026-10-01T08:30:00+00:00"
         who = await tools.whoami(db, p)
         assert who["tenant"]["id"] == t.id and who["role"] == "analyst" and who["client"] == "Test Client"
     _run(body)
