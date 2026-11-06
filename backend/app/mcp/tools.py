@@ -210,7 +210,7 @@ def _alert_summary(a: Alert) -> dict:
 def _ioc(i: IOC, verdict: Optional[str] = None) -> dict:
     return {"id": i.id, "ioc_type": i.ioc_type, "value": i.value, "threat_level": i.threat_level,
             "status": i.status, "tlp": i.tlp, "case_id": i.case_id, "description": i.description,
-            "enrichment_verdict": verdict, "created_at": _iso(i.created_at)}
+            "first_seen": _iso(i.first_seen), "enrichment_verdict": verdict, "created_at": _iso(i.created_at)}
 
 
 def _task(t) -> dict:
@@ -412,7 +412,7 @@ async def get_case(db: AsyncSession, p: OAuthPrincipal, case_id: int) -> dict:
     milestones = _jsonable(await case_milestones(db, c))
     return {
         **_case_summary(c), "description": c.description, "source": c.source, "outcome": c.outcome,
-        "closing_note": c.closing_note, "updated_at": _iso(c.updated_at), "resolved_at": _iso(c.resolved_at),
+        "closing_note": c.closing_note, "updated_at": _iso(c.updated_at), "acknowledged_at": _iso(c.acknowledged_at), "resolved_at": _iso(c.resolved_at),
         "milestones": milestones,
         "artifacts": [{"id": a.id, "type": a.type_key, "value": a.value, "description": a.description}
                       for a in artifacts],
@@ -522,13 +522,14 @@ async def add_artifact(db: AsyncSession, p: OAuthPrincipal, case_id: int, type_k
 @tool
 async def add_ioc(db: AsyncSession, p: OAuthPrincipal, ioc_type: str, value: str, case_id: Optional[int] = None,
                   threat_level: Optional[str] = None, tlp: Optional[str] = None,
-                  description: Optional[str] = None) -> dict:
+                  description: Optional[str] = None, first_seen: Optional[str] = None) -> dict:
     """Create a tenant IOC (ioc_type e.g. ip_address, domain, url, file_hash, email), optionally linked to a case.
-    tlp: clear/white, green, amber (default), red."""
+    tlp: clear/white, green, amber (default), red. first_seen: ISO 8601 with a timezone offset; on a case it
+    feeds the computed first-seen milestone."""
     if case_id is not None:
         await _case(db, p, case_id)
     fields = {"ioc_type": ioc_type, "value": value, "case_id": case_id, "threat_level": threat_level, "tlp": tlp,
-              "description": description}
+              "description": description, "first_seen": first_seen}
     data = IOCCreate(**{k: v for k, v in fields.items() if v is not None}).model_dump()
     ioc = await ioc_service.create_ioc(db, tenant_id=p.tenant_id, data=data, user_id=p.user.id)
     await db.commit()
