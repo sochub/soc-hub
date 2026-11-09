@@ -4,6 +4,7 @@ import { AlertTriangle, FileDown, FileJson, Save, Sparkles } from 'lucide-react'
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import MilestonesEditor from './MilestonesEditor';
+import { usePasteImage } from './usePasteImage';
 import { useCanRun } from '../enrichment/useCanRun';
 import { btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import type { CaseReportView, ReportDraft, TLPLevel } from '../../types';
@@ -139,6 +140,34 @@ function ChartPreview({ caseId, name, version, alt }: { caseId: number; name: 'l
                 <div className="py-10 text-center text-xs text-muted">{current?.failed ? 'Chart unavailable' : 'Loading chart...'}</div>
             )}
         </div>
+    );
+}
+
+/** Narrative textarea that accepts pasted / dropped images (uploaded inline, inserted as markdown). */
+function ReportTextarea({ caseId, id, rows, readOnly, value, onChange, placeholder }: {
+    caseId: number; id: string; rows: number; readOnly: boolean; value: string; onChange: (v: string) => void; placeholder: string;
+}) {
+    const ref = useRef<HTMLTextAreaElement>(null);
+    const paste = usePasteImage(caseId, () => ref.current,
+        (f, t) => value.includes(f) && (onChange(value.replace(f, () => t)), true));
+    return (
+        <>
+            <textarea
+                ref={ref}
+                id={id}
+                rows={rows}
+                maxLength={TEXT_MAX}
+                readOnly={readOnly}
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                onPaste={readOnly ? undefined : paste.onPaste}
+                onDrop={readOnly ? undefined : paste.onDrop}
+                placeholder={placeholder}
+                className={cn('w-full text-sm border border-line rounded-sm px-3 py-2 bg-panel text-fg focus:outline-hidden focus:border-accent resize-y',
+                    readOnly && 'bg-surface text-fg-2')}
+            />
+            {paste.error && <p role="alert" className="mt-1 text-xs text-red-300">{paste.error}</p>}
+        </>
     );
 }
 
@@ -309,17 +338,9 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                                 {form[key].length.toLocaleString()} / {TEXT_MAX.toLocaleString()}
                             </span>
                         </div>
-                        <textarea
-                            id={`report-${key}`}
-                            rows={key === 'executive_summary' ? 6 : 4}
-                            maxLength={TEXT_MAX}
-                            readOnly={readOnly}
-                            value={form[key]}
-                            onChange={(e) => update({ [key]: e.target.value } as Partial<Form>)}
-                            placeholder={readOnly ? '' : `${label}...`}
-                            className={cn('w-full text-sm border border-line rounded-sm px-3 py-2 bg-panel text-fg focus:outline-hidden focus:border-accent resize-y',
-                                readOnly && 'bg-surface text-fg-2')}
-                        />
+                        <ReportTextarea caseId={caseId} id={`report-${key}`} rows={key === 'executive_summary' ? 6 : 4}
+                            readOnly={readOnly} value={form[key]} onChange={(v) => update({ [key]: v } as Partial<Form>)}
+                            placeholder={readOnly ? '' : `${label}...`} />
                     </div>
                 ))}
             </div>

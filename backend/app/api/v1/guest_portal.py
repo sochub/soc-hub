@@ -4,13 +4,14 @@ from datetime import datetime
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
-from app.api.v1.attachments import _upload_chunks
+from app.api.v1.attachments import _chain, _upload_chunks
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
 from app.guests.access import GuestSession, get_current_guest, get_guest_grant, require_contributor, visible_grants
@@ -19,6 +20,7 @@ from app.models.case_attachment import CaseAttachment
 from app.models.case_guest import CaseGuest, GuestAccount
 from app.notifications import service as notify
 from app.services.attachments import EmptyFile, TooLarge, store_upload
+from app.storage import StorageError, get_storage
 from app.utils.audit import create_audit_log
 
 router = APIRouter()
@@ -174,6 +176,45 @@ async def guest_attachments(case_id: int, db: AsyncSession = Depends(deps.get_db
         CaseAttachment.deleted_at.is_(None)).order_by(CaseAttachment.created_at.desc()))).scalars().all()
     return [GuestAttachmentOut(id=a.id, filename=a.filename, size_bytes=a.size_bytes, sha256=a.sha256,
                                created_at=a.created_at) for a in rows]
+
+
+@router.get("/cases/{case_id}/attachments/{att_id}/raw")
+async def guest_raw_attachment(case_id: int, att_id: int, db: AsyncSession = Depends(deps.get_db),
+                               grant: CaseGuest = Depends(get_guest_grant)) -> Any:
+    """Inline image for <img>. The only widening of guest attachment access: the image must be inline, live, in
+    this grant's case, and referenced by a note currently shared with this guest (unsharing closes access)."""
+    a = (await db.execute(select(CaseAttachment).where(
+        CaseAttachment.id == att_id, CaseAttachment.case_id == grant.case_id,
+        CaseAttachment.tenant_id == grant.tenant_id, CaseAttachment.is_inline.is_(True),
+        CaseAttachment.deleted_at.is_(None)))).scalars().first()
+    shared = a is not None and (await db.execute(
+        select(TimelineEvent.id).where(
+            TimelineEvent.case_id == grant.case_id, TimelineEvent.shared_with_guests.is_(True),
+            (TimelineEvent.guest_id.is_(None)) | (TimelineEvent.guest_id == grant.id),
+            TimelineEvent.content.contains(f"/attachments/{att_id}/raw")).limit(1))).first() is not None
+    if not shared:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    key, ctype = a.storage_key, a.content_type
+    it = None
+    try:
+        it = get_storage().open(key)
+        first = await it.__anext__()
+    except StopAsyncIteration:
+        first = b""
+    except (FileNotFoundError, StorageError):
+        if it is not None:
+            await it.aclose()
+        raise HTTPException(status_code=500, detail="Attachment content unavailable")
+    except BaseException:
+        if it is not None:
+            await it.aclose()
+        raise
+    return StreamingResponse(_chain(first, it), media_type=ctype, headers={
+        "Content-Disposition": "inline",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox",
+        "Cache-Control": "private, max-age=300",
+    })
 
 
 @router.post("/cases/{case_id}/attachments", response_model=GuestAttachmentOut, status_code=201)

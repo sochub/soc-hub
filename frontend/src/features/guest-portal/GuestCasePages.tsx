@@ -50,6 +50,8 @@ function CreateAccountBanner() {
     );
 }
 
+const guestImageSrc = (src: string) => src.replace(/^\/api\/v1\/cases\/(\d+)\/attachments\/(\d+)\/raw$/, '/api/v1/guest/cases/$1/attachments/$2/raw');
+
 export function GuestHomePage() {
     const navigate = useNavigate();
     const [params] = useSearchParams();
@@ -143,7 +145,7 @@ export function GuestCasePage() {
                     <ol className="space-y-3">{timeline.data.map((e) => (
                         <li key={e.id} className="bg-panel border border-line rounded-lg p-3 text-sm">
                             <div className="text-xs text-fg-3 mb-1">{e.author} · {new Date(e.created_at).toLocaleString()}</div>
-                            <Markdown content={e.content} />
+                            <Markdown content={e.content} transformImageSrc={guestImageSrc} />
                         </li>))}</ol>
                 )}
             </section>
