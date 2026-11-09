@@ -8,17 +8,19 @@ interface TIConfig {
     auto_max_tlp: string; artifact_tlp: string; cache_ttl_hours: number;
     sources: Record<string, boolean>; vt_per_minute: number; vt_per_day: number;
     internal_domains: string[];
-    credentials_set: { virustotal: boolean; abusech: boolean };
+    credentials_set: { virustotal: boolean; abusech: boolean; misp: boolean };
+    misp_url: string | null; misp_verify_tls: boolean;
 }
 interface Draft {
     auto_max_tlp?: string; artifact_tlp?: string; cache_ttl_hours?: number | string;
     vt_per_minute?: number | string; vt_per_day?: number | string;
     sources?: Record<string, boolean>; domains?: string;
     vt_key?: string; abusech_key?: string; clear_virustotal?: boolean; clear_abusech?: boolean;
+    misp_url?: string; misp_key?: string; misp_verify_tls?: boolean; clear_misp?: boolean;
 }
 
 const SOURCE_LABEL: Record<string, string> = {
-    virustotal: 'VirusTotal', urlhaus: 'URLhaus', threatfox: 'ThreatFox', rdap: 'RDAP', crtsh: 'crt.sh',
+    virustotal: 'VirusTotal', urlhaus: 'URLhaus', threatfox: 'ThreatFox', rdap: 'RDAP', crtsh: 'crt.sh', misp: 'MISP',
 };
 const AUTO_TLP = ['none', 'white', 'green', 'amber', 'red'];
 const TLP = ['white', 'green', 'amber', 'red'];
@@ -56,6 +58,10 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
         };
         if (draft.vt_key?.trim()) b.virustotal_api_key = draft.vt_key.trim();
         if (draft.abusech_key?.trim()) b.abusech_auth_key = draft.abusech_key.trim();
+        if (draft.misp_url !== undefined && draft.misp_url.trim()) b.misp_url = draft.misp_url.trim();
+        if (draft.misp_key?.trim()) b.misp_key = draft.misp_key.trim();
+        if (draft.misp_verify_tls !== undefined) b.misp_verify_tls = draft.misp_verify_tls;
+        if (draft.clear_misp) b.clear_misp = true;
         if (draft.clear_virustotal) b.clear_virustotal = true;
         if (draft.clear_abusech) b.clear_abusech = true;
         return b;
@@ -83,7 +89,7 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
     if (!data) return null;
     const input = 'w-full border border-line-strong px-2 py-1.5 text-sm';
     const sources = draft.sources ?? data.sources;
-    const keyField = (label: string, isSet: boolean, valKey: 'vt_key' | 'abusech_key', clearKey: 'clear_virustotal' | 'clear_abusech', note?: string) => (
+    const keyField = (label: string, isSet: boolean, valKey: 'vt_key' | 'abusech_key' | 'misp_key', clearKey: 'clear_virustotal' | 'clear_abusech' | 'clear_misp', note?: string) => (
         <div>
             <label className="block"><span className="label-mono">{label}{isSet && <span className="ml-2 text-emerald-300">· set</span>}</span>
                 <input type="password" autoComplete="off" className={`${input} font-mono`} value={draft[valKey] ?? ''}
@@ -103,6 +109,18 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
 
             {keyField('VirusTotal API key', data.credentials_set.virustotal, 'vt_key', 'clear_virustotal')}
             {keyField('abuse.ch Auth-Key', data.credentials_set.abusech, 'abusech_key', 'clear_abusech', 'Free key from auth.abuse.ch — enables URLhaus and ThreatFox.')}
+
+            <div className="space-y-2">
+                <label className="block"><span className="label-mono">MISP server URL</span>
+                    <input type="url" autoComplete="off" className={`${input} font-mono`} value={draft.misp_url ?? data.misp_url ?? ''}
+                        onChange={(e) => set({ misp_url: e.target.value })} placeholder="https://misp.example.com" /></label>
+                {keyField('MISP auth key', data.credentials_set.misp, 'misp_key', 'clear_misp', 'Indicators are looked up on your own MISP server.')}
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.misp_verify_tls ?? data.misp_verify_tls}
+                    onChange={(e) => set({ misp_verify_tls: e.target.checked })} />Verify TLS certificate</label>
+                {!(draft.misp_verify_tls ?? data.misp_verify_tls) && (
+                    <p role="alert" className="text-xs text-amber-300">TLS verification disabled — exposed to interception. Use only for trusted internal servers.</p>
+                )}
+            </div>
 
             <fieldset>
                 <legend className="label-mono">sources</legend>
@@ -146,7 +164,7 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
             {tests && (
                 <ul className="text-xs space-y-0.5">
                     {Object.entries(tests).map(([k, v]) => (
-                        <li key={k} className={v.ok ? 'text-emerald-300' : 'text-red-300'}><span className="font-semibold">{k === 'abusech' ? 'abuse.ch' : 'VirusTotal'}</span>: {v.message}</li>
+                        <li key={k} className={v.ok ? 'text-emerald-300' : 'text-red-300'}><span className="font-semibold">{k === 'abusech' ? 'abuse.ch' : k === 'misp' ? 'MISP' : 'VirusTotal'}</span>: {v.message}</li>
                     ))}
                 </ul>
             )}

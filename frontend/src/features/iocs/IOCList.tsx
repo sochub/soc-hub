@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { AlertOctagon, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { AlertOctagon, ChevronDown, ChevronRight, Plus, Send, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { IOC } from '../../types';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
@@ -48,6 +48,14 @@ const tlpBadge = (tlp: string) => {
     return map[tlp] ?? map.amber;
 };
 
+const SKIP_LABEL: Record<string, string> = {
+    tlp_red: 'TLP:RED — not shared',
+    unmappable: 'type not supported by MISP',
+    unmappable_hash: 'type not supported by MISP',
+};
+
+type MispPushResult = { event_uuid: string; event_url: string; pushed: number[]; skipped: { id: number; reason: string }[] };
+
 const defaultForm = {
     ioc_type: 'ip_address',
     value: '',
@@ -66,6 +74,9 @@ export default function IOCList() {
     const [form, setForm] = useState(defaultForm);
     const [openId, setOpenId] = useState<number | null>(null);
     const canRun = useCanRun();
+    const [selected, setSelected] = useState<Set<number>>(new Set());
+    const [mispResult, setMispResult] = useState<MispPushResult | null>(null);
+    const [mispError, setMispError] = useState<string | null>(null);
 
     const { data: iocs, isLoading } = useQuery<IOC[]>({
         queryKey: ['iocs'],
@@ -98,6 +109,37 @@ export default function IOCList() {
         },
     });
 
+    const visible = (iocs ?? []).filter(i => i.value.toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase()));
+    const selectedIocs = (iocs ?? []).filter(i => selected.has(i.id));
+    const selectedCaseIds = new Set(selectedIocs.map(i => i.case_id));
+    const singleCaseId = selectedIocs.length > 0 && selectedCaseIds.size === 1 ? selectedIocs[0].case_id : null;
+    const allSelected = visible.length > 0 && visible.every(i => selected.has(i.id));
+    const toggle = (id: number) => setSelected(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
+    const toggleAll = () => setSelected(allSelected ? new Set() : new Set(visible.map(i => i.id)));
+
+    const mispPush = useMutation({
+        mutationFn: async ({ caseId, ids }: { caseId: number; ids: number[] }) =>
+            (await api.post(`/cases/${caseId}/misp-push`, { ioc_ids: ids })).data as MispPushResult,
+        onMutate: () => { setMispResult(null); setMispError(null); },
+        onSuccess: (data) => { setMispResult(data); setSelected(new Set()); },
+        onError: (err: any) => {
+            const status = err?.response?.status;
+            const detail = err?.response?.data?.detail;
+            if (status === 409 && detail === 'misp_not_configured') {
+                setMispError('Connect MISP under Settings → Integrations first.');
+            } else if (status === 502 && detail && typeof detail === 'object') {
+                const n = Array.isArray(detail.pushed_ids) ? detail.pushed_ids.length : 0;
+                setMispError(`${detail.message || 'MISP push failed.'}${n > 0 ? ` ${n} were pushed before the failure.` : ''}`);
+            } else {
+                setMispError('Could not send to MISP.');
+            }
+        },
+    });
+
     return (
         <PageContainer>
             {/* Header */}
@@ -123,6 +165,42 @@ export default function IOCList() {
                 </div>
             </div>
 
+            {canRun && selected.size > 0 && (
+                <div className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2 text-sm">
+                    <span className="text-fg-2">{selected.size} selected</span>
+                    <button
+                        onClick={() => singleCaseId != null && mispPush.mutate({ caseId: singleCaseId, ids: selectedIocs.map(i => i.id) })}
+                        disabled={singleCaseId == null || mispPush.isPending}
+                        title={singleCaseId == null ? 'select IOCs from a single case' : 'Send selected IOCs to MISP'}
+                        className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs font-semibold text-fg hover:bg-raised disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Send size={12} />
+                        {mispPush.isPending ? 'Sending...' : 'Send to MISP'}
+                    </button>
+                    <button onClick={() => setSelected(new Set())} className="text-xs text-muted hover:text-fg-2">Clear</button>
+                </div>
+            )}
+            {mispError && (
+                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300">{mispError}</div>
+            )}
+            {mispResult && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300 space-y-1">
+                    <p>
+                        {mispResult.pushed.length} IOC{mispResult.pushed.length === 1 ? '' : 's'} pushed to MISP.{' '}
+                        <a href={mispResult.event_url} target="_blank" rel="noopener noreferrer" className="underline">Open event</a>
+                    </p>
+                    {mispResult.skipped.length > 0 && (
+                        <ul className="text-xs text-amber-300 list-disc pl-5">
+                            {mispResult.skipped.map(s => (
+                                <li key={s.id}>
+                                    {iocs?.find(i => i.id === s.id)?.value ?? `IOC #${s.id}`} — {SKIP_LABEL[s.reason] ?? s.reason}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
             {/* Table */}
             <div className="glass-panel rounded-xl border border-line overflow-hidden">
                 {isLoading ? (
@@ -139,6 +217,11 @@ export default function IOCList() {
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-line text-xs font-semibold text-muted uppercase tracking-wider">
+                                    {canRun && (
+                                        <th className="px-2 py-3 w-8">
+                                            <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all IOCs" />
+                                        </th>
+                                    )}
                                     <th className="px-2 py-3 w-8"></th>
                                     <th className="px-4 py-3 text-left">Type</th>
                                     <th className="px-4 py-3 text-left">Value</th>
@@ -152,9 +235,14 @@ export default function IOCList() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
-                                {iocs.filter(i => i.value.toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase())).map((ioc) => (
+                                {visible.map((ioc) => (
                                     <Fragment key={ioc.id}>
                                     <tr className="hover:bg-panel transition-colors group">
+                                        {canRun && (
+                                            <td className="px-2 py-3">
+                                                <input type="checkbox" checked={selected.has(ioc.id)} onChange={() => toggle(ioc.id)} aria-label={`Select ${ioc.value}`} />
+                                            </td>
+                                        )}
                                         <td className="px-2 py-3">
                                             <button onClick={() => setOpenId(openId === ioc.id ? null : ioc.id)} className="text-muted hover:text-fg-2" title="Threat intel" aria-expanded={openId === ioc.id}>
                                                 {openId === ioc.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -217,7 +305,7 @@ export default function IOCList() {
                                     </tr>
                                     {openId === ioc.id && (
                                         <tr className="bg-surface">
-                                            <td></td>
+                                            <td colSpan={canRun ? 2 : 1}></td>
                                             <td colSpan={9} className="px-4 py-3"><EnrichmentPanel kind="ioc" id={ioc.id} canRun={canRun} ioc={ioc} /></td>
                                         </tr>
                                     )}

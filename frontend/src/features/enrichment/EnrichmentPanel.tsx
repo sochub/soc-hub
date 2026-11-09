@@ -7,7 +7,7 @@ import { cn } from '../../lib/utils';
 import type { EnrichmentResultRow, EnrichmentView, IOC } from '../../types';
 
 const SOURCE_LABEL: Record<string, string> = {
-    virustotal: 'VirusTotal', urlhaus: 'URLhaus', threatfox: 'ThreatFox', rdap: 'RDAP', crtsh: 'crt.sh',
+    virustotal: 'VirusTotal', urlhaus: 'URLhaus', threatfox: 'ThreatFox', rdap: 'RDAP', crtsh: 'crt.sh', misp: 'MISP',
 };
 const VERDICT_BADGE: Record<string, string> = {
     malicious: 'bg-red-500/10 text-red-300 border-red-500/30',

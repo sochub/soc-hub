@@ -9,7 +9,8 @@ REGISTRY = {
     "threatfox": SimpleNamespace(NAME="threatfox", TYPES=abusech.THREATFOX_TYPES, lookup=abusech.lookup_threatfox),
 }
 
-from app.enrichment.sources import crtsh, rdap  # noqa: E402
+from app.enrichment.sources import crtsh, misp, rdap  # noqa: E402
 
 REGISTRY["rdap"] = rdap
 REGISTRY["crtsh"] = crtsh
+REGISTRY["misp"] = misp

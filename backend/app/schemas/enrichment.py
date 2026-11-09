@@ -1,3 +1,4 @@
+import re
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -19,8 +20,24 @@ class EnrichmentConfigIn(BaseModel):
     internal_domains: List[str] = Field(default_factory=list, max_length=50)
     virustotal_api_key: Optional[str] = Field(None, max_length=200)
     abusech_auth_key: Optional[str] = Field(None, max_length=200)
+    misp_url: Optional[str] = Field(None, max_length=500)
+    misp_key: Optional[str] = Field(None, max_length=500)
+    misp_verify_tls: Optional[bool] = None
+    clear_misp: bool = False
     clear_virustotal: bool = False
     clear_abusech: bool = False
+
+    @field_validator("misp_url")
+    @classmethod
+    def _misp_url(cls, v):
+        if v is None or not v.strip():
+            return None
+        v = v.strip().rstrip("/")
+        if re.search(r"\s", v):
+            raise ValueError("misp_url must not contain whitespace")
+        if not v.lower().startswith(("http://", "https://")) or len(v) < 9:
+            raise ValueError("misp_url must start with http:// or https://")
+        return v
 
     @field_validator("auto_max_tlp")
     @classmethod
