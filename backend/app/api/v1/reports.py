@@ -2,12 +2,13 @@
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,12 +30,14 @@ from app.reports.pdf import RenderTimeout, render_pdf_async, strip_userinfo
 from app.schemas.report import TEXT_MAX, TLP, ReportDraft, ReportIn
 from app.services.ai_service import _parse_json_reply
 from app.utils.audit import create_audit_log
+from app.utils.versioning import check_version
 
 router = APIRouter()
 branding_router = APIRouter()  # mounted under /tenants
 logger = logging.getLogger(__name__)
 # Never log narrative text, IOC values or AI replies: ids, formats and outcomes only.
 _LOG = "report %s tenant=%s case=%s format=%s full=%s outcome=%s"
+LOCK_TTL_SECONDS = 120
 TEXT_FIELDS = ("executive_summary", "impact", "lessons_learned")
 _FIELDS = (*TEXT_FIELDS, "tlp")
 _DEFAULTS = {f: None for f in _FIELDS} | {"tlp": "amber"}
@@ -72,12 +75,27 @@ async def _payload(db: AsyncSession, case: Case, user: User, tid: int) -> dict:
     rep = await build_report(db, case, full=False, generated_by=user)
     report = {f: (getattr(row, f) if row else _DEFAULTS[f]) for f in _FIELDS}
     report.update(updated_by_email=rep["report"]["updated_by"], updated_at=rep["report"]["updated_at"])
+    report.update(await _lock_info(db, row))
     return to_jsonable({
         "report": report,
         "milestones": rep["milestones"],
         "min_tlp": await min_tlp(db, case),
         "ai_available": (await llm.describe(db, tid))["provider"] is not None,
     })
+
+
+def _lock_live(row: Optional[CaseReport]) -> bool:
+    if row is None or row.locked_by is None or row.locked_at is None:
+        return False
+    return ms_mod.aware(row.locked_at) > datetime.now(timezone.utc) - timedelta(seconds=LOCK_TTL_SECONDS)
+
+
+async def _lock_info(db: AsyncSession, row: Optional[CaseReport]) -> dict:
+    """Lock fields for a payload; an expired or absent lock reads as nulls."""
+    if not _lock_live(row):
+        return {"locked_by": None, "locked_by_email": None, "locked_at": None}
+    email = (await db.execute(select(User.email).where(User.id == row.locked_by))).scalar_one_or_none()
+    return {"locked_by": row.locked_by, "locked_by_email": email, "locked_at": row.locked_at}
 
 
 def _same(a, b) -> bool:
@@ -122,6 +140,8 @@ async def put_report(
     row = (await db.execute(select(CaseReport).where(CaseReport.case_id == case_id,
                                                      CaseReport.tenant_id == tenant_id)
                             .with_for_update().execution_options(populate_existing=True))).scalar_one()
+    # A row we just inserted has no saved version yet (its updated_at is only the insert default).
+    check_version(body, None if created is not None else row.updated_at)
     changed = []
     for f in _FIELDS:
         new = getattr(body, f)
@@ -139,6 +159,72 @@ async def put_report(
     out = await _payload(db, case, current_user, tenant_id)
     _log("put", tenant_id, case_id, "ok")
     return out
+
+
+async def _write_lock(db: AsyncSession, report_id: int, user_id, at) -> None:
+    """Lock columns only: updated_at is the optimistic-version token, so keep it (onupdate would bump it)."""
+    await db.execute(update(CaseReport).where(CaseReport.id == report_id)
+                     .values(locked_by=user_id, locked_at=at, updated_at=CaseReport.updated_at))
+
+
+class LockIn(BaseModel):
+    takeover: bool = False
+
+
+@router.post("/{case_id}/report/lock")
+async def lock_report(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    body: Optional[LockIn] = None,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    takeover = bool(body and body.takeover)
+    await _case(db, "lock", case_id, tenant_id)
+    user_id = current_user.id
+    await db.execute(insert(CaseReport).values(tenant_id=tenant_id, case_id=case_id)
+                     .on_conflict_do_nothing(index_elements=["case_id"]))
+    row = (await db.execute(select(CaseReport).where(CaseReport.case_id == case_id,
+                                                     CaseReport.tenant_id == tenant_id)
+                            .with_for_update().execution_options(populate_existing=True))).scalar_one()
+    holder = row.locked_by if _lock_live(row) else None
+    if holder is not None and holder != user_id:
+        if not takeover:
+            info = await _lock_info(db, row)
+            ua = row.updated_at
+            await db.rollback()
+            _log("lock", tenant_id, case_id, "held")
+            return JSONResponse(status_code=409, content=to_jsonable({**info, "self": False,
+                                                                       "updated_at": ua}))
+        await create_audit_log(db, entity_type="case", entity_id=case_id, action="report.lock_takeover",
+                               tenant_id=tenant_id, user_id=user_id, changes={"from": holder})
+    now = datetime.now(timezone.utc)
+    await _write_lock(db, row.id, user_id, now)
+    out = {"locked_by": user_id, "locked_by_email": current_user.email, "locked_at": now, "self": True,
+           "updated_at": row.updated_at}
+    await db.commit()
+    _log("lock", tenant_id, case_id, "takeover" if holder not in (None, user_id) else "ok")
+    return to_jsonable(out)
+
+
+@router.delete("/{case_id}/report/lock", status_code=204)
+async def unlock_report(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    current_user: User = Depends(deps.require_analyst_or_above),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Response:
+    await _case(db, "unlock", case_id, tenant_id)
+    user_id = current_user.id
+    row = (await db.execute(select(CaseReport).where(CaseReport.case_id == case_id,
+                                                     CaseReport.tenant_id == tenant_id)
+                            .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+    if row is not None and row.locked_by == user_id:
+        await _write_lock(db, row.id, None, None)
+    await db.commit()
+    return Response(status_code=204)
 
 
 # I3: the draft prompt is bounded. Timeline: first + last DRAFT_TIMELINE_EACH events; IOCs (malicious first):

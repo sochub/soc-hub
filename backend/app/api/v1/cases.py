@@ -20,6 +20,7 @@ from app.services.case_service import (
 from app.notifications import service as notif_service
 from app.utils.roles import resolve_active_role
 from app.utils.audit import create_audit_log
+from app.utils.versioning import check_version
 from app.services.milestones import MilestoneConflict, case_milestones, set_milestones
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.tasks.triage import run_case_triage_task
@@ -452,8 +453,11 @@ async def update_timeline_event(
     if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
         raise HTTPException(status_code=403, detail="Only the author or an admin can edit this entry")
 
-    await edit_timeline_note(db, case=case, event=event, update_data=event_in.model_dump(exclude_unset=True),
+    check_version(event_in, event.updated_at)
+    await edit_timeline_note(db, case=case, event=event,
+                             update_data=event_in.model_dump(exclude_unset=True, exclude={"base_updated_at"}),
                              user_id=current_user.id)
+    event.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
 

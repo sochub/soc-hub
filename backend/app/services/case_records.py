@@ -2,6 +2,7 @@
 
 All functions only flush; the caller commits. Callers load the event/asset tenant-scoped first.
 """
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import HTTPException
@@ -46,8 +47,10 @@ async def update_case_event(db: AsyncSession, *, ev: CaseEvent, data: dict, tena
     """``data`` is ``CaseEventUpdate.model_dump(exclude_unset=True)``."""
     data = dict(data)
     ids = data.pop("artifact_ids", None)
+    data.pop("base_updated_at", None)
     for k, v in data.items():
         setattr(ev, k, v)
+    ev.updated_at = datetime.now(timezone.utc)
     if ids is not None:
         ev.artifacts = await event_artifacts(db, ev.case_id, tenant_id, ids)
     await create_audit_log(db=db, entity_type="case", entity_id=ev.case_id, action="event_updated",

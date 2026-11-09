@@ -107,6 +107,12 @@ function exportCsv(events: CaseEvent[], caseId: number) {
     URL.revokeObjectURL(a.href);
 }
 
+const isConflict = (err: unknown) => {
+    const r = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
+    return r?.status === 409 && r.data?.detail === 'version_conflict';
+};
+const CONFLICT_COPY = 'This event changed while you were editing — copy your changes, then reload.';
+
 const field = 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
 
 /** The case's one feed: investigation events (the story, dated when they happened) interleaved with notes and system changes. */
@@ -122,6 +128,7 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
     const [editing, setEditing] = useState<number | 'new' | null>(null);
     const [draft, setDraft] = useState<Draft>(blank);
     const [suggesting, setSuggesting] = useState(false);
+    const [baseVersion, setBaseVersion] = useState<string | null>(null); // updated_at of the event being edited, as loaded
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const canEdit = me?.role === 'admin' || me?.role === 'analyst' || me?.is_super_admin;
@@ -136,11 +143,14 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
     const save = useMutation({
         mutationFn: async () => editing === 'new'
             ? api.post(`/cases/${caseId}/events`, toPayload(draft))
-            : api.put(`/cases/${caseId}/events/${editing}`, toPayload(draft)),
+            : api.put(`/cases/${caseId}/events/${editing}`, { ...toPayload(draft), base_updated_at: baseVersion }),
         onSuccess: () => { setEditing(null); invalidate(); },
     });
     const patch = useMutation({
-        mutationFn: async ({ id, ...body }: { id: number; flagged?: boolean; in_summary?: boolean }) => api.put(`/cases/${caseId}/events/${id}`, body),
+        mutationFn: async ({ id, ...body }: { id: number; updated_at: string | null; flagged?: boolean; in_summary?: boolean }) => {
+            const { updated_at, ...rest } = body;
+            return api.put(`/cases/${caseId}/events/${id}`, { ...rest, base_updated_at: updated_at });
+        },
         onSuccess: invalidate,
     });
     const remove = useMutation({ mutationFn: async (id: number) => api.delete(`/cases/${caseId}/events/${id}`), onSuccess: invalidate });
@@ -226,7 +236,7 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                     </button>
                 </div>
             </div>
-            {save.isError && <p role="alert" className="text-xs text-severity-critical">Could not save the event.</p>}
+            {save.isError && <p role="alert" className="text-xs text-severity-critical">{isConflict(save.error) ? CONFLICT_COPY : 'Could not save the event.'}</p>}
         </div>
     );
 
@@ -274,6 +284,7 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                 {source === 'all' && ' · '}
                 {source !== 'investigation' && `${shownActivity.length} of ${activity.length} activity entries`}
             </p>
+            {patch.isError && <p role="alert" className="text-xs text-severity-critical">{isConflict(patch.error) ? CONFLICT_COPY : 'Could not update the event.'}</p>}
             {setMilestone.isError && <p role="alert" className="text-xs text-severity-critical">{apiDetail(setMilestone.error)}</p>}
             {suggesting && <TimelineSuggest caseId={caseId} categories={EVENT_CATEGORIES} timezone={me?.timezone} onClose={() => setSuggesting(false)} />}
             {noting && <NoteComposer caseId={caseId} onClose={() => setNoting(false)} />}
@@ -334,8 +345,8 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                                             {e.flagged && <Flag size={12} className="text-severity-high" aria-label="Pinned to glance" />}
                                             {canEdit && (
                                                 <span className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                                                    <button onClick={() => patch.mutate({ id: e.id, flagged: !e.flagged })} title={e.flagged ? 'Unpin from glance' : 'Pin to glance'} className={cn('hover:text-fg', e.flagged ? 'text-severity-high' : 'text-muted')}><Flag size={13} /></button>
-                                                    <button onClick={() => patch.mutate({ id: e.id, in_summary: !e.in_summary })} title={e.in_summary ? 'In report — click to exclude' : 'Excluded from report — click to include'} className={cn('hover:text-fg', e.in_summary ? 'text-accent' : 'text-muted')}>
+                                                    <button onClick={() => patch.mutate({ id: e.id, updated_at: e.updated_at, flagged: !e.flagged })} title={e.flagged ? 'Unpin from glance' : 'Pin to glance'} className={cn('hover:text-fg', e.flagged ? 'text-severity-high' : 'text-muted')}><Flag size={13} /></button>
+                                                    <button onClick={() => patch.mutate({ id: e.id, updated_at: e.updated_at, in_summary: !e.in_summary })} title={e.in_summary ? 'In report — click to exclude' : 'Excluded from report — click to include'} className={cn('hover:text-fg', e.in_summary ? 'text-accent' : 'text-muted')}>
                                                         {e.in_summary ? <FileText size={13} /> : <FileX size={13} />}
                                                     </button>
                                                     <select value="" aria-label="Set as milestone" title="Use this event's time as a case milestone"
@@ -344,7 +355,7 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                                                         <option value="">Set as…</option>
                                                         {MILESTONES.map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
                                                     </select>
-                                                    <button onClick={() => { setDraft(fromEvent(e)); setEditing(e.id); }} title="Edit" className="text-muted hover:text-fg"><Pencil size={13} /></button>
+                                                    <button onClick={() => { setDraft(fromEvent(e)); setBaseVersion(e.updated_at ?? null); setEditing(e.id); }} title="Edit" className="text-muted hover:text-fg"><Pencil size={13} /></button>
                                                     <button onClick={() => { if (confirm('Delete this event?')) remove.mutate(e.id); }} title="Delete" className="text-muted hover:text-severity-critical"><Trash2 size={13} /></button>
                                                 </span>
                                             )}
