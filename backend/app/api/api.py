@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.oauth import routes as oauth
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, ticketing, portfolio, containment, user_verification, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room, case_time
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, ticketing, portfolio, containment, user_verification, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room, case_time, mailboxes
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -42,6 +42,7 @@ api_router.include_router(case_triage.router, prefix="/cases", tags=["triage"])
 api_router.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
 api_router.include_router(workflows.runs_router, prefix="/workflow-runs", tags=["workflows"])
 api_router.include_router(slack.router, prefix="/slack", tags=["slack"])
+api_router.include_router(mailboxes.router, prefix="/mailboxes", tags=["mailboxes"])
 api_router.include_router(ai_config.router, prefix="/ai", tags=["ai"])
 api_router.include_router(enrichment.router, prefix="/enrichment", tags=["enrichment"])
 api_router.include_router(attachments.router, prefix="/cases", tags=["attachments"])

@@ -44,6 +44,7 @@ import app.tasks.notifications  # noqa: E402,F401
 import app.tasks.guest_digest  # noqa: E402,F401
 import app.tasks.slack  # noqa: E402,F401
 import app.tasks.war_room  # noqa: E402,F401
+import app.tasks.email_intake  # noqa: E402,F401
 
 # Beat is embedded in the worker process via the `-B` flag on the
 # docker-compose `worker` service — there's only ever one worker replica, so
@@ -72,6 +73,14 @@ celery_app.conf.beat_schedule = {
     "sync-tickets": {
         "task": "app.tasks.ticketing.sync_tickets_task",
         "schedule": 300.0,
+    },
+    "poll-mailboxes": {
+        "task": "app.tasks.email_intake.poll_mailboxes_task",
+        "schedule": 60.0,
+    },
+    "cleanup-email-artifacts": {
+        "task": "app.tasks.email_intake.cleanup_email_artifacts_task",
+        "schedule": 86400.0,
     },
     "prune-notifications": {
         "task": "app.tasks.notifications.prune_notifications_task",

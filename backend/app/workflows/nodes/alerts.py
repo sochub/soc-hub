@@ -90,6 +90,11 @@ async def run_alert_promote(nctx: NodeContext, config: dict) -> dict:
     await nctx.db.flush()
 
     run = nctx.run
+    from app.services.email_intake import evidence_ids  # late: email_intake imports the workflow runtime
+    if evidence_ids(alert.payload):  # email alert: copy its .eml/attachments into the case once this step commits
+        from app.tasks.email_intake import copy_email_evidence_task
+        alert_id, case_id = alert.id, case.id
+        nctx.after_commit.append(lambda: copy_email_evidence_task.delay(alert_id, case_id))
     if created:
         nctx.after_commit.append(lambda: run_case_triage_task.delay(triage_id))
         nctx.after_commit.append(lambda: emit_event(run.tenant_id, "case.created", case_id=case.id, depth=run.depth + 1))
@@ -150,6 +155,8 @@ async def run_alert_create(nctx: NodeContext, config: dict) -> dict:
                                tenant_id=tenant_id, user_id=None,
                                changes={"source": source, "external_id": external_id, "by": "automation"})
         alert = (await nctx.db.execute(select(Alert).where(Alert.id == alert_id))).scalars().one()
+        from app.services.email_intake import link_alert_artifacts  # late: email_intake imports the workflow runtime
+        await link_alert_artifacts(nctx.db, alert_id=alert_id, tenant_id=tenant_id, payload=payload)
         suppressed = await suppression_service.apply(nctx.db, alert)
         if suppressed is None:  # suppressed noise starts no workflows
             depth = nctx.run.depth + 1
