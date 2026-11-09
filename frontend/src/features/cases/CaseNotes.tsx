@@ -18,7 +18,7 @@ const apiError = (err: unknown, fallback: string) => {
 };
 
 /** Note type + text; @mentions only in comments (other types are not notifications). */
-function NoteFields({ value, onChange }: { value: { event_type: string; content: string }; onChange: (v: { event_type: string; content: string }) => void }) {
+function NoteFields({ caseId, value, onChange }: { caseId: number; value: { event_type: string; content: string }; onChange: (v: { event_type: string; content: string }) => void }) {
     return (
         <>
             <select value={value.event_type} aria-label="Note type"
@@ -26,7 +26,7 @@ function NoteFields({ value, onChange }: { value: { event_type: string; content:
                 className={field}>
                 {NOTE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
-            <MarkdownField value={value.content}>
+            <MarkdownField value={value.content} imageCaseId={caseId}>
                 {value.event_type === 'comment' ? (
                     <MentionTextarea value={value.content} onChange={(content) => onChange({ ...value, content })}
                         placeholder="What's new? (type @ to mention a teammate)" />
@@ -52,7 +52,7 @@ export function NoteComposer({ caseId, onClose }: { caseId: number; onClose: () 
                 <h4 className="text-sm font-semibold text-fg">New note <span className="font-normal text-muted">· stamped now</span></h4>
                 <button onClick={onClose} className="text-muted hover:text-fg" aria-label="Close"><X size={16} /></button>
             </div>
-            <NoteFields value={draft} onChange={setDraft} />
+            <NoteFields caseId={caseId} value={draft} onChange={setDraft} />
             {add.isError && <p role="alert" className="text-xs text-severity-critical">{apiError(add.error, 'Could not add the note.')}</p>}
             <div className="flex justify-end gap-2">
                 <button onClick={onClose} className="px-3 py-1.5 text-xs text-fg-3 hover:text-fg">Cancel</button>
@@ -122,7 +122,7 @@ export function NoteEntry({ caseId, note, me }: { caseId: number; note: Timeline
             </div>
             {editing ? (
                 <div className="mt-2 space-y-2">
-                    <NoteFields value={editing} onChange={setEditing} />
+                    <NoteFields caseId={caseId} value={editing} onChange={setEditing} />
                     <div className="flex justify-end gap-2">
                         <button onClick={() => setEditing(null)} className="px-2 py-1 text-xs text-fg-3 hover:text-fg">Cancel</button>
                         <button onClick={() => save.mutate()} disabled={!editing.content.trim() || save.isPending}

@@ -198,7 +198,7 @@ export default function CaseTimeline({ caseId, activity = [] }: { caseId: number
                 <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="Title" className={cn(field, 'sm:col-span-2')} aria-label="Title" />
                 <input value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })} placeholder="Source (EDR, Sysmon, proxy log…)" className={field} aria-label="Source" />
                 <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="Tags, comma separated" className={field} aria-label="Tags" />
-                <div className="sm:col-span-2"><MarkdownField value={draft.content}><textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} placeholder="What happened (markdown)" rows={3} className={cn(field, 'w-full resize-none')} aria-label="Content" /></MarkdownField></div>
+                <div className="sm:col-span-2"><MarkdownField value={draft.content} imageCaseId={caseId}><textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} placeholder="What happened (markdown)" rows={3} className={cn(field, 'w-full resize-none')} aria-label="Content" /></MarkdownField></div>
                 <textarea value={draft.raw} onChange={(e) => setDraft({ ...draft, raw: e.target.value })} placeholder="Raw log line / evidence excerpt" rows={2} className={cn(field, 'sm:col-span-2 resize-none font-mono text-xs')} aria-label="Raw" />
             </div>
             {artifacts.length > 0 && (

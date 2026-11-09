@@ -5,11 +5,12 @@ import remarkGfm from 'remark-gfm';
 
 import { cn } from '../lib/utils';
 import { MENTION_RE } from '../features/cases/mentionRe';
+import { usePasteImage } from '../features/cases/usePasteImage';
 
 // Mention tokens become `[@Name](user:id)` links, rendered as chips; raw HTML is never rendered.
 const keepMentions = (url: string) => (url.startsWith('user:') ? url : defaultUrlTransform(url));
 
-export function Markdown({ content, className }: { content: string; className?: string }) {
+export function Markdown({ content, className, transformImageSrc }: { content: string; className?: string; transformImageSrc?: (src: string) => string }) {
     const src = content.replace(MENTION_RE, (_m, name: string, id: string) => `[@${name.replace(/[\\[\]*_`]/g, '\\$&')}](user:${id})`);
     return (
         <div className={cn('copilot-markdown break-words [&_p]:whitespace-pre-wrap', className)}>
@@ -20,6 +21,10 @@ export function Markdown({ content, className }: { content: string; className?: 
                     a: ({ href, children }) => href?.startsWith('user:')
                         ? <span className="text-accent font-medium bg-accent/10 px-0.5">{children}</span>
                         : <a href={href} target="_blank" rel="noopener noreferrer nofollow">{children}</a>,
+                    img: ({ src, alt }) => (
+                        <img src={typeof src === 'string' && transformImageSrc ? transformImageSrc(src) : src} alt={alt ?? ''}
+                            className="max-w-full rounded" loading="lazy" />
+                    ),
                 }}
             >{src}</ReactMarkdown>
         </div>
@@ -62,10 +67,11 @@ const ACTIONS: { icon: typeof Bold; label: string; key?: string; run: (ta: HTMLT
 ];
 
 /** Write/Preview tabs and a formatting toolbar around any textarea; the child keeps owning the value. */
-export function MarkdownField({ value, children }: { value: string; children: React.ReactNode }) {
+export function MarkdownField({ value, children, imageCaseId }: { value: string; children: React.ReactNode; imageCaseId?: number }) {
     const [preview, setPreview] = useState(false);
     const box = useRef<HTMLDivElement>(null);
-    const textarea = () => box.current?.querySelector('textarea');
+    const textarea = () => box.current?.querySelector('textarea') ?? null;
+    const paste = usePasteImage(imageCaseId ?? 0, textarea);
     const tab = (on: boolean) => cn('px-2 py-0.5 rounded-sm', on ? 'bg-raised text-fg' : 'text-muted hover:text-fg-2');
     const onKeyDown = (ev: React.KeyboardEvent) => {
         if (!(ev.metaKey || ev.ctrlKey) || ev.shiftKey || ev.altKey || !(ev.target instanceof HTMLTextAreaElement)) return;
@@ -73,7 +79,7 @@ export function MarkdownField({ value, children }: { value: string; children: Re
         if (action) { ev.preventDefault(); action.run(ev.target); }
     };
     return (
-        <div className="space-y-1">
+        <div className="space-y-1" onPaste={imageCaseId ? paste.onPaste : undefined} onDrop={imageCaseId ? paste.onDrop : undefined}>
             <div className="flex flex-wrap items-center gap-1 text-[11px]">
                 <button type="button" className={tab(!preview)} onClick={() => setPreview(false)}>Write</button>
                 <button type="button" className={tab(preview)} onClick={() => setPreview(true)}>Preview</button>
@@ -94,6 +100,7 @@ export function MarkdownField({ value, children }: { value: string; children: Re
                 )}
                 <span className="ml-auto text-muted">Markdown supported</span>
             </div>
+            {imageCaseId && paste.error && <p role="alert" className="text-xs text-red-300">{paste.error}</p>}
             {preview
                 ? <div className="min-h-[76px] bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg-2">
                     {value.trim() ? <Markdown content={value} /> : <span className="text-muted">Nothing to preview</span>}

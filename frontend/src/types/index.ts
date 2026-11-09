@@ -361,6 +361,7 @@ export interface Attachment {
   size_bytes: number;
   sha256: string;
   is_malicious: boolean;
+  is_inline?: boolean;
   description: string | null;
   uploaded_by: number | null;
   uploaded_by_email: string | null;
