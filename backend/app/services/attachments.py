@@ -134,11 +134,12 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
                              description=description, uploaded_by=user_id, uploaded_by_guest_id=guest_id)
         db.add(row)
         await db.flush()
-        await add_artifact_to_case(db, case=case, artifact_type=ArtifactType.FILE_HASH, value=row.sha256,
-                                   description=f"SHA-256 of attachment {name}", user_id=user_id)
-        db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="attachment_added",
-                             content=f"Attached {name} (sha256 {row.sha256[:12]}…)",
-                             guest_id=guest_id, shared_with_guests=guest_id is not None))
+        if not is_inline:
+            await add_artifact_to_case(db, case=case, artifact_type=ArtifactType.FILE_HASH, value=row.sha256,
+                                       description=f"SHA-256 of attachment {name}", user_id=user_id)
+            db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="attachment_added",
+                                 content=f"Attached {name} (sha256 {row.sha256[:12]}…)",
+                                 guest_id=guest_id, shared_with_guests=guest_id is not None))
         await create_audit_log(db=db, entity_type="attachment", entity_id=row.id, action="upload",
                                tenant_id=case.tenant_id, user_id=user_id,
                                changes={"filename": name, "sha256": row.sha256, "is_malicious": row.is_malicious,

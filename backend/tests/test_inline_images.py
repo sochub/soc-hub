@@ -94,6 +94,9 @@ def test_inline_upload_and_raw(monkeypatch, tmp_path):
             assert r.headers["cache-control"] == "private, max-age=300"
             assert r.content == PNG
 
+            # pasted images are note content: no hash artifact, no activity-feed event
+            assert await _side_effects(cid) == (0, 0)
+
             # inline reads are audit-exempt
             async with AsyncSessionLocal() as db:
                 n = len((await db.execute(select(AuditLog).where(
@@ -113,6 +116,14 @@ def test_inline_upload_and_raw(monkeypatch, tmp_path):
     asyncio.run(run())
 
 
+async def _side_effects(case_id):
+    async with AsyncSessionLocal() as db:
+        arts = (await db.execute(select(CaseArtifact).where(CaseArtifact.case_id == case_id))).scalars().all()
+        evs = (await db.execute(select(TimelineEvent).where(
+            TimelineEvent.case_id == case_id, TimelineEvent.event_type == "attachment_added"))).scalars().all()
+        return len(arts), len(evs)
+
+
 async def _other_tenant(case_id):
     async with AsyncSessionLocal() as db:
         return (await db.execute(select(Case.tenant_id).where(Case.id == case_id))).scalar_one()
@@ -124,6 +135,7 @@ def test_raw_rejects_non_inline(monkeypatch, tmp_path):
             base = f"/api/v1/cases/{cid}/attachments"
             r = await client.post(base, files={"file": ("p.png", PNG, "image/png")})
             assert r.status_code == 201 and r.json()["is_inline"] is False
+            assert await _side_effects(cid) == (1, 1)  # regular uploads keep artifact + timeline event
             assert (await client.get(f"{base}/{r.json()['id']}/raw")).status_code == 404
 
     asyncio.run(run())
