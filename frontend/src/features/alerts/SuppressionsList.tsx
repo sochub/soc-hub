@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, X, Search } from 'lucide-react';
@@ -20,7 +20,7 @@ const OPS: [string, string][] = [
 ];
 const BASE_FIELDS = ['source', 'title', 'severity'];
 const EXPIRY: [string, number | null][] = [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Never', null]];
-const field = 'bg-panel border border-line rounded-lg px-2.5 py-1.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
+const field = 'h-9 bg-panel border border-line rounded-lg px-2.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
 const apiError = (err: unknown, fallback: string) => {
     const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
     return typeof d === 'string' ? d : fallback;
@@ -38,6 +38,55 @@ function payloadPaths(obj: unknown, prefix = 'payload', out: [string, string][] 
     return out;
 }
 
+/** Field box with its own suggestion list: opens below the box (a native select popup covers it on macOS), and any
+ *  payload path can be typed. An exact known field lists everything, unlike a datalist that filters down to itself (#130). */
+function FieldPicker({ value, groups, onChange }: { value: string; groups: [string, string[]][]; onChange: (v: string) => void }) {
+    const [open, setOpen] = useState(false);
+    const [active, setActive] = useState(0);
+    const id = useId();
+    const q = groups.some(([, o]) => o.includes(value)) ? '' : value.toLowerCase();
+    const shown = groups.map(([g, o]): [string, string[]] => [g, o.filter((f) => f.toLowerCase().includes(q))]).filter(([, o]) => o.length);
+    const flat = shown.flatMap(([, o]) => o);
+    const listed = open && flat.length > 0;
+    const pick = (f: string) => { onChange(f); setOpen(false); };
+    return (
+        <div className="relative min-w-0">
+            <input role="combobox" aria-label="Field" aria-autocomplete="list" aria-expanded={listed} aria-controls={id}
+                aria-activedescendant={listed ? `${id}-${active}` : undefined} value={value} placeholder="field or payload.path" spellCheck={false}
+                onFocus={() => { setOpen(true); setActive(0); }} onBlur={() => setOpen(false)}
+                onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(0); }}
+                onKeyDown={(e) => {
+                    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && flat.length) {
+                        e.preventDefault(); setOpen(true);
+                        setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : flat.length - 1)) % flat.length);
+                    } else if (e.key === 'Enter' && listed) { e.preventDefault(); pick(flat[active]); }
+                    else if (e.key === 'Escape') setOpen(false);
+                }}
+                className={cn(field, 'font-mono text-xs w-full')} />
+            {listed && (
+                <ul id={id} role="listbox" aria-label="Fields"
+                    className="absolute z-30 left-0 top-full mt-1 min-w-full w-max max-w-[min(32rem,calc(100vw-2rem))] max-h-64 overflow-auto rounded-lg border border-line bg-panel shadow-lg py-1">
+                    {shown.map(([g, opts]) => (
+                        <li key={g} role="presentation">
+                            <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted">{g}</p>
+                            <ul role="group" aria-label={g}>
+                                {opts.map((f) => {
+                                    const i = flat.indexOf(f);
+                                    return (
+                                        <li key={f} id={`${id}-${i}`} role="option" aria-selected={i === active} title={f}
+                                            onMouseDown={(e) => { e.preventDefault(); pick(f); }} onMouseEnter={() => setActive(i)}
+                                            className={cn('px-2.5 py-1 font-mono text-xs truncate cursor-pointer', i === active ? 'bg-raised text-fg' : 'text-fg-2')}>{f}</li>
+                                    );
+                                })}
+                            </ul>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
 function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: string; title: string; payload: unknown } | null; onDone: () => void }) {
     const qc = useQueryClient();
     const [name, setName] = useState(fromAlert ? `${fromAlert.source}: ${fromAlert.title}`.slice(0, 200) : '');
@@ -46,7 +95,15 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
     const [conds, setConds] = useState<Condition[]>(fromAlert
         ? [{ field: 'source', op: 'equals', value: fromAlert.source }, { field: 'title', op: 'equals', value: fromAlert.title }]
         : [{ field: 'title', op: 'contains', value: '' }]);
-    const paths = fromAlert ? payloadPaths(fromAlert.payload) : [];
+    // No source alert: suggest payload paths seen in recent alerts (#130), without pre-filling values.
+    const { data: recent = [] } = useQuery({
+        queryKey: ['alerts', 'recent-payloads'], enabled: !fromAlert, staleTime: 60_000,
+        queryFn: async () => (await api.get('/alerts/', { params: { limit: 20 } })).data as { payload: unknown }[],
+    });
+    const paths = fromAlert ? payloadPaths(fromAlert.payload)
+        : [...new Set(recent.flatMap((a) => payloadPaths(a.payload).map(([p]) => p)))].slice(0, 80).map((p): [string, string] => [p, '']);
+    const groups: [string, string[]][] = [['Alert fields', BASE_FIELDS],
+        ...(paths.length ? [[fromAlert ? `Payload of alert #${fromAlert.id}` : 'Payload (recent alerts)', paths.map(([p]) => p)] as [string, string[]]] : [])];
     const valid = conds.length > 0 && conds.every((c) => c.value.trim() && /^(source|title|severity|payload(\.[A-Za-z0-9_\-@$]{1,64}){1,8})$/.test(c.field));
 
     const preview = useMutation({ mutationFn: async () => (await api.post('/suppressions/preview', { conditions: conds })).data as Preview });
@@ -73,25 +130,24 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
                 </select>
                 <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this noise? (e.g. VPN egress, approved scanner)" aria-label="Reason" className={cn(field, 'sm:col-span-3')} />
             </div>
-            <datalist id="suppression-fields">
-                {BASE_FIELDS.map((f) => <option key={f} value={f} />)}
-                {paths.map(([p]) => <option key={p} value={p} />)}
-            </datalist>
+            <p className="text-xs text-muted">
+                Fields: <code className="font-mono">source</code>, <code className="font-mono">title</code>, <code className="font-mono">severity</code>, or any payload path such as <code className="font-mono">payload.agent.name</code>.
+                {fromAlert ? ` Suggestions come from alert #${fromAlert.id}.` : paths.length ? ` Suggestions come from the ${recent.length} most recent alerts.` : ''}
+            </p>
             {conds.map((c, i) => (
-                <div key={i} className="flex flex-wrap items-center gap-2">
-                    <input list="suppression-fields" value={c.field} aria-label="Field" placeholder="source, title, severity or payload.path"
-                        onChange={(e) => {
-                            const p = paths.find(([k]) => k === e.target.value);
-                            set(i, { field: e.target.value, ...(p && !c.value ? { value: p[1] } : {}) });
-                        }}
-                        className={cn(field, 'font-mono text-xs w-56')} />
-                    <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} aria-label="Operator" className={field}>
+                // Fixed columns so every condition row lines up, whatever field is picked.
+                <div key={i} className="grid grid-cols-1 sm:grid-cols-[16rem_9rem_minmax(0,1fr)_1.5rem] items-center gap-2">
+                    <FieldPicker value={c.field} groups={groups} onChange={(v) => {
+                        const p = paths.find(([k]) => k === v);
+                        set(i, { field: v, ...(p?.[1] && !c.value ? { value: p[1] } : {}) });
+                    }} />
+                    <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} aria-label="Operator" className={cn(field, 'text-xs w-full')}>
                         {OPS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                     </select>
                     <input value={c.value} onChange={(e) => set(i, { value: e.target.value })} aria-label="Value" placeholder={c.op === 'in_cidr' ? '10.0.0.0/8' : 'value'}
-                        className={cn(field, 'font-mono text-xs flex-1 min-w-40')} />
+                        className={cn(field, 'font-mono text-xs w-full')} />
                     <button onClick={() => { setConds(conds.filter((_, j) => j !== i)); preview.reset(); }} disabled={conds.length === 1}
-                        className="text-muted hover:text-severity-critical disabled:opacity-30" aria-label="Remove condition"><X size={14} /></button>
+                        className="justify-self-center text-muted hover:text-severity-critical disabled:opacity-30" aria-label="Remove condition"><X size={14} /></button>
                 </div>
             ))}
             {conds.length < 10 && (
@@ -125,6 +181,7 @@ export default function SuppressionsList() {
     const [params, setParams] = useSearchParams();
     const fromId = Number(params.get('from_alert')) || null;
     const [creating, setCreating] = useState(false);
+    const [showInactive, setShowInactive] = useState(false);
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const canEdit = me?.role === 'admin' || me?.role === 'analyst' || me?.is_super_admin;
     const { data: rules = [], isLoading } = useQuery({ queryKey: ['suppressions'], queryFn: async () => (await api.get('/suppressions/')).data as Rule[] });
@@ -132,6 +189,8 @@ export default function SuppressionsList() {
         queryKey: ['alert', fromId], enabled: !!fromId,
         queryFn: async () => (await api.get(`/alerts/${fromId}`)).data as { id: number; source: string; title: string; payload: unknown },
     });
+    const inactive = rules.filter((r) => !r.enabled || expired(r)).length;
+    const shown = showInactive ? rules : rules.filter((r) => r.enabled && !expired(r));
     const formOpen = creating || (!!fromId && !!fromAlert); // ?from_alert=<id> opens it pre-filled
 
     const refresh = () => qc.invalidateQueries({ queryKey: ['suppressions'] });
@@ -144,7 +203,7 @@ export default function SuppressionsList() {
             <div className="flex items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-fg tracking-tight">Suppressions</h1>
-                    <p className="text-fg-3 text-sm mt-0.5">Known noise is auto-dismissed at ingest and kept for the record. A rule that has suppressed alerts can only be disabled.</p>
+                    <p className="text-fg-3 text-sm mt-0.5">Known noise is auto-dismissed at ingest and kept for the record. A rule that has suppressed alerts can only be disabled; disabled rules are hidden unless you choose to show them.</p>
                 </div>
                 {canEdit && !formOpen && (
                     <button onClick={() => setCreating(true)} className="text-xs bg-accent text-on-accent hover:bg-accent-hover px-3 py-1.5 rounded-sm flex items-center gap-1.5 font-medium shrink-0">
@@ -158,7 +217,13 @@ export default function SuppressionsList() {
                 <p className="text-sm text-muted py-8 text-center">No suppression rules yet. Use “Suppress similar” on an alert you dismissed as noise.</p>
             ) : (
                 <div className="space-y-2">
-                    {rules.map((r) => (
+                    {inactive > 0 && (
+                        <label className="flex items-center gap-1.5 text-xs text-fg-2">
+                            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show disabled and expired rules ({inactive})
+                        </label>
+                    )}
+                    {!shown.length && <p className="text-sm text-muted py-6 text-center">No active rules.</p>}
+                    {shown.map((r) => (
                         <article key={r.id} className={cn('rounded-lg border border-line bg-panel p-3', (!r.enabled || expired(r)) && 'opacity-60')}>
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-sm font-medium text-fg">{r.name}</span>
@@ -171,9 +236,11 @@ export default function SuppressionsList() {
                                         <label className="flex items-center gap-1.5 text-xs text-fg-2">
                                             <input type="checkbox" checked={r.enabled} onChange={() => toggle.mutate(r)} /> Enabled
                                         </label>
-                                        <button onClick={() => { if (confirm('Delete this rule?')) remove.mutate(r.id); }} disabled={r.hit_count > 0}
-                                            title={r.hit_count > 0 ? 'It has suppressed alerts: disable it instead' : 'Delete'}
-                                            className="text-muted hover:text-severity-critical disabled:opacity-30"><Trash2 size={13} /></button>
+                                        {/* aria-disabled, not disabled: disabled buttons swallow hover, so the reason tooltip never shows */}
+                                        <button onClick={() => { if (r.hit_count === 0 && confirm('Delete this rule?')) remove.mutate(r.id); }} aria-disabled={r.hit_count > 0}
+                                            title={r.hit_count > 0 ? 'Can’t delete: this rule has suppressed alerts and is kept for their history. Disable it instead; disabled rules are hidden from this list.' : 'Delete'}
+                                            aria-label={r.hit_count > 0 ? 'Delete unavailable: rule has suppressed alerts' : 'Delete rule'}
+                                            className={cn('text-muted', r.hit_count > 0 ? 'opacity-30 cursor-not-allowed' : 'hover:text-severity-critical')}><Trash2 size={13} /></button>
                                     </span>
                                 )}
                             </div>

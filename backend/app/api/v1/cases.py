@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
+from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,8 +53,12 @@ async def _attach_sla(db: AsyncSession, tenant_id: int, cases: List[Case]) -> Li
 SILENT_AFTER = timedelta(minutes=10)
 
 
-def war_room_url(team_id: Optional[str], channel_id: str) -> Optional[str]:
-    return f"https://app.slack.com/client/{team_id}/{channel_id}" if team_id else None
+def war_room_url(team_id: Optional[str], channel_id: str) -> str:
+    """Deep link to the channel. team_id is only learned by the integration's Test call, so without it
+    fall back to Slack's app_redirect, which resolves the channel in the viewer's signed-in workspace."""
+    if team_id:
+        return f"https://app.slack.com/client/{team_id}/{channel_id}"
+    return f"https://slack.com/app_redirect?{urlencode({'channel': channel_id})}"
 
 
 async def _attach_war_room(db: AsyncSession, tenant_id: int, cases: List[Case]) -> None:

@@ -532,3 +532,50 @@ def test_unreadable_refresh_cookie_is_refused_and_cleared():
         out = await _call(c, "POST", LOGOUT, refresh="pre-sealing-raw-token", headers=XRW)
         assert out.status_code == 204 and _cookies(out)[REFRESH_COOKIE]["max-age"] == "0"
     _go(body)
+
+
+def test_org_session_policy_expires_sessions():
+    """Absolute and idle caps from the organization policy end a browser session at refresh; the strictest
+    membership wins, so a lax second organization cannot extend it."""
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            strict, lax = await _tenant(db, ids), await _tenant(db, ids)
+            strict.session_max_minutes, strict.session_idle_minutes = 480, 120
+            await db.commit()
+            u = await _user(db, ids, "p", [(lax, "analyst"), (strict, "viewer")])
+        access, refresh = await _spa_login(c, u.email)
+        async with AsyncSessionLocal() as db:
+            row = await db.get(AuthSession, _claims(access)["sid"])
+            row.created_at -= timedelta(hours=7)
+            await db.commit()
+        r = await _call(c, "POST", REFRESH, refresh=refresh, headers=XRW)
+        assert r.status_code == 200, r.text  # inside both limits
+        for field, age in (("created_at", timedelta(hours=9)), ("last_used_at", timedelta(hours=3))):
+            access, refresh = await _spa_login(c, u.email)
+            async with AsyncSessionLocal() as db:
+                row = await db.get(AuthSession, _claims(access)["sid"])
+                setattr(row, field, getattr(row, field) - age)
+                await db.commit()
+            r = await _call(c, "POST", REFRESH, refresh=refresh, headers=XRW)
+            assert r.status_code == 401, (field, r.text)
+            assert (await _row(_claims(access)["sid"])).revoked_at is not None
+            assert (await _call(c, "GET", "/api/v1/users/me", access=access)).status_code == 401
+    _go(body)
+
+
+def test_org_session_policy_api():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _tenant(db, ids)
+            u = await _user(db, ids, "adm", [(t, "admin")])
+        access, _ = await _spa_login(c, u.email)
+        url = "/api/v1/tenants/current/security"
+        bad = await _call(c, "PUT", url, access=access, headers=XRW, json={"session_idle_minutes": 30})
+        assert bad.status_code == 422  # below the 2 h floor
+        ok = await _call(c, "PUT", url, access=access, headers=XRW, json={"session_idle_minutes": 240, "session_max_minutes": 720})
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["session_idle_minutes"] == 240 and ok.json()["session_max_minutes"] == 720
+        # Omitted = unchanged; null = back to the platform default.
+        r = await _call(c, "PUT", url, access=access, headers=XRW, json={"session_max_minutes": None})
+        assert r.json()["session_idle_minutes"] == 240 and r.json()["session_max_minutes"] is None
+    _go(body)

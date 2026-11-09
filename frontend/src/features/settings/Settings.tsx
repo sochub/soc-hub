@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer } from 'lucide-react';
+import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer, Clock } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { TenantOAuthSession, LoginMethod, SLAPolicyItem, SSOConfig, User } from '../../types';
@@ -102,6 +102,56 @@ function SLAPoliciesSection() {
                         {save.isPending ? <Loader2 size={14} className="animate-spin" /> : savedFlash ? <Check size={14} /> : <Save size={14} />}
                         {savedFlash ? 'Saved' : 'Save SLA policies'}
                     </button>
+                </div>
+            )}
+        </section>
+    );
+}
+
+const IDLE_CHOICES: [string, number | null][] = [['Default (30 days)', null], ['2 hours', 120], ['4 hours', 240], ['8 hours', 480], ['24 hours', 1440], ['7 days', 10080]];
+const MAX_CHOICES: [string, number | null][] = [['No limit (default)', null], ['8 hours', 480], ['12 hours', 720], ['24 hours', 1440], ['7 days', 10080], ['30 days', 43200]];
+type SessionPolicy = { session_idle_minutes: number | null; session_max_minutes: number | null };
+
+function SessionPolicySection() {
+    const qc = useQueryClient();
+    const { data, isLoading } = useQuery({
+        queryKey: ['tenant-security'],
+        queryFn: async () => (await api.get('/tenants/current/security')).data as SessionPolicy,
+    });
+    const save = useMutation({
+        mutationFn: async (patch: Partial<SessionPolicy>) => (await api.put('/tenants/current/security', patch)).data,
+        onSuccess: (d) => qc.setQueryData(['tenant-security'], d),
+    });
+    const select = (label: string, key: keyof SessionPolicy, choices: [string, number | null][]) => (
+        <label className="flex flex-col gap-1 text-xs text-fg-2">
+            {label}
+            <select value={data?.[key] ?? ''} disabled={save.isPending} aria-label={label}
+                onChange={(e) => save.mutate({ [key]: e.target.value ? Number(e.target.value) : null })}
+                className="bg-panel border border-line rounded-lg px-2.5 py-1.5 text-sm text-fg w-48">
+                {choices.map(([l, v]) => <option key={l} value={v ?? ''}>{l}</option>)}
+            </select>
+        </label>
+    );
+    return (
+        <section className="bg-panel border border-line">
+            <div className="flex items-center justify-between px-4 h-11 border-b border-line">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <Clock size={15} className="text-accent" /> Session length
+                </h2>
+            </div>
+            {isLoading || !data ? (
+                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+            ) : (
+                <div className="p-4 space-y-3">
+                    <div className="flex flex-wrap gap-4">
+                        {select('Sign out after inactivity', 'session_idle_minutes', IDLE_CHOICES)}
+                        {select('Require sign-in again after', 'session_max_minutes', MAX_CHOICES)}
+                    </div>
+                    <p className="text-xs text-fg-3">
+                        Applies to browser sign-ins of every member. Someone who belongs to several organizations gets the strictest setting.
+                        Limits are checked when the session renews, so a sign-out can come up to an hour late. API tokens and MCP clients are not affected.
+                    </p>
+                    {save.isError && <p role="alert" className="text-xs text-red-300">{mfaErrorMessage(save.error, 'Could not update the setting.')}</p>}
                 </div>
             )}
         </section>
@@ -453,6 +503,7 @@ export default function Settings() {
             )}
 
             {isAdmin && <MfaRequirementSection />}
+            {isAdmin && <SessionPolicySection />}
             {isAdmin && <McpSection />}
             {isAdmin && <GuestSettingsSection />}
             {isAdmin && <SLAPoliciesSection />}

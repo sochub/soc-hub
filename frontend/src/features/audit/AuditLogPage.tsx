@@ -14,6 +14,10 @@ const CATEGORIES = [
 const PRESETS = [{ key: '1', label: '24h' }, { key: '7', label: '7d' }, { key: '30', label: '30d' }] as const;
 
 const SEARCH_DEBOUNCE_MS = 300;
+// Filter bar: every field is label-above-control and every control is h-8, so the row shares one baseline.
+const fieldWrap = 'flex flex-col gap-1';
+const fieldLabel = 'text-xs font-medium text-fg-3';
+const control = 'h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg';
 
 function sinceDays(days: string): string | undefined {
     if (!days || days === 'custom') return undefined;
@@ -115,24 +119,24 @@ export default function AuditLogPage() {
                         </button>
                     ))}
                 </div>
-                <div>
-                    <Label htmlFor="audit-user">User</Label>
+                <div className={fieldWrap}>
+                    <Label htmlFor="audit-user" className={fieldLabel}>User</Label>
                     <select id="audit-user" value={userId} onChange={(e) => setUserId(e.target.value)}
-                        className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg">
+                        className={control}>
                         <option value="">Anyone</option>
                         {facets.data?.users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
                     </select>
                 </div>
-                <div className="min-w-[14rem] flex-1">
-                    <Label htmlFor="audit-action">Action</Label>
-                    <Input id="audit-action" list="audit-actions" value={actionInput} onChange={(e) => onActionChange(e.target.value)}
+                <div className={`${fieldWrap} min-w-[14rem] flex-1`}>
+                    <Label htmlFor="audit-action" className={fieldLabel}>Action</Label>
+                    <Input className="h-8 py-0 px-2 text-xs rounded-md bg-raised" id="audit-action" list="audit-actions" value={actionInput} onChange={(e) => onActionChange(e.target.value)}
                         placeholder="e.g. login., PUT /api/v1/cases" />
                     <datalist id="audit-actions">{facets.data?.actions.map((a) => <option key={a} value={a} />)}</datalist>
                 </div>
-                <div>
-                    <Label htmlFor="audit-outcome">Outcome</Label>
+                <div className={fieldWrap}>
+                    <Label htmlFor="audit-outcome" className={fieldLabel}>Outcome</Label>
                     <select id="audit-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}
-                        className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg">
+                        className={control}>
                         <option value="">Any</option><option value="success">Success</option>
                         <option value="denied">Denied</option><option value="error">Error</option>
                     </select>
@@ -151,26 +155,26 @@ export default function AuditLogPage() {
                 </div>
                 {days === 'custom' && (
                     <div className="flex items-end gap-2">
-                        <div>
-                            <Label htmlFor="audit-from">From</Label>
+                        <div className={fieldWrap}>
+                            <Label htmlFor="audit-from" className={fieldLabel}>From</Label>
                             <input id="audit-from" type="date" value={customFrom} max={customTo || undefined}
                                 onChange={(e) => setCustomFrom(e.target.value)}
-                                className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg" />
+                                className={control} />
                         </div>
-                        <div>
-                            <Label htmlFor="audit-to">To</Label>
+                        <div className={fieldWrap}>
+                            <Label htmlFor="audit-to" className={fieldLabel}>To</Label>
                             <input id="audit-to" type="date" value={customTo} min={customFrom || undefined}
                                 onChange={(e) => setCustomTo(e.target.value)}
-                                className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg" />
+                                className={control} />
                         </div>
                     </div>
                 )}
                 {me?.is_super_admin && (
-                    <label className="flex items-center gap-2 text-xs text-fg-2">
+                    <label className="flex items-center gap-2 h-8 text-xs text-fg-2 whitespace-nowrap">
                         <input type="checkbox" checked={platform} onChange={(e) => setPlatform(e.target.checked)} /> Platform events
                     </label>
                 )}
-                <Button size="sm" variant="secondary" onClick={exportCsv} disabled={exporting}><Download size={13} /> Export CSV</Button>
+                <Button size="sm" variant="secondary" className="ml-auto" onClick={exportCsv} disabled={exporting}><Download size={13} /> Export CSV</Button>
             </div>
             {exportError && <p role="alert" className="text-sm text-severity-critical">{exportError}</p>}
             {log.isError && <p role="alert" className="text-sm text-severity-critical">Could not load the audit log.</p>}

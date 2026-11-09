@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -282,15 +282,39 @@ async def mfa_reset(
     return Response(status_code=204)
 
 
+# Idle floor is 2 h: last_used_at only moves on refresh, which an active browser does every 60 min.
+SESSION_IDLE_CHOICES = {120, 240, 480, 1440, 10080}
+SESSION_MAX_CHOICES = {480, 720, 1440, 10080, 43200}
+
+
 class SecurityOut(BaseModel):
     require_mfa: bool
     members_without_mfa: int
     mcp_enabled: bool
+    session_idle_minutes: Optional[int] = None
+    session_max_minutes: Optional[int] = None
 
 
 class SecurityIn(BaseModel):
     require_mfa: Optional[bool] = None
     mcp_enabled: Optional[bool] = None
+    # Sent as null = back to the platform default; omitted = unchanged.
+    session_idle_minutes: Optional[int] = None
+    session_max_minutes: Optional[int] = None
+
+    @field_validator("session_idle_minutes")
+    @classmethod
+    def _idle(cls, v):
+        if v is not None and v not in SESSION_IDLE_CHOICES:
+            raise ValueError(f"must be one of {sorted(SESSION_IDLE_CHOICES)} or null")
+        return v
+
+    @field_validator("session_max_minutes")
+    @classmethod
+    def _max(cls, v):
+        if v is not None and v not in SESSION_MAX_CHOICES:
+            raise ValueError(f"must be one of {sorted(SESSION_MAX_CHOICES)} or null")
+        return v
 
 
 async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
@@ -302,7 +326,8 @@ async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
                User.mfa_enabled_at.is_(None), User.password_login_enabled.is_(True))
     )).scalar_one()
     return SecurityOut(require_mfa=bool(tenant.require_mfa), members_without_mfa=int(n),
-                       mcp_enabled=bool(tenant.mcp_enabled))
+                       mcp_enabled=bool(tenant.mcp_enabled),
+                       session_idle_minutes=tenant.session_idle_minutes, session_max_minutes=tenant.session_max_minutes)
 
 
 @security_router.get("/current/security", response_model=SecurityOut)
@@ -342,6 +367,15 @@ async def update_tenant_security(
         await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
                                action="tenant.mcp_toggled", tenant_id=tenant.id,
                                user_id=current_user.id, changes={"mcp_enabled": body.mcp_enabled})
+        changed = True
+    policy = {k: getattr(body, k) for k in ("session_idle_minutes", "session_max_minutes")
+              if k in body.model_fields_set and getattr(tenant, k) != getattr(body, k)}
+    if policy:
+        for k, v in policy.items():
+            setattr(tenant, k, v)
+        await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
+                               action="tenant.session_policy_changed", tenant_id=tenant.id,
+                               user_id=current_user.id, changes=policy)
         changed = True
     if changed:
         await db.commit()
