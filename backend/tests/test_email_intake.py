@@ -309,6 +309,43 @@ def test_cap_of_50_per_cycle(monkeypatch, tmp_path):
     run(body())
 
 
+def test_failing_message_rolls_back_cleans_blobs_and_leaves_others(monkeypatch, tmp_path):
+    import pytest
+    good = make_mail(mid="<good@example.test>", attachments=[("g.txt", b"good", "text/plain")])
+    bad = make_mail(mid="<bad@example.test>", attachments=[("b.txt", b"bad", "text/plain")])
+    real = email_intake.create_run
+
+    async def flaky(db, wf, **kw):
+        if kw["trigger_payload"]["email"]["message_id"] == "<bad@example.test>":
+            raise RuntimeError("boom secret detail")
+        return await real(db, wf, **kw)
+    monkeypatch.setattr(email_intake, "create_run", flaky)
+
+    async def body():
+        async with env(monkeypatch, tmp_path, messages=[good, bad]) as (e, db, mb):
+            await add_workflow(db, e)
+            with pytest.raises(email_intake.MailboxError) as exc:
+                await email_intake.poll_mailbox(db, mb)
+            assert str(exc.value) == "1 message(s) could not be processed" and "boom" not in str(exc.value)
+            assert await seen_ids(db, e) == {"<good@example.test>"}
+            assert sorted(a.filename for a in await artifacts(db, e) if a.kind == "attachment") == ["g.txt"]
+            assert len([p for p in tmp_path.rglob("*") if p.is_file()]) == 2  # the bad message's blobs are gone
+            f = e.fake
+            assert f.seen == ["1"] and f.deleted == ["1"] and f.copied == [("1", "Processed")]  # bad stays unseen
+            assert len(e.delayed) == 1
+    run(body())
+
+
+def test_filter_on_missing_header_is_no_match_not_a_crash(monkeypatch, tmp_path):
+    async def body():
+        async with env(monkeypatch, tmp_path, messages=[make_mail(date=None)]) as (e, db, mb):
+            await add_workflow(db, e, trigger_filter="email.date.startswith('2026')")
+            await add_workflow(db, e, trigger_filter="email.date > 'x'")
+            assert await email_intake.poll_mailbox(db, mb) == 1
+            assert e.delayed == [] and await seen_ids(db, e) == {"<m1@example.test>"}
+    run(body())
+
+
 def test_failed_copy_never_deletes_or_expunges(monkeypatch, tmp_path):
     async def body():
         async with env(monkeypatch, tmp_path, messages=[make_mail()], copy_fails=True) as (e, db, mb):
