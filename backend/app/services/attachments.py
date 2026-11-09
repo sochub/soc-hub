@@ -95,7 +95,8 @@ async def _file_chunks(f):
 
 async def store_upload(db, *, case, user_id, filename, content_type, chunks: AsyncIterator[bytes], is_malicious,
                        description, storage=None, max_bytes: Optional[int] = None,
-                       guest_id: Optional[int] = None, actor: Optional[str] = None) -> CaseAttachment:
+                       guest_id: Optional[int] = None, actor: Optional[str] = None,
+                       is_inline: bool = False) -> CaseAttachment:
     storage = storage or get_storage()
     max_bytes = max_bytes if max_bytes is not None else settings.MAX_UPLOAD_MB * 1024 * 1024
     name = sanitize_filename(filename)
@@ -129,7 +130,7 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
                 raise EmptyFile()
         row = CaseAttachment(tenant_id=case.tenant_id, case_id=case.id, filename=name,
                              content_type=clean_content_type(content_type), size_bytes=size,
-                             sha256=h.hexdigest(), is_malicious=bool(is_malicious), storage_key=key,
+                             sha256=h.hexdigest(), is_malicious=bool(is_malicious), is_inline=bool(is_inline), storage_key=key,
                              description=description, uploaded_by=user_id, uploaded_by_guest_id=guest_id)
         db.add(row)
         await db.flush()

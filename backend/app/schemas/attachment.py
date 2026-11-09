@@ -14,6 +14,7 @@ class AttachmentOut(BaseModel):
     size_bytes: int
     sha256: str
     is_malicious: bool
+    is_inline: bool = False
     description: Optional[str] = None
     uploaded_by: Optional[int] = None
     uploaded_by_email: Optional[str] = None

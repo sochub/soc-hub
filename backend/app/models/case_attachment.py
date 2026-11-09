@@ -15,6 +15,7 @@ class CaseAttachment(Base):
     size_bytes = Column(BigInteger, nullable=False)
     sha256 = Column(String(64), nullable=False, index=True)
     is_malicious = Column(Boolean, nullable=False, server_default="false", default=False)
+    is_inline = Column(Boolean, nullable=False, server_default="false", default=False)
     storage_key = Column(String, nullable=False, unique=True)
     description = Column(String(1000), nullable=True)
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)

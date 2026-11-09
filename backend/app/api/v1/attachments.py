@@ -24,6 +24,7 @@ from app.utils.audit import create_audit_log
 router = APIRouter()
 logger = logging.getLogger(__name__)
 # Never log file names, contents or storage keys: ids, sizes, flags and outcomes only.
+INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _LOG = "attachment %s tenant=%s case=%s id=%s size=%s malicious=%s outcome=%s"
 
 
@@ -96,16 +97,19 @@ async def upload_attachment(
     file: UploadFile = File(...),
     is_malicious: bool = Form(False),
     description: Optional[str] = Form(None, max_length=1000),
+    inline: bool = Form(False),
     current_user: User = Depends(deps.require_analyst_or_above),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     case = await _case(db, case_id, tenant_id)
+    if inline and file.content_type not in INLINE_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail="Inline uploads must be PNG, JPEG, GIF or WebP images")
     # store_upload rolls the session back on failure, expiring every ORM instance: capture plain values first.
     user_id, malicious = current_user.id, bool(is_malicious)
     try:
         row = await store_upload(db, case=case, user_id=user_id, filename=file.filename or "",
                                  content_type=file.content_type, chunks=_upload_chunks(file),
-                                 is_malicious=malicious, description=description)
+                                 is_malicious=malicious, description=description, is_inline=bool(inline))
     except TooLarge:
         logger.info(_LOG, "upload", tenant_id, case_id, None, None, malicious, "too_large")
         raise HTTPException(status_code=413, detail=f"File exceeds {settings.MAX_UPLOAD_MB} MB")
@@ -126,6 +130,7 @@ async def list_attachments(
     db: AsyncSession = Depends(deps.get_db),
     case_id: int,
     include_deleted: bool = Query(False),
+    include_inline: bool = Query(False),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
@@ -135,7 +140,45 @@ async def list_attachments(
     where = [CaseAttachment.case_id == case_id, CaseAttachment.tenant_id == tenant_id]
     if not include_deleted:
         where.append(CaseAttachment.deleted_at.is_(None))
+    if not include_inline:
+        where.append(CaseAttachment.is_inline.is_(False))
     return AttachmentList(max_upload_mb=settings.MAX_UPLOAD_MB, items=await _out(db, *where))
+
+
+@router.get("/{case_id}/attachments/{att_id}/raw")
+async def raw_attachment(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    case_id: int,
+    att_id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Serve an inline image for <img> rendering. Deliberately not audit_read: inline reads are audit-exempt."""
+    a = await _found(db, "raw", case_id, att_id, tenant_id)
+    if not a.is_inline:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    key, ctype = a.storage_key, a.content_type
+    it = None
+    try:
+        it = get_storage().open(key)
+        first = await it.__anext__()
+    except StopAsyncIteration:
+        first = b""
+    except (FileNotFoundError, StorageError):
+        if it is not None:
+            await it.aclose()
+        raise HTTPException(status_code=500, detail="Attachment content unavailable")
+    except BaseException:
+        if it is not None:
+            await it.aclose()
+        raise
+    return StreamingResponse(_chain(first, it), media_type=ctype, headers={
+        "Content-Disposition": "inline",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox",
+        "Cache-Control": "private, max-age=300",
+    })
 
 
 @router.get("/{case_id}/attachments/{att_id}/download", dependencies=[audit_read("attachment.download")])
