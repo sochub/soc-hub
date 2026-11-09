@@ -45,8 +45,11 @@ async def misp_push(case_id: int, body: MispPushIn, db: AsyncSession = Depends(d
     try:
         res = await push_iocs(db, tenant_id=tenant_id, case=case, iocs=iocs, misp_cfg=cfg)
     except MispPushError as e:
-        await db.commit()  # keep an event link created before the failure so a retry reuses it
-        raise HTTPException(status_code=502, detail=str(e)) from None
+        # Keep an event link created before the failure (a retry reuses it) and record what already left the tenant.
+        await create_audit_log(db, "case", case_id, "misp_push", tenant_id, user_id=current_user.id,
+                               changes={"partial": True, "pushed": len(e.pushed), "skipped": len(e.skipped)})
+        await db.commit()
+        raise HTTPException(status_code=502, detail={"message": str(e), "pushed_ids": e.pushed}) from None
     await create_audit_log(db, "case", case_id, "misp_push", tenant_id, user_id=current_user.id,
                            changes={"pushed": len(res["pushed"]), "skipped": len(res["skipped"]),
                                     "event_uuid": res["event_uuid"]})

@@ -15,11 +15,15 @@ TRANSPORT: Optional[httpx.AsyncBaseTransport] = None  # test seam
 _TYPE_MAP = {"ip_address": "ip-dst", "domain": "domain", "url": "url", "email": "email-src",
              "registry_key": "regkey", "mutex": "mutex", "user_agent": "user-agent"}
 _HASH_LEN = {32: "md5", 40: "sha1", 64: "sha256"}
-_DUP_WORDS = ("already exist", "similar attribute", "duplicate")
+_DUP_WORDS = ("already exist", "similar attribute")
 
 
 class MispPushError(Exception):
     """Message is safe to show to users (never contains the API key)."""
+
+    def __init__(self, message: str, pushed=None, skipped=None):
+        super().__init__(message)
+        self.pushed, self.skipped = list(pushed or []), list(skipped or [])
 
 
 def misp_type(ioc) -> Optional[str]:
@@ -37,7 +41,7 @@ def _skip_reason(ioc) -> Optional[str]:
 
 
 def _is_duplicate(resp: httpx.Response) -> bool:
-    if resp.status_code < 400:
+    if resp.status_code not in (403, 422):
         return False
     return any(w in resp.text.lower() for w in _DUP_WORDS)
 
@@ -87,9 +91,10 @@ async def push_iocs(db, *, tenant_id: int, case, iocs, misp_cfg: dict) -> dict:
                     pushed.append(ioc.id)
                 else:
                     raise MispPushError(f"MISP request failed (HTTP {resp.status_code})")
-    except MispPushError:
+    except MispPushError as e:
+        e.pushed, e.skipped = pushed, skipped
         raise
     except (httpx.HTTPError, ValueError, AttributeError):
-        raise MispPushError("MISP request failed") from None
+        raise MispPushError("MISP request failed", pushed, skipped) from None
     return {"event_uuid": link.external_id if link else None, "event_url": link.url if link else None,
             "pushed": pushed, "skipped": skipped}

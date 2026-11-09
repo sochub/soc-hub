@@ -184,3 +184,39 @@ async def test_misp_error_is_502_without_key():
         r = await c.post(URL.format(ids["c1"]), json={"ioc_ids": [ids["iocs"]["ip"]]})
         assert r.status_code == 502 and KEY not in r.text
     await _run(body, fake=handler)
+
+
+@pytest.mark.asyncio
+async def test_db_duplicate_entry_500_is_not_pushed():
+    def handler(req):
+        if req.url.path == "/events/add":
+            return httpx.Response(200, json={"Event": {"id": "5", "uuid": "uuid-1234"}})
+        return httpx.Response(500, text="SQLSTATE Duplicate entry for key")
+
+    async def body(c, ids, fake):
+        r = await c.post(URL.format(ids["c1"]), json={"ioc_ids": [ids["iocs"]["ip"]]})
+        assert r.status_code == 502 and r.json()["detail"]["pushed_ids"] == []
+    await _run(body, fake=handler)
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_audited_and_ids_returned():
+    n = {"attrs": 0}
+
+    def handler(req):
+        if req.url.path == "/events/add":
+            return httpx.Response(200, json={"Event": {"id": "5", "uuid": "uuid-1234"}})
+        n["attrs"] += 1
+        return httpx.Response(200, json={}) if n["attrs"] == 1 else httpx.Response(500, text=KEY)
+
+    async def body(c, ids, fake):
+        i = ids["iocs"]
+        r = await c.post(URL.format(ids["c1"]), json={"ioc_ids": [i["ip"], i["md5"]]})
+        assert r.status_code == 502 and KEY not in r.text
+        assert r.json()["detail"]["pushed_ids"] == [i["ip"]]
+        async with AsyncSessionLocal() as s:
+            a = (await s.execute(select(AuditLog).where(AuditLog.tenant_id == ids["t"],
+                                                       AuditLog.action == "misp_push"))).scalars().all()
+            assert len(a) == 1 and a[0].changes["partial"] is True and a[0].changes["pushed"] == 1
+            assert (await s.execute(select(CaseLink).where(CaseLink.case_id == ids["c1"]))).scalars().first()
+    await _run(body, fake=handler)
