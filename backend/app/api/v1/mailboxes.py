@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.models.tenant_mailbox import TenantMailbox
 from app.models.user import User
-from app.schemas.mailbox import MailboxIn, MailboxOut, MailboxTestResult
+from app.schemas.mailbox import MailboxIn, MailboxOut, MailboxUpdate, MailboxTestResult
 from app.services import email_intake
+from app.services.email_intake import validate_mailbox_host
 from app.utils.audit import create_audit_log
 from app.utils.crypto import encrypt
 
@@ -25,6 +26,11 @@ async def _get(db: AsyncSession, tenant_id: int, mailbox_id: int) -> TenantMailb
     if not mb:
         raise HTTPException(status_code=404, detail="Mailbox not found")
     return mb
+
+
+def _check_host(host: str) -> None:
+    if (err := validate_mailbox_host(host)):
+        raise HTTPException(status_code=422, detail=err)
 
 
 def _out(mb: TenantMailbox) -> MailboxOut:
@@ -47,6 +53,7 @@ async def create_mailbox(body: MailboxIn, db: AsyncSession = Depends(deps.get_db
                          tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     if not body.password:
         raise HTTPException(status_code=422, detail="A password is required")
+    _check_host(body.host)
     mb = TenantMailbox(tenant_id=tenant_id, password_enc=encrypt(body.password),
                        **body.model_dump(include=set(_FIELDS)))
     db.add(mb)
@@ -59,12 +66,16 @@ async def create_mailbox(body: MailboxIn, db: AsyncSession = Depends(deps.get_db
 
 
 @router.put("/{mailbox_id}", response_model=MailboxOut)
-async def update_mailbox(mailbox_id: int, body: MailboxIn, db: AsyncSession = Depends(deps.get_db),
+async def update_mailbox(mailbox_id: int, body: MailboxUpdate, db: AsyncSession = Depends(deps.get_db),
                          current_user: User = Depends(deps.require_admin),
                          tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     mb = await _get(db, tenant_id, mailbox_id)
-    for k, v in body.model_dump(include=set(_FIELDS)).items():
-        setattr(mb, k, v)
+    if body.host is not None:
+        _check_host(body.host)
+    # Partial update: only fields the client sent change.
+    for k, v in body.model_dump(include=set(_FIELDS), exclude_unset=True).items():
+        if v is not None:
+            setattr(mb, k, v)
     if body.password:
         mb.password_enc = encrypt(body.password)
     await create_audit_log(db=db, entity_type="mailbox", entity_id=mb.id, action="updated", tenant_id=tenant_id,

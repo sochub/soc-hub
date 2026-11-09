@@ -2,6 +2,8 @@
 import asyncio
 import secrets
 
+import pytest
+
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import delete, select
@@ -17,6 +19,20 @@ from app.models.user import User
 from app.utils.crypto import decrypt
 
 PW = "S3cr3t-Pass-xyz"
+
+
+def _resolve(monkeypatch, ip):
+    """Stub DNS only inside email_intake (patching socket globally would break the DB driver)."""
+    from types import SimpleNamespace
+    from app.services import email_intake
+    monkeypatch.setattr(email_intake, "socket", SimpleNamespace(
+        getaddrinfo=lambda *a, **k: [(2, 1, 6, "", (ip, 0))]))
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch):
+    """Resolve every test host to a public address unless a test overrides it."""
+    _resolve(monkeypatch, "93.184.216.34")
 
 
 def _deny():
@@ -145,6 +161,80 @@ def test_connection_endpoint(monkeypatch):
     asyncio.run(_scenario(body))
 
 
+def test_put_partial_update():
+    async def body(c, s, tids):
+        mid = (await c.post("/api/v1/mailboxes/", json=_body(port=1143, folder="Phish", poll_interval_seconds=300,
+                                                            enabled=False))).json()["id"]
+        r = await c.put(f"/api/v1/mailboxes/{mid}", json={"name": "x"})
+        assert r.status_code == 200, r.text
+        o = r.json()
+        assert (o["name"], o["port"], o["folder"], o["poll_interval_seconds"], o["enabled"]) == \
+            ("x", 1143, "Phish", 300, False)
+        assert decrypt((await _row(mid)).password_enc) == PW
+    asyncio.run(_scenario(body))
+
+
+def test_private_host_rejected_on_save_and_test(monkeypatch):
+    from app.core.config import settings
+
+    async def body(c, s, tids):
+        _resolve(monkeypatch, "10.0.0.5")
+        r = await c.post("/api/v1/mailboxes/", json=_body())
+        assert r.status_code == 422 and "MAILBOX_PRIVATE_HOSTS" in r.text
+        # allowlisted host is accepted
+        monkeypatch.setattr(settings, "MAILBOX_PRIVATE_HOSTS", ["imap.example.test"])
+        mid = (await c.post("/api/v1/mailboxes/", json=_body())).json()["id"]
+        monkeypatch.setattr(settings, "MAILBOX_PRIVATE_HOSTS", [])
+        assert (await c.put(f"/api/v1/mailboxes/{mid}", json={"host": "imap.example.test"})).status_code == 422
+        r = await c.post(f"/api/v1/mailboxes/{mid}/test")
+        assert r.json()["ok"] is False and "MAILBOX_PRIVATE_HOSTS" in r.json()["error"]
+    asyncio.run(_scenario(body))
+
+
+def _mb(use_ssl=True):
+    from app.utils.crypto import encrypt
+    return TenantMailbox(host="imap.example.test", port=993, use_ssl=use_ssl, username="u",
+                         password_enc=encrypt(PW), folder="INBOX")
+
+
+def test_starttls_refused_no_cleartext_login(monkeypatch):
+    import imaplib
+    from app.services import email_intake
+    calls = []
+
+    class Plain:
+        capabilities = ("IMAP4REV1",)
+        def __init__(self, *a, **k): pass
+        def login(self, *a): calls.append("login")
+        def logout(self): pass
+    monkeypatch.setattr(imaplib, "IMAP4", Plain)
+    res = email_intake.test_connection(_mb(use_ssl=False))
+    assert res == {"ok": False, "message_count": None, "error": "server does not support STARTTLS"}
+    assert calls == []
+
+
+def test_ssl_uses_verified_context_and_generic_errors(monkeypatch):
+    import imaplib
+    import ssl
+    from app.services import email_intake
+    seen = {}
+
+    class Bad:
+        state = "NONAUTH"
+        def __init__(self, *a, **k): seen.update(k)
+        def login(self, *a): raise imaplib.IMAP4.error("[AUTH] banner-secret Dovecot 2.3 at mail.internal")
+        def logout(self): pass
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", Bad)
+    res = email_intake.test_connection(_mb())
+    assert res["error"] == "authentication failed" and "Dovecot" not in res["error"]
+    ctx = seen["ssl_context"]
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+
+    def tls(*a, **k): raise ssl.SSLError("cert for internal.corp invalid")
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", tls)
+    assert email_intake.test_connection(_mb())["error"] == "TLS handshake failed"
+
+
 def test_test_connection_scrubs_password(monkeypatch):
     import imaplib
     from app.services import email_intake
@@ -156,4 +246,4 @@ def test_test_connection_scrubs_password(monkeypatch):
     monkeypatch.setattr(imaplib, "IMAP4_SSL", Boom)
     mb = TenantMailbox(host="h", port=993, use_ssl=True, username="u", password_enc=encrypt(PW), folder="INBOX")
     res = email_intake.test_connection(mb)
-    assert res["ok"] is False and PW not in res["error"] and res["message_count"] is None
+    assert res == {"ok": False, "message_count": None, "error": "connection failed"}

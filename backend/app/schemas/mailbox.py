@@ -17,6 +17,20 @@ class MailboxIn(BaseModel):
     fallback_create_alert: bool = False
 
 
+class MailboxUpdate(BaseModel):
+    """Partial update: omitted fields keep their stored value."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    host: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    port: Optional[int] = Field(default=None, ge=1, le=65535)
+    use_ssl: Optional[bool] = None
+    username: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    password: Optional[str] = None
+    folder: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    poll_interval_seconds: Optional[int] = Field(default=None, ge=60)
+    enabled: Optional[bool] = None
+    fallback_create_alert: Optional[bool] = None
+
+
 class MailboxOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
