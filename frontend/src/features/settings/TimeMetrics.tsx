@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import PageContainer from '../../components/layout/PageContainer';
 import { Button, Input } from '../../components/ui';
 import { formatDuration } from '../cases/timeApi';
 
@@ -41,8 +42,9 @@ export default function TimeMetrics() {
     };
 
     return (
-        <div className="space-y-6">
-            <h1 className="text-xl font-semibold text-fg">Time spent</h1>
+        <PageContainer>
+            <div className="space-y-6">
+            <h1 className="text-3xl font-bold text-fg tracking-tight">Time spent</h1>
             <div className="flex flex-wrap items-end gap-3">
                 <label className="text-xs text-muted">From
                     <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="mt-1" />
@@ -76,6 +78,7 @@ export default function TimeMetrics() {
                     </tbody>
                 </table>
             )}
-        </div>
+            </div>
+        </PageContainer>
     );
 }
