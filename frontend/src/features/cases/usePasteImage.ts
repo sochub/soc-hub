@@ -34,11 +34,14 @@ export function usePasteImage(caseId: number, getTextarea: () => HTMLTextAreaEle
             const fd = new FormData();
             fd.append('file', file);
             fd.append('inline', 'true');
-            const { data } = await api.post(`/cases/${caseId}/attachments`, fd);
-            replaceText(ta, placeholder, `![${name}](/api/v1/cases/${caseId}/attachments/${data.id}/raw)`);
+            const { data } = await api.post(`/cases/${caseId}/attachments`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
             qc.invalidateQueries({ queryKey: ['attachments', caseId] });
+            // The editor may have unmounted mid-upload (preview toggle, cancel, save): re-resolve, never write to a detached node.
+            const live = getTextarea();
+            if (live?.isConnected) replaceText(live, placeholder, `![${name}](/api/v1/cases/${caseId}/attachments/${data.id}/raw)`);
         } catch (e) {
-            replaceText(ta, placeholder, '');
+            const live = getTextarea();
+            if (live?.isConnected) replaceText(live, placeholder, '');
             setError(detail(e));
         }
     };
@@ -56,7 +59,7 @@ export function usePasteImage(caseId: number, getTextarea: () => HTMLTextAreaEle
     };
 
     return {
-        onPaste: (ev: ClipboardEvent) => handle(Array.from(ev.clipboardData.files), ev),
+        onPaste: (ev: ClipboardEvent) => ev.clipboardData.getData('text/plain') ? undefined : handle(Array.from(ev.clipboardData.files), ev),
         onDrop: (ev: DragEvent) => handle(Array.from(ev.dataTransfer.files), ev),
         error,
     };
