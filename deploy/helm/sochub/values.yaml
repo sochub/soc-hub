@@ -24,6 +24,10 @@ existingSecret: ""
 # DATABASE_URL / REDIS_URL: leave empty to derive from the bundled postgresql / redis subcharts;
 # REQUIRED when those subcharts are disabled.
 secrets:
+  # generate=true (default, quickstart): empty SECRET_KEY/ENCRYPTION_KEY are generated once and kept via lookup.
+  # GitOps (ArgoCD/Flux render without cluster access, so lookup is empty and keys would rotate on every
+  # sync, making stored credentials undecryptable): set generate=false and provide the keys or existingSecret.
+  generate: true
   SECRET_KEY: ""
   ENCRYPTION_KEY: ""
   DATABASE_URL: ""   # e.g. postgresql+asyncpg://user:pass@host:5432/sicms
@@ -54,10 +58,10 @@ smtp:
   password: ""
   fromEmail: ""
 
-# Extra env vars for api, worker and migrate (full k8s EnvVar syntax), e.g.
+# Extra env vars for api, worker, slack-socket and migrate (full k8s EnvVar syntax), e.g.
 #   extraEnv:
 #     - {name: AWS_ACCESS_KEY_ID, valueFrom: {secretKeyRef: {name: s3, key: id}}}
-extraEnv: []
+extraEnv: []   # applied to api, worker, slack-socket and migrate
 
 api:
   replicas: 1

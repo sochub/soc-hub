@@ -15,7 +15,12 @@ kubectl port-forward svc/sochub-frontend 8080:8080
 kubectl exec -it deploy/sochub-api -- python -m app.scripts.create_super_admin --email you@example.com
 ```
 
-SECRET_KEY and ENCRYPTION_KEY are generated on first install and preserved across upgrades.
+> **Key management (read this).** With the default `secrets.generate=true`, SECRET_KEY and ENCRYPTION_KEY are
+> generated on first install and kept across upgrades via a cluster `lookup`. **GitOps/ArgoCD/Flux users MUST set
+> `secrets.generate=false`** and provide the keys (or `existingSecret`): those tools render without cluster access,
+> so keys would rotate on every sync and all stored integration credentials become undecryptable. The generated
+> Secret is kept on uninstall (`resource-policy: keep`); reinstalling over an existing database requires the
+> original ENCRYPTION_KEY or all stored credentials are lost. Back the keys up.
 The bundled database passwords are placeholders: evaluation only.
 
 ## Production checklist

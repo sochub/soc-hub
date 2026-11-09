@@ -41,6 +41,9 @@ spec:
             {{- include "sochub.secretEnv" . | nindent 12 }}
             - name: ENVIRONMENT
               value: {{ .Values.config.environment | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

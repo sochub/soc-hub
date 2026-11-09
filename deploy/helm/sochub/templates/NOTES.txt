@@ -12,5 +12,5 @@ Create the first super admin:
   kubectl --namespace {{ .Release.Namespace }} exec -it deploy/{{ include "sochub.fullname" . }}-api -- python -m app.scripts.create_super_admin --email you@example.com
 {{- if not .Values.existingSecret }}
 
-SECRET_KEY / ENCRYPTION_KEY were generated if left empty and are kept across upgrades. Back them up.
+SECRET_KEY / ENCRYPTION_KEY were generated if left empty and are kept across upgrades. Back them up; GitOps users must set secrets.generate=false (keys rotate otherwise).
 {{- end }}

@@ -29,17 +29,10 @@ spec:
           image: {{ include "sochub.backendImage" . }}
           imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
           command: ["python", "-m", "app.slack_socket"]
+          envFrom:
+            {{- include "sochub.backendEnvFrom" . | nindent 12 }}
           env:
-            {{- $name := include "sochub.secretName" . }}
-            {{- range $k := list "DATABASE_URL" "REDIS_URL" }}
-            - name: {{ $k }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $name }}
-                  key: {{ $k }}
-            {{- end }}
-            - name: ENVIRONMENT
-              value: {{ .Values.config.environment | quote }}
+            {{- include "sochub.backendEnv" . | nindent 12 }}
           resources:
             {{- toYaml .Values.slackSocket.resources | nindent 12 }}
           securityContext:
