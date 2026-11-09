@@ -1,0 +1,49 @@
+{{- if .Values.slackSocket.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sochub.fullname" . }}-slack-socket
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: slack-socket
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sochub.selectorLabels" (dict "ctx" . "component" "slack-socket") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sochub.selectorLabels" (dict "ctx" . "component" "slack-socket") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: slack-socket
+          image: {{ include "sochub.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          command: ["python", "-m", "app.slack_socket"]
+          env:
+            {{- $name := include "sochub.secretName" . }}
+            {{- range $k := list "DATABASE_URL" "REDIS_URL" }}
+            - name: {{ $k }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}
+                  key: {{ $k }}
+            {{- end }}
+            - name: ENVIRONMENT
+              value: {{ .Values.config.environment | quote }}
+          resources:
+            {{- toYaml .Values.slackSocket.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

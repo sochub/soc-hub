@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "sochub.fullname" . }}-migrate
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    {{- /* A pre-install hook runs before the release's own Secret/ConfigMap/PostgreSQL exist, so it is only
+         usable when the Secret and database are external and pre-existing. Otherwise run post-install
+         (the Job retries until the database is up); upgrades always run it before the new pods roll. */}}
+    {{- if and .Values.existingSecret (not .Values.postgresql.enabled) }}
+    "helm.sh/hook": pre-install,pre-upgrade
+    {{- else }}
+    "helm.sh/hook": post-install,pre-upgrade
+    {{- end }}
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "sochub.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: migrate
+          image: {{ include "sochub.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          env:
+            {{- include "sochub.secretEnv" . | nindent 12 }}
+            - name: ENVIRONMENT
+              value: {{ .Values.config.environment | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

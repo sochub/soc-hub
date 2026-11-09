@@ -1,0 +1,19 @@
+{{- if and .Values.persistence.attachments.enabled (not .Values.persistence.attachments.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sochub.pvcName" . }}
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.persistence.attachments.accessMode }}
+  {{- with .Values.persistence.attachments.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.attachments.size }}
+{{- end }}
