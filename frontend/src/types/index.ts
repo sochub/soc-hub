@@ -273,6 +273,7 @@ export interface TimelineEvent {
   via?: string | null;
   via_client?: string | null;
   pinned?: boolean;
+  updated_at?: string | null;
 }
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';

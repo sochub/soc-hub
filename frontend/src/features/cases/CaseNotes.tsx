@@ -12,6 +12,10 @@ import type { TimelineEvent, User } from '../../types';
 import { NOTE_TYPES } from './notes';
 
 const field = 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
+const isConflict = (err: unknown) => {
+    const r = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
+    return r?.status === 409 && r.data?.detail === 'version_conflict';
+};
 const apiError = (err: unknown, fallback: string) => {
     const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
     return typeof d === 'string' ? d : fallback;
@@ -77,7 +81,7 @@ export function NoteEntry({ caseId, note, me }: { caseId: number; note: Timeline
     const refresh = () => qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
     const base = `/cases/${caseId}/timeline/${note.id}`;
 
-    const save = useMutation({ mutationFn: async () => api.put(base, editing), onSuccess: () => { setEditing(null); refresh(); } });
+    const save = useMutation({ mutationFn: async () => api.put(base, { ...editing, base_updated_at: note.updated_at ?? null }), onSuccess: () => { setEditing(null); refresh(); } });
     const remove = useMutation({ mutationFn: async () => api.delete(base), onSuccess: refresh });
     const share = useMutation({ mutationFn: async () => api.put(`${base}/share`, { shared: !note.shared_with_guests }), onSuccess: refresh });
     const pin = useMutation({ mutationFn: async () => api.patch(`${base}/pin`, { pinned: !note.pinned }), onSuccess: refresh });
@@ -135,7 +139,9 @@ export function NoteEntry({ caseId, note, me }: { caseId: number; note: Timeline
             ) : (
                 <Markdown content={note.content} className="mt-1 text-sm text-fg-2" />
             )}
-            {error && <p role="alert" className="mt-1 text-xs text-severity-critical">{apiError(error, 'Could not save the change.')}</p>}
+            {error && <p role="alert" className="mt-1 text-xs text-severity-critical">{isConflict(error)
+                ? 'This note changed while you were editing — copy your changes, then reload.'
+                : apiError(error, 'Could not save the change.')}</p>}
         </div>
     );
 }
