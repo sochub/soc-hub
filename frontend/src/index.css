@@ -192,7 +192,7 @@
   @apply p-2 border border-line text-fg-2;
 }
 /* Dropdown chevron, inset from the border (the native one sits flush and cannot be padded).
-   Deliberately unlayered so it beats px-*/pr-* utilities on every select. Selects that draw their
+   Deliberately unlayered so it beats the px and pr padding utilities on every select. Selects that draw their
    own chevron icon opt out with `appearance-none`. Single-line selects only. */
 select:not(.appearance-none):not([multiple]):not([size]) {
   appearance: none;
