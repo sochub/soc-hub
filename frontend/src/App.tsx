@@ -21,6 +21,7 @@ import SettingsHub from './features/settings/SettingsHub';
 
 // Route-level code splitting: heavy pages (charts, React Flow, Scalar) load on first visit.
 const Dashboard = lazy(() => import('./features/cases/Dashboard'));
+const TimeMetrics = lazy(() => import('./features/settings/TimeMetrics'));
 const AuditLogPage = lazy(() => import('./features/audit/AuditLogPage'));
 const MyQueue = lazy(() => import('./features/queue/MyQueue'));
 const CasesList = lazy(() => import('./features/cases/CasesList'));
@@ -115,6 +116,7 @@ function App() {
                   <Route element={<RequireRole roles={['admin', 'super_admin']} />}>
                     <Route path="users" element={<UserManagement />} />
                     <Route path="audit" element={<AuditLogPage />} />
+                    <Route path="time" element={<TimeMetrics />} />
                   </Route>
                   <Route element={<RequireRole roles={['super_admin']} />}>
                     <Route path="tenants" element={<TenantManagement />} />
