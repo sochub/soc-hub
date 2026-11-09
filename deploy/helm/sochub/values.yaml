@@ -63,6 +63,9 @@ smtp:
 # Extra env vars for api, worker, slack-socket and migrate (full k8s EnvVar syntax), e.g.
 #   extraEnv:
 #     - {name: AWS_ACCESS_KEY_ID, valueFrom: {secretKeyRef: {name: s3, key: id}}}
+# On-prem IMAP/MISP on private addresses need an allowlist (JSON list of exact hostnames), e.g.
+#     - {name: MAILBOX_PRIVATE_HOSTS, value: '["mail.corp.internal"]'}
+#     - {name: MISP_PRIVATE_HOSTS, value: '["misp.corp.internal"]'}
 extraEnv: []   # applied to api, worker, slack-socket and migrate
 
 api:

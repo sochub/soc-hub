@@ -35,6 +35,9 @@ The bundled database passwords are placeholders: evaluation only.
 - Storage: multi-node needs ReadWriteMany because api AND worker both write attachments (email intake
   writes from the worker). With the default ReadWriteOnce the chart adds a podAffinity so the worker
   lands on the api's node. Alternatively use S3 (`config.storageBackend=s3`, `s3.*`).
+- On-prem IMAP or MISP servers on private addresses are blocked by the SSRF guard. Allow them with
+  `MAILBOX_PRIVATE_HOSTS` / `MISP_PRIVATE_HOSTS` (JSON lists of exact hostnames) via `extraEnv`:
+  `extraEnv: [{name: MAILBOX_PRIVATE_HOSTS, value: '["mail.corp.internal"]'}, {name: MISP_PRIVATE_HOSTS, value: '["misp.corp.internal"]'}]`
 - The worker is fixed at one replica (embedded Celery beat).
 - See `values-production.yaml` for a full example.
 
