@@ -137,7 +137,7 @@ export default function CaseDetail() {
     // Viewers can't list guests (the API returns 403), so they don't get the tab.
     const canSeeGuests = isAdmin || me?.role === 'analyst';
     useTimeHeartbeat(id ? parseInt(id) : undefined, canSeeGuests);
-    const { data: timeData } = useCaseTime(id ? parseInt(id) : 0, !!id);
+    const { data: timeData } = useCaseTime(id ? parseInt(id) : 0, !!id && canSeeGuests);
 
     // Deep link from a notification: /cases/:id#event-<id> -> show Activity (once per hash); CaseTimeline scrolls to the note.
     const { hash } = useLocation();
@@ -266,7 +266,7 @@ export default function CaseDetail() {
                                     <Calendar size={12} />
                                     {formatDateTime(caseData.created_at, me?.timezone)}
                                 </span>
-                                {!!timeData?.total_seconds && (
+                                {canSeeGuests && !!timeData?.total_seconds && (
                                     <span className="flex items-center gap-1.5" title="Time spent on this case">
                                         <Clock size={12} />
                                         {formatDuration(timeData.total_seconds)}
@@ -317,7 +317,7 @@ export default function CaseDetail() {
                 {/* Tabs (sticky while the page scrolls inside <main>) */}
                 <div className="sticky top-0 z-10 bg-panel px-6 pt-3">
                     <div className="flex border-b border-line relative space-x-6">
-                        {CASE_TABS.filter((tab) => tab !== 'guests' || canSeeGuests).map((tab) => (
+                        {CASE_TABS.filter((tab) => (tab !== 'guests' && tab !== 'time') || canSeeGuests).map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => selectTab(tab)}
@@ -365,7 +365,7 @@ export default function CaseDetail() {
                                 </div>
                             )}
 
-                            {activeTab === 'time' && id && <CaseTime caseId={parseInt(id)} />}
+                            {activeTab === 'time' && id && canSeeGuests && <CaseTime caseId={parseInt(id)} />}
 
                             {activeTab === 'tasks' && id && (
                                 <CaseTasks caseId={parseInt(id)} />
