@@ -32,7 +32,7 @@
           "external_id": "{{ trigger.email.message_id }}",
           "title": "{{ trigger.email.subject }}",
           "severity": "medium",
-          "payload": "{{ trigger }}"
+          "payload": "trigger"
         }
       }
     ],
