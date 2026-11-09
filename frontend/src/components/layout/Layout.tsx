@@ -212,7 +212,8 @@ export default function Layout() {
                         <a href={DEMO_REPO_URL} target="_blank" rel="noopener noreferrer" className="underline text-fg hover:text-accent">Get sochub on GitHub →</a>
                     </div>
                 )}
-                <header className="h-14 px-4 sm:px-6 flex items-center justify-between border-b border-line bg-canvas/80 backdrop-blur shrink-0">
+                {/* relative z-30: backdrop-blur makes the header its own stacking context, so without a z-index the bell dropdown sat under positioned page content (case panel, sticky tabs). */}
+                <header className="relative z-30 h-14 px-4 sm:px-6 flex items-center justify-between border-b border-line bg-canvas/80 backdrop-blur shrink-0">
                     <div className="flex items-center gap-3 min-w-0">
                         <button onClick={() => setMobileOpen(true)}
                             className="lg:hidden p-2 -ml-2 text-fg-3 hover:text-fg" aria-label="Open menu">
