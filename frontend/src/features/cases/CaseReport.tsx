@@ -12,6 +12,7 @@ import type { CaseReportView, ReportDraft, TLPLevel } from '../../types';
 const TEXT_MAX = 20000;
 const LOCK_RENEW_MS = 45_000;
 const CONFLICT_COPY = 'This report changed while you were editing — copy your changes, then reload.';
+type LockRun = { cancelled: boolean; held: boolean };
 type LockResp = { locked_by_email: string | null; updated_at: string | null };
 const isVersionConflict = (e: unknown) => {
     const r = (e as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
@@ -205,7 +206,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     const [takingOver, setTakingOver] = useState(false);
     const [conflict, setConflict] = useState(false);
     const versionRef = useRef<string | null>(null);
-    const holdingRef = useRef(false);
+    const runRef = useRef<LockRun | null>(null);
     const holding = lock === 'held';
 
     const baseline = data ? formFrom(data) : null;
@@ -221,15 +222,17 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
         return () => window.removeEventListener('beforeunload', onBeforeUnload);
     }, [dirty]);
 
-    const claim = async (takeover: boolean) => {
+    // Each lock-effect run owns a token; a cancelled run never touches state or the shared lock after a newer run exists.
+    const claim = async (takeover: boolean, run: LockRun | null) => {
+        if (!run) return false;
         try {
             const r = (await api.post(`/cases/${caseId}/report/lock`, { takeover })).data as LockResp;
-            versionRef.current = r.updated_at;
-            holdingRef.current = true;
-            setLock('held');
+            run.held = true;
+            if (!run.cancelled) { versionRef.current = r.updated_at; setLock('held'); }
             return true;
         } catch (e) {
-            holdingRef.current = false;
+            run.held = false;
+            if (run.cancelled) return false;
             const by = lockHolder(e);
             if (by !== null) setLock({ by });
             else setError(await errorDetail(e));
@@ -237,30 +240,37 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
         }
     };
 
+    // Release only when no newer run took over (StrictMode remount) and this run holds the lock.
+    const release = (run: LockRun) => {
+        if (runRef.current !== null || !run.held) return;
+        run.held = false;
+        api.delete(`/cases/${caseId}/report/lock`).catch(() => undefined);
+    };
+
     useEffect(() => {
         if (!canWrite) return;
-        let cancelled = false;
+        const run: LockRun = { cancelled: false, held: false };
+        runRef.current = run;
         // eslint-disable-next-line react-hooks/set-state-in-effect -- async claim; state is set after the request resolves
-        claim(false).then((ok) => {
+        claim(false, run).then((ok) => {
             if (!ok) return;
-            if (cancelled) { holdingRef.current = false; api.delete(`/cases/${caseId}/report/lock`).catch(() => undefined); return; }
+            if (run.cancelled) { setTimeout(() => release(run), 0); return; }
             queryClient.invalidateQueries({ queryKey });
         });
-        const timer = window.setInterval(() => { if (holdingRef.current) void claim(false); }, LOCK_RENEW_MS);
+        const timer = window.setInterval(() => { if (run.held && !run.cancelled) void claim(false, run); }, LOCK_RENEW_MS);
         return () => {
-            cancelled = true;
+            run.cancelled = true;
+            runRef.current = null;
             window.clearInterval(timer);
-            if (holdingRef.current) {
-                holdingRef.current = false;
-                api.delete(`/cases/${caseId}/report/lock`).catch(() => undefined);
-            }
+            // Deferred so a StrictMode remount (which sets runRef synchronously) cancels the release.
+            setTimeout(() => release(run), 0);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [caseId, canWrite]);
 
     const takeOver = async () => {
         setTakingOver(true);
-        if (await claim(true)) {
+        if (await claim(true, runRef.current)) {
             setEdited(null);
             setConflict(false);
             setError(null);

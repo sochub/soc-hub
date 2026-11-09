@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, Eye, EyeOff, Pencil, Pin, PinOff, Trash2, X } from 'lucide-react';
 import { api } from '../../api/client';
@@ -74,6 +74,7 @@ export function NoteComposer({ caseId, onClose }: { caseId: number; onClose: () 
 export function NoteEntry({ caseId, note, me }: { caseId: number; note: TimelineEvent; me?: User }) {
     const qc = useQueryClient();
     const [editing, setEditing] = useState<{ event_type: string; content: string } | null>(null);
+    const baseVersion = useRef<string | null>(null); // updated_at as loaded when editing started; refetches must not advance it
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
     const canWrite = isAdmin || me?.role === 'analyst';
     // Mirrors the backend rule for editing/deleting entries: admin, or the analyst who wrote it.
@@ -81,7 +82,7 @@ export function NoteEntry({ caseId, note, me }: { caseId: number; note: Timeline
     const refresh = () => qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
     const base = `/cases/${caseId}/timeline/${note.id}`;
 
-    const save = useMutation({ mutationFn: async () => api.put(base, { ...editing, base_updated_at: note.updated_at ?? null }), onSuccess: () => { setEditing(null); refresh(); } });
+    const save = useMutation({ mutationFn: async () => api.put(base, { ...editing, base_updated_at: baseVersion.current }), onSuccess: () => { setEditing(null); refresh(); } });
     const remove = useMutation({ mutationFn: async () => api.delete(base), onSuccess: refresh });
     const share = useMutation({ mutationFn: async () => api.put(`${base}/share`, { shared: !note.shared_with_guests }), onSuccess: refresh });
     const pin = useMutation({ mutationFn: async () => api.patch(`${base}/pin`, { pinned: !note.pinned }), onSuccess: refresh });
@@ -120,7 +121,7 @@ export function NoteEntry({ caseId, note, me }: { caseId: number; note: Timeline
                             className={note.shared_with_guests ? 'text-accent' : 'text-muted hover:text-fg'}>
                             {note.shared_with_guests ? <Eye size={13} /> : <EyeOff size={13} />}
                         </button>
-                        {canModify && <button onClick={() => setEditing({ event_type: note.event_type, content: note.content })} title="Edit" className="text-muted hover:text-fg"><Pencil size={13} /></button>}
+                        {canModify && <button onClick={() => { baseVersion.current = note.updated_at ?? null; setEditing({ event_type: note.event_type, content: note.content }); }} title="Edit" className="text-muted hover:text-fg"><Pencil size={13} /></button>}
                         {canModify && <button onClick={() => { if (confirm('Delete this note?')) remove.mutate(); }} title="Delete" className="text-muted hover:text-severity-critical"><Trash2 size={13} /></button>}
                     </span>
                 )}
