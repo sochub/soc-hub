@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.ai.errors import scrub
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal, engine
-from app.enrichment.config import SOURCE_KEY, load_settings, runnable_sources
+from app.enrichment.config import SOURCE_KEY, load_settings, runnable_sources, secret_values
 from app.enrichment.indicators import normalise, should_skip, tlp_allows
 from app.enrichment.ratelimit import RateLimiter, limits_for
 from app.enrichment.sources import REGISTRY
@@ -63,7 +63,7 @@ async def run_enrichment(db, tenant_id, itype, value, *, sources: Optional[List[
 
 
 async def _run(db, tenant_id, itype, value, s, sources, force, attempt, limiter, now) -> dict:
-    secrets_ = list(s.keys.values())
+    secrets_ = secret_values(s.keys)
     runnable = [n for n in runnable_sources(s) if n in REGISTRY and itype in REGISTRY[n].TYPES]
     if sources is not None:
         runnable = [n for n in runnable if n in sources]

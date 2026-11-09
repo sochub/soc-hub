@@ -11,9 +11,10 @@ from app.utils.crypto import decrypt
 
 logger = logging.getLogger(__name__)
 
-SOURCES = ("virustotal", "urlhaus", "threatfox", "rdap", "crtsh")
-SOURCE_KEY = {"virustotal": "virustotal_api_key", "urlhaus": "abusech_auth_key", "threatfox": "abusech_auth_key"}
-KEY_FIELDS = ("virustotal_api_key", "abusech_auth_key")
+SOURCES = ("virustotal", "urlhaus", "threatfox", "rdap", "crtsh", "misp")
+SOURCE_KEY = {"virustotal": "virustotal_api_key", "urlhaus": "abusech_auth_key", "threatfox": "abusech_auth_key",
+              "misp": "misp"}
+KEY_FIELDS = ("virustotal_api_key", "abusech_auth_key", "misp")
 DEFAULTS = {
     "auto_max_tlp": "green", "artifact_tlp": "amber", "cache_ttl_hours": 24,
     "sources": {s: True for s in SOURCES}, "vt_per_minute": 4, "vt_per_day": 500, "internal_domains": [],
@@ -31,6 +32,23 @@ class EnrichmentSettings:
     internal_domains: List[str] = field(default_factory=list)
     keys: Dict[str, str] = field(default_factory=dict)
     key_error: bool = False
+
+
+def _misp_complete(raw) -> bool:
+    try:
+        c = json.loads(raw or "{}")
+        return isinstance(c, dict) and bool(c.get("url") and c.get("key"))
+    except ValueError:
+        return False
+
+
+def secret_values(keys: Dict[str, str]) -> List[str]:
+    """Every value that must be scrubbed from errors/logs; the MISP blob also yields its inner auth key."""
+    from app.enrichment.sources.misp import secret_parts
+    out = list(keys.values())
+    if keys.get("misp"):
+        out += secret_parts(keys["misp"])
+    return out
 
 
 def decrypt_keys(enc, tenant_id) -> tuple:
@@ -65,6 +83,8 @@ def runnable_sources(s: EnrichmentSettings) -> List[str]:
             continue
         key = SOURCE_KEY.get(src)
         if key and not s.keys.get(key):
+            continue
+        if src == "misp" and not _misp_complete(s.keys.get("misp")):
             continue
         out.append(src)
     return out

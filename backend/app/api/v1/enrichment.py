@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.errors import scrub
 from app.api import deps
-from app.enrichment.config import DEFAULTS, KEY_FIELDS, decrypt_keys, load_settings
+from app.enrichment.config import DEFAULTS, KEY_FIELDS, decrypt_keys, load_settings, secret_values
 from app.enrichment.sources import REGISTRY
 from app.enrichment.view import enrichment_view
 from app.models.tenant_enrichment_config import TenantEnrichmentConfig
@@ -25,8 +25,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 _PLAIN = ("auto_max_tlp", "artifact_tlp", "cache_ttl_hours", "sources", "vt_per_minute", "vt_per_day",
           "internal_domains")
-_CLEAR = {"virustotal_api_key": "clear_virustotal", "abusech_auth_key": "clear_abusech"}
-_TESTS = (("virustotal", "virustotal", "virustotal_api_key"), ("abusech", "urlhaus", "abusech_auth_key"))
+_CLEAR = {"virustotal_api_key": "clear_virustotal", "abusech_auth_key": "clear_abusech",
+          "misp": "clear_misp"}
+_TESTS = (("virustotal", "virustotal", "virustotal_api_key"), ("abusech", "urlhaus", "abusech_auth_key"),
+          ("misp", "misp", "misp"))
 
 
 def _log(op, tid, outcome):
@@ -34,9 +36,38 @@ def _log(op, tid, outcome):
     logger.info("ti_config %s tenant=%s outcome=%s", op, tid, outcome)
 
 
+def _merge_misp(body, keys) -> bool:
+    """Assemble the stored MISP triple from the three config fields, merging with what is stored."""
+    if body.clear_misp:
+        return keys.pop("misp", None) is not None
+    url, key, verify = (body.misp_url or None), (body.misp_key or "").strip() or None, body.misp_verify_tls
+    if url is None and key is None and verify is None:
+        return False
+    cur = _misp_cfg(keys)
+    new = {"url": url or cur.get("url") or "", "key": key or cur.get("key") or "",
+           "verify": cur.get("verify", True) if verify is None else verify}
+    if new == {"url": cur.get("url") or "", "key": cur.get("key") or "", "verify": cur.get("verify", True)}:
+        return False
+    keys["misp"] = json.dumps(new)
+    return True
+
+
 async def _row(db, tid) -> Optional[TenantEnrichmentConfig]:
     return (await db.execute(select(TenantEnrichmentConfig).where(
         TenantEnrichmentConfig.tenant_id == tid))).scalars().first()
+
+
+def _misp_cfg(keys) -> dict:
+    try:
+        v = json.loads(keys.get("misp") or "{}")
+        return v if isinstance(v, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _misp_set(keys) -> bool:
+    c = _misp_cfg(keys)
+    return bool(c.get("url") and c.get("key"))
 
 
 def _out(row, keys) -> dict:
@@ -45,7 +76,10 @@ def _out(row, keys) -> dict:
     base["sources"] = {**DEFAULTS["sources"], **((row.sources if row else None) or {})}
     base["internal_domains"] = list((row.internal_domains if row else None) or [])
     base["credentials_set"] = {"virustotal": bool(keys.get("virustotal_api_key")),
-                               "abusech": bool(keys.get("abusech_auth_key"))}
+                               "abusech": bool(keys.get("abusech_auth_key")),
+                               "misp": _misp_set(keys)}
+    base["misp_url"] = _misp_cfg(keys).get("url") or None
+    base["misp_verify_tls"] = _misp_cfg(keys).get("verify") is not False
     return base
 
 
@@ -69,6 +103,10 @@ async def put_config(body: EnrichmentConfigIn, db: AsyncSession = Depends(deps.g
     keys = dict(stored)
     touched = []
     for f in KEY_FIELDS:
+        if f == "misp":
+            if _merge_misp(body, keys):
+                touched.append(f)
+            continue
         if getattr(body, _CLEAR[f]):
             if keys.pop(f, None) is not None or key_error:
                 touched.append(f)
@@ -119,7 +157,7 @@ async def delete_config(db: AsyncSession = Depends(deps.get_db), current_user: U
 async def test_config(db: AsyncSession = Depends(deps.get_db), current_user: User = Depends(deps.require_admin),
                       tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     s = await load_settings(db, tenant_id)
-    secrets_ = list(s.keys.values())
+    secrets_ = secret_values(s.keys)
     out = {}
     for label, source, field in _TESTS:
         key = s.keys.get(field)
