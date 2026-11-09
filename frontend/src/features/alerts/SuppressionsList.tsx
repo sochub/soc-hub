@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, X, Search } from 'lucide-react';
@@ -19,7 +19,6 @@ const OPS: [string, string][] = [
     ['starts_with', 'starts with'], ['ends_with', 'ends with'], ['in_cidr', 'in CIDR'],
 ];
 const BASE_FIELDS = ['source', 'title', 'severity'];
-const CUSTOM = '__custom__';
 const EXPIRY: [string, number | null][] = [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Never', null]];
 const field = 'h-9 bg-panel border border-line rounded-lg px-2.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
 const apiError = (err: unknown, fallback: string) => {
@@ -39,6 +38,55 @@ function payloadPaths(obj: unknown, prefix = 'payload', out: [string, string][] 
     return out;
 }
 
+/** Field box with its own suggestion list: opens below the box (a native select popup covers it on macOS), and any
+ *  payload path can be typed. An exact known field lists everything, unlike a datalist that filters down to itself (#130). */
+function FieldPicker({ value, groups, onChange }: { value: string; groups: [string, string[]][]; onChange: (v: string) => void }) {
+    const [open, setOpen] = useState(false);
+    const [active, setActive] = useState(0);
+    const id = useId();
+    const q = groups.some(([, o]) => o.includes(value)) ? '' : value.toLowerCase();
+    const shown = groups.map(([g, o]): [string, string[]] => [g, o.filter((f) => f.toLowerCase().includes(q))]).filter(([, o]) => o.length);
+    const flat = shown.flatMap(([, o]) => o);
+    const listed = open && flat.length > 0;
+    const pick = (f: string) => { onChange(f); setOpen(false); };
+    return (
+        <div className="relative min-w-0">
+            <input role="combobox" aria-label="Field" aria-autocomplete="list" aria-expanded={listed} aria-controls={id}
+                aria-activedescendant={listed ? `${id}-${active}` : undefined} value={value} placeholder="field or payload.path" spellCheck={false}
+                onFocus={() => { setOpen(true); setActive(0); }} onBlur={() => setOpen(false)}
+                onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(0); }}
+                onKeyDown={(e) => {
+                    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && flat.length) {
+                        e.preventDefault(); setOpen(true);
+                        setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : flat.length - 1)) % flat.length);
+                    } else if (e.key === 'Enter' && listed) { e.preventDefault(); pick(flat[active]); }
+                    else if (e.key === 'Escape') setOpen(false);
+                }}
+                className={cn(field, 'font-mono text-xs w-full')} />
+            {listed && (
+                <ul id={id} role="listbox" aria-label="Fields"
+                    className="absolute z-30 left-0 top-full mt-1 min-w-full w-max max-w-[min(32rem,calc(100vw-2rem))] max-h-64 overflow-auto rounded-lg border border-line bg-panel shadow-lg py-1">
+                    {shown.map(([g, opts]) => (
+                        <li key={g} role="presentation">
+                            <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted">{g}</p>
+                            <ul role="group" aria-label={g}>
+                                {opts.map((f) => {
+                                    const i = flat.indexOf(f);
+                                    return (
+                                        <li key={f} id={`${id}-${i}`} role="option" aria-selected={i === active} title={f}
+                                            onMouseDown={(e) => { e.preventDefault(); pick(f); }} onMouseEnter={() => setActive(i)}
+                                            className={cn('px-2.5 py-1 font-mono text-xs truncate cursor-pointer', i === active ? 'bg-raised text-fg' : 'text-fg-2')}>{f}</li>
+                                    );
+                                })}
+                            </ul>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
 function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: string; title: string; payload: unknown } | null; onDone: () => void }) {
     const qc = useQueryClient();
     const [name, setName] = useState(fromAlert ? `${fromAlert.source}: ${fromAlert.title}`.slice(0, 200) : '');
@@ -54,7 +102,8 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
     });
     const paths = fromAlert ? payloadPaths(fromAlert.payload)
         : [...new Set(recent.flatMap((a) => payloadPaths(a.payload).map(([p]) => p)))].slice(0, 80).map((p): [string, string] => [p, '']);
-    const known = [...BASE_FIELDS, ...paths.map(([p]) => p)];
+    const groups: [string, string[]][] = [['Alert fields', BASE_FIELDS],
+        ...(paths.length ? [[fromAlert ? `Payload of alert #${fromAlert.id}` : 'Payload (recent alerts)', paths.map(([p]) => p)] as [string, string[]]] : [])];
     const valid = conds.length > 0 && conds.every((c) => c.value.trim() && /^(source|title|severity|payload(\.[A-Za-z0-9_\-@$]{1,64}){1,8})$/.test(c.field));
 
     const preview = useMutation({ mutationFn: async () => (await api.post('/suppressions/preview', { conditions: conds })).data as Preview });
@@ -88,28 +137,10 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
             {conds.map((c, i) => (
                 // Fixed columns so every condition row lines up, whatever field is picked.
                 <div key={i} className="grid grid-cols-1 sm:grid-cols-[16rem_9rem_minmax(0,1fr)_1.5rem] items-center gap-2">
-                    {/* A <select>, not a <datalist>: a datalist filters by the current text, so "title" hid every other field (#130). */}
-                    {known.includes(c.field) ? <select value={c.field} aria-label="Field"
-                        onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === CUSTOM) return set(i, { field: 'payload.' });
-                            const p = paths.find(([k]) => k === v);
-                            set(i, { field: v, ...(p?.[1] && !c.value ? { value: p[1] } : {}) });
-                        }}
-                        className={cn(field, 'font-mono text-xs w-full')}>
-                        <optgroup label="Alert fields">{BASE_FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}</optgroup>
-                        {paths.length > 0 && <optgroup label={fromAlert ? `Payload of alert #${fromAlert.id}` : 'Payload (recent alerts)'}>
-                            {paths.map(([p]) => <option key={p} value={p}>{p}</option>)}
-                        </optgroup>}
-                        <option value={CUSTOM}>Custom payload path…</option>
-                    </select> : (
-                        <div className="flex items-center gap-1 min-w-0">
-                            <input value={c.field} onChange={(e) => set(i, { field: e.target.value })} aria-label="Custom payload path" placeholder="payload.agent.name" autoFocus
-                                className={cn(field, 'font-mono text-xs flex-1 min-w-0')} />
-                            <button onClick={() => set(i, { field: 'title' })} title="Pick from the list" aria-label="Pick field from the list"
-                                className="h-9 px-2 text-xs text-fg-3 hover:text-fg border border-line rounded-lg">List</button>
-                        </div>
-                    )}
+                    <FieldPicker value={c.field} groups={groups} onChange={(v) => {
+                        const p = paths.find(([k]) => k === v);
+                        set(i, { field: v, ...(p?.[1] && !c.value ? { value: p[1] } : {}) });
+                    }} />
                     <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} aria-label="Operator" className={cn(field, 'text-xs w-full')}>
                         {OPS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                     </select>
