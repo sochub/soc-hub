@@ -227,31 +227,13 @@ export default function CaseDetail() {
 
                 {/* Header */}
                 <div className="p-6 pb-2">
-                    <div className="flex items-center gap-4 mb-6">
+                    <div className="flex flex-wrap items-center gap-4 mb-6">
                         <Link to="/" className="p-2 rounded-lg text-fg-3 hover:text-fg hover:bg-raised transition-colors">
                             <ArrowLeft size={20} />
                         </Link>
-                        <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-1">
+                        <div className="flex-1 min-w-64">
+                            <div className="mb-1">
                                 <h1 className="text-2xl font-bold text-fg tracking-tight">{caseData.title}</h1>
-                                <span className={cn(
-                                    "px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border tracking-wider",
-                                    severityColor
-                                )}>
-                                    {caseData.severity}
-                                </span>
-                                {caseData.slack_channel_id && <WarRoomPill caseData={caseData} canEdit={canWarRoom} />}
-                                {!caseData.slack_channel_id && canWarRoom && slackCfg?.configured && (
-                                    <button type="button" onClick={() => setShowWarRoom(true)}
-                                        className="inline-flex items-center gap-1 rounded-sm border border-line-strong px-2.5 py-0.5 text-xs text-fg-2 hover:bg-raised">
-                                        <Hash size={12} /> Open war room
-                                    </button>
-                                )}
-                                {caseData.outcome && (
-                                    <span className="px-2.5 py-0.5 rounded-sm text-xs uppercase font-bold border border-line text-fg-2 tracking-wider">
-                                        {caseData.outcome.replace(/_/g, ' ')}
-                                    </span>
-                                )}
                             </div>
                             <div className="flex items-center gap-4 text-xs font-mono text-muted">
                                 <span className="flex items-center gap-1.5">
@@ -273,19 +255,35 @@ export default function CaseDetail() {
                                 </span>
                             </div>
                         </div>
-                        {id && <FollowButton caseId={parseInt(id)} ready={!!me} isOwner={!!me && caseData.owner_id === me.id} />}
-                        <button
-                            onClick={() => setShowEditModal(true)}
-                            className="p-2 text-fg-3 hover:text-fg hover:bg-raised rounded-lg transition-colors"
-                        >
-                            <Edit size={20} />
-                        </button>
-                        {isAdmin && (
-                            <button onClick={() => setShowDelete(true)} aria-label="Delete case" title="Delete case"
-                                className="p-2 text-fg-3 hover:text-severity-critical hover:bg-raised rounded-lg transition-colors">
-                                <Trash2 size={20} />
+                        {/* Status chips and actions share one row so they all sit on the same centre line (h-8 each). */}
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className={cn("inline-flex items-center h-8 px-2.5 rounded-sm text-xs uppercase font-bold border tracking-wider", severityColor)}>
+                                {caseData.severity}
+                            </span>
+                            {caseData.outcome && (
+                                <span className="inline-flex items-center h-8 px-2.5 rounded-sm text-xs uppercase font-bold border border-line text-fg-2 tracking-wider whitespace-nowrap">
+                                    {caseData.outcome.replace(/_/g, ' ')}
+                                </span>
+                            )}
+                            {caseData.slack_channel_id && <WarRoomPill caseData={caseData} canEdit={canWarRoom} />}
+                            {!caseData.slack_channel_id && canWarRoom && slackCfg?.configured && (
+                                <button type="button" onClick={() => setShowWarRoom(true)}
+                                    className="inline-flex items-center gap-1.5 h-8 rounded-sm border border-line-strong px-2.5 text-xs text-fg-2 hover:bg-raised whitespace-nowrap">
+                                    <Hash size={12} /> Open war room
+                                </button>
+                            )}
+                            {id && <FollowButton caseId={parseInt(id)} ready={!!me} isOwner={!!me && caseData.owner_id === me.id} />}
+                            <button onClick={() => setShowEditModal(true)} aria-label="Edit case" title="Edit case"
+                                className="inline-flex items-center justify-center h-8 w-8 text-fg-3 hover:text-fg hover:bg-raised rounded-lg transition-colors">
+                                <Edit size={18} />
                             </button>
-                        )}
+                            {isAdmin && (
+                                <button onClick={() => setShowDelete(true)} aria-label="Delete case" title="Delete case"
+                                    className="inline-flex items-center justify-center h-8 w-8 text-fg-3 hover:text-severity-critical hover:bg-raised rounded-lg transition-colors">
+                                    <Trash2 size={18} />
+                                </button>
+                            )}
+                        </div>
                     </div>
                     {id && isAdmin && <DeleteCaseModal caseId={parseInt(id)} title={caseData.title} open={showDelete} onClose={() => setShowDelete(false)} />}
 

@@ -15,7 +15,7 @@ export default function WarRoomPill({ caseData, canEdit }: Props) {
     const on = !!caseData.slack_listen;
     const label = caseData.slack_channel_name ? `#${caseData.slack_channel_name}` : 'Slack war room';
     return (
-        <span className="inline-flex items-center gap-1.5 rounded-sm border border-line px-2.5 py-0.5 text-xs">
+        <span className="inline-flex items-center gap-1.5 h-8 rounded-sm border border-line px-2.5 text-xs whitespace-nowrap">
             <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
             {caseData.war_room_url ? (
                 <a href={caseData.war_room_url} target="_blank" rel="noopener noreferrer"
