@@ -62,7 +62,7 @@ def test_claim_conflict_takeover_release():
         r = await c.post(f"{url}/lock", json={})
         assert r.status_code == 200, r.text
         j = r.json()
-        assert j["self"] is True and j["locked_by"] == a.id and j["locked_by_email"] == a.email and j["locked_at"]
+        assert j["updated_at"] and j["self"] is True and j["locked_by"] == a.id and j["locked_by_email"] == a.email and j["locked_at"]
         # re-claim by the holder is fine; GET shows the lock
         assert (await c.post(f"{url}/lock", json={})).status_code == 200
         assert (await c.get(url)).json()["report"]["locked_by_email"] == a.email
@@ -71,7 +71,7 @@ def test_claim_conflict_takeover_release():
         r = await c.post(f"{url}/lock", json={"takeover": False})
         assert r.status_code == 409, r.text
         j = r.json()
-        assert j["self"] is False and j["locked_by"] == a.id and j["locked_by_email"] == a.email
+        assert j["self"] is False and j["locked_by"] == a.id and j["locked_by_email"] == a.email and j["updated_at"]
         # a non-holder delete never releases the holder's lock
         assert (await c.delete(f"{url}/lock")).status_code == 204
         assert (await c.get(url)).json()["report"]["locked_by"] == a.id
@@ -120,4 +120,28 @@ def test_lock_cross_tenant_404():
         r = await c.post(f"/api/v1/cases/{ids['cases'][0]}/report/lock", json={})
         assert r.status_code == 404
         assert (await c.delete(f"/api/v1/cases/{ids['cases'][0]}/report/lock")).status_code == 404
+    asyncio.run(_run(body))
+
+
+def test_lock_writes_keep_version_token():
+    async def body(c, ids, state, users):
+        a, b = users
+        url = f"/api/v1/cases/{ids['cases'][0]}/report"
+        v0 = (await c.post(f"{url}/lock", json={})).json()["updated_at"]
+        r = await c.get(url)
+        v = r.json()["report"]["updated_at"]
+        assert v[:19] == v0[:19]
+        await asyncio.sleep(1.1)
+        assert (await c.post(f"{url}/lock", json={})).json()["updated_at"] == v  # heartbeat re-claim
+        r = await c.put(url, json={"executive_summary": "x", "base_updated_at": v})
+        assert r.status_code == 200, r.text
+        v2 = r.json()["report"]["updated_at"]
+        await asyncio.sleep(1.1)
+        state["user"] = b
+        assert (await c.post(f"{url}/lock", json={"takeover": True})).json()["updated_at"] == v2
+        assert (await c.delete(f"{url}/lock")).status_code == 204
+        assert (await c.get(url)).json()["report"]["updated_at"] == v2
+        state["user"] = a
+        r = await c.put(url, json={"executive_summary": "y", "base_updated_at": v2})
+        assert r.status_code == 200, r.text
     asyncio.run(_run(body))

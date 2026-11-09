@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -161,6 +161,12 @@ async def put_report(
     return out
 
 
+async def _write_lock(db: AsyncSession, report_id: int, user_id, at) -> None:
+    """Lock columns only: updated_at is the optimistic-version token, so keep it (onupdate would bump it)."""
+    await db.execute(update(CaseReport).where(CaseReport.id == report_id)
+                     .values(locked_by=user_id, locked_at=at, updated_at=CaseReport.updated_at))
+
+
 class LockIn(BaseModel):
     takeover: bool = False
 
@@ -186,14 +192,17 @@ async def lock_report(
     if holder is not None and holder != user_id:
         if not takeover:
             info = await _lock_info(db, row)
+            ua = row.updated_at
             await db.rollback()
             _log("lock", tenant_id, case_id, "held")
-            return JSONResponse(status_code=409, content=to_jsonable({**info, "self": False}))
+            return JSONResponse(status_code=409, content=to_jsonable({**info, "self": False,
+                                                                       "updated_at": ua}))
         await create_audit_log(db, entity_type="case", entity_id=case_id, action="report.lock_takeover",
                                tenant_id=tenant_id, user_id=user_id, changes={"from": holder})
-    row.locked_by, row.locked_at = user_id, datetime.now(timezone.utc)
-    await db.flush()
-    out = {"locked_by": user_id, "locked_by_email": current_user.email, "locked_at": row.locked_at, "self": True}
+    now = datetime.now(timezone.utc)
+    await _write_lock(db, row.id, user_id, now)
+    out = {"locked_by": user_id, "locked_by_email": current_user.email, "locked_at": now, "self": True,
+           "updated_at": row.updated_at}
     await db.commit()
     _log("lock", tenant_id, case_id, "takeover" if holder not in (None, user_id) else "ok")
     return to_jsonable(out)
@@ -213,7 +222,7 @@ async def unlock_report(
                                                      CaseReport.tenant_id == tenant_id)
                             .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
     if row is not None and row.locked_by == user_id:
-        row.locked_by = row.locked_at = None
+        await _write_lock(db, row.id, None, None)
     await db.commit()
     return Response(status_code=204)
 
