@@ -10,7 +10,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
-from app.services import alert_service, suppression_service
+from app.services import alert_service, email_intake, suppression_service
 from app.workflows.events import emit_event
 
 router = APIRouter()
@@ -158,6 +158,9 @@ async def bulk_alerts(
         else:
             await alert_service.dismiss_alert(db, alert=alert, user_id=current_user.id, bulk=True)
     await db.commit()
+    if case:
+        for alert in alerts:
+            await email_intake.copy_email_evidence(alert=alert, case_id=case.id, user_id=current_user.id)
     found = {a.id for a in alerts}
     ids = list(dict.fromkeys(body.ids))
     return {"updated": [i for i in ids if i in found], "skipped": [i for i in ids if i not in found]}
@@ -183,6 +186,7 @@ async def promote_alert_to_case(
 
     await alert_service.promote_alert(db, alert=alert, case=case, user_id=current_user.id)
     await db.commit()
+    await email_intake.copy_email_evidence(alert=alert, case_id=case.id, user_id=current_user.id)
     await db.refresh(alert)
     return alert
 

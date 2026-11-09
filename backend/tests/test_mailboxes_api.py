@@ -73,6 +73,7 @@ async def _scenario(body):
                 await d.execute(delete(User).where(User.id.in_(ids["users"])))
                 await d.execute(delete(Tenant).where(Tenant.id.in_(ids["tenants"])))
                 await d.commit()
+    await engine.dispose()  # pooled connections are bound to this test's loop; later tests start their own
 
 
 async def _row(mid):
