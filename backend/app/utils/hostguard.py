@@ -21,7 +21,7 @@ def validate_outbound_host(host: str, allowlist: Iterable[str], setting_name: st
             ip = ipaddress.ip_address(info[4][0].split("%")[0])
         except ValueError:
             return "host could not be resolved"
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
-                or ip.is_unspecified):
+        # not is_global also covers CGNAT 100.64.0.0/10 and other special-use ranges
+        if not ip.is_global or ip.is_multicast:
             return f"host resolves to a private address; add it to {setting_name} to allow"
     return None
