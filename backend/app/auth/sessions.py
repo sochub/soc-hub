@@ -19,12 +19,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Request
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.audit.events import audit_event
 from app.audit.middleware import audit_ip
 from app.core.config import settings
 from app.models.auth_session import AuthSession
+from app.models.membership import TenantMembership
+from app.models.tenant import Tenant
 from app.models.user import User
 
 KINDS = ("web", "oauth")
@@ -73,6 +75,18 @@ async def create_session(db, user: User, *, kind: str, amr: str, sso_tenant_id: 
     db.add(row)
     await db.flush()
     return row, f"{row.id}.{secret}"
+
+
+async def _policy_expired(db, row: AuthSession, now: datetime) -> bool:
+    """Organization session policy for browser sessions: the strictest across the user's active
+    memberships, so switching into a laxer organization cannot outlive a stricter one. NULL = no limit.
+    ponytail: checked at refresh only, so a limit can overshoot by up to one access-token lifetime (60 min)."""
+    idle, max_age = (await db.execute(
+        select(func.min(Tenant.session_idle_minutes), func.min(Tenant.session_max_minutes))
+        .join(TenantMembership, TenantMembership.tenant_id == Tenant.id)
+        .where(TenantMembership.user_id == row.user_id, Tenant.is_active.is_not(False)))).one()
+    return bool((idle and now - row.last_used_at > timedelta(minutes=idle))
+                or (max_age and now - row.created_at > timedelta(minutes=max_age)))
 
 
 async def _revoke_and_raise(db, row: AuthSession, code: str) -> None:
@@ -129,6 +143,9 @@ async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, Use
     user = (await db.execute(select(User).where(User.id == row.user_id))).scalar_one_or_none()
     if user is None or not user.is_active or int(user.token_version or 0) != row.tv:
         await _revoke_and_raise(db, row, "revoked")
+
+    if row.kind == "web" and await _policy_expired(db, row, now):
+        await _revoke_and_raise(db, row, "expired")
 
     row.last_used_at = now
     if grace:

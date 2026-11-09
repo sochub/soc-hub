@@ -16,6 +16,9 @@ class Tenant(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     workflow_http_allowlist = Column(JSON, nullable=False, default=list, server_default="[]")
     require_mfa = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    # Browser session policy; NULL = platform default (REFRESH_IDLE_DAYS idle, no absolute cap).
+    session_idle_minutes = Column(Integer, nullable=True)
+    session_max_minutes = Column(Integer, nullable=True)
     guest_domain_allowlist = Column(JSON, nullable=False, default=list, server_default="[]")
     mcp_enabled = Column(Boolean, nullable=False, default=False, server_default=sa_false())
     guest_require_sso = Column(Boolean, nullable=False, default=False, server_default=sa_false())  # superseded by guest_login_method
