@@ -26,7 +26,8 @@ function NoteFields({ caseId, value, onChange }: { caseId: number; value: { even
                 className={field}>
                 {NOTE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
-            <MarkdownField value={value.content} imageCaseId={caseId}>
+            <MarkdownField value={value.content} imageCaseId={caseId}
+                replaceInValue={(f, t) => value.content.includes(f) && (onChange({ ...value, content: value.content.replace(f, () => t) }), true)}>
                 {value.event_type === 'comment' ? (
                     <MentionTextarea value={value.content} onChange={(content) => onChange({ ...value, content })}
                         placeholder="What's new? (type @ to mention a teammate)" />

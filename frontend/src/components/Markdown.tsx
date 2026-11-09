@@ -67,11 +67,11 @@ const ACTIONS: { icon: typeof Bold; label: string; key?: string; run: (ta: HTMLT
 ];
 
 /** Write/Preview tabs and a formatting toolbar around any textarea; the child keeps owning the value. */
-export function MarkdownField({ value, children, imageCaseId }: { value: string; children: React.ReactNode; imageCaseId?: number }) {
+export function MarkdownField({ value, children, imageCaseId, replaceInValue }: { value: string; children: React.ReactNode; imageCaseId?: number; replaceInValue?: (from: string, to: string) => boolean }) {
     const [preview, setPreview] = useState(false);
     const box = useRef<HTMLDivElement>(null);
     const textarea = () => box.current?.querySelector('textarea') ?? null;
-    const paste = usePasteImage(imageCaseId ?? 0, textarea);
+    const paste = usePasteImage(imageCaseId ?? 0, textarea, replaceInValue);
     const tab = (on: boolean) => cn('px-2 py-0.5 rounded-sm', on ? 'bg-raised text-fg' : 'text-muted hover:text-fg-2');
     const onKeyDown = (ev: React.KeyboardEvent) => {
         if (!(ev.metaKey || ev.ctrlKey) || ev.shiftKey || ev.altKey || !(ev.target instanceof HTMLTextAreaElement)) return;

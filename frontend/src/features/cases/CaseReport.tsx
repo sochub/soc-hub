@@ -148,7 +148,8 @@ function ReportTextarea({ caseId, id, rows, readOnly, value, onChange, placehold
     caseId: number; id: string; rows: number; readOnly: boolean; value: string; onChange: (v: string) => void; placeholder: string;
 }) {
     const ref = useRef<HTMLTextAreaElement>(null);
-    const paste = usePasteImage(caseId, () => ref.current);
+    const paste = usePasteImage(caseId, () => ref.current,
+        (f, t) => value.includes(f) && (onChange(value.replace(f, () => t)), true));
     return (
         <>
             <textarea

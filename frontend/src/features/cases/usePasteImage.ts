@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ClipboardEvent, DragEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
@@ -20,9 +20,24 @@ function replaceText(ta: HTMLTextAreaElement, from: string, to: string) {
 }
 
 /** Paste / drag-drop images into a markdown textarea: uploads inline and inserts an image link. */
-export function usePasteImage(caseId: number, getTextarea: () => HTMLTextAreaElement | null) {
+export function usePasteImage(
+    caseId: number,
+    getTextarea: () => HTMLTextAreaElement | null,
+    /** State-level swap used when the textarea unmounted mid-upload; returns false if `from` is no longer in the value. */
+    replaceInValue?: (from: string, to: string) => boolean,
+) {
+    // Always call the latest closure: the one captured at upload start would hold a stale value.
+    const fallback = useRef(replaceInValue);
+    fallback.current = replaceInValue;
     const qc = useQueryClient();
     const [error, setError] = useState<string | null>(null);
+
+    // Live textarea when still mounted (keeps caret/undo); otherwise the owner's state updater; else tell the user.
+    const swap = (from: string, to: string) => {
+        const live = getTextarea();
+        if (live?.isConnected) { replaceText(live, from, to); return; }
+        if (!fallback.current?.(from, to)) setError(`Editor closed before the image finished uploading; remove any "${from}" text left in the field.`);
+    };
 
     const upload = async (file: File, ta: HTMLTextAreaElement) => {
         // Brackets/parens/newlines in a filename would break the markdown image syntax.
@@ -36,12 +51,9 @@ export function usePasteImage(caseId: number, getTextarea: () => HTMLTextAreaEle
             fd.append('inline', 'true');
             const { data } = await api.post(`/cases/${caseId}/attachments`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
             qc.invalidateQueries({ queryKey: ['attachments', caseId] });
-            // The editor may have unmounted mid-upload (preview toggle, cancel, save): re-resolve, never write to a detached node.
-            const live = getTextarea();
-            if (live?.isConnected) replaceText(live, placeholder, `![${name}](/api/v1/cases/${caseId}/attachments/${data.id}/raw)`);
+            swap(placeholder, `![${name}](/api/v1/cases/${caseId}/attachments/${data.id}/raw)`);
         } catch (e) {
-            const live = getTextarea();
-            if (live?.isConnected) replaceText(live, placeholder, '');
+            swap(placeholder, '');
             setError(detail(e));
         }
     };
