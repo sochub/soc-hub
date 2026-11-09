@@ -12,7 +12,9 @@ import ipaddress
 import logging
 import re
 import socket
+import json
 import ssl
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -21,6 +23,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import List, Optional
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import delete, literal_column, select, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -35,6 +38,7 @@ from app.services import suppression_service
 from app.services.attachments import clean_content_type, sanitize_filename, store_upload
 from app.storage import get_storage
 from app.utils.crypto import decrypt
+from app.workflows.nodes.alerts import MAX_ALERT_PAYLOAD
 from app.workflows.events import emit_event, trigger_matches
 from app.workflows.runtime import create_run
 
@@ -44,6 +48,16 @@ BATCH_LIMIT = 50  # messages handled per mailbox per cycle
 BODY_MAX_BYTES = 64 * 1024
 MESSAGE_ID_MAX = 512  # mailbox_seen.message_id column width
 PROCESSED_FOLDER = "Processed"
+# poll_mailboxes_task runs with soft_time_limit=540 (app/tasks/email_intake.py). The sweep stops claiming new
+# mailboxes at ~80% of it, and one mailbox's loop is bounded so a slow server can't starve the other tenants.
+SWEEP_BUDGET_SECONDS = 432
+MAILBOX_BUDGET_SECONDS = 120
+CLEANUP_BATCH = 1000
+SUBJECT_MAX_BYTES = 2048
+ADDRESS_MAX_CHARS = 254
+TO_MAX_ENTRIES = 100
+TO_JOINED_MAX_BYTES = 4096
+SKIPPED_MAX_ENTRIES = 20
 ARTIFACT_RETENTION = timedelta(days=30)
 SEEN_RETENTION = timedelta(days=90)
 
@@ -207,9 +221,9 @@ def _addresses(*values) -> List[str]:
     out: List[str] = []
     for _, addr in getaddresses([str(v) for v in values if v]):
         addr = _clean(addr).lower()
-        if addr and addr not in out:
+        if addr and len(addr) <= ADDRESS_MAX_CHARS and addr not in out:
             out.append(addr)
-    return out
+    return out[:TO_MAX_ENTRIES]
 
 
 @dataclass
@@ -240,7 +254,7 @@ def parse_email(raw: bytes) -> ParsedEmail:
 
     sender = (_addresses(hdr("From")) or [""])[0]
     to = _addresses(hdr("To"), hdr("Cc"), hdr("Delivered-To"), hdr("X-Original-To"))
-    subject = hdr("Subject")
+    subject = _cap_bytes(hdr("Subject"), SUBJECT_MAX_BYTES)
     try:
         date = parsedate_to_datetime(hdr("Date")).isoformat()
     except Exception:
@@ -277,9 +291,9 @@ def parse_email(raw: bytes) -> ParsedEmail:
         attachments.append((name, clean_content_type(ctype), data))
 
     return ParsedEmail(email={
-        "message_id": message_id, "sender": sender, "to": to, "to_joined": ", ".join(to), "subject": subject,
+        "message_id": message_id, "sender": sender, "to": to, "to_joined": _cap_bytes(", ".join(to), TO_JOINED_MAX_BYTES), "subject": subject,
         "date": date or None, "body_text": text, "has_attachments": found > 0, "attachment_count": found,
-        "skipped_attachments": skipped,
+        "skipped_attachments": skipped[:SKIPPED_MAX_ENTRIES],
     }, attachments=attachments)
 
 
@@ -336,6 +350,22 @@ async def _store_blob(storage, db, *, tenant_id, mailbox_id, kind, filename, con
     return row
 
 
+def _fit_payload(payload: dict, limit: int = MAX_ALERT_PAYLOAD) -> None:
+    """Keep the payload under the same size guard alert_create enforces (it flows into run steps, audit rows and the
+    fallback alert). The caps in parse_email make this a backstop; if it ever trips, shorten body_text and mark it."""
+    reserve = 1024  # room for the artifact ids added later
+    size = len(json.dumps(payload, default=str))
+    if size + reserve <= limit:
+        return
+    mail = payload["email"]
+    mail["truncated"] = True
+    over = size + len('"truncated": true, ') + reserve - limit
+    body = mail["body_text"].encode("utf-8")
+    mail["body_text"] = body[:max(0, len(body) - over)].decode("utf-8", errors="ignore")
+    if len(json.dumps(payload, default=str)) + reserve > limit:  # still too big: drop the bulky list fields too
+        mail.update(body_text="", to=[], to_joined="", skipped_attachments=[])
+
+
 async def _process_message(db, *, mailbox_id: int, tenant_id: int, fallback: bool, raw: bytes) -> bool:
     """Handle one email in one transaction. Returns False for a duplicate, True when newly processed."""
     from app.tasks.workflows import advance_run_task  # late: the worker imports this module's task wrapper
@@ -351,6 +381,7 @@ async def _process_message(db, *, mailbox_id: int, tenant_id: int, fallback: boo
         return False
 
     payload = {"event": "email.received", "mailbox_id": mailbox_id, "email": mail}
+    _fit_payload(payload)
     workflows = (await db.execute(select(Workflow).where(
         Workflow.tenant_id == tenant_id, Workflow.enabled == True,  # noqa: E712
         Workflow.trigger_type == "email.received").order_by(Workflow.id))).scalars().all()
@@ -410,11 +441,13 @@ async def _process_message(db, *, mailbox_id: int, tenant_id: int, fallback: boo
     return True
 
 
-async def poll_mailbox(db, mailbox) -> int:
+async def poll_mailbox(db, mailbox, *, deadline: Optional[float] = None) -> int:
     """Fetch up to BATCH_LIMIT unseen emails and process each; returns how many were new (not duplicates).
 
     Each message commits on its own, then is archived on the server. A message that fails to process stays
-    unseen (retried next cycle); the others still go through and a MailboxError summarises the failures."""
+    unseen (retried next cycle); the others still go through and a MailboxError summarises the failures.
+    `deadline` (time.monotonic) stops the loop between messages; the rest stay unseen for the next cycle.
+    SoftTimeLimitExceeded is never swallowed."""
     await db.refresh(mailbox)  # a rollback on an earlier message may have expired it
     mailbox_id, tenant_id, fallback, folder = mailbox.id, mailbox.tenant_id, mailbox.fallback_create_alert, mailbox.folder
     conn = await asyncio.to_thread(_open_connection, mailbox)
@@ -423,11 +456,13 @@ async def poll_mailbox(db, mailbox) -> int:
     try:
         try:
             uids = await asyncio.to_thread(_imap_unseen, conn, folder)
-        except MailboxError:
+        except (MailboxError, SoftTimeLimitExceeded):
             raise
         except Exception:
             raise MailboxError("IMAP error") from None
         for uid in uids:
+            if deadline is not None and time.monotonic() > deadline:
+                break
             raw = await asyncio.to_thread(_imap_fetch, conn, uid)
             if raw is None:
                 failed += 1
@@ -435,6 +470,8 @@ async def poll_mailbox(db, mailbox) -> int:
             try:
                 new += await _process_message(db, mailbox_id=mailbox_id, tenant_id=tenant_id, fallback=fallback,
                                               raw=raw)
+            except SoftTimeLimitExceeded:
+                raise
             except Exception as e:  # never log message content or addresses
                 logger.warning("email intake: message failed mailbox=%s err=%s", mailbox_id, type(e).__name__)
                 failed += 1
@@ -449,10 +486,11 @@ async def poll_mailbox(db, mailbox) -> int:
     return new
 
 
-async def _claim_due(now: datetime, mailbox_ids=None) -> List[int]:
-    """Pick the due mailboxes under FOR UPDATE SKIP LOCKED and stamp last_polled_at in the same short transaction.
-    The stamp is the claim: the per-message commits of a long poll release row locks, so an overlapping sweep
-    must find the mailbox not due (and mailbox_seen's unique key is the real duplicate guard)."""
+async def _claim_next(now: datetime, mailbox_ids=None) -> Optional[int]:
+    """Claim the most overdue due mailbox under FOR UPDATE SKIP LOCKED, stamping last_polled_at in the same short
+    transaction. The stamp is the claim: per-message commits of a long poll release row locks, so an overlapping
+    sweep must find the mailbox not due (and mailbox_seen's unique key is the real duplicate guard). One at a
+    time, so a sweep that runs out of budget leaves the remaining mailboxes due (and first in line) next cycle."""
     async with AsyncSessionLocal() as db:
         due = (TenantMailbox.last_polled_at.is_(None)) | (
             TenantMailbox.last_polled_at + TenantMailbox.poll_interval_seconds * literal_column("interval '1 second'")
@@ -460,29 +498,41 @@ async def _claim_due(now: datetime, mailbox_ids=None) -> List[int]:
         q = select(TenantMailbox.id).where(
             TenantMailbox.enabled == True, due,  # noqa: E712
             TenantMailbox.tenant_id.in_(select(Tenant.id).where(Tenant.is_active.isnot(False))),
-        ).order_by(TenantMailbox.id).with_for_update(skip_locked=True)
+        ).order_by(TenantMailbox.last_polled_at.asc().nullsfirst(), TenantMailbox.id).limit(1).with_for_update(
+            skip_locked=True)
         if mailbox_ids is not None:
             q = q.where(TenantMailbox.id.in_(mailbox_ids))
-        ids = list((await db.execute(q)).scalars().all())
-        if ids:
-            await db.execute(update(TenantMailbox).where(TenantMailbox.id.in_(ids)).values(last_polled_at=now))
+        mid = (await db.execute(q)).scalar()
+        if mid is not None:
+            await db.execute(update(TenantMailbox).where(TenantMailbox.id == mid).values(last_polled_at=now))
         await db.commit()
-        return ids
+        return mid
 
 
-async def poll_due_mailboxes(now: Optional[datetime] = None, *, mailbox_ids=None) -> List[int]:
-    """Beat sweep: poll every due mailbox. One mailbox failing never aborts the others; its `last_error` is a
-    generic string (never the password or an exception's text). `mailbox_ids` scopes the sweep (tests)."""
+async def poll_due_mailboxes(now: Optional[datetime] = None, *, mailbox_ids=None,
+                             budget: float = SWEEP_BUDGET_SECONDS,
+                             mailbox_budget: float = MAILBOX_BUDGET_SECONDS) -> List[int]:
+    """Beat sweep: poll due mailboxes until none is left or `budget` seconds are used. One mailbox failing never
+    aborts the others; its `last_error` is a generic string (never the password or an exception's text). Each
+    mailbox gets at most `mailbox_budget` seconds; unfetched messages stay unseen for the next cycle.
+    `mailbox_ids` scopes the sweep (tests)."""
     now = now or datetime.now(timezone.utc)
-    ids = await _claim_due(now, mailbox_ids)
-    for mid in ids:
+    sweep_deadline = time.monotonic() + budget
+    polled: List[int] = []
+    while time.monotonic() < sweep_deadline:
+        mid = await _claim_next(now, mailbox_ids)
+        if mid is None:
+            break
+        polled.append(mid)
         error: Optional[str] = None
         try:
             async with AsyncSessionLocal() as db:
                 mb = await db.get(TenantMailbox, mid)
                 if mb is None or not mb.enabled:
                     continue
-                await poll_mailbox(db, mb)
+                await poll_mailbox(db, mb, deadline=min(sweep_deadline, time.monotonic() + mailbox_budget))
+        except SoftTimeLimitExceeded:
+            raise
         except MailboxError as e:
             error = str(e)
         except Exception as e:
@@ -492,7 +542,7 @@ async def poll_due_mailboxes(now: Optional[datetime] = None, *, mailbox_ids=None
             await db.execute(update(TenantMailbox).where(TenantMailbox.id == mid).values(
                 last_error=error, last_polled_at=datetime.now(timezone.utc)))
             await db.commit()
-    return ids
+    return polled
 
 
 # ── promotion: copy the stored evidence into the case ────────────────────────────────────────────
@@ -554,6 +604,8 @@ async def copy_email_evidence(*, alert, case_id: int, user_id: Optional[int]) ->
                     case_attachment_id=att.id))
                 await db.commit()
                 copied += 1
+            except SoftTimeLimitExceeded:
+                raise
             except Exception as e:  # store_upload already rolled back; the evidence stays in email_artifacts
                 logger.warning("email evidence copy failed artifact=%s err=%s", art_id, type(e).__name__)
                 case = (await db.execute(select(Case).where(Case.id == case_id))).scalars().first()
@@ -564,24 +616,35 @@ async def copy_email_evidence(*, alert, case_id: int, user_id: Optional[int]) ->
 
 async def cleanup_email_artifacts(now: Optional[datetime] = None, *, tenant_ids=None) -> dict:
     """Delete email artifacts (blob first, then row) older than 30 days that no alert or case holds, and dedupe
-    rows older than 90 days. `tenant_ids` scopes the run (tests)."""
+    rows older than 90 days. Works through them in CLEANUP_BATCH-sized keyset batches until none is left, so a busy
+    tenant never outgrows one daily run. `tenant_ids` scopes the run (tests)."""
     now = now or datetime.now(timezone.utc)
     storage = get_storage()
     removed = 0
+    last_id = 0
     async with AsyncSessionLocal() as db:
-        q = select(EmailArtifact.id, EmailArtifact.storage_key).where(
-            EmailArtifact.created_at < now - ARTIFACT_RETENTION, EmailArtifact.alert_id.is_(None),
-            EmailArtifact.case_attachment_id.is_(None)).order_by(EmailArtifact.id).limit(1000)
-        if tenant_ids is not None:
-            q = q.where(EmailArtifact.tenant_id.in_(tenant_ids))
-        for art_id, key in (await db.execute(q)).all():
-            try:
-                await storage.delete(key)  # idempotent; a failure leaves the row so the next run retries
-            except Exception:
-                logger.warning("email artifact blob delete failed id=%s", art_id)
-                continue
-            await db.execute(delete(EmailArtifact).where(EmailArtifact.id == art_id))
-            removed += 1
+        while True:
+            q = select(EmailArtifact.id, EmailArtifact.storage_key).where(
+                EmailArtifact.id > last_id, EmailArtifact.created_at < now - ARTIFACT_RETENTION,
+                EmailArtifact.alert_id.is_(None), EmailArtifact.case_attachment_id.is_(None)
+            ).order_by(EmailArtifact.id).limit(CLEANUP_BATCH)
+            if tenant_ids is not None:
+                q = q.where(EmailArtifact.tenant_id.in_(tenant_ids))
+            batch = (await db.execute(q)).all()
+            for art_id, key in batch:
+                last_id = art_id
+                try:
+                    await storage.delete(key)  # idempotent; a failure leaves the row, so the next run retries it
+                except SoftTimeLimitExceeded:
+                    raise
+                except Exception:
+                    logger.warning("email artifact blob delete failed id=%s", art_id)
+                    continue
+                await db.execute(delete(EmailArtifact).where(EmailArtifact.id == art_id))
+                removed += 1
+            await db.commit()
+            if len(batch) < CLEANUP_BATCH:
+                break
         sq = delete(MailboxSeen).where(MailboxSeen.processed_at < now - SEEN_RETENTION)
         if tenant_ids is not None:
             sq = sq.where(MailboxSeen.mailbox_id.in_(select(TenantMailbox.id).where(TenantMailbox.tenant_id.in_(tenant_ids))))

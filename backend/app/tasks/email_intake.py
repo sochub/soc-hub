@@ -2,7 +2,8 @@ from app.tasks.runner import _run_async
 from app.worker import celery_app
 
 
-# A cycle can fetch 50 emails with attachments, more than the default 120 s soft limit allows.
+# A cycle can fetch 50 emails with attachments, more than the default 120 s soft limit allows. The sweep budget in
+# services/email_intake.py (SWEEP_BUDGET_SECONDS) is ~80% of the soft limit; keep them in step.
 @celery_app.task(acks_late=True, soft_time_limit=540, time_limit=600)
 def poll_mailboxes_task():
     from app.services.email_intake import poll_due_mailboxes

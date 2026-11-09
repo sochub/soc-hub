@@ -625,6 +625,105 @@ def test_copy_task_registered():
     assert "app.tasks.email_intake.copy_email_evidence_task" in celery_app.tasks
 
 
+def test_sweep_and_mailbox_deadlines(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    msgs = [make_mail(mid=f"<d{i}@example.test>") for i in range(5)]
+
+    async def body():
+        async with env(monkeypatch, tmp_path, messages=msgs) as (e, db, mb):
+            # sweep budget already used up: no mailbox is claimed, so it stays due for the next cycle
+            assert await email_intake.poll_due_mailboxes(mailbox_ids=[e.mid], budget=0) == []
+            row = (await db.execute(select(TenantMailbox).where(TenantMailbox.id == e.mid))).scalars().one()
+            await db.refresh(row)
+            assert row.last_polled_at is None and e.fake.log == []
+
+            # a mailbox's loop stops between messages at its deadline; the rest stay unseen and untouched
+            clock = [0.0]
+            monkeypatch.setattr(email_intake, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+            real_uid = e.fake.uid
+
+            def ticking_uid(cmd, *a):
+                if cmd.upper() == "FETCH":
+                    clock[0] += 10
+                return real_uid(cmd, *a)
+            e.fake.uid = ticking_uid
+            assert await email_intake.poll_mailbox(db, mb, deadline=25) == 3
+            assert e.fake.fetched == ["1", "2", "3"] and e.fake.deleted == ["1", "2", "3"]
+            assert len(await seen_ids(db, e)) == 3
+            # next cycle picks the remaining two up
+            clock[0] = 0
+            assert await email_intake.poll_mailbox(db, mb, deadline=1000) == 2
+    run(body())
+
+
+def test_soft_time_limit_is_not_swallowed(monkeypatch, tmp_path):
+    import pytest
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    async def body():
+        async with env(monkeypatch, tmp_path, messages=[make_mail()]) as (e, db, mb):
+            async def slow(*a, **k):
+                raise SoftTimeLimitExceeded()
+            monkeypatch.setattr(email_intake, "_process_message", slow)
+            with pytest.raises(SoftTimeLimitExceeded):
+                await email_intake.poll_mailbox(db, mb)
+            with pytest.raises(SoftTimeLimitExceeded):
+                await email_intake.poll_due_mailboxes(mailbox_ids=[e.mid])
+            assert e.fake.deleted == []  # never archived
+    run(body())
+
+
+def test_payload_fields_are_capped(monkeypatch):
+    many = ", ".join(f"u{i}@example.test" for i in range(300))
+    p = email_intake.parse_email(make_mail(subject="s" * 50_000, to=many + ", " + "x" * 400 + "@example.test"))
+    m = p.email
+    assert len(m["subject"].encode()) <= email_intake.SUBJECT_MAX_BYTES
+    assert len(m["to"]) == email_intake.TO_MAX_ENTRIES and all(len(a) <= 254 for a in m["to"])
+    assert len(m["to_joined"].encode()) <= email_intake.TO_JOINED_MAX_BYTES
+    monkeypatch.setattr(email_intake.settings, "MAX_UPLOAD_MB", 1)
+    atts = [(f"f{i}.bin", b"x" * (1024 * 1024 + 1), "application/octet-stream") for i in range(25)]
+    m = email_intake.parse_email(make_mail(attachments=atts)).email
+    assert m["attachment_count"] == 25 and len(m["skipped_attachments"]) == email_intake.SKIPPED_MAX_ENTRIES
+
+
+def test_fallback_payload_is_kept_under_the_alert_size_guard(monkeypatch, tmp_path):
+    import json
+    raw = make_mail(body="word " * 20_000)  # ~100KB body
+
+    async def body():
+        async with env(monkeypatch, tmp_path, fallback=True, messages=[raw]) as (e, db, mb):
+            monkeypatch.setattr(email_intake, "MAX_ALERT_PAYLOAD", 30_000)
+            monkeypatch.setattr(email_intake, "_fit_payload", lambda p, limit=30_000, _f=email_intake._fit_payload: _f(p, limit))
+            await email_intake.poll_mailbox(db, mb)
+            alert = (await db.execute(select(Alert).where(Alert.tenant_id == e.tid))).scalars().one()
+            assert len(json.dumps(alert.payload)) <= 30_000
+            assert alert.payload["email"]["truncated"] is True and alert.payload["email"]["body_text"].startswith("word")
+            assert alert.payload["eml_artifact_id"]  # evidence still stored whole
+            eml = next(a for a in await artifacts(db, e) if a.kind == "eml")
+            assert (tmp_path / eml.storage_key).read_bytes() == raw
+    run(body())
+
+
+def test_cleanup_works_through_more_than_one_batch(monkeypatch, tmp_path):
+    async def body():
+        async with env(monkeypatch, tmp_path) as (e, db, mb):
+            monkeypatch.setattr(email_intake, "CLEANUP_BATCH", 2)
+            now = datetime.now(timezone.utc)
+            rows = []
+            for i in range(5):
+                key = f"tenants/{e.tid}/email/{secrets.token_hex(8)}"
+                (tmp_path / key).parent.mkdir(parents=True, exist_ok=True)
+                (tmp_path / key).write_bytes(b"d")
+                rows.append(EmailArtifact(tenant_id=e.tid, kind="eml", filename=f"{i}.eml", size_bytes=1,
+                                          sha256="0" * 64, storage_key=key, created_at=now - timedelta(days=40)))
+            db.add_all(rows)
+            await db.commit()
+            res = await email_intake.cleanup_email_artifacts(now, tenant_ids=[e.tid])
+            assert res["artifacts"] == 5 and await artifacts(db, e) == []
+            assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+    run(body())
+
+
 def test_cleanup_removes_only_unreferenced_old_artifacts_and_old_seen(monkeypatch, tmp_path):
     async def body():
         async with env(monkeypatch, tmp_path) as (e, db, mb):
