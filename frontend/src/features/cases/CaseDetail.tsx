@@ -2,7 +2,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import Avatar from '../../components/Avatar';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Shield, MessageSquare, ArrowLeft, Hash, Calendar, Plus, Globe, FileText, Mail, Server, Monitor, User as UserIcon, Edit, Link2, Unlink, ShieldAlert, Trash2 } from 'lucide-react';
+import { Shield, MessageSquare, ArrowLeft, Hash, Calendar, Plus, Globe, FileText, Mail, Server, Monitor, User as UserIcon, Edit, Link2, Unlink, ShieldAlert, Trash2, Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useState } from 'react';
@@ -33,6 +33,8 @@ import EnrichmentPanel from '../enrichment/EnrichmentPanel';
 import { useCanRun } from '../enrichment/useCanRun';
 import { useArtifactTypes } from '../artifacts/useArtifactTypes';
 import ArtifactMindMap from '../artifacts/ArtifactMindMap';
+import CaseTime from './CaseTime';
+import { formatDuration, useCaseTime, useTimeHeartbeat } from './timeApi';
 
 const ARTIFACT_ICONS: Record<string, any> = {
     hash: FileText,
@@ -45,9 +47,9 @@ const ARTIFACT_ICONS: Record<string, any> = {
     username: UserIcon,
 };
 
-const CASE_TABS = ['activity', 'tasks', 'artifacts', 'evidence', 'guests', 'report', 'network', 'audit', 'automation'] as const;
+const CASE_TABS = ['activity', 'tasks', 'artifacts', 'evidence', 'guests', 'report', 'network', 'time', 'audit', 'automation'] as const;
 type CaseTab = typeof CASE_TABS[number];
-const TAB_LABEL: Partial<Record<CaseTab, string>> = { artifacts: 'Artifacts & assets' };
+const TAB_LABEL: Partial<Record<CaseTab, string>> = { artifacts: 'Artifacts & assets', time: 'Time' };
 
 // What the add dialog offers; the hint tells analysts which one they have.
 const ITEM_KINDS = [
@@ -134,6 +136,8 @@ export default function CaseDetail() {
     });
     // Viewers can't list guests (the API returns 403), so they don't get the tab.
     const canSeeGuests = isAdmin || me?.role === 'analyst';
+    useTimeHeartbeat(id ? parseInt(id) : undefined, canSeeGuests);
+    const { data: timeData } = useCaseTime(id ? parseInt(id) : 0, !!id && canSeeGuests);
 
     // Deep link from a notification: /cases/:id#event-<id> -> show Activity (once per hash); CaseTimeline scrolls to the note.
     const { hash } = useLocation();
@@ -244,6 +248,12 @@ export default function CaseDetail() {
                                     <Calendar size={12} />
                                     {formatDateTime(caseData.created_at, me?.timezone)}
                                 </span>
+                                {canSeeGuests && !!timeData?.total_seconds && (
+                                    <span className="flex items-center gap-1.5" title="Time spent on this case">
+                                        <Clock size={12} />
+                                        {formatDuration(timeData.total_seconds)}
+                                    </span>
+                                )}
                                 <span className="flex items-center gap-1.5 whitespace-nowrap">
                                     <Shield size={12} />
                                     Owner:
@@ -305,7 +315,7 @@ export default function CaseDetail() {
                 {/* Tabs (sticky while the page scrolls inside <main>) */}
                 <div className="sticky top-0 z-10 bg-panel px-6 pt-3">
                     <div className="flex border-b border-line relative space-x-6">
-                        {CASE_TABS.filter((tab) => tab !== 'guests' || canSeeGuests).map((tab) => (
+                        {CASE_TABS.filter((tab) => (tab !== 'guests' && tab !== 'time') || canSeeGuests).map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => selectTab(tab)}
@@ -352,6 +362,8 @@ export default function CaseDetail() {
                                     <CaseTimeline caseId={parseInt(id)} activity={caseData.timeline_events ?? []} />
                                 </div>
                             )}
+
+                            {activeTab === 'time' && id && canSeeGuests && <CaseTime caseId={parseInt(id)} />}
 
                             {activeTab === 'tasks' && id && (
                                 <CaseTasks caseId={parseInt(id)} />

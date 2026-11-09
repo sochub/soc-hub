@@ -1,0 +1,48 @@
+{
+  "key": "email-to-alert",
+  "name": "Email to alert",
+  "vendor": "SOC Hub",
+  "kind": "intake",
+  "description": "Turn every email received in a configured mailbox into a pending alert (source email, message-id as external id). The raw .eml and attachments are kept as evidence once the alert is promoted to a case.",
+  "trigger_type": "email.received",
+  "trigger_filter": "",
+  "params": [],
+  "secrets": [],
+  "setup": "Configure a mailbox under Settings -> Integrations (Mailboxes) first; each new message in its folder fires this workflow.\n\n## Narrowing\nEdit the trigger filter, for example `'soc+phishing' in email.to_joined` or `email.has_attachments`.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "alert",
+        "type": "alert_create",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "source": "email",
+          "external_id": "{{ trigger.email.message_id }}",
+          "title": "{{ trigger.email.subject }}",
+          "severity": "medium",
+          "payload": "trigger"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_alert",
+        "source": "start",
+        "target": "alert",
+        "source_handle": null
+      }
+    ]
+  }
+}

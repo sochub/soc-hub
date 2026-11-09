@@ -190,4 +190,5 @@ export const TRIGGER_LABEL: Record<TriggerType, string> = {
     'alert.ingested': 'Alert ingested',
     manual: 'Manual',
     schedule: 'Schedule (cron, UTC)',
+    'email.received': 'Email received',
 };

@@ -10,6 +10,18 @@ import { btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import type { CaseReportView, ReportDraft, TLPLevel } from '../../types';
 
 const TEXT_MAX = 20000;
+const LOCK_RENEW_MS = 45_000;
+const CONFLICT_COPY = 'This report changed while you were editing — copy your changes, then reload.';
+type LockRun = { cancelled: boolean; held: boolean };
+type LockResp = { locked_by_email: string | null; updated_at: string | null };
+const isVersionConflict = (e: unknown) => {
+    const r = (e as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
+    return r?.status === 409 && r.data?.detail === 'version_conflict';
+};
+const lockHolder = (e: unknown): string | null => {
+    const r = (e as { response?: { status?: number; data?: LockResp } })?.response;
+    return r?.status === 409 ? (r.data?.locked_by_email ?? 'another user') : null;
+};
 const TLP_ORDER: TLPLevel[] = ['white', 'green', 'amber', 'red'];
 const TLP_LABEL: Record<TLPLevel, string> = { white: 'CLEAR', green: 'GREEN', amber: 'AMBER', red: 'RED' };
 const TLP_STYLE: Record<TLPLevel, { backgroundColor: string; color: string }> = {
@@ -189,6 +201,13 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     const [full, setFull] = useState(false);
     const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
     const exportingRef = useRef(false);
+    // Edit lock: 'pending' until the claim resolves, 'held' when ours, otherwise the email of the current holder.
+    const [lock, setLock] = useState<'pending' | 'held' | { by: string }>('pending');
+    const [takingOver, setTakingOver] = useState(false);
+    const [conflict, setConflict] = useState(false);
+    const versionRef = useRef<string | null>(null);
+    const runRef = useRef<LockRun | null>(null);
+    const holding = lock === 'held';
 
     const baseline = data ? formFrom(data) : null;
     const form = edited ?? baseline;
@@ -203,6 +222,63 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
         return () => window.removeEventListener('beforeunload', onBeforeUnload);
     }, [dirty]);
 
+    // Each lock-effect run owns a token; a cancelled run never touches state or the shared lock after a newer run exists.
+    const claim = async (takeover: boolean, run: LockRun | null) => {
+        if (!run) return false;
+        try {
+            const r = (await api.post(`/cases/${caseId}/report/lock`, { takeover })).data as LockResp;
+            run.held = true;
+            if (!run.cancelled) { versionRef.current = r.updated_at; setLock('held'); }
+            return true;
+        } catch (e) {
+            run.held = false;
+            if (run.cancelled) return false;
+            const by = lockHolder(e);
+            if (by !== null) setLock({ by });
+            else setError(await errorDetail(e));
+            return false;
+        }
+    };
+
+    // Release only when no newer run took over (StrictMode remount) and this run holds the lock.
+    const release = (run: LockRun) => {
+        if (runRef.current !== null || !run.held) return;
+        run.held = false;
+        api.delete(`/cases/${caseId}/report/lock`).catch(() => undefined);
+    };
+
+    useEffect(() => {
+        if (!canWrite) return;
+        const run: LockRun = { cancelled: false, held: false };
+        runRef.current = run;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- async claim; state is set after the request resolves
+        claim(false, run).then((ok) => {
+            if (!ok) return;
+            if (run.cancelled) { setTimeout(() => release(run), 0); return; }
+            queryClient.invalidateQueries({ queryKey });
+        });
+        const timer = window.setInterval(() => { if (run.held && !run.cancelled) void claim(false, run); }, LOCK_RENEW_MS);
+        return () => {
+            run.cancelled = true;
+            runRef.current = null;
+            window.clearInterval(timer);
+            // Deferred so a StrictMode remount (which sets runRef synchronously) cancels the release.
+            setTimeout(() => release(run), 0);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [caseId, canWrite]);
+
+    const takeOver = async () => {
+        setTakingOver(true);
+        if (await claim(true, runRef.current)) {
+            setEdited(null);
+            setConflict(false);
+            setError(null);
+            await queryClient.invalidateQueries({ queryKey });
+        }
+        setTakingOver(false);
+    };
+
     const update = (patch: Partial<Form>) => {
         if (!form) return;
         setEdited({ ...form, ...patch });
@@ -212,18 +288,24 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     const save = useMutation({
         mutationFn: async () => {
             if (!form || !data) throw new Error('not loaded');
-            const body: Record<string, unknown> = { tlp: form.tlp };
+            const body: Record<string, unknown> = { tlp: form.tlp, base_updated_at: versionRef.current };
             for (const { key } of TEXT_FIELDS) body[key] = form[key] === '' ? null : form[key];
             return (await api.put(`/cases/${caseId}/report`, body)).data as CaseReportView;
         },
         onSuccess: (view) => {
+            versionRef.current = view.report.updated_at;
+            setConflict(false);
             queryClient.setQueryData(queryKey, view);
             setEdited(null);
             setError(null);
             setNotice('Report saved');
             queryClient.invalidateQueries({ queryKey: ['audit-logs', 'case', String(caseId)] });
         },
-        onError: async (e) => { setNotice(null); setError(await errorDetail(e)); },
+        onError: async (e) => {
+            setNotice(null);
+            if (isVersionConflict(e)) { setConflict(true); setError(null); return; }
+            setError(await errorDetail(e));
+        },
     });
 
     const draft = useMutation({
@@ -280,7 +362,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     }
 
     const ms = data.milestones;
-    const readOnly = !canWrite;
+    const readOnly = !canWrite || !holding;
     const chartVersion = data.report.updated_at ?? 'none';
     // Never below the floor, also when min_tlp rises after a refetch.
     const exportValue = clampTlp(exportTlp ?? data.report.tlp, data.min_tlp);
@@ -296,7 +378,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                     <TlpSelect label="Report TLP" value={form.tlp} min={data.min_tlp} disabled={readOnly}
                         onChange={(t) => update({ tlp: t })} />
                 </label>
-                {canWrite && data.ai_available && (
+                {!readOnly && data.ai_available && (
                     confirmDraft ? (
                         <span className="inline-flex items-center gap-2 text-xs">
                             <span className="text-fg-2">Replace current text with an AI draft?</span>
@@ -321,6 +403,18 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                 </div>
             </div>
 
+            {canWrite && typeof lock === 'object' && (
+                <div role="status" className="flex flex-wrap items-center gap-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-sm px-3 py-2">
+                    <AlertTriangle size={14} className="shrink-0" />
+                    <span className="mr-auto">Being edited by {lock.by}</span>
+                    <button onClick={takeOver} disabled={takingOver} className={btnSecondary}>
+                        {takingOver ? 'Taking over...' : 'Take over'}
+                    </button>
+                </div>
+            )}
+            {conflict && (
+                <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">{CONFLICT_COPY}</div>
+            )}
             {error && (
                 <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">{error}</div>
             )}
@@ -368,7 +462,7 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                 </div>
             </div>
 
-            {canWrite && (
+            {!readOnly && (
                 <div className="flex items-center justify-end gap-3">
                     {dirty && (
                         <button onClick={() => { setEdited(null); setError(null); setNotice(null); }} disabled={save.isPending} className={btnSecondary}>

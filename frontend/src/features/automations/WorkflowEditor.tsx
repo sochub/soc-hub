@@ -211,6 +211,13 @@ function Editor() {
                             <textarea rows={2} className="w-full border border-line-strong px-2 py-1.5 font-mono text-xs" disabled={readOnly}
                                 placeholder={meta.trigger_type === 'schedule' ? '*/15 * * * *' : "filter, e.g. 'x' in case.tags"} value={meta.trigger_filter}
                                 onChange={(e) => setMeta({ ...meta, trigger_filter: e.target.value })} />
+                            {meta.trigger_type === 'email.received' && (
+                                <p className="text-xs text-fg-3">
+                                    Fields: <code>email.to_joined</code>, <code>email.sender</code>, <code>email.subject</code>,{' '}
+                                    <code>email.has_attachments</code>, <code>trigger.mailbox_id</code>. Example:{' '}
+                                    <code>'soc+phishing' in email.to_joined</code>. Leave empty to match every email.
+                                </p>
+                            )}
                         </div>
                         {!readOnly && (['Logic', 'Cases', 'Alerts', 'HTTP', 'Slack'] as const).map((cat) => {
                             const items = palette.filter((d) => d.category === cat);

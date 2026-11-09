@@ -112,7 +112,7 @@ async def _scenario(monkeypatch, caplog, recorder):
                 for k in ("auto_max_tlp", "artifact_tlp", "cache_ttl_hours", "sources", "vt_per_minute",
                           "vt_per_day", "internal_domains"):
                     assert d[k] == DEFAULTS[k], f"a {k} {d[k]}"
-                assert d["credentials_set"] == {"virustotal": False, "abusech": False}, "a credentials_set"
+                assert d["credentials_set"] == {"virustotal": False, "abusech": False, "misp": False}, "a credentials_set"
 
                 # b) PUT with a VT key -> 200; key never in response or DB plaintext; audit has field names only
                 r = await call("PUT", CFG, "save", json={"virustotal_api_key": VT_KEY, "auto_max_tlp": "amber",
@@ -279,9 +279,10 @@ async def _scenario(monkeypatch, caplog, recorder):
                 r = await call("POST", CFG + "/test", "test")
                 assert r.status_code == 200, f"n nokey {r.status_code} {r.text}"
                 assert r.json() == {"virustotal": {"ok": False, "message": "No key set"},
-                                    "abusech": {"ok": False, "message": "No key set"}}, f"n nokey {r.text}"
+                                    "abusech": {"ok": False, "message": "No key set"},
+                                    "misp": {"ok": False, "message": "No key set"}}, f"n nokey {r.text}"
                 r = await call("PUT", CFG, "save", json={"virustotal_api_key": VT_KEY2, "abusech_auth_key": AB_KEY})
-                assert r.status_code == 200 and all(r.json()["credentials_set"].values()), f"n put {r.text}"
+                assert r.status_code == 200 and all(v for k, v in r.json()["credentials_set"].items() if k != "misp"), f"n put {r.text}"
                 seen = []
 
                 async def vt_lookup(itype, value, key, **kw):
@@ -322,7 +323,7 @@ async def _scenario(monkeypatch, caplog, recorder):
                 r = await call("DELETE", CFG, "delete")
                 assert r.status_code == 204, f"o delete {r.status_code}"
                 r = await call("GET", CFG)
-                assert r.json()["credentials_set"] == {"virustotal": False, "abusech": False}, "o after delete"
+                assert r.json()["credentials_set"] == {"virustotal": False, "abusech": False, "misp": False}, "o after delete"
                 assert (await stored_keys())[0] is None, "o row remains"
 
             audits = (await db.execute(select(AuditLog).where(

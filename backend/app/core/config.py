@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     # internal network). Exact-match, operator-controlled.
     OIDC_PRIVATE_HOSTS: list[str] = []
 
+    # Hostnames a tenant mailbox (IMAP email intake) may resolve to a private address (self-hosted mail
+    # server on an internal network). Exact-match, operator-controlled.
+    MAILBOX_PRIVATE_HOSTS: list[str] = []
+
+    # Hostnames a tenant's MISP server URL (threat-intel enrichment) may resolve to a private address
+    # (self-hosted MISP on an internal network). Exact-match, operator-controlled.
+    MISP_PRIVATE_HOSTS: list[str] = []
+
     # Platform-level switch: may a host on a tenant's HTTP allowlist (workflow HTTP node, OAuth token URL,
     # tenant AI api_base) resolve to a private address (RFC 1918, CGNAT 100.64/10, ULA fc00::/7)? Off by
     # default. Enabling it lets every tenant admin reach private addresses, including the platform's own

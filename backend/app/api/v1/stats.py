@@ -1,6 +1,10 @@
-from typing import Any
+import csv
+import io
+from datetime import date
+from typing import Any, Literal, Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, cast, Date, text
 from sqlalchemy.future import select
@@ -11,6 +15,8 @@ from app.models.artifact import Artifact
 from app.models.case_artifact import CaseArtifact
 from app.models.ioc import IOC
 from app.models.user import User
+from app.models.case_time_entry import CaseTimeEntry
+from app.api.v1.audit_logs import _csv_safe  # reused CSV formula-injection guard
 from app.utils.sla import compute_sla_state, load_policy_overrides
 from app.services.artifact_types import not_private
 
@@ -299,3 +305,50 @@ async def get_stats(
         "artifacts_by_type": artifacts_by_type,
         "top_artifacts": top_artifacts,
     }
+
+
+_TIME_CSV = ["user_email", "case_id", "case_title", "severity", "seconds"]
+
+
+@router.get("/time")
+async def time_rollup(
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    format: Literal["json", "csv"] = "json",
+    db: AsyncSession = Depends(deps.get_db),
+    admin: User = Depends(deps.require_admin),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Admin rollup of tracked time per user and case (entries starting in [start, end], default last 30 days)."""
+    today = datetime.now(timezone.utc).date()
+    end = end or today
+    start = start or end - timedelta(days=30)
+    lo = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
+    hi = datetime(end.year, end.month, end.day, tzinfo=timezone.utc) + timedelta(days=1)
+    secs = func.coalesce(func.sum(func.extract("epoch", CaseTimeEntry.ended_at - CaseTimeEntry.started_at)), 0)
+    q = (select(User.email, Case.id, Case.title, Case.severity, secs)
+         .join(User, User.id == CaseTimeEntry.user_id).join(Case, Case.id == CaseTimeEntry.case_id)
+         .where(CaseTimeEntry.tenant_id == tenant_id, CaseTimeEntry.started_at >= lo, CaseTimeEntry.started_at < hi)
+         .group_by(User.email, Case.id, Case.title, Case.severity)
+         .order_by(User.email, Case.id))
+    rows = [{"user_email": em, "case_id": cid, "case_title": title,
+             "severity": getattr(sev, "value", sev), "seconds": int(s)}
+            for em, cid, title, sev, s in (await db.execute(q)).all()]
+    if format == "json":
+        return {"rows": rows}
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=_TIME_CSV)
+    w.writeheader()
+
+    async def body():
+        for r in rows:
+            w.writerow({k: _csv_safe(v) for k, v in r.items()})
+            if buf.tell() > 64_000:
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate()
+        yield buf.getvalue()
+
+    # header is already in buf; body() yields it with the first chunk
+    return StreamingResponse(body(), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="time-{start}-{end}.csv"'})

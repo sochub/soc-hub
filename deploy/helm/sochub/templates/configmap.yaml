@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sochub.configMapName" . }}
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
+  STORAGE_LOCAL_PATH: "/data/attachments"
+  MAX_UPLOAD_MB: {{ .Values.config.maxUploadMb | quote }}
+  FRONTEND_URL: {{ .Values.config.frontendUrl | quote }}
+  PUBLIC_BASE_URL: {{ .Values.config.publicBaseUrl | quote }}
+  LITELLM_LOCAL_MODEL_COST_MAP: "True"
+  OLLAMA_BASE_URL: {{ if .Values.ollama.enabled }}{{ printf "http://%s-ollama:11434" (include "sochub.fullname" .) | quote }}{{ else }}{{ .Values.config.ollamaBaseUrl | quote }}{{ end }}
+  OLLAMA_MODEL: {{ .Values.config.ollamaModel | quote }}
+  {{- with .Values.s3 }}
+  {{- if .bucket }}
+  S3_BUCKET: {{ .bucket | quote }}
+  S3_REGION: {{ .region | quote }}
+  S3_ENDPOINT_URL: {{ .endpointUrl | quote }}
+  S3_PREFIX: {{ .prefix | quote }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.smtp }}
+  {{- if .host }}
+  SMTP_HOST: {{ .host | quote }}
+  SMTP_PORT: {{ .port | quote }}
+  SMTP_USER: {{ .user | quote }}
+  SMTP_FROM_EMAIL: {{ .fromEmail | quote }}
+  {{- end }}
+  {{- end }}

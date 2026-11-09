@@ -17,7 +17,7 @@ end
 return -1
 """
 
-_FIXED = {"urlhaus": [(60, 60)], "threatfox": [(60, 60)], "rdap": [(30, 60)], "crtsh": [(1, 5)]}
+_FIXED = {"urlhaus": [(60, 60)], "threatfox": [(60, 60)], "rdap": [(30, 60)], "crtsh": [(1, 5)], "misp": [(60, 60)]}
 
 
 def limits_for(source: str, s) -> List[Tuple[int, int]]:

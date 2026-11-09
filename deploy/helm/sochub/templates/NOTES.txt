@@ -1,0 +1,16 @@
+SOC Hub installed as release "{{ .Release.Name }}".
+
+{{- if .Values.ingress.enabled }}
+Open: {{ (index .Values.ingress.hosts 0).host }}
+{{- else }}
+Reach the UI with:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "sochub.fullname" . }}-frontend 8080:8080
+then browse http://localhost:8080
+{{- end }}
+
+Create the first super admin:
+  kubectl --namespace {{ .Release.Namespace }} exec -it deploy/{{ include "sochub.fullname" . }}-api -- python -m app.scripts.create_super_admin --email you@example.com
+{{- if not .Values.existingSecret }}
+
+SECRET_KEY / ENCRYPTION_KEY were generated if left empty and are kept across upgrades. Back them up; GitOps users must set secrets.generate=false (keys rotate otherwise).
+{{- end }}

@@ -122,5 +122,5 @@ async def test_crtsh_502_html():
 
 
 def test_registry_complete():
-    assert set(REGISTRY) == {"virustotal", "urlhaus", "threatfox", "rdap", "crtsh"}
+    assert set(REGISTRY) == {"virustotal", "urlhaus", "threatfox", "rdap", "crtsh", "misp"}
     assert REGISTRY["crtsh"].TYPES == frozenset({"domain"}) and REGISTRY["rdap"].TYPES == frozenset({"domain", "ip"})

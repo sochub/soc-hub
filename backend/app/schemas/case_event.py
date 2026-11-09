@@ -37,6 +37,7 @@ class CaseEventUpdate(BaseModel):
     flagged: Optional[bool] = None
     in_summary: Optional[bool] = None
     artifact_ids: Optional[List[int]] = None
+    base_updated_at: Optional[datetime] = None  # optimistic version check; omitted = no check
 
     _cat = field_validator("category")(lambda v: v if v is None else _category(v))
 

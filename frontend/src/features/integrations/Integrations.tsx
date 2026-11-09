@@ -7,6 +7,7 @@ import HttpAllowlistCard from './HttpAllowlistCard';
 import SlackCard from './SlackCard';
 import AIProviderCard from './AIProviderCard';
 import ThreatIntelCard from './ThreatIntelCard';
+import MailboxCard from './MailboxCard';
 import SecretsCard from './SecretsCard';
 import TicketingCard from './TicketingCard';
 import ContainmentCard from './ContainmentCard';
@@ -135,6 +136,8 @@ export default function Integrations() {
                     <AIProviderCard key={me?.active_tenant_id ?? 'none'} tenantId={me?.active_tenant_id ?? null} />
                     <ThreatIntelCard key={me?.active_tenant_id ?? 'none'} tenantId={me?.active_tenant_id ?? null} />
                     <SecretsCard key={me?.active_tenant_id ?? 'none'} tenantId={me?.active_tenant_id ?? null} />
+
+                    <MailboxCard key={`m${me?.active_tenant_id ?? 'none'}`} tenantId={me?.active_tenant_id ?? null} />
 
                     <SlackCard />
                     <TicketingCard key={`t${me?.active_tenant_id ?? 'none'}`} tenantId={me?.active_tenant_id ?? null} />

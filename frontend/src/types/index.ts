@@ -273,6 +273,7 @@ export interface TimelineEvent {
   via?: string | null;
   via_client?: string | null;
   pinned?: boolean;
+  updated_at?: string | null;
 }
 
 export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breached';
@@ -341,7 +342,7 @@ export interface IOC {
 }
 
 export type EnrichmentResultRow = {
-  source: 'virustotal' | 'urlhaus' | 'threatfox' | 'rdap' | 'crtsh';
+  source: 'virustotal' | 'misp' | 'urlhaus' | 'threatfox' | 'rdap' | 'crtsh';
   status: 'pending' | 'ok' | 'not_found' | 'error' | 'rate_limited' | 'skipped';
   verdict: 'malicious' | 'suspicious' | 'harmless' | 'unknown' | null;
   score: string | null; summary: Record<string, unknown>; link: string | null;

@@ -52,7 +52,7 @@ from app.schemas.ioc import IOCCreate, IOCUpdate
 from app.schemas.playbook import PlaybookTemplateCreate, PlaybookTemplateUpdate
 from app.schemas.suppression import SuppressionCreate, SuppressionPreview
 from app.schemas.workflow import DryRunIn, RunSummary, WorkflowIn
-from app.services import (alert_service, case_records, case_service, enrichment_service, ioc_service,
+from app.services import (alert_service, case_records, case_service, email_intake, enrichment_service, ioc_service,
                           playbook_service, portfolio, suppression_service, task_service, ticket_sync,
                           workflow_service)
 from app.services import containment as containment_service
@@ -356,6 +356,7 @@ async def promote_alert_to_case(db: AsyncSession, p: OAuthPrincipal, alert_id: i
         case = await _case(db, p, case_id)
     await alert_service.promote_alert(db, alert=a, case=case, user_id=p.user.id)
     await db.commit()
+    await email_intake.copy_email_evidence(alert=a, case_id=case.id, user_id=p.user.id)
     if created:
         run_case_triage_task.delay(triage_id)
         emit_event(p.tenant_id, "case.created", case_id=case.id)
@@ -1552,8 +1553,8 @@ async def validate_workflow(db: AsyncSession, p: OAuthPrincipal, workflow_id: Op
                             graph: Optional[dict] = None, trigger_type: Optional[str] = None,
                             trigger_filter: Optional[str] = None) -> dict:
     """Check a workflow without saving: the saved one (workflow_id), the saved one with the given fields swapped
-    in, or a new graph (graph + trigger_type: case.created, case.updated, alert.ingested, manual, schedule; for
-    schedule trigger_filter is the cron expression). Same checks as enabling in SOC Hub, incl. secret rules."""
+    in, or a new graph (graph + trigger_type: case.created, case.updated, alert.ingested, manual, schedule,
+    email.received; for schedule trigger_filter is the cron expression). Same checks as enabling in SOC Hub, incl. secret rules."""
     if workflow_id is not None:
         wf = await _workflow(db, p, workflow_id)
         graph = wf.graph if graph is None else graph
@@ -1571,8 +1572,8 @@ async def validate_workflow(db: AsyncSession, p: OAuthPrincipal, workflow_id: Op
 async def create_workflow(db: AsyncSession, p: OAuthPrincipal, name: str, trigger_type: str, graph: dict,
                           description: Optional[str] = None, trigger_filter: Optional[str] = None) -> dict:
     """Admins only: create a workflow from graph JSON ({nodes, edges}, see get_workflow for the shape).
-    trigger_type: case.created, case.updated, alert.ingested, manual, schedule (trigger_filter = cron). Always
-    saved DISABLED; returns validation_errors to fix before an admin enables it in SOC Hub."""
+    trigger_type: case.created, case.updated, alert.ingested, manual, schedule (trigger_filter = cron),
+    email.received. Always saved DISABLED; returns validation_errors to fix before an admin enables it in SOC Hub."""
     _require_admin(p, "create workflows")
     body = WorkflowIn(**_fields(name=name, trigger_type=trigger_type, graph=graph, description=description,
                                 trigger_filter=trigger_filter))
