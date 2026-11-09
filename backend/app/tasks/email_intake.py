@@ -13,3 +13,9 @@ def poll_mailboxes_task():
 def cleanup_email_artifacts_task():
     from app.services.email_intake import cleanup_email_artifacts
     _run_async(cleanup_email_artifacts())
+
+
+@celery_app.task(acks_late=True)
+def copy_email_evidence_task(alert_id, case_id):
+    from app.services.email_intake import copy_evidence_for_alert
+    _run_async(copy_evidence_for_alert(alert_id, case_id))

@@ -497,7 +497,7 @@ async def poll_due_mailboxes(now: Optional[datetime] = None, *, mailbox_ids=None
 
 # ── promotion: copy the stored evidence into the case ────────────────────────────────────────────
 
-def _evidence_ids(payload) -> List[int]:
+def evidence_ids(payload) -> List[int]:
     if not isinstance(payload, dict):
         return []
     atts = payload.get("attachment_artifact_ids")
@@ -505,12 +505,31 @@ def _evidence_ids(payload) -> List[int]:
     return [i for i in raw if isinstance(i, int) and not isinstance(i, bool)]
 
 
+async def link_alert_artifacts(db, *, alert_id: int, tenant_id: int, payload) -> None:
+    """Hold this tenant's still-unclaimed email artifacts named in `payload` on the alert, so the 30-day cleanup
+    keeps them (same as the fallback path). Used by the alert_create node. Flushes only; the caller commits."""
+    ids = evidence_ids(payload)
+    if ids:
+        await db.execute(update(EmailArtifact).where(
+            EmailArtifact.id.in_(ids), EmailArtifact.tenant_id == tenant_id, EmailArtifact.alert_id.is_(None)
+        ).values(alert_id=alert_id))
+
+
+async def copy_evidence_for_alert(alert_id: int, case_id: int, user_id: Optional[int] = None) -> int:
+    """copy_email_evidence for a promotion done by automation (runs from a Celery task after the step commits)."""
+    async with AsyncSessionLocal() as db:
+        alert = (await db.execute(select(Alert).where(Alert.id == alert_id))).scalars().first()
+    if alert is None:
+        return 0
+    return await copy_email_evidence(alert=alert, case_id=case_id, user_id=user_id)
+
+
 async def copy_email_evidence(*, alert, case_id: int, user_id: Optional[int]) -> int:
     """After an email alert is promoted (and that commit is done), copy its .eml and attachments into the case as
     regular evidence and link each EmailArtifact to the new attachment (so retention keeps them). Own session:
     store_upload commits, and a failure of one file must not touch the caller's objects. Best effort; returns
     the number copied. Only this tenant's artifacts that are unlinked and not another alert's are eligible."""
-    ids = _evidence_ids(alert.payload)
+    ids = evidence_ids(alert.payload)
     if not ids:
         return 0
     copied = 0

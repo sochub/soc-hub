@@ -531,6 +531,100 @@ def test_promote_endpoint_copies_email_evidence(monkeypatch, tmp_path):
     run(body())
 
 
+def _nctx(db, tid, ctx=None, alert_id=None):
+    from types import SimpleNamespace
+
+    from app.workflows.nodes import NodeContext
+    return NodeContext(db=db, run=SimpleNamespace(id=-1, tenant_id=tid, depth=0, case_id=None, alert_id=alert_id),
+                       step=None, node={}, ctx=ctx or {})
+
+
+def test_alert_create_node_holds_email_artifacts_past_cleanup(monkeypatch, tmp_path):
+    """The stock email-to-alert template: trigger -> alert_create with payload {{ trigger }}."""
+    from app.workflows.nodes import alerts as alerts_node
+    raw = make_mail(attachments=[("a.txt", b"hello", "text/plain")])
+
+    async def body():
+        async with env(monkeypatch, tmp_path, messages=[raw]) as (e, db, mb):
+            monkeypatch.setattr(alerts_node, "emit_event", lambda *a, **k: None)
+            await add_workflow(db, e)
+            await email_intake.poll_mailbox(db, mb)
+            run_ = (await db.execute(select(WorkflowRun).where(WorkflowRun.tenant_id == e.tid))).scalars().one()
+            trig = run_.trigger_payload
+            assert {a.alert_id for a in await artifacts(db, e)} == {None}
+
+            nctx = _nctx(db, e.tid, {"trigger": trig})
+            out = await alerts_node.run_alert_create(nctx, {
+                "source": "email", "external_id": trig["email"]["message_id"], "title": trig["email"]["subject"],
+                "severity": "medium", "payload": "trigger"})
+            await db.commit()
+            assert out["created"] is True
+            arts = await artifacts(db, e)
+            assert len(arts) == 2 and {a.alert_id for a in arts} == {out["alert_id"]}
+
+            # an id naming another tenant's artifact is never claimed
+            other = Tenant(name="email-test", slug=f"email-{e.h}-o")
+            db.add(other)
+            await db.flush()
+            e.tenants.append(int(other.id))
+            foreign = EmailArtifact(tenant_id=other.id, kind="eml", filename="f.eml", size_bytes=1, sha256="0" * 64,
+                                    storage_key=f"tenants/{other.id}/email/{secrets.token_hex(8)}")
+            db.add(foreign)
+            await db.commit()
+            out2 = await alerts_node.run_alert_create(nctx, {
+                "source": "email", "external_id": "other", "title": "t", "payload": {"eml_artifact_id": int(foreign.id)}})
+            await db.commit()
+            await db.refresh(foreign)
+            assert out2["created"] is True and foreign.alert_id is None
+
+            # 31 days on, the cleanup keeps the alert's evidence
+            old = datetime.now(timezone.utc) - timedelta(days=40)
+            await db.execute(update(EmailArtifact).where(EmailArtifact.tenant_id == e.tid).values(created_at=old))
+            await db.commit()
+            res = await email_intake.cleanup_email_artifacts(tenant_ids=[e.tid])
+            assert res["artifacts"] == 0 and len(await artifacts(db, e)) == 2
+    run(body())
+
+
+def test_alert_promote_node_copies_email_evidence(monkeypatch, tmp_path):
+    import app.tasks.email_intake as tasks
+    from app.workflows.nodes import alerts as alerts_node
+    raw = make_mail(attachments=[("a.txt", b"hello", "text/plain")])
+
+    async def body():
+        async with env(monkeypatch, tmp_path, fallback=True, messages=[raw]) as (e, db, mb):
+            queued = []
+            monkeypatch.setattr(tasks.copy_email_evidence_task, "delay", lambda *a: queued.append(a))
+            monkeypatch.setattr(alerts_node, "emit_event", lambda *a, **k: None)
+            import app.tasks.triage as triage
+            monkeypatch.setattr(triage.run_case_triage_task, "delay", lambda *a: None)
+            await email_intake.poll_mailbox(db, mb)
+            alert_id = (await db.execute(select(Alert.id).where(Alert.tenant_id == e.tid))).scalar()
+
+            nctx = _nctx(db, e.tid, alert_id=alert_id)
+            out = await alerts_node.run_alert_promote(nctx, {"mode": "new", "title": "from email"})
+            await db.commit()
+            e.cases.append(int(out["case_id"]))
+            assert len(nctx.after_commit) >= 1
+            for fn in nctx.after_commit:
+                fn()
+            assert queued == [(alert_id, out["case_id"])]
+            # the Celery task body
+            assert await email_intake.copy_evidence_for_alert(alert_id, out["case_id"]) == 2
+            atts = (await db.execute(select(CaseAttachment).where(CaseAttachment.case_id == out["case_id"]))).scalars().all()
+            assert sorted(a.filename for a in atts) == ["Suspicious invoice.eml", "a.txt"]
+            rows = await artifacts(db, e)
+            for r in rows:
+                await db.refresh(r)
+            assert {r.case_attachment_id for r in rows} == {a.id for a in atts}
+    run(body())
+
+
+def test_copy_task_registered():
+    from app.worker import celery_app
+    assert "app.tasks.email_intake.copy_email_evidence_task" in celery_app.tasks
+
+
 def test_cleanup_removes_only_unreferenced_old_artifacts_and_old_seen(monkeypatch, tmp_path):
     async def body():
         async with env(monkeypatch, tmp_path) as (e, db, mb):
