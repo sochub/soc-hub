@@ -21,6 +21,9 @@ const OPS: [string, string][] = [
 const BASE_FIELDS = ['source', 'title', 'severity'];
 const EXPIRY: [string, number | null][] = [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Never', null]];
 const field = 'h-9 bg-panel border border-line rounded-lg px-2.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
+// Own chevron: the native one sits flush against the right border and cannot be padded.
+const select = 'appearance-none pr-9 bg-no-repeat bg-position-[right_0.75rem_center] bg-size-[1rem] cursor-pointer';
+const chevron = { backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e95' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")` };
 const apiError = (err: unknown, fallback: string) => {
     const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
     return typeof d === 'string' ? d : fallback;
@@ -125,7 +128,7 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
             <p className="text-xs text-fg-3">New alerts that match <strong>every</strong> condition are stored as dismissed and start no workflows. Matching ignores case.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" className={cn(field, 'sm:col-span-2')} />
-                <select value={days ?? ''} onChange={(e) => setDays(e.target.value ? Number(e.target.value) : null)} aria-label="Expires after" className={field}>
+                <select value={days ?? ''} onChange={(e) => setDays(e.target.value ? Number(e.target.value) : null)} aria-label="Expires after" className={cn(field, select)} style={chevron}>
                     {EXPIRY.map(([label, d]) => <option key={label} value={d ?? ''}>Expires: {label}</option>)}
                 </select>
                 <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this noise? (e.g. VPN egress, approved scanner)" aria-label="Reason" className={cn(field, 'sm:col-span-3')} />
@@ -141,7 +144,7 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
                         const p = paths.find(([k]) => k === v);
                         set(i, { field: v, ...(p?.[1] && !c.value ? { value: p[1] } : {}) });
                     }} />
-                    <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} aria-label="Operator" className={cn(field, 'text-xs w-full')}>
+                    <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} aria-label="Operator" className={cn(field, select, 'text-xs w-full')} style={chevron}>
                         {OPS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                     </select>
                     <input value={c.value} onChange={(e) => set(i, { value: e.target.value })} aria-label="Value" placeholder={c.op === 'in_cidr' ? '10.0.0.0/8' : 'value'}
