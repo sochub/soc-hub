@@ -16,6 +16,12 @@ from app.models.tenant import Tenant
 from app.models.tenant_enrichment_config import TenantEnrichmentConfig
 from app.models.user import User
 
+@pytest.fixture(autouse=True)
+def _allow_hosts(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MISP_PRIVATE_HOSTS", ["misp.example", "m2.example"])
+
+
 CFG = json.dumps({"url": "https://misp.example/", "key": "MISP-SECRET-KEY", "verify": True})
 
 
@@ -39,15 +45,17 @@ async def test_hit_with_to_ids():
         seen["url"], seen["auth"] = str(req.url), req.headers["authorization"]
         seen["body"] = json.loads(req.content)
         return _resp([
-            {"event_id": "7", "to_ids": True, "Event": {"info": "Campaign X"},
-             "Tag": [{"name": "misp-galaxy:x"}, {"name": "tlp:amber"}]},
-            {"event_id": "7", "to_ids": False, "Event": {"info": "Campaign X"}},
-            {"event_id": "9", "to_ids": False, "Event": {"info": "Other"}, "Tag": [{"name": "tlp:green"}]},
+            {"event_id": "7", "to_ids": True, "Tag": [{"name": "misp-galaxy:x"}],
+             "Event": {"id": "7", "info": "Campaign X", "Tag": [{"name": "tlp:amber"}]}},
+            {"event_id": "7", "to_ids": False, "Event": {"id": "7", "info": "Campaign X"}},
+            {"event_id": "9", "to_ids": False, "Event": {"id": "9", "info": "Other"},
+             "EventTag": [{"Tag": {"name": "tlp:green"}}]},
         ])
 
     r = await misp.lookup("ip", "1.2.3.4", CFG, transport=_mock(handler))
     assert seen["url"] == "https://misp.example/attributes/restSearch"
-    assert seen["auth"] == "MISP-SECRET-KEY" and seen["body"] == {"value": "1.2.3.4", "limit": 50}
+    assert seen["auth"] == "MISP-SECRET-KEY"
+    assert seen["body"] == {"value": "1.2.3.4", "limit": 50, "includeContext": True, "includeEventTags": True}
     assert r.status == "ok" and r.verdict == "suspicious" and r.score == "3 attributes"
     assert r.link == "https://misp.example/events/view/7"
     assert r.summary["events"] == [{"id": "7", "info": "Campaign X"}, {"id": "9", "info": "Other"}]
@@ -164,6 +172,11 @@ async def test_config_put_assembles_and_merges():
                     # bad url rejected
                     r = await c.put("/api/v1/enrichment/config", json={"misp_url": "ftp://x"})
                     assert r.status_code == 422
+                    # SSRF guard / userinfo rejected at PUT
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "http://127.0.0.1:9"})
+                    assert r.status_code == 422 and "MISP_PRIVATE_HOSTS" in r.text
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "https://u:p@m2.example"})
+                    assert r.status_code == 422
                     # clear
                     r = await c.put("/api/v1/enrichment/config", json={"clear_misp": True})
                     assert r.json()["credentials_set"]["misp"] is False
@@ -174,6 +187,79 @@ async def test_config_put_assembles_and_merges():
                 if "t" in ids:
                     await s.execute(delete(TenantEnrichmentConfig).where(TenantEnrichmentConfig.tenant_id == ids["t"]))
                     from app.models.audit_log import AuditLog
+                    await s.execute(delete(AuditLog).where(AuditLog.tenant_id == ids["t"]))
+                    await s.execute(delete(Tenant).where(Tenant.id == ids["t"]))
+                if "u" in ids:
+                    await s.execute(delete(User).where(User.id == ids["u"]))
+                await s.commit()
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["https://user:pw@misp.example", "https://mi sp.example", "ftp://misp.example"])
+async def test_lookup_rejects_bad_urls(url):
+    hit = []
+    r = await misp.lookup("ip", "1.2.3.4", json.dumps({"url": url, "key": "k"}),
+                          transport=_mock(lambda req: hit.append(1) or _resp([])))
+    assert r.status == "error" and not hit
+
+
+@pytest.mark.asyncio
+async def test_lookup_blocks_private_host(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MISP_PRIVATE_HOSTS", [])
+    hit = []
+    r = await misp.lookup("ip", "1.2.3.4", json.dumps({"url": "http://127.0.0.1:8080", "key": "k"}),
+                          transport=_mock(lambda req: hit.append(1) or _resp([])))
+    assert r.status == "error" and r.error == "host not allowed" and not hit
+
+
+def test_check_url_allowlist(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "MISP_PRIVATE_HOSTS", [])
+    assert "MISP_PRIVATE_HOSTS" in misp.check_url("http://localhost:8443")
+    monkeypatch.setattr(settings, "MISP_PRIVATE_HOSTS", ["localhost"])
+    assert misp.check_url("http://localhost:8443") is None
+
+
+@pytest.mark.asyncio
+async def test_clear_misp_with_undecryptable_credentials():
+    await engine.dispose()
+    h = secrets.token_hex(3)
+    ids = {}
+    async with AsyncSessionLocal() as db:
+        try:
+            t = Tenant(name="wf-test", slug=f"wf-test-{h}-mispk")
+            u = User(email=f"mispk-{h}@example.test", hashed_password=get_password_hash(secrets.token_hex(8)), is_active=True)
+            db.add_all([t, u])
+            await db.flush()
+            ids["t"], ids["u"] = int(t.id), int(u.id)
+            db.add(TenantEnrichmentConfig(tenant_id=ids["t"], credentials_enc="not-decryptable"))
+            await db.commit()
+            from httpx import ASGITransport, AsyncClient
+
+            async def _db():
+                async with AsyncSessionLocal() as s:
+                    yield s
+
+            app.dependency_overrides[deps.get_db] = _db
+            app.dependency_overrides[deps.require_admin] = lambda: u
+            app.dependency_overrides[deps.get_effective_tenant_id] = lambda: ids["t"]
+            try:
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+                    r = await c.put("/api/v1/enrichment/config", json={"clear_misp": True})
+                    assert r.status_code == 200, r.text
+                async with AsyncSessionLocal() as s:
+                    row = (await s.execute(select(TenantEnrichmentConfig).where(
+                        TenantEnrichmentConfig.tenant_id == ids["t"]))).scalars().first()
+                    assert row.credentials_enc is None
+            finally:
+                app.dependency_overrides.clear()
+        finally:
+            async with AsyncSessionLocal() as s:
+                if "t" in ids:
+                    from app.models.audit_log import AuditLog
+                    await s.execute(delete(TenantEnrichmentConfig).where(TenantEnrichmentConfig.tenant_id == ids["t"]))
                     await s.execute(delete(AuditLog).where(AuditLog.tenant_id == ids["t"]))
                     await s.execute(delete(Tenant).where(Tenant.id == ids["t"]))
                 if "u" in ids:

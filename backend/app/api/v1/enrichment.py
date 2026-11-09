@@ -13,6 +13,7 @@ from app.ai.errors import scrub
 from app.api import deps
 from app.enrichment.config import DEFAULTS, KEY_FIELDS, decrypt_keys, load_settings, secret_values
 from app.enrichment.sources import REGISTRY
+from app.enrichment.sources.misp import check_url
 from app.enrichment.view import enrichment_view
 from app.models.tenant_enrichment_config import TenantEnrichmentConfig
 from app.models.user import User
@@ -36,10 +37,10 @@ def _log(op, tid, outcome):
     logger.info("ti_config %s tenant=%s outcome=%s", op, tid, outcome)
 
 
-def _merge_misp(body, keys) -> bool:
+def _merge_misp(body, keys, key_error=False) -> bool:
     """Assemble the stored MISP triple from the three config fields, merging with what is stored."""
     if body.clear_misp:
-        return keys.pop("misp", None) is not None
+        return keys.pop("misp", None) is not None or key_error
     url, key, verify = (body.misp_url or None), (body.misp_key or "").strip() or None, body.misp_verify_tls
     if url is None and key is None and verify is None:
         return False
@@ -48,6 +49,8 @@ def _merge_misp(body, keys) -> bool:
            "verify": cur.get("verify", True) if verify is None else verify}
     if new == {"url": cur.get("url") or "", "key": cur.get("key") or "", "verify": cur.get("verify", True)}:
         return False
+    if (err := check_url(new["url"])):
+        raise HTTPException(status_code=422, detail=err)
     keys["misp"] = json.dumps(new)
     return True
 
@@ -104,7 +107,7 @@ async def put_config(body: EnrichmentConfigIn, db: AsyncSession = Depends(deps.g
     touched = []
     for f in KEY_FIELDS:
         if f == "misp":
-            if _merge_misp(body, keys):
+            if _merge_misp(body, keys, key_error):
                 touched.append(f)
             continue
         if getattr(body, _CLEAR[f]):

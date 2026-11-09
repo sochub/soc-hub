@@ -1,3 +1,4 @@
+import re
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -32,6 +33,8 @@ class EnrichmentConfigIn(BaseModel):
         if v is None or not v.strip():
             return None
         v = v.strip().rstrip("/")
+        if re.search(r"\s", v):
+            raise ValueError("misp_url must not contain whitespace")
         if not v.lower().startswith(("http://", "https://")) or len(v) < 9:
             raise ValueError("misp_url must start with http:// or https://")
         return v

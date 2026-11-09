@@ -8,7 +8,6 @@ unreferenced artifacts after 30 days and dedupe rows after 90.
 import asyncio
 import hashlib
 import imaplib
-import ipaddress
 import logging
 import re
 import socket
@@ -29,6 +28,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.utils.hostguard import validate_outbound_host
 from app.models.case import Alert, Case
 from app.models.email_artifact import EmailArtifact
 from app.models.tenant import Tenant
@@ -61,32 +61,12 @@ SKIPPED_MAX_ENTRIES = 20
 ARTIFACT_RETENTION = timedelta(days=30)
 SEEN_RETENTION = timedelta(days=90)
 
-PRIVATE_HOST_MSG = "host resolves to a private address; add it to MAILBOX_PRIVATE_HOSTS to allow"
-
-
 def validate_mailbox_host(host: str) -> Optional[str]:
     """Return an error message if `host` resolves to a non-public address (SSRF guard), else None.
 
-    Exact hosts in settings.MAILBOX_PRIVATE_HOSTS are allowed. Note: we later connect by hostname (with
-    verified TLS), so a DNS-rebinding race between this check and the connect is an accepted trade-off.
-    """
-    if host in settings.MAILBOX_PRIVATE_HOSTS:
-        return None
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except OSError:
-        return "host could not be resolved"
-    for info in infos:
-        try:
-            ip = ipaddress.ip_address(info[4][0].split("%")[0])
-        except ValueError:
-            return "host could not be resolved"
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
-                or ip.is_unspecified):
-            return PRIVATE_HOST_MSG
-    return None
-
-
+    Exact hosts in settings.MAILBOX_PRIVATE_HOSTS are allowed."""
+    return validate_outbound_host(host, settings.MAILBOX_PRIVATE_HOSTS, "MAILBOX_PRIVATE_HOSTS",
+                                  resolve=lambda h: socket.getaddrinfo(h, None))
 
 
 def _fail(msg: str) -> dict:
