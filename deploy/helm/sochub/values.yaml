@@ -58,6 +58,8 @@ smtp:
   password: ""
   fromEmail: ""
 
+# NOTE: extraEnv also reaches the (possibly pre-install) migrate Job, so it must not reference Secrets/ConfigMaps
+# that this release itself creates.
 # Extra env vars for api, worker, slack-socket and migrate (full k8s EnvVar syntax), e.g.
 #   extraEnv:
 #     - {name: AWS_ACCESS_KEY_ID, valueFrom: {secretKeyRef: {name: s3, key: id}}}

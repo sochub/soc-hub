@@ -21,6 +21,9 @@ kubectl exec -it deploy/sochub-api -- python -m app.scripts.create_super_admin -
 > so keys would rotate on every sync and all stored integration credentials become undecryptable. The generated
 > Secret is kept on uninstall (`resource-policy: keep`); reinstalling over an existing database requires the
 > original ENCRYPTION_KEY or all stored credentials are lost. Back the keys up.
+> After `helm uninstall` the kept Secret survives but no release owns it any more, so a reinstall fails with Helm's
+> "resource already exists" error until you delete the old Secret (save its keys first!) or install with
+> `existingSecret` pointing at it. The `existingSecret` route is recommended because it reuses the same keys.
 The bundled database passwords are placeholders: evaluation only.
 
 ## Production checklist
