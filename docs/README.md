@@ -16,6 +16,10 @@ into the per-subsystem design notes.
 | [Slack](slack/setup.md) | Bring-your-own Slack app, Socket Mode, `/sochub` |
 | [Workflows](workflows/README.md) | Automation engine and vendor integrations |
 | [Case guests](guests/README.md) | Inviting outside people to a single case |
+| [Time tracking](time-tracking.md) | Automatic and manual case time, who sees it, admin metrics |
+| [Email intake](email-intake.md) | IMAP mailboxes, the `email.received` trigger, evidence retention |
+| [MISP integration](misp-integration.md) | Indicator lookups and pushing case IOCs to a MISP event |
+| [Collaborative editing](collaborative-editing.md) | Inline images, report edit lock, version conflicts |
 | [Audit log](audit/README.md) | What the platform audit log records |
 | [Sessions and OAuth](oauth/README.md) | Login sessions, refresh rotation, the OAuth authorization server, connected apps |
 | [Connecting AI clients (MCP)](mcp/README.md) | MCP server for Claude Code, Claude Desktop and Cursor: setup, tools, roles, attribution, revoking |

@@ -1,0 +1,143 @@
+# SOC Hub Helm chart values. Mirrors docker-compose.prod.yml.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Defaults are local tags (e.g. built with `docker build`); point at your registry to override.
+images:
+  backend:
+    repository: sochub-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: sochub-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Name of a pre-existing Secret holding SECRET_KEY, ENCRYPTION_KEY, DATABASE_URL, REDIS_URL
+# (and optionally SMTP_PASSWORD). When set, the chart renders no Secret of its own.
+existingSecret: ""
+
+# Inline secrets, used only when existingSecret is empty.
+# SECRET_KEY / ENCRYPTION_KEY: leave empty to auto-generate (64 chars, kept across upgrades).
+# DATABASE_URL / REDIS_URL: leave empty to derive from the bundled postgresql / redis subcharts;
+# REQUIRED when those subcharts are disabled.
+secrets:
+  # generate=true (default, quickstart): empty SECRET_KEY/ENCRYPTION_KEY are generated once and kept via lookup.
+  # GitOps (ArgoCD/Flux render without cluster access, so lookup is empty and keys would rotate on every
+  # sync, making stored credentials undecryptable): set generate=false and provide the keys or existingSecret.
+  generate: true
+  SECRET_KEY: ""
+  ENCRYPTION_KEY: ""
+  DATABASE_URL: ""   # e.g. postgresql+asyncpg://user:pass@host:5432/sicms
+  REDIS_URL: ""      # e.g. redis://:pass@host:6379/0
+
+# Non-secret application config (rendered into a ConfigMap).
+config:
+  environment: production
+  storageBackend: local          # local | s3
+  maxUploadMb: 100
+  frontendUrl: "http://localhost"
+  publicBaseUrl: "http://localhost"   # externally reachable URL (links, webhooks, OIDC)
+  ollamaBaseUrl: ""              # used when ollama.enabled=false (empty = AI features off/unset)
+  ollamaModel: "llama3.2:3b"
+
+# Optional S3 attachment storage (set config.storageBackend=s3). Credentials: use IRSA / extraEnv.
+s3:
+  bucket: ""
+  region: ""
+  endpointUrl: ""
+  prefix: ""
+
+# Optional SMTP (invitations work without it). The password lands in the Secret.
+smtp:
+  host: ""
+  port: 587
+  user: ""
+  password: ""
+  fromEmail: ""
+
+# NOTE: extraEnv also reaches the (possibly pre-install) migrate Job, so it must not reference Secrets/ConfigMaps
+# that this release itself creates.
+# Extra env vars for api, worker, slack-socket and migrate (full k8s EnvVar syntax), e.g.
+#   extraEnv:
+#     - {name: AWS_ACCESS_KEY_ID, valueFrom: {secretKeyRef: {name: s3, key: id}}}
+# On-prem IMAP/MISP on private addresses need an allowlist (JSON list of exact hostnames), e.g.
+#     - {name: MAILBOX_PRIVATE_HOSTS, value: '["mail.corp.internal"]'}
+#     - {name: MISP_PRIVATE_HOSTS, value: '["misp.corp.internal"]'}
+extraEnv: []   # applied to api, worker, slack-socket and migrate
+
+api:
+  replicas: 1
+  service: {type: ClusterIP}
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 1Gi}
+  nodeSelector: {}
+
+worker:
+  # replicas is deliberately NOT configurable: the worker runs with `-B` (embedded Celery beat),
+  # so it must stay at exactly 1 or scheduled jobs would run multiple times.
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 1Gi}
+
+frontend:
+  replicas: 1
+  service: {type: ClusterIP}
+  hstsHeader: ""     # e.g. 'add_header Strict-Transport-Security "max-age=31536000" always;' (only behind TLS)
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+
+# Slack Socket Mode listener (one replica, idles when no tenant uses it).
+slackSocket:
+  enabled: false
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
+# Optional in-cluster Ollama (local LLM). Pull the model afterwards:
+#   kubectl exec deploy/<release>-ollama -- ollama pull llama3.2:3b
+ollama:
+  enabled: false
+  image: {repository: ollama/ollama, tag: latest, pullPolicy: IfNotPresent}
+  persistence: {enabled: false, size: 10Gi, storageClass: ""}
+  resources:
+    requests: {cpu: "1", memory: 4Gi}
+    limits: {memory: 8Gi}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: sochub.example.com
+  tls: []   # [{secretName: sochub-tls, hosts: [sochub.example.com]}]
+
+# Attachments are written by BOTH api and worker. With ReadWriteOnce both pods must share a node
+# (the worker gets a podAffinity to the api automatically). Multi-node clusters: use ReadWriteMany
+# or switch to S3 (config.storageBackend=s3 + s3.*).
+persistence:
+  attachments:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    existingClaim: ""
+
+# Evaluation defaults (bundled Bitnami subcharts, passwords below are PLACEHOLDERS).
+# For production disable both and use managed services via secrets.DATABASE_URL / REDIS_URL.
+postgresql:
+  enabled: true
+  auth:
+    username: sochub
+    password: sochub-change-me
+    database: sicms
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    password: sochub-change-me
