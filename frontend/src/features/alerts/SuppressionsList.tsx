@@ -21,7 +21,7 @@ const OPS: [string, string][] = [
 const BASE_FIELDS = ['source', 'title', 'severity'];
 const CUSTOM = '__custom__';
 const EXPIRY: [string, number | null][] = [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Never', null]];
-const field = 'bg-panel border border-line rounded-lg px-2.5 py-1.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
+const field = 'h-9 bg-panel border border-line rounded-lg px-2.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
 const apiError = (err: unknown, fallback: string) => {
     const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
     return typeof d === 'string' ? d : fallback;
@@ -86,33 +86,37 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
                 {fromAlert ? ` Suggestions come from alert #${fromAlert.id}.` : paths.length ? ` Suggestions come from the ${recent.length} most recent alerts.` : ''}
             </p>
             {conds.map((c, i) => (
-                <div key={i} className="flex flex-wrap items-center gap-2">
+                // Fixed columns so every condition row lines up, whatever field is picked.
+                <div key={i} className="grid grid-cols-1 sm:grid-cols-[16rem_9rem_minmax(0,1fr)_1.5rem] items-center gap-2">
                     {/* A <select>, not a <datalist>: a datalist filters by the current text, so "title" hid every other field (#130). */}
-                    <select value={known.includes(c.field) ? c.field : CUSTOM} aria-label="Field"
+                    {known.includes(c.field) ? <select value={c.field} aria-label="Field"
                         onChange={(e) => {
                             const v = e.target.value;
                             if (v === CUSTOM) return set(i, { field: 'payload.' });
                             const p = paths.find(([k]) => k === v);
                             set(i, { field: v, ...(p?.[1] && !c.value ? { value: p[1] } : {}) });
                         }}
-                        className={cn(field, 'font-mono text-xs max-w-64')}>
+                        className={cn(field, 'font-mono text-xs w-full')}>
                         <optgroup label="Alert fields">{BASE_FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}</optgroup>
                         {paths.length > 0 && <optgroup label={fromAlert ? `Payload of alert #${fromAlert.id}` : 'Payload (recent alerts)'}>
                             {paths.map(([p]) => <option key={p} value={p}>{p}</option>)}
                         </optgroup>}
                         <option value={CUSTOM}>Custom payload path…</option>
-                    </select>
-                    {!known.includes(c.field) && (
-                        <input value={c.field} onChange={(e) => set(i, { field: e.target.value })} aria-label="Custom payload path" placeholder="payload.agent.name"
-                            className={cn(field, 'font-mono text-xs w-56')} />
+                    </select> : (
+                        <div className="flex items-center gap-1 min-w-0">
+                            <input value={c.field} onChange={(e) => set(i, { field: e.target.value })} aria-label="Custom payload path" placeholder="payload.agent.name" autoFocus
+                                className={cn(field, 'font-mono text-xs flex-1 min-w-0')} />
+                            <button onClick={() => set(i, { field: 'title' })} title="Pick from the list" aria-label="Pick field from the list"
+                                className="h-9 px-2 text-xs text-fg-3 hover:text-fg border border-line rounded-lg">List</button>
+                        </div>
                     )}
-                    <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} aria-label="Operator" className={field}>
+                    <select value={c.op} onChange={(e) => set(i, { op: e.target.value })} aria-label="Operator" className={cn(field, 'text-xs w-full')}>
                         {OPS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                     </select>
                     <input value={c.value} onChange={(e) => set(i, { value: e.target.value })} aria-label="Value" placeholder={c.op === 'in_cidr' ? '10.0.0.0/8' : 'value'}
-                        className={cn(field, 'font-mono text-xs flex-1 min-w-40')} />
+                        className={cn(field, 'font-mono text-xs w-full')} />
                     <button onClick={() => { setConds(conds.filter((_, j) => j !== i)); preview.reset(); }} disabled={conds.length === 1}
-                        className="text-muted hover:text-severity-critical disabled:opacity-30" aria-label="Remove condition"><X size={14} /></button>
+                        className="justify-self-center text-muted hover:text-severity-critical disabled:opacity-30" aria-label="Remove condition"><X size={14} /></button>
                 </div>
             ))}
             {conds.length < 10 && (
