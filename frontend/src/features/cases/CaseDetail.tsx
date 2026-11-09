@@ -235,16 +235,16 @@ export default function CaseDetail() {
                             <div className="mb-1">
                                 <h1 className="text-2xl font-bold text-fg tracking-tight">{caseData.title}</h1>
                             </div>
-                            <div className="flex items-center gap-4 text-xs font-mono text-muted">
-                                <span className="flex items-center gap-1.5">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono text-muted">
+                                <span className="flex items-center gap-1.5 whitespace-nowrap">
                                     <Hash size={12} />
                                     ID: {String(caseData.id).padStart(4, '0')}
                                 </span>
-                                <span className="flex items-center gap-1.5">
+                                <span className="flex items-center gap-1.5 whitespace-nowrap">
                                     <Calendar size={12} />
                                     {formatDateTime(caseData.created_at, me?.timezone)}
                                 </span>
-                                <span className="flex items-center gap-1.5">
+                                <span className="flex items-center gap-1.5 whitespace-nowrap">
                                     <Shield size={12} />
                                     Owner:
                                     {canWarRoom ? (

@@ -270,3 +270,10 @@ def test_slack_button_path_listen_off(monkeypatch):
                 c = (await db.execute(select(Case).where(Case.id == w["case_id"]))).scalars().one()
                 assert c.slack_channel_id and c.slack_listen is False
     asyncio.run(go())
+
+
+def test_war_room_url_falls_back_without_team_id():
+    """team_id is only learned by the integration's Test call; the room must still be linkable."""
+    from app.api.v1.cases import war_room_url
+    assert war_room_url("TX", "C123") == "https://app.slack.com/client/TX/C123"
+    assert war_room_url(None, "C123") == "https://slack.com/app_redirect?channel=C123"
