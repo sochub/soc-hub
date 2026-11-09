@@ -38,3 +38,5 @@ from app.models.case_guest import CaseGuest, GuestAccount, GuestNotification  # 
 from app.models.auth_session import AuthSession  # noqa: F401
 from app.models.oauth_client import OAuthClient  # noqa: F401
 from app.models.war_room_suggestion import WarRoomSuggestion, WarRoomMessageSeen  # noqa: F401
+from app.models.tenant_mailbox import TenantMailbox, MailboxSeen  # noqa: F401
+from app.models.email_artifact import EmailArtifact  # noqa: F401
