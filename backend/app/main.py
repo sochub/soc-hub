@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.mcp.server import mcp_asgi, mcp_exact_path, mcp_server
 from app.oauth.resources import RESOURCES, issuer
 from app.oauth.routes import metadata as oauth_metadata
+from app.utils.versioning import VersionConflict, version_conflict_handler
 
 # Security headers applied to every response. These are cheap, defence-in-depth
 # protections; the API serves JSON only, so a deny-all CSP is appropriate.
@@ -68,6 +69,7 @@ if settings.cors_origins:
 # Outermost app middleware: sees the final status of every request. See docs/audit/README.md.
 app.add_middleware(AuditMiddleware)
 
+app.add_exception_handler(VersionConflict, version_conflict_handler)
 app.include_router(api_router, prefix="/api/v1")
 
 

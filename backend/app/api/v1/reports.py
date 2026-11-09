@@ -29,6 +29,7 @@ from app.reports.pdf import RenderTimeout, render_pdf_async, strip_userinfo
 from app.schemas.report import TEXT_MAX, TLP, ReportDraft, ReportIn
 from app.services.ai_service import _parse_json_reply
 from app.utils.audit import create_audit_log
+from app.utils.versioning import check_version
 
 router = APIRouter()
 branding_router = APIRouter()  # mounted under /tenants
@@ -122,6 +123,8 @@ async def put_report(
     row = (await db.execute(select(CaseReport).where(CaseReport.case_id == case_id,
                                                      CaseReport.tenant_id == tenant_id)
                             .with_for_update().execution_options(populate_existing=True))).scalar_one()
+    # A row we just inserted has no saved version yet (its updated_at is only the insert default).
+    check_version(body, None if created is not None else row.updated_at)
     changed = []
     for f in _FIELDS:
         new = getattr(body, f)

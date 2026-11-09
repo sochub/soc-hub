@@ -14,6 +14,7 @@ from app.models.user import User
 from app.schemas.case_event import (CaseEventCreate, CaseEventOut, CaseEventUpdate, EventSuggestRequest,
                                    EventSuggestResponse)
 from app.services import case_records, timeline_suggest
+from app.utils.versioning import check_version
 
 router = APIRouter()
 
@@ -78,7 +79,9 @@ async def update_event(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     ev = await _get_event(db, case_id, event_id, tenant_id)
-    await case_records.update_case_event(db, ev=ev, data=body.model_dump(exclude_unset=True), tenant_id=tenant_id,
+    check_version(body, ev.updated_at)
+    await case_records.update_case_event(db, ev=ev, data=body.model_dump(exclude_unset=True, exclude={"base_updated_at"}),
+                                         tenant_id=tenant_id,
                                          user_id=current_user.id)
     await db.commit()
     await db.refresh(ev)

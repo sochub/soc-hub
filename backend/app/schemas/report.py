@@ -13,6 +13,7 @@ class ReportIn(BaseModel):
     impact: Optional[str] = Field(None, max_length=TEXT_MAX)
     lessons_learned: Optional[str] = Field(None, max_length=TEXT_MAX)
     tlp: TLP = "amber"
+    base_updated_at: Optional[datetime] = None  # optimistic version check; omitted = no check
     # Milestones live on the case now (PUT /cases/{id}/milestones); extra keys sent by old clients are ignored.
 
 

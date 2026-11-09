@@ -90,12 +90,14 @@ class TimelineEventCreate(TimelineEventBase):
 class TimelineEventUpdate(BaseModel):
     event_type: Optional[str] = None
     content: Optional[str] = None
+    base_updated_at: Optional[datetime] = None
 
 class TimelineEvent(TimelineEventBase):
     id: int
     case_id: int
     user_id: Optional[int] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
     user: Optional[TimelineEventUser] = None
     shared_with_guests: bool = False
     guest_id: Optional[int] = None
