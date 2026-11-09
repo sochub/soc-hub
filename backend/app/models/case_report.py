@@ -21,3 +21,6 @@ class CaseReport(Base):
     recovered_at = Column(DateTime(timezone=True), nullable=True)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # Edit lock for collaborative editing; cleared by the lock release or when the holder is deleted.
+    locked_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    locked_at = Column(DateTime(timezone=True), nullable=True)
