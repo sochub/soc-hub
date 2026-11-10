@@ -498,6 +498,7 @@ async def pin_timeline_event(
                                action="timeline_pinned" if body.pinned else "timeline_unpinned",
                                tenant_id=tenant_id, user_id=current_user.id, changes={"case_id": case_id})
         await db.commit()
+        await db.refresh(ev, ["updated_at"])  # onupdate=now() is server-side; reload before serializing
     return ev
 
 
