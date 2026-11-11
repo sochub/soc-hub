@@ -90,6 +90,13 @@ async def _scenario(monkeypatch):
         assert "sochub commands" in (await slack_socket.handle_envelope(ids.integ, cmd))["text"]
         foreign = {**cmd, "payload": {**cmd["payload"], "team_id": "TOTHER"}}
         assert await slack_socket.handle_envelope(ids.integ, foreign) is None  # other workspace: dropped
+        async with AsyncSessionLocal() as db:  # old L6: workspace unknown (token never verified): drop everything
+            (await db.get(SlackIntegration, ids.integ)).team_id = None
+            await db.commit()
+        assert await slack_socket.handle_envelope(ids.integ, cmd) is None
+        async with AsyncSessionLocal() as db:
+            (await db.get(SlackIntegration, ids.integ)).team_id = team
+            await db.commit()
         sub = {"type": "interactive", "envelope_id": "e2", "payload": {
             "type": "view_submission", "team": {"id": team}, "user": {"id": "UOK"}, "view": {
                 "callback_id": ui.CREATE_CASE, "private_metadata": json.dumps({"t": ids.t}), "state": {"values": {
@@ -127,8 +134,13 @@ def test_socket_mode(monkeypatch):
     asyncio.run(_scenario(monkeypatch))
 
 
-def test_config_socket_mode_needs_no_signing_secret():
+def test_config_socket_mode_needs_no_signing_secret(monkeypatch):
     from tests.audit_fixtures import hdr, run
+    from app.services.slack_service import SlackError
+
+    async def offline(*a, **k):  # no real Slack calls from tests
+        raise SlackError("auth.test: invalid_auth")
+    monkeypatch.setattr("app.api.v1.slack.slack_call", offline)
 
     async def body(c, w):
         admin = hdr(w, "admin")

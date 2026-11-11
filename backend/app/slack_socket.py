@@ -57,7 +57,7 @@ async def handle_envelope(integration_id: int, msg: dict) -> Optional[dict]:
         if integ is None:
             return None
         team = _team_of(kind, payload)
-        if integ.team_id and team != integ.team_id:
+        if not integ.team_id or team != integ.team_id:  # unknown team (token never verified): drop, never guess
             logger.warning("dropping %s envelope for team %s on tenant %s socket", kind, team, integ.tenant_id)
             return None
         if kind == "slash_commands":

@@ -163,7 +163,10 @@ class FakeSMTP:
     def ehlo(self):
         pass
 
-    def starttls(self):
+    def has_extn(self, name):
+        return name == "starttls"
+
+    def starttls(self, context=None):
         pass
 
     def login(self, *a):

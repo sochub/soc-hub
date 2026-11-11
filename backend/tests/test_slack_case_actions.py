@@ -22,7 +22,7 @@ async def _scenario(monkeypatch):
     ephem, resp, events = [], [], []
 
     async def fake_call(token, method, **kw):
-        return {"user": {"profile": {"email": email["v"]}}}
+        return {"user": {"profile": {"email": email["v"]}, **email.get("flags", {})}}
 
     async def fake_respond(url, payload):
         resp.append(payload)
@@ -67,7 +67,7 @@ async def _scenario(monkeypatch):
             assert await pu(f"inactive-{h}@example.test") is None, "inactive"
             assert await pu(f"viewer-{h}@example.test") is None, "viewer"
             assert await pu(f"other-{h}@example.test") is None, "other tenant"
-            assert (await pu(f"sup-{h}@example.test")) is not None, "super admin"
+            assert await pu(f"sup-{h}@example.test") is None, "super admin without a membership (old L1)"
             assert await pu(None) is None
 
             async def mkcase(status=CaseStatus.OPEN):
@@ -130,6 +130,23 @@ async def _scenario(monkeypatch):
             await sa._handle_case_action(tid, payload(), tid, fresh_id, "close")
             assert len(ephem) == n + 1 and "isn't linked" in ephem[-1], "unlinked msg"
             assert (await fresh(fresh_id)).status == CaseStatus.OPEN and len(events) == 3, "unlinked changed case"
+
+            # old L1: the first click bound Slack U1 to the analyst; another Slack account showing the same email
+            # (profile edited) no longer matches, and an unconfirmed email never matches
+            async with AsyncSessionLocal() as d2:
+                m = (await d2.execute(select(TenantMembership).where(TenantMembership.user_id == aid))).scalars().one()
+                assert m.slack_user_id == "U1"
+            email["v"] = aemail
+            await sa._handle_case_action(tid, {"user": {"id": "U2"}, "response_url": "https://hooks.slack.com/x"},
+                                         tid, fresh_id, "close")
+            assert "isn't linked" in ephem[-1] and (await fresh(fresh_id)).status == CaseStatus.OPEN, "rebound"
+            email["flags"] = {"is_email_confirmed": False}
+            n = len(ephem)
+            await sa._handle_case_action(tid, payload(), tid, fresh_id, "close")
+            assert len(ephem) == n + 1 and "isn't linked" in ephem[-1], "unconfirmed email"
+            email["flags"] = {}
+            await sa._handle_case_action(tid, payload(), tid, fresh_id, "close")
+            assert (await fresh(fresh_id)).status == CaseStatus.CLOSED, "bound account still works"
         finally:
             await db.rollback()
             if ids["c"]:

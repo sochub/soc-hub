@@ -143,7 +143,8 @@ async def store_upload(db, *, case, user_id, filename, content_type, chunks: Asy
         await create_audit_log(db=db, entity_type="attachment", entity_id=row.id, action="upload",
                                tenant_id=case.tenant_id, user_id=user_id,
                                changes={"filename": name, "sha256": row.sha256, "is_malicious": row.is_malicious,
-                                        "case_id": case.id, **({"guest_id": guest_id} if guest_id else {}),
+                                        "case_id": case.id, **({"inline": True} if is_inline else {}),
+                                        **({"guest_id": guest_id} if guest_id else {}),
                                         **({"actor": actor} if actor else {})})
         await db.commit()
         committed = True

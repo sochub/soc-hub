@@ -80,7 +80,7 @@ MIN_ROLE: dict[str, str] = {
     "promote_artifact_to_ioc": "analyst", "get_enrichment": "viewer", "list_case_tasks": "viewer",
     "update_task": "analyst", "list_playbooks": "viewer", "get_playbook": "viewer", "apply_playbook": "analyst",
     "create_playbook_draft": "admin", "list_runnable_workflows": "viewer", "run_workflow": "analyst",
-    "get_workflow_run": "viewer",
+    "get_workflow_run": "analyst",  # step inputs/outputs and the graph: not for viewers (same as REST)
     # cases: milestones and the activity log
     "set_case_milestones": "analyst", "edit_activity_entry": "analyst", "delete_activity_entry": "analyst",
     "pin_activity_entry": "analyst",
@@ -98,7 +98,7 @@ MIN_ROLE: dict[str, str] = {
     "list_workflow_runs": "viewer", "cancel_workflow_run": "analyst",
     # admin authoring
     "create_playbook": "admin", "update_playbook": "admin", "delete_playbook": "admin", "publish_playbook": "admin",
-    "list_workflows": "viewer", "get_workflow": "viewer", "validate_workflow": "viewer", "create_workflow": "admin",
+    "list_workflows": "analyst", "get_workflow": "analyst", "validate_workflow": "analyst", "create_workflow": "admin",
     "update_workflow": "admin", "dry_run_workflow": "admin",
     # alert suppression
     "list_suppressions": "viewer", "preview_suppression": "viewer", "create_suppression": "analyst",

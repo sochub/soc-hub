@@ -47,11 +47,15 @@ async def run_fail(nctx: NodeContext, config: dict) -> dict:
     raise NodeError(str(config.get("message") or "stopped by fail step")[:500])
 
 
+MAX_CHILD_RUNS_PER_ROOT = 25  # workflows one manual/triggered run may start, across its whole chain
+
+
 @executor("run_workflow")
 async def run_workflow(nctx: NodeContext, config: dict) -> dict:
     """Start another of this organization's manual workflows on the same case (or `case_id`), passing `inputs`
-    as `trigger.inputs`. It runs on its own; this step only starts it. Chains stop at MAX_DEPTH."""
-    from sqlalchemy import select
+    as `trigger.inputs`. It runs on its own; this step only starts it. Chains stop at MAX_DEPTH, and one root run
+    starts at most MAX_CHILD_RUNS_PER_ROOT workflows in total (no exponential fan-out on the shared queue)."""
+    from sqlalchemy import func, select
     from app.models.workflow import Workflow
     from app.tasks.workflows import advance_run_task
     from app.workflows.events import MAX_DEPTH
@@ -59,6 +63,11 @@ async def run_workflow(nctx: NodeContext, config: dict) -> dict:
     from app.workflows.runtime import create_run
 
     run = nctx.run
+    if run.parent_step_id is not None:  # a for_each iteration (validation refuses this too)
+        raise NodeError("run_workflow can't run inside a for_each loop")
+    started_by = (run.trigger_payload or {}).get("started_by") if isinstance(run.trigger_payload, dict) else None
+    root = (started_by or {}).get("root_run_id") if run.depth else None
+    root = root if isinstance(root, int) and not isinstance(root, bool) else run.id
     raw_id, name = config.get("workflow_id"), str(config.get("workflow_name") or "").strip()
     q = select(Workflow).where(Workflow.tenant_id == run.tenant_id, Workflow.trigger_type == "manual")
     if raw_id not in (None, ""):
@@ -84,10 +93,15 @@ async def run_workflow(nctx: NodeContext, config: dict) -> dict:
     inputs = config.get("inputs") or {}
     if not isinstance(inputs, dict):
         raise NodeError("inputs must be a JSON object")
+    started = (await nctx.db.execute(select(func.count()).select_from(WorkflowRun).where(
+        WorkflowRun.tenant_id == run.tenant_id, WorkflowRun.depth > 0,
+        WorkflowRun.trigger_payload["started_by"]["root_run_id"].as_integer() == root))).scalar()
+    if started >= MAX_CHILD_RUNS_PER_ROOT:
+        raise NodeError(f"this run already started {MAX_CHILD_RUNS_PER_ROOT} workflows (the limit per run)")
     parent = (await nctx.db.get(Workflow, run.workflow_id))
     child = await create_run(nctx.db, wf, case_id=case.id, alert_id=run.alert_id, depth=run.depth + 1, trigger_payload={
         "event": "workflow", "case_id": case.id, "inputs": inputs,
-        "started_by": {"run_id": run.parent_run_id or run.id, "workflow_id": run.workflow_id,
+        "started_by": {"run_id": run.parent_run_id or run.id, "root_run_id": root, "workflow_id": run.workflow_id,
                        "workflow_name": parent.name if parent else None}})
     child_id = child.id
     nctx.after_commit.append(lambda: advance_run_task.delay(child_id))

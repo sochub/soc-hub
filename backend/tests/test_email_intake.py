@@ -74,6 +74,9 @@ class FakeIMAP:
         self.log.append(("uid", cmd) + tuple(str(a) for a in args))
         if cmd == "SEARCH":
             return "OK", [" ".join(u for u in self.unseen if u not in self.seen).encode()]
+        if cmd == "FETCH" and args[1] == "(RFC822.SIZE)":
+            uid = args[0]
+            return "OK", [b"1 (UID %s RFC822.SIZE %d)" % (uid.encode(), len(self.messages[uid]))]
         if cmd == "FETCH":
             uid = args[0]
             self.fetched.append(uid)
@@ -535,7 +538,8 @@ def _nctx(db, tid, ctx=None, alert_id=None):
     from types import SimpleNamespace
 
     from app.workflows.nodes import NodeContext
-    return NodeContext(db=db, run=SimpleNamespace(id=-1, tenant_id=tid, depth=0, case_id=None, alert_id=alert_id),
+    return NodeContext(db=db, run=SimpleNamespace(id=-1, tenant_id=tid, depth=0, case_id=None, alert_id=alert_id,
+                                                  trigger_payload=(ctx or {}).get("trigger")),
                        step=None, node={}, ctx=ctx or {})
 
 
@@ -643,7 +647,7 @@ def test_sweep_and_mailbox_deadlines(monkeypatch, tmp_path):
             real_uid = e.fake.uid
 
             def ticking_uid(cmd, *a):
-                if cmd.upper() == "FETCH":
+                if cmd.upper() == "FETCH" and "PEEK" in a[1]:  # the body fetch, not the RFC822.SIZE check
                     clock[0] += 10
                 return real_uid(cmd, *a)
             e.fake.uid = ticking_uid
@@ -766,3 +770,133 @@ def test_beat_schedule_and_tasks_registered():
                                                 "schedule": 86400.0}
     assert "app.tasks.email_intake.poll_mailboxes_task" in celery_app.tasks
     assert "app.tasks.email_intake.cleanup_email_artifacts_task" in celery_app.tasks
+
+
+def _nested(depth: int, leaf: bytes) -> bytes:
+    s = b"MIME-Version: 1.0\r\nMessage-ID: <deep@example.test>\r\n"
+    for i in range(depth):
+        s += b'Content-Type: multipart/mixed; boundary="b%d"\r\n\r\n--b%d\r\n' % (i, i)
+    s += leaf
+    for i in reversed(range(depth)):
+        s += b"--b%d--\r\n" % i
+    return s
+
+
+def test_parse_email_caps_mime_depth_and_parts():
+    """N5: hostile MIME nesting is capped (no RecursionError, no unbounded walk); the rest still parses."""
+    leaf = (b'Content-Type: application/pdf; name="x.pdf"\r\nContent-Disposition: attachment; filename="x.pdf"\r\n'
+            b"\r\n%PDF-1.4 deep\r\n")
+    p = email_intake.parse_email(_nested(email_intake.MIME_MAX_DEPTH + 30, leaf))
+    assert p.attachments == [] and any("nested" in s["reason"] for s in p.email["skipped_attachments"])
+    wide = EmailMessage()
+    wide["Message-ID"] = "<wide@example.test>"
+    wide.set_content("x")
+    for i in range(email_intake.MIME_MAX_PARTS + 50):
+        wide.add_attachment(b"a", maintype="application", subtype="octet-stream", filename=f"{i}.bin")
+    p = email_intake.parse_email(wide.as_bytes())
+    assert len(p.attachments) < email_intake.MIME_MAX_PARTS
+    assert any("too many" in s["reason"] for s in p.email["skipped_attachments"])
+    # an attached email nested so deep that re-serialising it recurses is skipped, not fatal
+    inner = _nested(400, b"Content-Type: text/plain\r\n\r\nhi\r\n")
+    outer = (b"MIME-Version: 1.0\r\nMessage-ID: <outer@example.test>\r\n"
+             b'Content-Type: multipart/mixed; boundary="o"\r\n\r\n--o\r\nContent-Type: text/plain\r\n\r\nbody\r\n'
+             b"--o\r\nContent-Type: message/rfc822\r\n\r\n" + inner + b"--o--\r\n")
+    p = email_intake.parse_email(outer)
+    assert p.email["message_id"] == "<outer@example.test>"
+
+
+def test_poison_message_moves_to_failed_folder_after_three_attempts(monkeypatch, tmp_path):
+    """N5: a message that always fails is retried MAX_MESSAGE_FAILURES times, then moved out of the inbox."""
+    from app.models.tenant_mailbox import MailboxFailure
+    good, bad = make_mail(mid="<good@example.test>"), make_mail(mid="<poison@example.test>")
+    real = email_intake.parse_email
+
+    def parse(raw):
+        if raw == bad:
+            raise RecursionError("maximum recursion depth exceeded")
+        return real(raw)
+    monkeypatch.setattr(email_intake, "parse_email", parse)
+
+    async def body():
+        import pytest
+        async with env(monkeypatch, tmp_path, messages=[bad, good]) as (e, db, mb):
+            for attempt in range(1, email_intake.MAX_MESSAGE_FAILURES):
+                with pytest.raises(email_intake.MailboxError, match="could not be processed"):
+                    await email_intake.poll_mailbox(db, mb)
+                assert e.fake.copied[-1:] != [("1", "Failed")]
+            with pytest.raises(email_intake.MailboxError, match="moved to the Failed folder"):
+                await email_intake.poll_mailbox(db, mb)
+            f = e.fake
+            assert ("1", "Failed") in f.copied and "1" in f.seen and "1" in f.deleted
+            assert ("2", "Processed") in f.copied and await seen_ids(db, e) == {"<good@example.test>"}
+            fetched = len(f.fetched)
+            assert await email_intake.poll_mailbox(db, mb) == 0 and len(f.fetched) == fetched  # no longer unseen
+            left = (await db.execute(select(MailboxFailure).where(MailboxFailure.mailbox_id == e.mid))).scalars().all()
+            assert left == []
+    run(body())
+
+
+def test_oversize_message_is_not_fetched_and_moves_to_failed(monkeypatch, tmp_path):
+    """N10: RFC822.SIZE above the cap: the body is never fetched; the message leaves the unseen batch."""
+    big, small = make_mail(mid="<big@example.test>", body="x" * 5000), make_mail(mid="<small@example.test>")
+    monkeypatch.setattr(email_intake, "_max_message_bytes", lambda: 2000)
+
+    async def body():
+        import pytest
+        async with env(monkeypatch, tmp_path, messages=[big, small]) as (e, db, mb):
+            with pytest.raises(email_intake.MailboxError, match="moved to the Failed folder"):
+                await email_intake.poll_mailbox(db, mb)
+            f = e.fake
+            assert f.fetched == ["2"] and ("1", "Failed") in f.copied and "1" in f.seen
+            assert await seen_ids(db, e) == {"<small@example.test>"}
+    run(body())
+
+
+def test_fetch_wall_clock_deadline(monkeypatch, tmp_path):
+    """N10: a server that drips a message gets FETCH_DEADLINE_SECONDS, then the poll stops and the UID is counted."""
+    import time as _time
+    from app.models.tenant_mailbox import MailboxFailure
+    monkeypatch.setattr(email_intake, "FETCH_DEADLINE_SECONDS", 0.2)
+    monkeypatch.setattr(email_intake, "_imap_fetch", lambda conn, uid: _time.sleep(1) or b"")
+
+    async def body():
+        import pytest
+        async with env(monkeypatch, tmp_path, messages=[make_mail()]) as (e, db, mb):
+            t0 = _time.monotonic()
+            with pytest.raises(email_intake.MailboxError, match="timed out"):
+                await email_intake.poll_mailbox(db, mb)
+            assert _time.monotonic() - t0 < 1
+            row = (await db.execute(select(MailboxFailure).where(MailboxFailure.mailbox_id == e.mid))).scalars().one()
+            assert (row.uid, row.failures) == ("1", 1)
+    run(body())
+
+
+def test_foreign_alert_payload_cannot_claim_email_evidence(monkeypatch, tmp_path):
+    """N11: artifact ids in a webhook payload, or in an alert_create run not triggered by that email, claim nothing."""
+    from app.workflows.nodes import alerts as alerts_node
+    raw = make_mail(attachments=[("a.txt", b"hello", "text/plain")])
+
+    async def body():
+        async with env(monkeypatch, tmp_path, messages=[raw]) as (e, db, mb):
+            monkeypatch.setattr(alerts_node, "emit_event", lambda *a, **k: None)
+            await add_workflow(db, e)
+            await email_intake.poll_mailbox(db, mb)  # evidence stored, unclaimed (the run hasn't alerted yet)
+            trig = (await db.execute(select(WorkflowRun).where(WorkflowRun.tenant_id == e.tid))).scalars().one().trigger_payload
+            ids = email_intake.evidence_ids(trig)
+            assert len(ids) == 2
+            forged = {**trig}  # a webhook replaying the email payload shape
+            alert = Alert(source="email", external_id="forged", title="t", payload=forged, status="pending",
+                          severity="medium", tenant_id=e.tid)
+            case = Case(title="c", tenant_id=e.tid, description="d")
+            db.add_all([alert, case])
+            await db.flush()
+            e.cases.append(int(case.id))
+            await db.commit()
+            assert await email_intake.copy_email_evidence(alert=alert, case_id=case.id, user_id=None) == 0
+            # alert_create in a run triggered by something else: ids in its payload are ignored
+            nctx = _nctx(db, e.tid, {"trigger": {"event": "alert.ingested", "eml_artifact_id": ids[0]}})
+            await alerts_node.run_alert_create(nctx, {"source": "email", "external_id": "x2", "title": "t",
+                                                      "payload": {"eml_artifact_id": ids[0]}})
+            await db.commit()
+            assert {a.alert_id for a in await artifacts(db, e)} == {None}
+    run(body())

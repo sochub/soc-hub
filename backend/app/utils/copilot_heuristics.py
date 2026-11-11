@@ -7,11 +7,13 @@ from typing import List, Dict, Optional
 
 _IPV4 = re.compile(r"\b((?:\d{1,3}\.){3}\d{1,3})\b")
 _HASH = re.compile(r"\b([a-fA-F0-9]{64}|[a-fA-F0-9]{40}|[a-fA-F0-9]{32})\b")
-_EMAIL = re.compile(r"\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b")
+# Every quantifier is bounded and labels can't contain the "." that separates them, so each start position costs
+# a bounded amount of work: matching stays linear in the text (unbounded `+` here was quadratic, i.e. ReDoS).
+_EMAIL = re.compile(r"\b([a-zA-Z0-9._%+-]{1,64}@(?:[a-zA-Z0-9-]{1,63}\.){1,8}[a-zA-Z]{2,24})\b")
 _URL = re.compile(r"\b(https?://[^\s<>\"')\]]+)", re.IGNORECASE)
 # Conservative domain match: 2+ labels ending in a plausible TLD.
 _DOMAIN = re.compile(
-    r"\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,8}"
     r"(?:com|net|org|io|co|ru|cn|info|biz|xyz|top|online|site|support|link|club|live|app|dev|cloud|me|to|cc|ws|tk|pw|su))\b",
     re.IGNORECASE,
 )
@@ -24,11 +26,16 @@ def _valid_ip(ip: str) -> bool:
         return False
 
 
+MAX_SCAN_CHARS = 64_000
+
+
 def detect_indicators(text: str, limit: int = 5) -> List[Dict[str, str]]:
     """Find IOC-like values in free text. Returns [{value, artifact_type}],
-    deduped, most-specific types first (url > email > hash > ip > domain)."""
+    deduped, most-specific types first (url > email > hash > ip > domain).
+    Only the first MAX_SCAN_CHARS characters are scanned."""
     if not text:
         return []
+    text = text[:MAX_SCAN_CHARS]
     found: List[Dict[str, str]] = []
     seen = set()
     consumed_spans: List[tuple] = []

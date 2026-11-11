@@ -92,3 +92,27 @@ def test_guest_raw_denied_unshared(monkeypatch, tmp_path):
             assert r.status_code == 404  # unsharing closes access
 
     run(body)
+
+
+def test_guest_raw_denied_when_only_guest_comment_references_it(monkeypatch, tmp_path):
+    """N3: a contributor guest's own comment listing /attachments/N/raw must not unlock internal images."""
+    monkeypatch.setattr(settings, "STORAGE_LOCAL_PATH", str(tmp_path))
+
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            c = await make_case(db, ids, t)
+            email = ids.email("contrib")
+            g = await make_grant(db, c, email, "contributor")
+            att = await _inline(db, c)
+            db.add(_note(c.id, att.id, shared_with_guests=False))  # internal note embeds the image
+            db.add(TimelineEvent(case_id=c.id, event_type="guest_comment", guest_id=g.id, shared_with_guests=True,
+                                 content=f"![x](/attachments/{att.id}/raw)"))
+            await db.commit()
+            cid, aid = c.id, att.id
+        async with client() as cl:
+            r = await cl.get(f"/api/v1/guest/cases/{cid}/attachments/{aid}/raw",
+                             headers=session_headers(email, link_tenant_id=t.id))
+        assert r.status_code == 404, r.text
+
+    run(body)

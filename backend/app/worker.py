@@ -19,17 +19,23 @@ def _mark_background(**_):
 # raises SoftTimeLimitExceeded inside the task (workflow steps catch it and fail with "step timed out");
 # at the hard limit the pool process is killed and replaced. Tasks that legitimately run longer set their
 # own `soft_time_limit`/`time_limit` (AI triage, threat-intel enrichment, the SLA sweep).
-# Follow-up (not done here): split automation onto its own queue/worker and run beat separately, so one
-# busy tenant can't delay SLA sweeps at all.
+# A pool process that grows past worker_max_memory_per_child (KiB; checked after each task) is replaced, so a
+# tenant's oversized template render or payload can't keep a worker bloated.
 celery_app.conf.update(
     task_soft_time_limit=120,
     task_time_limit=150,
+    worker_max_memory_per_child=512_000,
 )
 
-# The worker (docker-compose `worker` service) is started with no `-Q` flag,
-# so it only ever consumes the default "celery" queue — routing tasks
-# elsewhere (as a prior "main-queue" route did) means they're published but
-# never picked up. No multi-queue setup exists, so everything stays default.
+# Tenant-driven automation (workflow runs, IMAP polling) goes to its own "automation" queue, so one busy
+# tenant can't delay SLA sweeps, notifications or enrichment on the default "celery" queue. Deployments must
+# run a worker for each queue (or one worker with `-Q celery,automation`): a queue nobody consumes is
+# published but never picked up. Beat runs as its own process (`celery -A app.worker beat`), not `-B`.
+AUTOMATION_QUEUE = "automation"
+celery_app.conf.task_routes = {
+    "app.tasks.workflows.*": {"queue": AUTOMATION_QUEUE},
+    "app.tasks.email_intake.*": {"queue": AUTOMATION_QUEUE},
+}
 
 # The worker process only ever imports this module, so `@celery_app.task`
 # never registers anything unless we import the task modules here too —
@@ -46,9 +52,7 @@ import app.tasks.slack  # noqa: E402,F401
 import app.tasks.war_room  # noqa: E402,F401
 import app.tasks.email_intake  # noqa: E402,F401
 
-# Beat is embedded in the worker process via the `-B` flag on the
-# docker-compose `worker` service — there's only ever one worker replica, so
-# a separate beat service isn't needed. If that changes, split beat out.
+# Beat schedule: run exactly one beat process per deployment (see the queue note above).
 celery_app.conf.beat_schedule = {
     "check-sla-breaches": {
         "task": "app.tasks.sla.check_sla_breaches_task",
