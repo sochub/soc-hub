@@ -30,15 +30,17 @@ def test_production_rejects_redis_without_password(url):
         _settings(REDIS_URL=url)
 
 
-@pytest.mark.parametrize("pw", ["devredispass", "changeme", "redis"])
+@pytest.mark.parametrize("pw", ["devredispass", "changeme", "redis", "sochub-change-me", "CHANGE_ME"])
 def test_production_rejects_weak_redis_password(pw):
     with pytest.raises(ValueError, match="REDIS_URL"):
         _settings(REDIS_URL=f"redis://:{pw}@redis:6379/0")
 
 
-def test_production_rejects_default_db_password():
+@pytest.mark.parametrize("url", [DEV_DB, "postgresql+asyncpg://sochub:sochub-change-me@db:5432/sicms",
+                                 "postgresql+asyncpg://sochub:CHANGE_ME@db:5432/sochub"])
+def test_production_rejects_default_db_password(url):
     with pytest.raises(ValueError, match="DATABASE_URL"):
-        _settings(DATABASE_URL=DEV_DB)
+        _settings(DATABASE_URL=url)
 
 
 def test_debug_does_not_relax_production_guard():
