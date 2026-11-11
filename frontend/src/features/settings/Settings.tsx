@@ -336,6 +336,7 @@ export default function Settings() {
         idp_entity_id: '', idp_sso_url: '', idp_x509_cert: '',
         oidc_issuer: '', oidc_client_id: '', oidc_client_secret: '', oidc_scopes: 'openid email profile',
         auto_provision: false, default_role: 'viewer' as 'analyst' | 'viewer',
+        allowed_email_domains: '', // comma-separated in the form, a list on the wire
         saml_allow_idp_initiated: false,
     });
     const [savedFlash, setSavedFlash] = useState(false);
@@ -352,6 +353,7 @@ export default function Settings() {
                 idp_sso_url: cfg.idp_sso_url ?? '',
                 idp_x509_cert: cfg.idp_x509_cert ?? '',
                 auto_provision: cfg.auto_provision,
+                allowed_email_domains: (cfg.allowed_email_domains ?? []).join(', '),
                 default_role: cfg.default_role,
                 saml_allow_idp_initiated: cfg.saml_allow_idp_initiated,
             });
@@ -359,7 +361,10 @@ export default function Settings() {
     }, [cfg]);
 
     const save = useMutation({
-        mutationFn: async () => (await api.put('/tenants/sso-config', form)).data as SSOConfig,
+        mutationFn: async () => (await api.put('/tenants/sso-config', {
+            ...form,
+            allowed_email_domains: form.allowed_email_domains.split(/[\s,]+/).map(d => d.trim()).filter(Boolean),
+        })).data as SSOConfig,
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['sso-config'] });
             qc.invalidateQueries({ queryKey: ['tenant-guest-settings'] }); // guest SSO readiness depends on this config
@@ -463,6 +468,16 @@ export default function Settings() {
                                             <option value="analyst">analyst</option>
                                         </select>
                                     </label>
+                                </div>
+                                <div>
+                                    <label className="label-mono block mb-1">auto-provision email domains</label>
+                                    <input type="text" autoComplete="off" value={form.allowed_email_domains}
+                                        onChange={e => setForm(f => ({ ...f, allowed_email_domains: e.target.value }))}
+                                        placeholder="example.com, example.org"
+                                        className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
+                                    <p className="text-xs text-fg-3 mt-1">
+                                        Required with auto-provisioning: only new users with an email at one of these domains get an account on first SSO sign-in.
+                                    </p>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <button onClick={() => save.mutate()} disabled={save.isPending}

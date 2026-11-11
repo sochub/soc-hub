@@ -77,13 +77,20 @@ async def _claim_assertion(tenant_id: int, auth) -> bool:
     return True
 
 
+def sso_error_code(message: str) -> str:
+    """The fixed code the login pages show for a failure message; anything unknown is the generic "failed".
+    Only codes ride in the URL, so a crafted link can't make the login page display arbitrary text."""
+    return _SSO_ERROR_CODES.get(message, "failed")
+
+
 def _error_redirect(message: str) -> RedirectResponse:
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    return RedirectResponse(f"{base}/login#sso_error={quote(message)}", status_code=303)
+    return RedirectResponse(f"{base}/login#sso_error={sso_error_code(message)}", status_code=303)
 
 
 GUEST_RELAY = "guest"
 GUEST_SSO_DENIED = "This account has no active guest access here."
+GUEST_OTHER_METHOD = "This organization's guests sign in another way."
 _SLUG_RE = re.compile(r"^[a-z0-9-]{1,64}$")
 
 
@@ -98,7 +105,7 @@ def _guest_error_redirect(tenant: Optional[Tenant], message: str) -> RedirectRes
     base = settings.PUBLIC_BASE_URL.rstrip("/")
     slug = _safe_slug_for_redirect(tenant.slug) if tenant is not None else ""
     retry = f"?t={quote(slug, safe='')}" if slug else ""
-    return RedirectResponse(f"{base}/guest/login{retry}#sso_error={quote(message)}", status_code=303)
+    return RedirectResponse(f"{base}/guest/login{retry}#sso_error={sso_error_code(message)}", status_code=303)
 
 
 async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: str,
@@ -106,7 +113,7 @@ async def _guest_acs(request: Request, db: AsyncSession, tenant: Tenant, email: 
     """The IdP (`proto`: saml|oidc) proves `email`; issue a guest session only if it has an active grant in
     THIS tenant and the tenant's guests sign in with that protocol. Never touches users/memberships."""
     if tenant.guest_login_method != proto:
-        return await _acs_fail(request, tenant, "This organization's guests sign in another way.", "not_enabled",
+        return await _acs_fail(request, tenant, GUEST_OTHER_METHOD, "not_enabled",
                                guest=True, retry_tenant=tenant)
     email = email.strip().lower()
     grants = (await db.execute(select(CaseGuest).join(Tenant, Tenant.id == CaseGuest.tenant_id).where(
@@ -171,6 +178,11 @@ def oidc_redirect_uri(slug: str) -> str:
 
 SSO_NOT_ALLOWED = ("This account can't use single sign-on for this organization — "
                    "sign in with your password.")
+SSO_DEACTIVATED = "Your account is deactivated."
+SSO_NO_ACCOUNT = "No account for this email. Ask your admin for an invitation."
+SSO_DOMAIN_NOT_ALLOWED = "This email domain can't sign up through this organization's SSO. Ask your admin for an invitation."
+SSO_DOMAINS_UNSET = ("Automatic sign-up is on but no allowed email domains are set for this organization. "
+                     "Ask your admin.")
 
 
 async def _resolve_sso_user(
@@ -188,14 +200,18 @@ async def _resolve_sso_user(
 
     user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalars().first()
     if user and not user.is_active:
-        raise HTTPException(status_code=403, detail="Your account is deactivated.")
+        raise HTTPException(status_code=403, detail=SSO_DEACTIVATED)
 
     if not user:
         if not cfg.auto_provision:
-            raise HTTPException(
-                status_code=403,
-                detail="No account for this email. Ask your admin for an invitation.",
-            )
+            raise HTTPException(status_code=403, detail=SSO_NO_ACCOUNT)
+        # Only addresses in the tenant's own domains are provisioned: the tenant's IdP can't squat an email
+        # (and so block its real owner from signing up or being invited) at someone else's domain.
+        domains = {d.strip().lower() for d in (cfg.allowed_email_domains or []) if d and d.strip()}
+        if not domains:
+            raise HTTPException(status_code=403, detail=SSO_DOMAINS_UNSET)
+        if email.rpartition("@")[2] not in domains:
+            raise HTTPException(status_code=403, detail=SSO_DOMAIN_NOT_ALLOWED)
         user = User(
             email=email,
             # Unusable random password: SSO-provisioned users sign in via the IdP.
@@ -279,8 +295,8 @@ async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str, gues
     """SP-initiated login: redirect the browser to the tenant's IdP. Public. `guest=1` starts a guest sign-in."""
     tenant, cfg = await _tenant_and_config(db, slug)
     if not tenant or not saml_ready(cfg) or _method(tenant, guest) != "saml":
-        return _guest_error_redirect(None, "SSO is not enabled for this organization.") if guest else \
-            _error_redirect("SSO is not enabled for this tenant.")
+        return _guest_error_redirect(None, SSO_NOT_ENABLED) if guest else \
+            _error_redirect(SSO_NOT_ENABLED)
     req = saml_service.build_request_dict({}, {}, f"/api/v1/auth/saml/{slug}/login")
     auth = saml_service.make_auth(slug, cfg, req)
     url = auth.login(return_to=GUEST_RELAY) if guest else auth.login()
@@ -290,8 +306,7 @@ async def saml_login(*, db: AsyncSession = Depends(deps.get_db), slug: str, gues
         await _saml_redis().set(_SAML_STATE_KEY.format(bind), payload, ex=_SAML_STATE_TTL)
     except Exception:
         logger.exception("SAML request store unavailable; refusing sign-in tenant=%s", tenant.id)
-        msg = "SSO sign-in is temporarily unavailable. Please try again."
-        return _guest_error_redirect(None, msg) if guest else _error_redirect(msg)
+        return _guest_error_redirect(None, SSO_UNAVAILABLE) if guest else _error_redirect(SSO_UNAVAILABLE)
     out = RedirectResponse(url, status_code=303)
     out.set_cookie(SAML_COOKIE, bind, max_age=_SAML_STATE_TTL, **_saml_cookie_kwargs())
     return out
@@ -331,7 +346,7 @@ async def _saml_acs(request: Request, db: AsyncSession, slug: str) -> RedirectRe
                                retry_tenant=_guest_retry(tenant, cfg), action=action)
 
     if not ready or _method(tenant, is_guest) != "saml":
-        return await fail("SSO is not enabled for this tenant.", "not_enabled")
+        return await fail(SSO_NOT_ENABLED, "not_enabled")
 
     req = saml_service.build_request_dict(
         {k: v for k, v in form.items()}, {}, f"/api/v1/auth/saml/{slug}/acs"
@@ -343,8 +358,9 @@ async def _saml_acs(request: Request, db: AsyncSession, slug: str) -> RedirectRe
         logger.warning("SAML response could not be processed tenant=%s error=%s", tenant.id, type(exc).__name__)
         return await fail(SSO_FAILED, "saml_invalid")
     if auth.get_errors() or not auth.is_authenticated():
-        reason = auth.get_last_error_reason() or ", ".join(auth.get_errors()) or "invalid SAML response"
-        return await fail(f"SSO sign-in failed: {reason}", "saml_invalid")
+        # The library's reason can quote the (attacker-supplied) response: logged here, never shown to the user.
+        logger.warning("SAML response rejected tenant=%s errors=%s", tenant.id, ",".join(auth.get_errors())[:200])
+        return await fail(SSO_FAILED, "saml_invalid")
     in_response_to = auth.get_last_response_in_response_to()
     if in_response_to is not None:
         # Answers an AuthnRequest: it must be the one this browser started (and has not used yet).
@@ -365,7 +381,7 @@ async def _saml_acs(request: Request, db: AsyncSession, slug: str) -> RedirectRe
                 email = vals[0].strip()
                 break
     if "@" not in email:
-        return await fail("SSO response did not include an email address.", "no_email")
+        return await fail(SSO_NO_EMAIL, "no_email")
 
     if is_guest:
         return await _guest_acs(request, db, tenant, email)
@@ -403,12 +419,24 @@ async def _finish_member_sso(request: Request, db: AsyncSession, tenant: Tenant,
 
 PASSWORD_TENANT = "This organization signs in with a password."
 SSO_NOT_ENABLED = "SSO is not enabled for this organization."
+SSO_UNAVAILABLE = "SSO sign-in is temporarily unavailable. Please try again."
+SSO_NO_EMAIL = "SSO response did not include an email address."
 OIDC_FAILED = "SSO sign-in failed. Please try again."
 _OIDC_MESSAGES = {
     "state": "Your sign-in session expired or was already used. Please try again.",
     "idp_error": "Your identity provider did not complete the sign-in.",
-    "email": "SSO response did not include an email address.",
+    "email": SSO_NO_EMAIL,
     "unverified": "Your identity provider has not verified this email address.",
+}
+# Every failure message -> the code put in #sso_error (frontend: features/auth/ssoErrors.ts holds the texts).
+_SSO_ERROR_CODES = {
+    SSO_FAILED: "failed", OIDC_FAILED: "failed",
+    SSO_NOT_ENABLED: "not_enabled", PASSWORD_TENANT: "password_tenant", SSO_UNAVAILABLE: "unavailable",
+    SAML_UNSOLICITED: "expired", _OIDC_MESSAGES["state"]: "expired",
+    _OIDC_MESSAGES["idp_error"]: "idp_error", SSO_NO_EMAIL: "no_email", _OIDC_MESSAGES["unverified"]: "unverified",
+    SSO_NOT_ALLOWED: "not_allowed", SSO_DEACTIVATED: "deactivated", SSO_NO_ACCOUNT: "no_account",
+    SSO_DOMAIN_NOT_ALLOWED: "domain_not_allowed", SSO_DOMAINS_UNSET: "domains_unset",
+    GUEST_SSO_DENIED: "guest_denied", GUEST_OTHER_METHOD: "guest_other_method",
 }
 _STATE_TTL = 600
 _STATE_KEY = "oidc:state:{}"
@@ -565,6 +593,7 @@ def _config_out(tenant: Tenant, cfg: Optional[TenantSSOConfig]) -> SSOConfigOut:
         oidc_scopes=(cfg.oidc_scopes if cfg and cfg.oidc_scopes else "openid email profile"),
         has_oidc_client_secret=bool(cfg and cfg.oidc_client_secret_enc),
         auto_provision=bool(cfg and cfg.auto_provision),
+        allowed_email_domains=list((cfg.allowed_email_domains if cfg else None) or []),
         default_role=(cfg.default_role if cfg else "viewer"),
         saml_allow_idp_initiated=bool(cfg and cfg.saml_allow_idp_initiated),
         sp_entity_id=urls["entity_id"],
@@ -611,10 +640,15 @@ async def update_sso_config(
         db.add(cfg)
 
     for field in ("idp_entity_id", "idp_sso_url", "idp_x509_cert", "oidc_issuer", "oidc_client_id",
-                  "oidc_scopes", "auto_provision", "default_role", "saml_allow_idp_initiated"):
+                  "oidc_scopes", "auto_provision", "allowed_email_domains", "default_role",
+                  "saml_allow_idp_initiated"):
         value = getattr(body, field)
         if value is not None:
             setattr(cfg, field, value)
+    if cfg.auto_provision and not cfg.allowed_email_domains:
+        await db.rollback()
+        raise HTTPException(status_code=422,
+                            detail="Set the allowed email domains before turning on automatic sign-up.")
     secret_changed = bool(body.oidc_client_secret)
     if secret_changed:
         cfg.oidc_client_secret_enc = encrypt(body.oidc_client_secret)
@@ -638,6 +672,7 @@ async def update_sso_config(
                            changes={"member_login_method": tenant.member_login_method,
                                     "guest_login_method": tenant.guest_login_method,
                                     "auto_provision": cfg.auto_provision,
+                                    "allowed_email_domains": list(cfg.allowed_email_domains or []),
                                     "saml_allow_idp_initiated": cfg.saml_allow_idp_initiated,
                                     "oidc_client_secret_changed": secret_changed})
     await db.commit()

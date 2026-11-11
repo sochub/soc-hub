@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey, DateTime
+from sqlalchemy import JSON, Column, Integer, String, Text, Boolean, ForeignKey, DateTime
 from sqlalchemy.sql import func
 from app.db.base_class import Base
 
@@ -29,6 +29,9 @@ class TenantSSOConfig(Base):
     # users are never attached to a tenant by SSO (see sso._resolve_sso_user).
     auto_provision = Column(Boolean, nullable=False, default=False)
     default_role = Column(String, nullable=False, default="viewer")
+    # Email domains JIT provisioning may create accounts for (lowercase). Required while auto_provision is on;
+    # empty = nobody is provisioned.
+    allowed_email_domains = Column(JSON, nullable=False, default=list, server_default="[]")
     # Accept unsolicited (IdP-initiated) SAML responses. Off by default: they carry no browser binding, so
     # anyone with an account at the same IdP can sign a victim's browser into their account (login CSRF).
     saml_allow_idp_initiated = Column(Boolean, nullable=False, default=False, server_default="false")

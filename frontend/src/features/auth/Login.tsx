@@ -6,6 +6,7 @@ import { Button, Input, Label } from '../../components/ui';
 import MfaSetupDialog from '../profile/MfaSetupDialog';
 import { mfaErrorMessage } from '../profile/mfaErrors';
 import { takeReturnTo } from './returnTo';
+import { ssoErrorMessage } from './ssoErrors';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -38,7 +39,7 @@ export default function Login() {
             session.mark();
             navigate(takeReturnTo());
         } else if (hash.startsWith('#sso_error=')) {
-            setError(decodeURIComponent(hash.slice('#sso_error='.length)));
+            setError(ssoErrorMessage(hash.slice('#sso_error='.length)));
             window.history.replaceState(null, '', window.location.pathname);
         }
     }, [navigate]);
