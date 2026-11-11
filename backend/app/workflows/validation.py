@@ -402,6 +402,8 @@ def validate_graph(graph: Any, trigger_type: str, secret_names: Optional[Set[str
                 _err(errors, nid, "for_each loops cannot be nested")
             if node.get("type") == "trigger":
                 _err(errors, nid, "the trigger cannot be inside a loop")
+            if node.get("type") == "run_workflow":  # one workflow per item multiplies down a chain
+                _err(errors, nid, "run_workflow cannot be inside a loop")
         if node.get("type") == "for_each":
             cfg = node.get("config") or {}
             if not any(c.get("parent_id") == nid for c in nodes):
