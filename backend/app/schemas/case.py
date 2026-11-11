@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List, Any, Literal
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -45,13 +46,23 @@ class AlertBase(BaseModel):
 class AlertCreate(AlertBase):
     pass
 
+WEBHOOK_MAX_PAYLOAD = 256 * 1024  # same guard as the alert_create node (MAX_ALERT_PAYLOAD)
+
+
 class AlertWebhookCreate(BaseModel):
-    external_id: str
-    title: str
+    external_id: str = Field(..., min_length=1, max_length=255)
+    title: str = Field(..., max_length=500)
     payload: Any = None
     severity: Optional[str] = None
 
     _sev = field_validator("severity")(_check_alert_severity)
+
+    @field_validator("payload")
+    @classmethod
+    def _payload_size(cls, v):
+        if v is not None and len(json.dumps(v, default=str)) > WEBHOOK_MAX_PAYLOAD:
+            raise ValueError(f"payload must be at most {WEBHOOK_MAX_PAYLOAD} bytes of JSON")
+        return v
 
 class AlertUpdate(BaseModel):
     severity: Optional[str] = None

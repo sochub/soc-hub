@@ -38,6 +38,9 @@ async def _scenario():
             deps._verified_webhooks.clear()
             assert (await post(key, 1)).status_code == 200  # Argon2 verify
             assert (await post(key, 2)).status_code == 200  # cached
+            # the cache holds sha256(key), never the plaintext key
+            assert key not in deps._verified_webhooks
+            assert hashlib.sha256(key.encode()).hexdigest() in deps._verified_webhooks
             assert (await post(key[:-1] + ("A" if key[-1] != "A" else "B"), 3)).status_code == 401
             async with AsyncSessionLocal() as db:  # a deleted webhook's cached key stops working
                 await db.execute(delete(Webhook).where(Webhook.id == cid))

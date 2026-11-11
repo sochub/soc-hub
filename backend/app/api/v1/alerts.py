@@ -1,3 +1,5 @@
+import logging
+import time
 from typing import Any, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.dialects.postgresql import insert
@@ -5,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
+from app.core.config import settings
+from app.core.login_throttle import get_login_throttle
 from app.models.case import Alert, Case
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -14,6 +18,27 @@ from app.services import alert_service, email_intake, suppression_service
 from app.workflows.events import emit_event
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def get_webhook_redis():
+    """Same lazy Redis client as the login throttle; tests override it."""
+    return get_login_throttle().redis
+
+
+async def _webhook_rate_limit(redis, webhook_id: int) -> None:
+    """Fixed one-minute window per webhook key (ALERT_WEBHOOK_PER_MINUTE). Fails open like the login throttle."""
+    key = f"whrl:{webhook_id}:{int(time.time() // 60)}"
+    try:
+        n = await redis.incr(key)
+        await redis.expire(key, 60, nx=True)
+    except Exception as exc:
+        logger.warning("webhook limiter unavailable: %s", type(exc).__name__)
+        return
+    if n > settings.ALERT_WEBHOOK_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Too many alerts for this webhook; slow down",
+                            headers={"Retry-After": "60"})
+
 
 @router.post("/webhook", response_model=case_schema.Alert)
 async def ingest_alert(
@@ -21,6 +46,7 @@ async def ingest_alert(
     db: AsyncSession = Depends(deps.get_db),
     alert_in: case_schema.AlertWebhookCreate,
     webhook: Webhook = Depends(deps.get_webhook_from_key),
+    redis=Depends(get_webhook_redis),
 ) -> Any:
     """Ingest an alert via a tenant webhook.
 
@@ -34,6 +60,7 @@ async def ingest_alert(
     safe — exactly one insert wins. A new alert matching an active suppression
     rule is stored dismissed and emits nothing.
     """
+    await _webhook_rate_limit(redis, webhook.id)
     inserted_id = (await db.execute(
         insert(Alert)
         .values(
