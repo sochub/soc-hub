@@ -7,7 +7,8 @@ HKDF-SHA256 under its own label from ENCRYPTION_KEY when that is set, otherwise 
 Rotation: decryption tries, in order, the current key, the SECRET_KEY-derived key (when ENCRYPTION_KEY is
 set, so data written before it was configured keeps working), every ENCRYPTION_KEYS_PREVIOUS entry and
 the legacy key (SHA-256 of SECRET_KEY, used before key separation). Encryption always uses the current
-key. `python -m app.scripts.reencrypt_secrets` re-encrypts stored values with the current key.
+key. `python -m app.scripts.reencrypt_secrets` re-encrypts stored values with the current key; after that,
+ENCRYPTION_KEEP_LEGACY_KEYS=false drops the SECRET_KEY-derived fallbacks from the ring.
 """
 import base64
 import functools
@@ -36,17 +37,19 @@ def _previous() -> tuple:
 
 
 @functools.lru_cache(maxsize=8)
-def _keys(secret_key: str, encryption_key: str, previous: tuple) -> tuple:
+def _keys(secret_key: str, encryption_key: str, previous: tuple, keep_legacy: bool = True) -> tuple:
     keys = [_derive(encryption_key or secret_key)]
-    if encryption_key:
+    if encryption_key and keep_legacy:
         keys.append(_derive(secret_key))
     keys += [_derive(p) for p in previous]
-    keys.append(_legacy(secret_key))
+    if keep_legacy:
+        keys.append(_legacy(secret_key))
     return tuple(dict.fromkeys(keys))  # dedupe, keep order
 
 
 def _current_keys() -> tuple:
-    return _keys(settings.SECRET_KEY, settings.ENCRYPTION_KEY or "", _previous())
+    return _keys(settings.SECRET_KEY, settings.ENCRYPTION_KEY or "", _previous(),
+                 settings.ENCRYPTION_KEEP_LEGACY_KEYS)
 
 
 def current_key() -> bytes:

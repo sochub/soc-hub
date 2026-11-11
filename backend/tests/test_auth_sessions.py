@@ -194,6 +194,22 @@ def test_idle_expiry():
     _with_session(t)
 
 
+@pytest.mark.parametrize("kind", ["web", "oauth"])
+def test_platform_absolute_lifetime_applies_to_every_kind(kind):
+    """Old #7: an active session (OAuth/MCP included) still ends after SESSION_MAX_DAYS, and is revoked."""
+    async def t(sid, token, ids, u, sids):
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(AuthSession).where(AuthSession.id == sid).values(
+                created_at=datetime.now(timezone.utc) - timedelta(days=sessions.settings.SESSION_MAX_DAYS, hours=1)))
+            await db.commit()
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RefreshError) as ei:
+                await sessions.rotate(db, token, kind=kind)
+        assert ei.value.code == "expired"
+        assert (await _row(sid)).revoked_at is not None
+    _with_session(t, kind=kind)
+
+
 def test_idle_expired_stale_secret_reports_expired_not_reuse():
     """A stale token for an idle-expired session is just expired: no reuse alarm, no revocation."""
     async def t(sid, token, ids, u, sids):

@@ -144,6 +144,10 @@ async def rotate(db, refresh_token: str, *, kind: str) -> tuple[AuthSession, Use
     if user is None or not user.is_active or int(user.token_version or 0) != row.tv:
         await _revoke_and_raise(db, row, "revoked")
 
+    # Platform absolute lifetime, every kind (web and OAuth/MCP); tenant policy below can only be stricter.
+    # ponytail: checked at refresh only, so it can overshoot by one access-token lifetime.
+    if now - row.created_at > timedelta(days=settings.SESSION_MAX_DAYS):
+        await _revoke_and_raise(db, row, "expired")
     if row.kind == "web" and await _policy_expired(db, row, now):
         await _revoke_and_raise(db, row, "expired")
 

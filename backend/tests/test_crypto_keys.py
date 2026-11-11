@@ -21,6 +21,7 @@ def _legacy_fernet(secret_key: str) -> Fernet:
 def keys(monkeypatch):
     monkeypatch.setattr(settings, "ENCRYPTION_KEY", None, raising=False)
     monkeypatch.setattr(settings, "ENCRYPTION_KEYS_PREVIOUS", "", raising=False)
+    monkeypatch.setattr(settings, "ENCRYPTION_KEEP_LEGACY_KEYS", True, raising=False)
     return monkeypatch
 
 
@@ -33,6 +34,19 @@ def test_new_ciphertext_roundtrips(keys):
 def test_legacy_sha256_ciphertext_still_decrypts(keys):
     legacy = _legacy_fernet(settings.SECRET_KEY).encrypt(b"old-value").decode()
     assert crypto.decrypt(legacy) == "old-value"
+
+
+def test_legacy_keys_can_be_dropped_after_reencrypt(keys):
+    """M2: once re-encrypted, ENCRYPTION_KEEP_LEGACY_KEYS=false means a SECRET_KEY leak opens nothing."""
+    legacy = _legacy_fernet(settings.SECRET_KEY).encrypt(b"old-value").decode()
+    hkdf_secret = crypto.encrypt("hkdf-of-secret-key")  # ENCRYPTION_KEY unset: HKDF(SECRET_KEY)
+    keys.setattr(settings, "ENCRYPTION_KEY", "k" * 48)
+    current = crypto.encrypt("current")
+    keys.setattr(settings, "ENCRYPTION_KEEP_LEGACY_KEYS", False)
+    assert crypto.decrypt(current) == "current"
+    for token in (legacy, hkdf_secret):
+        with pytest.raises(InvalidToken):
+            crypto.decrypt(token)
 
 
 def test_new_ciphertext_is_not_under_the_legacy_key(keys):
@@ -149,14 +163,16 @@ def test_reencrypt_converts_legacy_row_and_is_idempotent(keys):
 def _prod_settings(**kw):
     from app.core.config import Settings
     base = dict(SECRET_KEY="x" * 48, DATABASE_URL="postgresql+asyncpg://soc:S3cure-pw@db:5432/sicms",
-                REDIS_URL="redis://:S3cure-redis@redis:6379/0", ENVIRONMENT="production")
+                REDIS_URL="redis://:S3cure-redis@redis:6379/0", ENVIRONMENT="production",
+                PUBLIC_BASE_URL="https://soc.example.com", FRONTEND_URL="https://soc.example.com")
     base.update(kw)
     return Settings(_env_file=None, **base)
 
 
-def test_encryption_key_is_optional_in_production():
-    assert _prod_settings().ENCRYPTION_KEY is None
-    assert _prod_settings(ENCRYPTION_KEY="").ENCRYPTION_KEY == ""  # blank env var = unset, boots
+def test_encryption_key_is_required_in_production():
+    for value in (None, ""):  # unset / blank env var
+        with pytest.raises(ValueError, match="ENCRYPTION_KEY"):
+            _prod_settings(ENCRYPTION_KEY=value)
     _prod_settings(ENCRYPTION_KEY="e" * 48)
 
 
