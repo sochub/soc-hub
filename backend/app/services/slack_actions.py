@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case, CaseStatus
@@ -41,25 +41,51 @@ async def _ephemeral(payload: dict, text: str) -> None:
 
 
 async def _slack_email(token: str, slack_user_id: str) -> Optional[str]:
+    """The Slack account's email, only when Slack says it is confirmed and the account is a live human member:
+    an unconfirmed profile email is just text the user typed."""
     try:
         info = await slack_call(token, "users.info", user=slack_user_id)
     except SlackError:
         return None
-    return (info.get("user") or {}).get("profile", {}).get("email")
+    u = info.get("user") or {}
+    if u.get("is_email_confirmed") is False or u.get("deleted") or u.get("is_bot") or u.get("is_stranger"):
+        return None
+    return (u.get("profile") or {}).get("email")
 
 
 TENANT_DEACTIVATED = "This workspace's SOC Hub tenant is deactivated."
 
 
-async def _platform_user(db, tenant_id: int, email: Optional[str]) -> Optional[User]:
+async def _platform_user(db, tenant_id: int, email: Optional[str], slack_user_id: Optional[str] = None) -> Optional[User]:
+    """The analyst+ member of this tenant behind a Slack account. Super admins act through Slack only with a real
+    membership. With `slack_user_id`, the first successful email match binds that Slack account to the membership
+    (trust on first use) and afterwards only that Slack account matches, so a later profile-email change can't
+    take the identity over.
+    ponytail: TOFU, not proof: whoever first clicks with a confirmed matching email wins the binding. Ceiling: an
+    explicit "link my Slack account" sign-in flow. Removing and re-adding the membership resets the binding."""
     if not email:
         return None
-    return (await db.execute(
-        select(User).outerjoin(TenantMembership, (TenantMembership.user_id == User.id) & (TenantMembership.tenant_id == tenant_id))
+    row = (await db.execute(
+        select(User, TenantMembership).join(TenantMembership, (TenantMembership.user_id == User.id) & (TenantMembership.tenant_id == tenant_id))
         .where(func.lower(User.email) == email.lower(), User.is_active == True,  # noqa: E712
-               or_(User.is_super_admin == True, TenantMembership.role.in_(["admin", "analyst"])),  # noqa: E712
+               TenantMembership.role.in_(["admin", "analyst"]),
                select(Tenant.id).where(Tenant.id == tenant_id, Tenant.is_active.isnot(False)).exists())
-    )).scalars().first()
+    )).first()
+    if row is None:
+        return None
+    user, m = row
+    if slack_user_id is None:
+        return user
+    if m.slack_user_id:
+        return user if m.slack_user_id == slack_user_id else None
+    taken = (await db.execute(select(TenantMembership.id).where(
+        TenantMembership.tenant_id == tenant_id, TenantMembership.slack_user_id == slack_user_id))).first()
+    if taken:
+        return None  # this Slack account is already bound to another member
+    m.slack_user_id = slack_user_id
+    await db.commit()
+    logger.info("slack account bound to membership tenant=%s membership=%s", tenant_id, m.id)
+    return user
 
 
 async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int, case_id: int, action: str) -> None:
@@ -68,7 +94,7 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
     clicker = payload["user"]["id"]
     async with AsyncSessionLocal() as db:
         _, token = await load_integration(db, tenant_id)
-        user = await _platform_user(db, tenant_id, await _slack_email(token, clicker))
+        user = await _platform_user(db, tenant_id, await _slack_email(token, clicker), clicker)
         if not user:
             await _ephemeral(payload, "Your Slack account isn't linked to a sochub user with analyst access in this tenant.")
             return
@@ -109,7 +135,7 @@ async def _handle_suggestion_action(tenant_id: int, payload: dict, btn_tenant_id
     clicker = payload["user"]["id"]
     async with AsyncSessionLocal() as db:
         _, token = await load_integration(db, tenant_id)
-        user = await _platform_user(db, tenant_id, await _slack_email(token, clicker))
+        user = await _platform_user(db, tenant_id, await _slack_email(token, clicker), clicker)
         if not user:
             await _ephemeral(payload, "Your Slack account isn't linked to a sochub user with analyst access in this tenant.")
             return

@@ -41,7 +41,7 @@ def _token(integ: SlackIntegration) -> str:
 
 
 async def linked_user(db, tenant_id: int, token: str, slack_user_id: str) -> Optional[User]:
-    return await _platform_user(db, tenant_id, await _slack_email(token, slack_user_id))
+    return await _platform_user(db, tenant_id, await _slack_email(token, slack_user_id), slack_user_id)
 
 
 async def _names(db, user_ids) -> dict:
