@@ -2,6 +2,7 @@
 
 All functions only flush; the caller commits (and emits workflow events after commit).
 """
+import asyncio
 import json
 
 from fastapi import HTTPException
@@ -21,19 +22,31 @@ SORTS = {"-created_at": Alert.created_at.desc(), "created_at": Alert.created_at.
          "severity": _SEVERITY_RANK.desc(), "-severity": _SEVERITY_RANK.asc()}
 
 
+SIMILAR_SCAN_CHARS = 8_000  # per compared payload: 500 alerts x 8 KB of regex work, off the event loop
+
+
+def _payload_indicators(payload, cap=None) -> set:
+    text = json.dumps(payload or {}, default=str)
+    return {i["value"] for i in detect_indicators(text[:cap] if cap else text, limit=20)}
+
+
 def indicators(alert: Alert) -> set:
-    return {i["value"] for i in detect_indicators(json.dumps(alert.payload or {}, default=str), limit=20)}
+    return _payload_indicators(alert.payload)
 
 
 async def similar_alerts(db: AsyncSession, *, alert: Alert, tenant_id: int, limit: int = 10) -> list:
     """Other tenant alerts sharing at least one indicator (ip/domain/hash/...) with this one."""
-    mine = indicators(alert)
+    mine = await asyncio.to_thread(_payload_indicators, alert.payload)
     if not mine:
         return []
-    # ponytail: in-memory compare over the newest 500 alerts; add an alert_indicators table if tenants exceed that.
+    # ponytail: in-memory compare over the newest 500 alerts (first SIMILAR_SCAN_CHARS of each payload); add an
+    # alert_indicators table if tenants exceed that.
     others = (await db.execute(select(Alert).where(Alert.tenant_id == tenant_id, Alert.id != alert.id)
                                .order_by(Alert.created_at.desc()).limit(500))).scalars().all()
-    return [a for a in others if mine & indicators(a)][:limit]
+    payloads = [a.payload for a in others]  # read ORM attributes here, not in the worker thread
+    hits = await asyncio.to_thread(
+        lambda: [i for i, p in enumerate(payloads) if mine & _payload_indicators(p, SIMILAR_SCAN_CHARS)][:limit])
+    return [others[i] for i in hits]
 
 
 async def is_tenant_member(db: AsyncSession, user_id: int, tenant_id: int) -> bool:
