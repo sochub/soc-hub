@@ -9,7 +9,8 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Production Stage: nginx as a non-root user, listening on 8080
+# Production Stage: nginx as a non-root user, listening on 8080. At start it writes only /tmp (pid, temp
+# files) and /etc/nginx/conf.d (rendered templates): with a read-only root filesystem, mount both writable.
 FROM nginx/nginx-unprivileged:alpine
 
 # Copy the nginx config template; rendered at start with only these variables substituted.
@@ -18,6 +19,11 @@ FROM nginx/nginx-unprivileged:alpine
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 # Rendered to conf.d/security-headers.inc (not auto-loaded: only *.conf is); included by each location.
 COPY nginx/security-headers.inc.template /etc/nginx/templates/security-headers.inc.template
+# http-context limit_req zones, rendered to conf.d/limits.conf.
+COPY nginx/limits.conf.template /etc/nginx/templates/limits.conf.template
+# REAL_IP_FROM (CIDRs of the proxy in front of nginx) -> conf.d/real-ip.conf. Empty = trust no proxy.
+COPY --chmod=0755 nginx/25-real-ip.sh /docker-entrypoint.d/25-real-ip.sh
+ENV REAL_IP_FROM=""
 ENV NGINX_ENVSUBST_FILTER=^(MAX_UPLOAD_MB|BACKEND_UPSTREAM|HSTS_HEADER)$
 ENV HSTS_HEADER=""
 ENV MAX_UPLOAD_MB=100

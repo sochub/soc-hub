@@ -6,6 +6,12 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Upstream timeouts for every proxied location (nginx's 60s defaults, made explicit); the upload, AI and
+    # MCP locations below override the read/send side.
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+
     # Serve static files. index.html must never be cached: it names the hashed
     # bundles, and a stale copy would point at bundles a new build removed.
     # Every SPA path (the OAuth consent screen included) is never framed: clickjacking on Approve.
@@ -57,6 +63,47 @@ server {
     location = /api/v1/users/me/avatar {
         proxy_pass ${BACKEND_UPSTREAM};
         client_max_body_size 3m;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Credential endpoints (password/MFA/SSO login, refresh, guest sign-in): per-client request rate cap
+    # (zone in limits.conf). Prefix locations without a URI on proxy_pass forward the request URI unchanged.
+    location ^~ /api/v1/auth/ {
+        limit_req zone=auth burst=20 nodelay;
+        proxy_pass ${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /api/v1/guest/auth/ {
+        limit_req zone=auth burst=20 nodelay;
+        proxy_pass ${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Alert ingestion webhook (API-key auth): bursty by nature, so a loose cap.
+    location = /api/v1/alerts/webhook {
+        limit_req zone=webhook burst=200 nodelay;
+        proxy_pass ${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # LLM-backed endpoints (copilot, AI settings test, report drafting/export, triage, event suggestions):
+    # one request can wait on the model for AI_TIMEOUT_SECONDS (120s default), so allow longer reads.
+    location ~ ^/api/v1/(copilot/|ai/|cases/[0-9]+/(triage|report|events/suggest)) {
+        proxy_pass ${BACKEND_UPSTREAM};
+        proxy_read_timeout 300s;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
