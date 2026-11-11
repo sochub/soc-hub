@@ -1,0 +1,7 @@
+# http-context limits (rendered into conf.d/, which nginx.conf includes inside http {}).
+# Keyed on $binary_remote_addr, i.e. the real client once REAL_IP_FROM names the proxy in front of
+# this nginx (see 25-real-ip.sh). Without it every client behind that proxy shares one bucket, so the
+# rates are generous: they stop scripted floods, the backend's login throttle does the fine-grained work.
+limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=webhook:10m rate=50r/s;
+limit_req_status 429;

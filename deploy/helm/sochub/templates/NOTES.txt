@@ -14,3 +14,24 @@ Create the first super admin:
 
 SECRET_KEY / ENCRYPTION_KEY were generated if left empty and are kept across upgrades. Back them up; GitOps users must set secrets.generate=false (keys rotate otherwise).
 {{- end }}
+{{- if or .Values.postgresql.enabled .Values.redis.enabled }}
+
+Bundled PostgreSQL/Redis passwords are in Secret {{ include "sochub.datastoreSecretName" . }} (generated once, kept).
+{{- end }}
+{{- if and (eq .Values.config.environment "production") (not (hasPrefix "https://" .Values.config.publicBaseUrl)) }}
+
+WARNING: config.publicBaseUrl is {{ .Values.config.publicBaseUrl | quote }}, not https://. Session cookies are sent
+without the Secure flag and SSO callbacks / emailed links use plain HTTP. Set config.publicBaseUrl and
+config.frontendUrl to the public https:// URL before real use.
+{{- end }}
+{{- if and .Values.ingress.enabled (not .Values.frontend.realIpFrom) }}
+
+WARNING: frontend.realIpFrom is empty, so every request appears to come from the ingress controller: login
+throttling then shares one bucket for all users and audit logs record the ingress IP. Set it to the CIDR
+the ingress controller pods use (often the cluster pod CIDR).
+{{- end }}
+{{- if and .Values.networkPolicy.enabled .Values.ingress.enabled (not .Values.networkPolicy.ingressFrom) }}
+
+NOTE: the frontend accepts connections from any pod (networkPolicy.ingressFrom is empty). Restrict it to your
+ingress controller's namespace.
+{{- end }}

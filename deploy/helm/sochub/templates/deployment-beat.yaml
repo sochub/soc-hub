@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sochub.fullname" . }}-beat
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: beat
+spec:
+  # Fixed at 1 with Recreate: two schedulers would enqueue every periodic job twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sochub.selectorLabels" (dict "ctx" . "component" "beat") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sochub.selectorLabels" (dict "ctx" . "component" "beat") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "sochub.podSecurity" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: beat
+          image: {{ include "sochub.backendImage" . }}
+          imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
+          command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=info", "-s", "/tmp/celerybeat-schedule"]
+          envFrom:
+            {{- include "sochub.backendEnvFrom" . | nindent 12 }}
+          env:
+            {{- include "sochub.backendEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+          securityContext:
+            {{- include "sochub.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            {{- include "sochub.scratchMounts" . | nindent 12 }}
+      volumes:
+        {{- include "sochub.scratchVolumes" . | nindent 8 }}

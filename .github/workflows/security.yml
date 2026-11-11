@@ -1,0 +1,175 @@
+name: Security
+
+# Static security scanners. Each job fails the build on findings unless marked report-only, and uploads
+# SARIF to code scanning (skipped on fork pull requests, which get no security-events token).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 4 * * 1"  # weekly, Monday 04:41 UTC: picks up newly published CVEs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # SARIF upload needs a security-events token, which fork PRs don't get.
+  UPLOAD_SARIF: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+jobs:
+  trivy-fs:
+    name: Trivy (dependencies, secrets, Dockerfiles)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          trivy-config: trivy.yaml
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: sarif
+          output: trivy-fs.sarif
+      - if: always() && env.UPLOAD_SARIF == 'true'
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  helm:
+    name: Helm lint + Trivy/Checkov on rendered manifests and Dockerfiles
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+      - name: Lint and render the chart
+        run: |
+          helm dependency build deploy/helm/sochub
+          helm lint deploy/helm/sochub
+          helm lint deploy/helm/sochub -f deploy/helm/sochub/values-production.yaml
+          mkdir rendered
+          helm template sochub deploy/helm/sochub > rendered/default.yaml
+          helm template sochub deploy/helm/sochub -f deploy/helm/sochub/values-production.yaml > rendered/production.yaml
+          helm template sochub deploy/helm/sochub --set ollama.enabled=true --set slackSocket.enabled=true \
+            --set ingress.enabled=true --set 'ingress.tls[0].secretName=tls' > rendered/all-components.yaml
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: rendered
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Checkov (rendered chart + Dockerfiles)
+        run: |
+          pip install checkov==3.3.2
+          checkov --config-file .checkov.yaml -d rendered -d backend -d frontend --framework kubernetes dockerfile \
+            --output cli --output sarif --output-file-path console,checkov.sarif
+      - if: always() && env.UPLOAD_SARIF == 'true'
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # ponytail: report-only (no --error) until the 8 open p/default findings in backend/app are triaged
+      # (fixed or marked `# nosemgrep: <rule> -- reason`); then add --error to make it blocking.
+      - name: Semgrep (p/default)
+        run: |
+          pip install semgrep==1.167.0
+          semgrep scan --config p/default --metrics off --exclude docs --exclude frontend/node_modules \
+            --sarif --output semgrep.sarif
+      - if: always() && env.UPLOAD_SARIF == 'true'
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  bandit:
+    name: Bandit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # Blocking at medium severity and above (-ll); reviewed exceptions carry `# nosec <id>` with a reason.
+      - name: Bandit (backend/app)
+        run: |
+          pip install "bandit[sarif]==1.9.4"
+          bandit -r backend/app -ll -q -f sarif -o bandit.sarif
+      - if: always() && env.UPLOAD_SARIF == 'true'
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  gitleaks:
+    name: Gitleaks (full history)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The binary (checksum-pinned) rather than gitleaks-action, which needs a license for organizations.
+      # Reviewed test fixtures are listed in .gitleaksignore.
+      - name: Gitleaks
+        run: |
+          curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks
+          ./gitleaks git . --redact --no-banner --exit-code 1 --report-format sarif --report-path gitleaks.sarif
+      - if: always() && env.UPLOAD_SARIF == 'true'
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks

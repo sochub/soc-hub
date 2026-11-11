@@ -15,17 +15,16 @@ spec:
       labels:
         {{- include "sochub.selectorLabels" (dict "ctx" . "component" "frontend") | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 101
-        runAsGroup: 101
+        {{- include "sochub.podSecurity" (dict "uid" 101) | nindent 8 }}
       containers:
         - name: frontend
-          image: "{{ .Values.images.frontend.repository }}:{{ .Values.images.frontend.tag }}"
+          image: {{ include "sochub.image" (dict "img" .Values.images.frontend "ctx" .) }}
           imagePullPolicy: {{ .Values.images.frontend.pullPolicy }}
           ports:
             - name: http
@@ -36,7 +35,14 @@ spec:
             - name: MAX_UPLOAD_MB
               value: {{ .Values.config.maxUploadMb | quote }}
             {{- with .Values.frontend.hstsHeader }}
+            {{- if hasPrefix "add_header" . }}
+            {{- fail "frontend.hstsHeader takes only the header value, e.g. \"max-age=31536000; includeSubDomains\"" }}
+            {{- end }}
             - name: HSTS_HEADER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.frontend.realIpFrom }}
+            - name: REAL_IP_FROM
               value: {{ . | quote }}
             {{- end }}
           livenessProbe:
@@ -51,6 +57,15 @@ spec:
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- include "sochub.containerSecurity" . | nindent 12 }}
+          # nginx writes only its pid/temp files (/tmp) and the rendered config templates (conf.d).
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: confd
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: confd
+          emptyDir: {}

@@ -1,0 +1,4 @@
+# hadolint config (CI: pr-checks.yml). DL3008: apt version pins on the Debian/Alpine base images go stale
+# with every point release and break the build; the base image tag + rebuilds on release keep them current.
+ignored:
+  - DL3008

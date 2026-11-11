@@ -1,0 +1,142 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $name := include "sochub.name" . }}
+{{- $np := .Values.networkPolicy }}
+{{- $ports := list }}{{- range $np.egressPorts }}{{ $ports = append $ports (int .) }}{{ end }}
+{{- if and .Values.smtp.host (not (has (int .Values.smtp.port) $ports)) }}{{ $ports = append $ports (int .Values.smtp.port) }}{{ end }}
+{{- if not .Values.postgresql.enabled }}{{ $ports = append $ports 5432 }}{{ end }}
+{{- if not .Values.redis.enabled }}{{ $ports = append $ports 6379 }}{{ end }}
+{{- /* ponytail: an external Ollama is assumed on its default port; any other port goes in networkPolicy.extraEgress. */ -}}
+{{- if and (not .Values.ollama.enabled) .Values.config.ollamaBaseUrl }}{{ $ports = append $ports 11434 }}{{ end }}
+# Everything in this release starts closed; the policies below open only what each component needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sochub.fullname" . }}-default-deny
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+---
+# frontend: reachable on 8080 (from the ingress controller), talks only to the api.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sochub.fullname" . }}-frontend
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sochub.selectorLabels" (dict "ctx" . "component" "frontend") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{port: 8080, protocol: TCP}]
+      {{- with $np.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  egress:
+    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - ports: [{port: 8000, protocol: TCP}]
+      to:
+        - podSelector:
+            matchLabels:
+              {{- include "sochub.selectorLabels" (dict "ctx" . "component" "api") | nindent 14 }}
+---
+# api: only the frontend may connect (so X-Real-IP can only come from our nginx).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sochub.fullname" . }}-api-ingress
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sochub.selectorLabels" (dict "ctx" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{port: 8000, protocol: TCP}]
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "sochub.selectorLabels" (dict "ctx" . "component" "frontend") | nindent 14 }}
+---
+# Backend processes (api, worker, beat, slack-socket, migrate): no inbound except the rule above; outbound to
+# DNS, the bundled datastores / Ollama, and egressPorts anywhere.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sochub.fullname" . }}-backend-egress
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - {key: app.kubernetes.io/component, operator: In, values: [api, worker, beat, slack-socket, migrate]}
+  policyTypes: [Egress]
+  egress:
+    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    {{- if .Values.postgresql.enabled }}
+    - ports: [{port: 5432, protocol: TCP}]
+      to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: postgresql, app.kubernetes.io/instance: {{ .Release.Name }}}
+    {{- end }}
+    {{- if .Values.redis.enabled }}
+    - ports: [{port: 6379, protocol: TCP}]
+      to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: redis, app.kubernetes.io/instance: {{ .Release.Name }}}
+    {{- end }}
+    {{- if .Values.ollama.enabled }}
+    - ports: [{port: 11434, protocol: TCP}]
+      to:
+        - podSelector:
+            matchLabels:
+              {{- include "sochub.selectorLabels" (dict "ctx" . "component" "ollama") | nindent 14 }}
+    {{- end }}
+    {{- if $ports }}
+    - ports:
+        {{- range $ports }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+    {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- if .Values.ollama.enabled }}
+---
+# ollama: only api and worker may call it; outbound HTTPS for model pulls.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sochub.fullname" . }}-ollama
+  labels:
+    {{- include "sochub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sochub.selectorLabels" (dict "ctx" . "component" "ollama") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{port: 11434, protocol: TCP}]
+      from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $name }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+            matchExpressions:
+              - {key: app.kubernetes.io/component, operator: In, values: [api, worker]}
+  egress:
+    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - ports: [{port: 443, protocol: TCP}]
+{{- end }}
+{{- end }}

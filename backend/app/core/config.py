@@ -1,6 +1,7 @@
 import warnings
 
 from typing import List, Literal, Optional
+from ipaddress import ip_network
 from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings
@@ -14,9 +15,10 @@ _WEAK_SECRET_KEYS = {
 }
 _MIN_SECRET_KEY_LENGTH = 32
 # The docker-compose local-dev Postgres password; never acceptable in production.
-_WEAK_DB_PASSWORDS = {"password"}
+_WEAK_DB_PASSWORDS = {"password", "sochub-change-me", "CHANGE_ME"}
 # Public/placeholder Redis passwords (the compose dev default is "devredispass").
-_WEAK_REDIS_PASSWORDS = {"devredispass", "changeme", "redis"}
+_WEAK_REDIS_PASSWORDS = {"devredispass", "changeme", "redis", "sochub-change-me", "CHANGE_ME"}
+# (sochub-change-me: the old Helm chart placeholder; CHANGE_ME: .env.prod.example.)
 _LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 class Settings(BaseSettings):
@@ -55,6 +57,20 @@ class Settings(BaseSettings):
     LOGIN_MAX_PER_EMAIL_IP: int = Field(5, ge=1)   # hard lock for one (email, client IP)
     LOGIN_MAX_PER_EMAIL: int = Field(30, ge=1)     # global cap per email (distributed guessing)
     LOGIN_MAX_PER_IP: int = Field(20, ge=1)        # per client IP, failures only
+
+    # Reverse proxies whose X-Real-IP / X-Forwarded-For we believe (comma-separated CIDRs), see
+    # app.core.login_throttle.client_ip. The default covers loopback and the private ranges Docker
+    # bridge networks and Kubernetes pod networks use, i.e. the bundled nginx in compose/Helm. Any
+    # other peer is identified by its socket address and its forwarding headers are ignored.
+    TRUSTED_PROXY_CIDRS: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+
+    @field_validator("TRUSTED_PROXY_CIDRS")
+    @classmethod
+    def _valid_proxy_cidrs(cls, v: str) -> str:
+        for cidr in v.split(","):
+            if cidr.strip():
+                ip_network(cidr.strip(), strict=False)  # ValueError -> refuse to boot
+        return v
 
     REDIS_URL: str = "redis://localhost:6379"
 
@@ -195,12 +211,12 @@ class Settings(BaseSettings):
                 "ENCRYPTION_KEY is not set: stored secrets are then encrypted with a key derived from SECRET_KEY. "
                 f"Set ENCRYPTION_KEY (>= {_MIN_SECRET_KEY_LENGTH} random characters, different from SECRET_KEY)."
             )
-        elif (  # empty = unset
+        elif (
             len(self.ENCRYPTION_KEY) < _MIN_SECRET_KEY_LENGTH or self.ENCRYPTION_KEY == self.SECRET_KEY
         ):
             problems.append(
                 f"ENCRYPTION_KEY must be at least {_MIN_SECRET_KEY_LENGTH} characters and differ from "
-                "SECRET_KEY (or leave it unset)."
+                "SECRET_KEY."
             )
         redis_password = urlsplit(self.REDIS_URL).password
         if not redis_password:

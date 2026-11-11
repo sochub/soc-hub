@@ -23,7 +23,7 @@ carry no secrets; all configuration comes from environment variables.
 | PostgreSQL 15+ | Container, RDS, Cloud SQL, ... → `DATABASE_URL=postgresql+asyncpg://...` |
 | Redis 7 | With a password → `REDIS_URL=redis://:<password>@host:6379/0` |
 | Backend env | `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `ENVIRONMENT=production`, `PUBLIC_BASE_URL`, `BACKEND_CORS_ORIGINS`, optional `AI_*` / `STORAGE_*` ([configuration.md](configuration.md)) |
-| Frontend env | `BACKEND_UPSTREAM` (default `http://backend:8000`), `MAX_UPLOAD_MB` |
+| Frontend env | `BACKEND_UPSTREAM` (default `http://backend:8000`), `MAX_UPLOAD_MB`, `HSTS_HEADER` (value only, e.g. `max-age=31536000; includeSubDomains`), `REAL_IP_FROM` (CIDRs of the proxy in front of nginx) |
 | Attachments | A persistent volume at `/data/attachments`, or `STORAGE_BACKEND=s3` (required where disks are ephemeral, e.g. Fargate) |
 | TLS | Terminate at a proxy or load balancer in front of the frontend's port 8080 |
 
@@ -32,7 +32,8 @@ The backend image runs three ways; only the command changes:
 | Role | Command | Replicas |
 |---|---|---|
 | API | _(image default)_ `uvicorn app.main:app --host 0.0.0.0 --port 8000` | 1+ |
-| Worker + scheduler | `celery -A app.worker.celery_app worker -B --loglevel=info -s /tmp/celerybeat-schedule` | **exactly 1** (`-B` embeds the scheduler) |
+| Worker | `celery -A app.worker.celery_app worker -Q celery,automation --loglevel=info` | 1+ |
+| Scheduler (beat) | `celery -A app.worker.celery_app beat --loglevel=info -s /tmp/celerybeat-schedule` | **exactly 1** |
 | Migrations | `alembic upgrade head` | one-off, before API/worker start on each upgrade |
 | Slack Socket Mode | `python -m app.slack_socket` | 1 (a 2nd for redundancy is fine); idles if no tenant uses Socket Mode |
 
@@ -41,12 +42,23 @@ Create the first admin once the stack is up:
 
 Health checks: backend `GET /health` on 8000, frontend `GET /` on 8080.
 
+Both images run with a read-only root filesystem if `/tmp` is writable (backend: also `/home/app`;
+frontend: also `/etc/nginx/conf.d`, where the config templates are rendered at start).
+
+Release images are signed keylessly with cosign (GitHub OIDC). Verify before deploying:
+
+```bash
+cosign verify docker.io/sochub/sochub-backend:1.4.0 \
+  --certificate-identity-regexp '^https://github.com/sochub/soc-hub/.github/workflows/images.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 ## VPS / single server (Docker Compose)
 
 ```bash
 curl -O https://raw.githubusercontent.com/sochub/soc-hub/main/docker-compose.prod.yml
 curl -o .env https://raw.githubusercontent.com/sochub/soc-hub/main/.env.prod.example
-# edit .env: replace every CHANGE_ME
+# edit .env: replace every CHANGE_ME (SOCHUB_TAG too: a release such as 1.4.0)
 docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml run --rm backend python -m app.scripts.create_super_admin --email you@example.com
 ```
@@ -77,12 +89,13 @@ another TLS proxy in front of `HTTP_PORT`.
 - `Deployment` + `Service` named `backend` (port 8000) and `frontend`
   (port 8080); the frontend's default `BACKEND_UPSTREAM` already matches.
   Expose `frontend` through an Ingress with TLS.
-- Worker: a `Deployment` with `replicas: 1` and the worker command; Slack Socket Mode: a
+- Worker: a `Deployment` with the worker command; beat: a `Deployment` with `replicas: 1`; Slack Socket Mode: a
   `Deployment` with `python -m app.slack_socket` (no Service needed, it only connects out).
 - Migrations: a `Job` (or a Helm pre-upgrade hook) running `alembic upgrade head`.
 - Attachments: a `PersistentVolumeClaim` at `/data/attachments`, or S3.
 - Secrets: a `Secret` mounted with `envFrom`; images run fine with
-  `runAsNonRoot: true` and `allowPrivilegeEscalation: false`.
+  `runAsNonRoot: true`, `allowPrivilegeEscalation: false` and `readOnlyRootFilesystem: true` (see above).
+  The Helm chart in `deploy/helm/sochub` does all of this, plus NetworkPolicies.
 
 ## Publishing a release (maintainers)
 
