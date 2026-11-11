@@ -98,7 +98,7 @@ def test_guest_sso_replayed_assertion_refused(monkeypatch):
             r = await cl.post(url, data={"SAMLResponse": "x", "RelayState": "guest"})
             loc = r.headers["location"]
             assert r.status_code == 303 and "/guest/login?t=" in loc and "#sso_error=" in loc
-            assert unquote(loc.split("#sso_error=", 1)[1]) == sso_mod.SSO_FAILED
+            assert unquote(loc.split("#sso_error=", 1)[1]) == "failed"
     run(body)
 
 

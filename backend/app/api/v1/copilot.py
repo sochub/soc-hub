@@ -778,6 +778,8 @@ async def _run_action(db: AsyncSession, req: ActionExecuteRequest, current_user:
             changes["tags"] = tags
         if not changes:
             raise HTTPException(status_code=400, detail="Nothing to update.")
+        # Same guards as REST/MCP: closing needs an outcome, which a copilot action can't supply.
+        await case_service.check_case_update(db, case=case, data=update_data, tenant_id=tenant_id, role=role)
         await case_service.apply_case_update(db, case=case, update_data=update_data, user_id=current_user.id)
         await db.commit()
         return ActionResult(ok=True, message=f"Updated case #{case.id} ({', '.join(changes)}).", case_id=case.id)

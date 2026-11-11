@@ -45,8 +45,14 @@ class InvitationAccept(BaseModel):
         return validate_password_strength(v)
 
 
+class InvitationAcceptExisting(BaseModel):
+    token: str
+
+
 class InvitationValidation(BaseModel):
     email: str
     tenant_name: str
     role: str
     valid: bool
+    # The invitee already has an account: they accept signed in (POST /invitations/accept-existing).
+    existing_account: bool = False

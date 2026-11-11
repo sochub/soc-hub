@@ -55,9 +55,9 @@ async def audit_if_password_fallback(request: Request, user: User, tenant_id: Op
 
 async def password_login_tenant(db: AsyncSession, user: User, *, mfa_enabled: bool
                                 ) -> tuple[Optional[int], Optional[str], Optional[str]]:
-    """Default active tenant for a password sign-in: the lowest-id ACTIVE tenant the login policy lets a `pwd`
+    """Default active tenant for a password sign-in: the oldest ACTIVE membership the login policy lets a `pwd`
     session enter. Returns (tenant_id, method, None); (None, None, None) for a user with no tenant; or
-    (None, None, slug of the lowest-id active membership) when active memberships exist but none admit a
+    (None, None, slug of the oldest active membership) when active memberships exist but none admit a
     password. Raises 403 (tenant_deactivated_error) when every membership is in a deactivated tenant.
     Super admins (break-glass) never depend on tenant state: the lowest-id active tenant, else any."""
     if user.is_super_admin:
@@ -69,7 +69,7 @@ async def password_login_tenant(db: AsyncSession, user: User, *, mfa_enabled: bo
         select(TenantMembership.tenant_id, TenantMembership.role, Tenant.member_login_method, Tenant.slug)
         .join(Tenant, Tenant.id == TenantMembership.tenant_id)
         .where(TenantMembership.user_id == user.id, Tenant.is_active.isnot(False))
-        .order_by(TenantMembership.tenant_id))).all()
+        .order_by(TenantMembership.created_at, TenantMembership.id))).all()  # home (oldest) membership first
     if not rows and (await db.execute(
             select(TenantMembership.tenant_id).where(TenantMembership.user_id == user.id).limit(1))).first():
         raise tenant_deactivated_error()

@@ -5,8 +5,10 @@ tenant. So:
 
 - a super admin may act on anyone;
 - nobody else may act on a super admin (break-glass accounts must never be locked out by a tenant);
-- a tenant admin may change GLOBAL account state only for a user whose sole membership is the admin's active
-  tenant; for a user who also belongs elsewhere they manage that user's membership in their own tenant only.
+- a tenant admin may change GLOBAL account state only for a user whose HOME tenant (oldest membership) is the
+  admin's active tenant; any other tenant manages that user's membership in its own tenant only. Memberships
+  of existing accounts are only ever added by the user accepting an invitation (or into a tenant with no members
+  yet), so another tenant can't make itself someone's home.
 
 Every refusal writes a ``security`` audit row (``user.manage_denied``)."""
 from typing import Optional
@@ -26,10 +28,13 @@ NOT_ALLOWED = "You can't manage this account."
 OTHER_TENANTS = "This account belongs to other tenants; ask a platform admin."
 
 
-async def has_other_memberships(db: AsyncSession, user_id: int, tenant_id: Optional[int]) -> bool:
-    row = (await db.execute(select(TenantMembership.id).where(
-        TenantMembership.user_id == user_id, TenantMembership.tenant_id != tenant_id).limit(1))).first()
-    return row is not None
+HOME_ORDER = (TenantMembership.created_at, TenantMembership.id)
+
+
+async def home_tenant_id(db: AsyncSession, user_id: int) -> Optional[int]:
+    """The user's home tenant: their oldest membership (lowest id breaks a created_at tie)."""
+    return (await db.execute(select(TenantMembership.tenant_id).where(TenantMembership.user_id == user_id)
+                             .order_by(*HOME_ORDER).limit(1))).scalars().first()
 
 
 async def refusal(db: AsyncSession, actor: User, target: User, tenant_id: Optional[int], scope: str) -> Optional[str]:
@@ -38,7 +43,7 @@ async def refusal(db: AsyncSession, actor: User, target: User, tenant_id: Option
         return None
     if target.is_super_admin:
         return NOT_ALLOWED
-    if scope == GLOBAL and await has_other_memberships(db, target.id, tenant_id):
+    if scope == GLOBAL and await home_tenant_id(db, target.id) != tenant_id:
         return OTHER_TENANTS
     return None
 

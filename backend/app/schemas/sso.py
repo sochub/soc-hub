@@ -1,9 +1,12 @@
-from typing import Optional
+import re
+from typing import List, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, field_validator
 
 from app.models.tenant import LOGIN_METHODS
+
+_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 
 
 class SSOConfigUpdate(BaseModel):
@@ -19,8 +22,23 @@ class SSOConfigUpdate(BaseModel):
     oidc_client_secret: Optional[str] = None
     oidc_scopes: Optional[str] = None
     auto_provision: Optional[bool] = None
+    # Email domains JIT provisioning may create accounts for; required (non-empty) while auto_provision is on.
+    allowed_email_domains: Optional[List[str]] = None
     default_role: Optional[str] = None
     saml_allow_idp_initiated: Optional[bool] = None
+
+    @field_validator("allowed_email_domains")
+    @classmethod
+    def _domains_ok(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        domains = list(dict.fromkeys(d.strip().lower().lstrip("@") for d in v if d and d.strip()))
+        if len(domains) > 50:
+            raise ValueError("at most 50 allowed email domains")
+        bad = [d for d in domains if not _DOMAIN_RE.match(d)]
+        if bad:
+            raise ValueError(f"not a valid domain: {bad[0][:100]}")
+        return domains
 
     @field_validator("default_role")
     @classmethod
@@ -73,6 +91,7 @@ class SSOConfigOut(BaseModel):
     oidc_scopes: str
     has_oidc_client_secret: bool
     auto_provision: bool
+    allowed_email_domains: List[str] = []
     default_role: str
     saml_allow_idp_initiated: bool = False
     # Service-provider values the admin pastes into their IdP

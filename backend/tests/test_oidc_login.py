@@ -76,6 +76,7 @@ async def _oidc_tenant(db, ids, *, member="oidc", guest="password", auto_provisi
     t.member_login_method, t.guest_login_method = member, guest
     db.add(TenantSSOConfig(tenant_id=t.id, oidc_issuer=ISSUER, oidc_client_id=CLIENT_ID,
                            oidc_client_secret_enc=encrypt(SECRET), auto_provision=auto_provision,
+                           allowed_email_domains=["corp.example"] if auto_provision else [],
                            default_role="viewer"))
     await db.commit()
     return t
@@ -299,7 +300,7 @@ def test_oidc_other_tenant_user_not_attached(monkeypatch):
             u = await _member(db, ids, "elsewhere", [other])
         idp = FakeIdP(monkeypatch)
         idp.email = u.email
-        assert _err(await _flow(c, idp, t.slug)) == sso_mod.SSO_NOT_ALLOWED
+        assert _err(await _flow(c, idp, t.slug)) == "not_allowed"
         async with AsyncSessionLocal() as db:
             tids = (await db.execute(select(TenantMembership.tenant_id).where(
                 TenantMembership.user_id == u.id))).scalars().all()
@@ -317,7 +318,7 @@ def test_oidc_multi_tenant_member_refused(monkeypatch):
             single = await _member(db, ids, "single", [t])
         idp = FakeIdP(monkeypatch)
         idp.email = u.email
-        assert _err(await _flow(c, idp, t.slug)) == sso_mod.SSO_NOT_ALLOWED
+        assert _err(await _flow(c, idp, t.slug)) == "not_allowed"
         assert "not_allowed" in await _reasons(t.id)
         idp.email = single.email
         r = await _flow(c, idp, t.slug)
@@ -356,7 +357,7 @@ def test_dispatcher(monkeypatch):
             t = await _oidc_tenant(db, ids, member="password", guest="oidc")
         r = await c.get(f"/api/v1/auth/sso/{pw.slug}/login")
         assert "/login#sso_error=" in r.headers["location"]
-        assert unquote(r.headers["location"].split("#sso_error=")[1]) == "This organization signs in with a password."
+        assert unquote(r.headers["location"].split("#sso_error=")[1]) == "password_tenant"
         r = await c.get(f"/api/v1/auth/sso/{pw.slug}/login?guest=1")
         assert "/guest/login#sso_error=" in r.headers["location"]
         r = await c.get(f"/api/v1/auth/sso/{t.slug}/login?guest=1")
@@ -491,4 +492,21 @@ def test_config_rejects_unready_method():
         assert r.status_code == 200 and r.json()["guest_login_method"] == "saml"
         # clearing the SAML config while guests still use it is refused
         assert (await c.put(url, json={"idp_x509_cert": ""})).status_code == 422
+    _go(body)
+
+
+def test_config_auto_provision_requires_allowed_domains():
+    """Old #9: auto-provisioning can't be switched on without allowed email domains."""
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            admin = await make_user(db, ids)
+        _as_admin(admin, t.id)
+        url = "/api/v1/tenants/sso-config"
+        assert (await c.put(url, json={"auto_provision": True})).status_code == 422
+        assert (await c.put(url, json={"auto_provision": True, "allowed_email_domains": ["not a domain"]})
+                ).status_code == 422
+        r = await c.put(url, json={"auto_provision": True, "allowed_email_domains": [" @Corp.Example ", "corp.example"]})
+        assert r.status_code == 200 and r.json()["allowed_email_domains"] == ["corp.example"], r.text
+        assert (await c.put(url, json={"allowed_email_domains": []})).status_code == 422  # still on
     _go(body)

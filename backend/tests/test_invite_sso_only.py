@@ -9,6 +9,7 @@ from app.api import deps
 from app.core.security import get_password_hash
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
+from app.models.invitation import Invitation
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -41,7 +42,8 @@ async def _scenario():
             r = await c.post("/api/v1/invitations/", json={"email": sso.email, "role": "analyst"})
             assert r.status_code == 409 and "single sign-on" in r.json()["detail"], r.text
             r = await c.post("/api/v1/invitations/", json={"email": pwd.email, "role": "analyst"})
-            assert r.status_code in (200, 201) and r.json()["added_directly"], r.text
+            # a password account in another tenant gets a pending invitation (N1: no forced membership)
+            assert r.status_code in (200, 201) and r.json()["added_directly"] is False, r.text
         async with AsyncSessionLocal() as db:
             n = (await db.execute(select(func.count()).select_from(TenantMembership).where(
                 TenantMembership.user_id == ids["u"][1], TenantMembership.tenant_id == ta_id))).scalar()
@@ -50,6 +52,7 @@ async def _scenario():
         app.dependency_overrides.pop(deps.require_admin, None)
         app.dependency_overrides.pop(deps.get_effective_tenant_id, None)
         async with AsyncSessionLocal() as db:
+            await db.execute(delete(Invitation).where(Invitation.tenant_id.in_(ids["t"])))
             await db.execute(delete(TenantMembership).where(TenantMembership.tenant_id.in_(ids["t"])))
             await db.execute(delete(User).where(User.id.in_(ids["u"])))
             await db.execute(delete(Tenant).where(Tenant.id.in_(ids["t"])))

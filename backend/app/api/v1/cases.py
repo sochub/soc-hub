@@ -9,10 +9,11 @@ from sqlalchemy.orm import selectinload
 
 from app.audit.context import audit_read
 from app.api import deps
-from app.models.case import Case, TimelineEvent
+from app.models.case import Case, CaseStatus, TimelineEvent
+from app.models.membership import TenantMembership
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
-from app.services import case_delete
+from app.services import case_delete, task_service
 from app.services.slack_service import SlackError, load_integration
 from app.schemas import case as case_schema
 from app.services.case_service import (
@@ -120,6 +121,11 @@ async def create_case(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Create new case."""
+    if case_in.owner_id not in (None, current_user.id) and case_in.owner_id not in await task_service.assignable_ids(
+            db, tenant_id):
+        raise HTTPException(status_code=422, detail="Owner must be an active analyst or admin of this tenant")
+    if case_in.status == CaseStatus.CLOSED:  # same rule as check_case_update: closing needs an outcome
+        raise HTTPException(status_code=422, detail="outcome is required to close a case")
     case, triage_id = await create_case_record(
         db, tenant_id=tenant_id, data=case_in.model_dump(), user_id=current_user.id,
     )
@@ -205,8 +211,12 @@ async def read_case(
         raise HTTPException(status_code=404, detail="Case not found")
     await _attach_sla(db, tenant_id, [case])
     case.milestones = await case_milestones(db, case)
-    if case.owner_id:
-        owner = await db.get(User, case.owner_id)
+    if case.owner_id:  # only a member of this tenant (or the caller) is named; never a foreign account
+        owner = (await db.execute(select(User).outerjoin(TenantMembership, (TenantMembership.user_id == User.id)
+                                                        & (TenantMembership.tenant_id == tenant_id))
+                                  .where(User.id == case.owner_id,
+                                         (TenantMembership.id.isnot(None)) | (User.id == current_user.id))
+                                  )).scalars().first()
         case.owner_name = (owner.full_name or owner.email) if owner else None
     return case
 
