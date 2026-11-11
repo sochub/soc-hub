@@ -278,7 +278,7 @@ async def default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int
         select(TenantMembership.tenant_id)
         .join(Tenant, Tenant.id == TenantMembership.tenant_id)
         .where(TenantMembership.user_id == user.id)
-        .order_by(Tenant.is_active.is_(False), TenantMembership.tenant_id)
+        .order_by(Tenant.is_active.is_(False), TenantMembership.created_at, TenantMembership.id)  # home first
         .limit(1)
     )
     return res.scalars().first()
