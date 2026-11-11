@@ -84,6 +84,15 @@ async def get_war_room_settings(db: AsyncSession = Depends(deps.get_db),
             "war_room_name_template": integ.war_room_name_template if integ else None}
 
 
+async def _team_of_token(token: str) -> Optional[str]:
+    """The workspace the bot token belongs to (auth.test). None if Slack can't say: Socket Mode then drops every
+    envelope until Test succeeds, rather than accepting any workspace's."""
+    try:
+        return (await slack_call(token, "auth.test")).get("team_id") or None
+    except Exception:  # SlackError or the network: the token stays saved, unverified
+        return None
+
+
 @router.put("/config")
 async def put_config(body: SlackConfigIn, db: AsyncSession = Depends(deps.get_db),
                      current_user: User = Depends(deps.require_admin),
@@ -102,9 +111,10 @@ async def put_config(body: SlackConfigIn, db: AsyncSession = Depends(deps.get_db
         integ = SlackIntegration(tenant_id=tenant_id, bot_token_enc=encrypt(token),
                                  signing_secret_enc=encrypt(secret or secrets.token_urlsafe(32)))
         db.add(integ)
+        integ.team_id = await _team_of_token(token)
     else:
         if token:
-            integ.bot_token_enc, integ.team_id = encrypt(token), None  # re-run Test to learn the team
+            integ.bot_token_enc, integ.team_id = encrypt(token), await _team_of_token(token)
         if secret:
             integ.signing_secret_enc = encrypt(secret)
     app_token = (body.app_token or "").strip()
