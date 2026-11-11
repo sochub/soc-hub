@@ -344,6 +344,8 @@ def test_mixed_case_email_logs_in(caplog):
         with caplog.at_level(logging.WARNING, logger="app.api.v1.auth"):
             assert (await _login(c, email.upper(), "S3cret-in-logs?")).status_code == 401
         text = caplog.text
-        assert "203.0.113.7" in text and email in text and "S3cret-in-logs?" not in text
+        # the address itself is never logged, only its domain and a short hash (old #6)
+        assert "203.0.113.7" in text and email.split("@")[1] in text and "S3cret-in-logs?" not in text
+        assert email not in text
 
     asyncio.run(_with_user(scenario, FakeRedis(lambda: 1000.0)))

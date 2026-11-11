@@ -58,7 +58,7 @@ def test_invitation_check_reveals_nothing_unless_live():
                 db.add(Invitation(email=ids.email(k), tenant_id=t.id, role="analyst", token=toks[k],
                                   status=status, expires_at=exp))
             await db.commit()
-        empty = {"email": "", "tenant_name": "", "role": "", "valid": False}
+        empty = {"email": "", "tenant_name": "", "role": "", "valid": False, "existing_account": False}
         try:
             async with client() as c:
                 for k in ("used", "expired"):
