@@ -2,13 +2,13 @@
 import asyncio
 import json
 import re
-from typing import Optional
+from typing import Optional, Tuple
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.core.config import settings
-from app.utils.hostguard import validate_outbound_host
+from app.utils.hostguard import validate_outbound_host, vetted_ip
 
 from app.enrichment.sources.base import LookupResult, SourceError, guarded, parse_json, status_result, tag_list
 
@@ -16,8 +16,7 @@ NAME = "misp"
 TYPES = frozenset({"ip", "domain", "url", "file_hash"})
 
 
-def check_url(url: str, *, resolve=None) -> Optional[str]:
-    """Error message if `url` is not an acceptable MISP server URL (syntax and SSRF host guard), else None."""
+def _syntax(url: str) -> Optional[str]:
     if not url or re.search(r"\s", url):
         return "MISP URL must not contain whitespace"
     try:
@@ -30,7 +29,36 @@ def check_url(url: str, *, resolve=None) -> Optional[str]:
         return "MISP URL must start with http:// or https://"
     if p.username is not None or p.password is not None or "@" in p.netloc:
         return "MISP URL must not contain credentials"
-    return validate_outbound_host(host, settings.MISP_PRIVATE_HOSTS, "MISP_PRIVATE_HOSTS", resolve=resolve)
+    return None
+
+
+HTTPS_REQUIRED = "MISP URL must use https:// when an API key is set"
+
+
+def check_url(url: str, *, resolve=None, require_https: bool = False) -> Optional[str]:
+    """Error message if `url` is not an acceptable MISP server URL (syntax and SSRF host guard), else None."""
+    if (err := _syntax(url)):
+        return err
+    if require_https and urlsplit(url).scheme != "https":
+        return HTTPS_REQUIRED
+    return validate_outbound_host(urlsplit(url).hostname, settings.MISP_PRIVATE_HOSTS, "MISP_PRIVATE_HOSTS",
+                                  resolve=resolve)
+
+
+def vet_url(url: str, *, resolve=None) -> Tuple[Optional[str], Optional[str]]:
+    """(error, ip) for a request that carries the API key: https only, and the vetted address to connect to so a
+    second DNS answer can't rebind the authenticated request onto an internal service."""
+    if (err := _syntax(url)):
+        return err, None
+    if urlsplit(url).scheme != "https":
+        return HTTPS_REQUIRED, None
+    return vetted_ip(urlsplit(url).hostname, settings.MISP_PRIVATE_HOSTS, "MISP_PRIVATE_HOSTS", resolve=resolve)
+
+
+def pinned(url: str, ip: str) -> Tuple[httpx.URL, dict, dict]:
+    """(url, headers, extensions) that connect to `ip` while Host, SNI and certificate checks keep the name."""
+    u = httpx.URL(url)
+    return u.copy_with(host=ip), {"Host": u.netloc.decode("ascii")}, {"sni_hostname": u.host}
 
 
 def parse_cfg(raw) -> dict:
@@ -84,13 +112,14 @@ def _tags(attrs: list) -> list:
 
 async def _lookup(itype, value, key, transport):
     cfg = parse_cfg(key)
-    err = await asyncio.to_thread(check_url, cfg["url"])
+    err, ip = await asyncio.to_thread(vet_url, cfg["url"])
     if err:
         raise SourceError("host not allowed" if "private" in err or "resolved" in err else err)
+    url, host, ext = pinned(f"{cfg['url']}/attributes/restSearch", ip)
     async with _client(cfg["verify"], transport) as c:
-        resp = await c.post(f"{cfg['url']}/attributes/restSearch", json={"value": value, "limit": 50, "includeContext": True, "includeEventTags": True},
-                            headers={"Authorization": cfg["key"], "Accept": "application/json",
-                                     "Content-Type": "application/json"})
+        resp = await c.post(url, json={"value": value, "limit": 50, "includeContext": True, "includeEventTags": True},
+                            headers={**host, "Authorization": cfg["key"], "Accept": "application/json",
+                                     "Content-Type": "application/json"}, extensions=ext)
     bad = status_result(NAME, resp)
     if bad:
         return bad

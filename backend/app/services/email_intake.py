@@ -28,7 +28,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
-from app.utils.hostguard import validate_outbound_host
+from app.utils.hostguard import validate_outbound_host, vetted_ip
 from app.models.case import Alert, Case
 from app.models.email_artifact import EmailArtifact
 from app.models.tenant import Tenant
@@ -69,6 +69,17 @@ def validate_mailbox_host(host: str) -> Optional[str]:
                                   resolve=lambda h: socket.getaddrinfo(h, None))
 
 
+def _pinned(cls, ip: str):
+    """`cls` (IMAP4 or IMAP4_SSL) connecting to the vetted `ip`, so a second DNS answer can't rebind the login onto
+    an internal host. TLS (implicit or STARTTLS) still uses and verifies the configured name (self.host)."""
+    class Pinned(cls):
+        def _create_socket(self, timeout):
+            sock = socket.create_connection((ip, self.port), timeout)
+            ctx = getattr(self, "ssl_context", None)
+            return ctx.wrap_socket(sock, server_hostname=self.host) if ctx is not None else sock
+    return Pinned
+
+
 def _fail(msg: str) -> dict:
     return {"ok": False, "message_count": None, "error": msg}
 
@@ -87,16 +98,18 @@ def _close(conn) -> None:
 def _open_connection(mailbox):
     """Connect and log in over verified TLS (implicit TLS, or STARTTLS and never cleartext). Shared by the
     connection test and the poller; tests patch this as the IMAP client factory. Raises MailboxError."""
-    if (err := validate_mailbox_host(mailbox.host)):
+    err, ip = vetted_ip(mailbox.host, settings.MAILBOX_PRIVATE_HOSTS, "MAILBOX_PRIVATE_HOSTS",
+                        resolve=lambda h: socket.getaddrinfo(h, None))
+    if err:
         raise MailboxError(err)
     conn = None
     try:
         password = decrypt(mailbox.password_enc)
         ctx = ssl.create_default_context()
         if mailbox.use_ssl:
-            conn = imaplib.IMAP4_SSL(mailbox.host, mailbox.port, ssl_context=ctx, timeout=10)
+            conn = _pinned(imaplib.IMAP4_SSL, ip)(mailbox.host, mailbox.port, ssl_context=ctx, timeout=10)
         else:
-            conn = imaplib.IMAP4(mailbox.host, mailbox.port, timeout=10)
+            conn = _pinned(imaplib.IMAP4, ip)(mailbox.host, mailbox.port, timeout=10)
             if "STARTTLS" not in getattr(conn, "capabilities", ()):
                 raise MailboxError("server does not support STARTTLS")
             conn.starttls(ctx)  # never log in over cleartext

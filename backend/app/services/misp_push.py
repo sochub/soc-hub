@@ -6,7 +6,7 @@ from typing import Optional
 import httpx
 from sqlalchemy import select
 
-from app.enrichment.sources.misp import check_url
+from app.enrichment.sources.misp import pinned, vet_url
 from app.models.case import CaseLink
 
 SYSTEM = "misp"
@@ -48,9 +48,14 @@ def _is_duplicate(resp: httpx.Response) -> bool:
 
 async def push_iocs(db, *, tenant_id: int, case, iocs, misp_cfg: dict) -> dict:
     """misp_cfg is the parsed config ({"url","key","verify"}). Raises MispPushError on MISP/transport failure."""
-    err = await asyncio.to_thread(check_url, misp_cfg["url"])
+    err, ip = await asyncio.to_thread(vet_url, misp_cfg["url"])
     if err:
-        raise MispPushError("MISP host not allowed")
+        raise MispPushError(err if "https" in err else "MISP host not allowed")
+
+    def post(c, url, body):  # connect to the vetted IP only (no DNS rebinding between check and request)
+        target, host, ext = pinned(url, ip)
+        return c.post(target, json=body, headers=host, extensions=ext)
+
     base = misp_cfg["url"]
     skipped, todo = [], []
     for ioc in iocs:
@@ -70,7 +75,7 @@ async def push_iocs(db, *, tenant_id: int, case, iocs, misp_cfg: dict) -> dict:
         async with httpx.AsyncClient(timeout=15.0, verify=misp_cfg["verify"], follow_redirects=False,
                                      transport=TRANSPORT, headers=headers) as c:
             if todo and link is None:
-                resp = await c.post(f"{base}/events/add", json={"Event": {
+                resp = await post(c, f"{base}/events/add", {"Event": {
                     "info": f"SOC Hub case #{case.id}: {case.title}", "distribution": 0, "analysis": 0,
                     "threat_level_id": 2}})
                 if resp.status_code >= 400:
@@ -84,7 +89,7 @@ async def push_iocs(db, *, tenant_id: int, case, iocs, misp_cfg: dict) -> dict:
                 db.add(link)
                 await db.flush()
             for ioc in todo:
-                resp = await c.post(f"{base}/attributes/add/{link.external_id}", json={
+                resp = await post(c, f"{base}/attributes/add/{link.external_id}", {
                     "type": misp_type(ioc), "value": ioc.value.strip(), "to_ids": True,
                     "comment": ioc.description or ""})
                 if resp.status_code < 400 or _is_duplicate(resp):

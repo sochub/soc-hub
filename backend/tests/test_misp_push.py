@@ -28,6 +28,22 @@ URL = "/api/v1/cases/{}/misp-push"
 def _allow_hosts(monkeypatch):
     from app.core.config import settings
     monkeypatch.setattr(settings, "MISP_PRIVATE_HOSTS", ["misp.example"])
+    _fake_dns(monkeypatch)
+
+
+def _fake_dns(monkeypatch, name_ip="10.9.9.9"):
+    """Stub DNS inside hostguard only: IP literals resolve to themselves, names to `name_ip`."""
+    import ipaddress
+    from types import SimpleNamespace
+    from app.utils import hostguard
+
+    def fake(h, *a, **k):
+        try:
+            ip = str(ipaddress.ip_address(h))
+        except ValueError:
+            ip = name_ip
+        return [(2, 1, 6, "", (ip, 0))]
+    monkeypatch.setattr(hostguard, "socket", SimpleNamespace(getaddrinfo=fake))
 
 
 class Fake:
