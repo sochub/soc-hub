@@ -85,7 +85,6 @@ jobs:
   hadolint:
     name: hadolint (${{ matrix.dockerfile }})
     runs-on: ubuntu-latest
-    continue-on-error: true # non-blocking for now
     strategy:
       fail-fast: false
       matrix:
@@ -94,7 +93,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Blocking: both Dockerfiles are clean under .hadolint.yaml (DL3008 ignored, with the reason there).
       - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
-        continue-on-error: true
         with:
           dockerfile: ${{ matrix.dockerfile }}
+          config: .hadolint.yaml
