@@ -1,7 +1,7 @@
 """A tenant admin may not take over the lifecycle of accounts it doesn't own.
 
-- Super admins are break-glass: only a super admin can invite, deactivate, reactivate, reset MFA on, change the
-  role of, or remove a super admin.
+- Super admins only bootstrap: they may set up a tenant's admin while it has no active admin, and may not
+  create or edit any user of a tenant that has one. Tenant admins never act on super admins.
 - Global account actions (deactivate / activate / MFA reset) are allowed to a tenant admin only for a user whose
   HOME tenant (oldest membership) is the admin's active tenant. Any other tenant manages the membership only
   (role, remove).
@@ -120,11 +120,11 @@ def test_tenant_admin_cannot_invite_super_admin():
         assert await _membership(ids["sa2"], ids["ta"]) is None
         rows = await _denials(ids)
         assert len(rows) == 1 and rows[0].user_id == ids["admin"] and rows[0].outcome == "denied"
-        # a super admin may add another super admin
+        # a super admin can't either once A has an admin (super admins only bootstrap a tenant's admin)
         r = await c.post("/api/v1/invitations/", headers=await _hdr(ids["sa"], ids["ta"]),
-                         json={"email": sa2.email, "role": "viewer"})
-        assert r.status_code == 201 and r.json()["added_directly"], r.text
-        assert await _membership(ids["sa2"], ids["ta"]) is not None
+                         json={"email": sa2.email, "role": "admin"})
+        assert r.status_code == 403, r.text
+        assert await _membership(ids["sa2"], ids["ta"]) is None
     _scenario(body)
 
 
@@ -210,28 +210,59 @@ def test_tenant_admin_global_actions_allowed_on_single_tenant_user():
     _scenario(body)
 
 
-def test_super_admin_can_do_everything():
+TENANT_HAS_ADMIN = "This organization already has an admin; its users are managed by that admin."
+
+
+def test_super_admin_hands_off_once_tenant_has_admin(monkeypatch):
+    """Super admins only bootstrap: once a tenant has an active admin they may not create or edit its users
+    (this replaces the old "super admin can do everything" test). Every refusal is audited."""
     async def body(c, ids):
+        async def fake_send(email, link, tenant_id, db):
+            pass
+        monkeypatch.setattr(invitations_mod, "send_invitation_email", fake_send)
+        sa = await _hdr(ids["sa"], ids["ta"])
         m = ids["multi"]
         await _enable_mfa(m)
-        r = await c.put(f"/api/v1/users/{m}/deactivate", headers=await _hdr(ids["sa"], ids["ta"]))
-        assert r.status_code == 200, r.text
-        r = await c.put(f"/api/v1/users/{m}/activate", headers=await _hdr(ids["sa"], ids["ta"]))
-        assert r.status_code == 200, r.text
-        r = await c.post(f"/api/v1/users/{m}/mfa/reset", headers=await _hdr(ids["sa"], ids["ta"]))
-        assert r.status_code == 204, r.text
-        # super admin acting on another super admin (sa2 is not a member of A; super admin may still act)
-        await _enable_mfa(ids["sa"])
-        r = await c.post(f"/api/v1/users/{ids['sa']}/mfa/reset", headers=await _hdr(ids["sa2"], ids["ta"]))
-        assert r.status_code == 204, r.text
-        r = await c.put(f"/api/v1/users/{ids['sa']}/role", headers=await _hdr(ids["sa2"], ids["ta"]),
-                        json={"role": "analyst"})
-        assert r.status_code == 200, r.text
+        for method, path, body_ in [
+            ("put", f"/api/v1/users/{m}/deactivate", None),
+            ("put", f"/api/v1/users/{m}/activate", None),
+            ("put", f"/api/v1/users/{m}/role", {"role": "viewer"}),
+            ("delete", f"/api/v1/users/{m}/membership", None),
+            ("post", f"/api/v1/users/{m}/mfa/reset", None),
+            ("post", "/api/v1/invitations/", {"email": "new-wf-test@example.com", "role": "admin"}),
+            ("post", "/api/v1/users/", {"email": "new2-wf-test@example.com", "password": "A-Strong-Passw0rd!x",
+                                        "role": "admin"}),
+        ]:
+            kw = {"json": body_} if body_ is not None else {}
+            r = await getattr(c, method)(path, headers=sa, **kw)
+            assert r.status_code == 403 and r.json()["detail"] == TENANT_HAS_ADMIN, (path, r.text)
+        assert (await _user(m)).is_active and (await _membership(m, ids["ta"])).role == "analyst"
+        assert len(await _denials(ids)) == 7
+        # another super admin's account is off limits too (super admins are created by hand)
         r = await c.put(f"/api/v1/users/{ids['sa']}/deactivate", headers=await _hdr(ids["sa2"], ids["ta"]))
+        assert r.status_code == 403, r.text
+    _scenario(body)
+
+
+def test_super_admin_bootstraps_only_the_first_admin():
+    """In a tenant with no active admin a super admin may set up its admin, and only an admin."""
+    async def body(c, ids):
+        sa = await _hdr(ids["sa2"], ids["tc"])
+        r = await c.post("/api/v1/invitations/", headers=sa, json={"email": "boot-wf-test@example.com",
+                                                                     "role": "analyst"})
+        assert r.status_code == 422, r.text
+        single = await _user(ids["single"])
+        r = await c.post("/api/v1/invitations/", headers=sa, json={"email": single.email, "role": "admin"})
+        assert r.status_code == 201 and r.json()["added_directly"] is True, r.text
+        # tenant C now has an admin: the super admin is done there
+        r = await c.put(f"/api/v1/users/{ids['single']}/role", headers=sa, json={"role": "analyst"})
+        assert r.status_code == 403 and r.json()["detail"] == TENANT_HAS_ADMIN, r.text
+        # if every admin is gone (deactivated), the super admin can bootstrap again
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(User).where(User.id == ids["single"]).values(is_active=False))
+            await db.commit()
+        r = await c.put(f"/api/v1/users/{ids['single']}/activate", headers=sa)
         assert r.status_code == 200, r.text
-        r = await c.put(f"/api/v1/users/{ids['sa']}/activate", headers=await _hdr(ids["sa2"], ids["ta"]))
-        assert r.status_code == 200, r.text
-        assert await _denials(ids) == []
     _scenario(body)
 
 
@@ -245,7 +276,8 @@ def test_member_list_flags_manageable_accounts():
         r = await c.get("/api/v1/users/", headers=await _hdr(ids["admin_b"], ids["tb"]))
         assert {u["id"]: u["account_manageable"] for u in r.json()}[ids["multi"]] is False
         r = await c.get("/api/v1/users/", headers=await _hdr(ids["sa"], ids["ta"]))
-        assert all(u["account_manageable"] for u in r.json())
+        # A has an admin: the super admin manages only their own account there
+        assert {u["id"] for u in r.json() if u["account_manageable"]} == {ids["sa"]}
     _scenario(body)
 
 

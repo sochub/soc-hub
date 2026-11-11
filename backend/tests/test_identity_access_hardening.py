@@ -83,8 +83,9 @@ def test_role_change_guards_and_audit():
         adm, an = w.users["admin"], w.users["analyst"]
         r = await c.put(f"/api/v1/users/{adm}/role", headers=hdr(w, "admin"), json={"role": "viewer"})
         assert r.status_code == 400 and "yourself" in r.text, r.text
+        # the tenant has an admin, so the super admin may not change its users at all (bootstrap only)
         r = await c.put(f"/api/v1/users/{adm}/role", headers=hdr(w, "root"), json={"role": "analyst"})
-        assert r.status_code == 400 and "last admin" in r.text, r.text
+        assert r.status_code == 403 and "already has an admin" in r.text, r.text
         r = await c.put(f"/api/v1/users/{an}/role", headers=hdr(w, "admin"), json={"role": "admin"})
         assert r.status_code == 200, r.text
         r = await c.put(f"/api/v1/users/{an}/role", headers=hdr(w, "admin"), json={"role": "viewer"})

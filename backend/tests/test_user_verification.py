@@ -187,6 +187,12 @@ def test_email_ask_user_only_tenant_domains_and_hourly_cap(monkeypatch):
                     step = SimpleNamespace(wait_token=None, wait_expires_at=None, output=None)
                     return await run_email_ask_user(NodeContext(db=db, run=SimpleNamespace(tenant_id=tid), step=step,
                                                                 node={}, ctx={}), {"email": email, "message": "x"})
+            # tenant ids are reused when the test DB is recreated but Redis survives: start from a clean window
+            import time as _time
+            import redis.asyncio as aioredis
+            r = aioredis.from_url(settings.REDIS_URL)
+            await r.delete(f"email_ask:{tid}:{int(_time.time() // 3600)}")
+            await r.aclose()
             with pytest.raises(NodeError, match="domains"):
                 await ask("victim@bank.example")
             assert await ask(f"bob@corp-{h}.example") is WAIT

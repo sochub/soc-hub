@@ -239,8 +239,9 @@ def test_admin_reset_revokes_target():
                 AuditLog.entity_id == ids["member"], AuditLog.action == "mfa_reset"))).scalars().all()
         assert len(rows) == 1 and rows[0].user_id == ids["admin"]
         await enable_member()
-        assert (await c.post(url, headers=await _hdr(ids["sa"], ids["ta"]))).status_code == 204
-        assert (await _user(ids["member"])).mfa_enabled_at is None
+        # tenant A has an admin: resetting its members is that admin's job, not the super admin's
+        assert (await c.post(url, headers=await _hdr(ids["sa"], ids["ta"]))).status_code == 403
+        assert (await _user(ids["member"])).mfa_enabled_at is not None
         assert (await c.post("/api/v1/users/99999999/mfa/reset",
                              headers=await _hdr(ids["sa"], ids["ta"]))).status_code == 404
     _scenario(body)
@@ -325,12 +326,10 @@ def test_reset_protections_and_no_secret_leak():
         assert r.status_code == 400 and r.json()["detail"] == "Use Turn off two-factor in your profile"
         assert (await _user(ids["admin"])).mfa_enabled_at is not None
         sa = await _hdr(ids["sa"], ids["ta"])
+        # super admins only bootstrap: the tenant has an active admin, so they can't reset its members either
         r = await c.post(f"/api/v1/users/{ids['admin']}/mfa/reset", headers=sa)
-        assert r.status_code == 204 and r.text == ""
-        async with AsyncSessionLocal() as db:
-            row = (await db.execute(select(AuditLog).where(
-                AuditLog.entity_id == ids["admin"], AuditLog.action == "mfa_reset"))).scalars().one()
-        assert row.tenant_id == ids["ta"]
+        assert r.status_code == 403 and "already has an admin" in r.text
+        assert (await _user(ids["admin"])).mfa_enabled_at is not None
     _scenario(body)
 
 

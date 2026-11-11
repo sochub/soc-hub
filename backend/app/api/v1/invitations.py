@@ -16,7 +16,7 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas import invitation as invitation_schema
 from app.services.email_service import send_invitation_email
-from app.utils.account_guard import deny
+from app.utils.account_guard import assert_super_admin_may_bootstrap, deny
 from app.utils.emails import normalize_email
 
 router = APIRouter()
@@ -43,11 +43,16 @@ async def create_invitation(
 
     New users get a token invitation to complete signup. Existing users get the same kind of token invitation
     and join only by accepting it while signed in as that account (POST /invitations/accept-existing), so no
-    tenant can attach itself to someone else's account. Two exceptions add an existing user directly:
-    bootstrapping a tenant with no members yet (its first admin), and a super admin (break-glass).
+    tenant can attach itself to someone else's account. The one exception adds an existing user directly:
+    bootstrapping a tenant with no members yet (its first admin).
+
+    A super admin only bootstraps: while the tenant has no active admin they may add or invite its admin;
+    after that, inviting is the tenant admin's job (app.utils.account_guard).
     """
     if invitation_in.role == UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=400, detail="Cannot invite super admin users.")
+    await assert_super_admin_may_bootstrap(db, current_user, tenant_id, action="invite",
+                                           role=invitation_in.role.value, request=request)
 
     # FOR UPDATE: account-wide actions lock the same row, so "is this account owned by one tenant only?" can't
     # race a membership being added here (app.utils.account_guard).
@@ -72,6 +77,7 @@ async def create_invitation(
             # so adding one elsewhere would lock them out of their own organization.
             raise HTTPException(status_code=409, detail=CANNOT_ADD_EXISTING)
     if existing_user and (current_user.is_super_admin or not await _has_members(db, tenant_id)):
+        # (a super admin got here only while the tenant has no active admin: assert_super_admin_may_bootstrap)
         db.add(TenantMembership(
             user_id=existing_user.id, tenant_id=tenant_id, role=invitation_in.role.value
         ))
@@ -156,6 +162,7 @@ async def revoke_invitation(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> None:
     """Revoke an invitation. Admin only."""
+    await assert_super_admin_may_bootstrap(db, current_user, tenant_id, action="invitation_revoke")
     result = await db.execute(
         select(Invitation).where(
             Invitation.id == invitation_id,
@@ -179,6 +186,7 @@ async def resend_invitation(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Resend an invitation: generates a new token, resets expiry, and re-sends email. Admin only."""
+    await assert_super_admin_may_bootstrap(db, current_user, tenant_id, action="invitation_resend")
     result = await db.execute(
         select(Invitation).where(
             Invitation.id == invitation_id,
