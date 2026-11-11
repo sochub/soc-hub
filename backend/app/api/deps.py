@@ -1,5 +1,5 @@
 import asyncio
-import hmac
+import hashlib
 import secrets
 from typing import Optional
 from fastapi import Depends, Request, HTTPException, Query, Security, status
@@ -219,7 +219,7 @@ async def get_effective_tenant_id(
 # ponytail: per-process FIFO; a shared cache isn't needed at this scale.
 _VERIFIED_CACHE_SIZE = 256
 _verified_webhooks: dict = {}
-_CACHE_HMAC_KEY = secrets.token_bytes(32)
+_CACHE_SALT = secrets.token_bytes(16)
 
 webhook_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False, scheme_name="WebhookApiKey")
 
@@ -249,9 +249,10 @@ async def get_webhook_from_key(
         )
     )).scalars().all()
     webhook = None
-    # Keyed HMAC with a per-process random key: the cache never holds the API key or an offline-checkable
-    # digest of it. (Storage verification is Argon2: verify_webhook_key.)
-    cache_key = hmac.new(_CACHE_HMAC_KEY, x_api_key.encode(), "sha256").hexdigest()
+    # Cheap scrypt with a per-process random salt: the cache never holds the API key or an offline-checkable
+    # digest of it (storage verification stays Argon2: verify_webhook_key).
+    # ponytail: n=2**10 (~1 ms) is enough for a random 32-byte key; it only has to keep scanners and dumps honest.
+    cache_key = hashlib.scrypt(x_api_key.encode(), salt=_CACHE_SALT, n=2**10, r=8, p=1, dklen=32).hex()
     for row in candidates:
         if _verified_webhooks.get(cache_key) == (row.id, row.key_hash):
             webhook = row

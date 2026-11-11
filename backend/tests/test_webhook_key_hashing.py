@@ -38,7 +38,7 @@ async def _scenario():
             deps._verified_webhooks.clear()
             assert (await post(key, 1)).status_code == 200  # Argon2 verify
             assert (await post(key, 2)).status_code == 200  # cached
-            # the cache holds a keyed HMAC of the key, never the plaintext key or a plain digest of it
+            # the cache holds a salted scrypt of the key, never the plaintext key or a plain digest of it
             assert key not in deps._verified_webhooks
             assert hashlib.sha256(key.encode()).hexdigest() not in deps._verified_webhooks
             assert len(deps._verified_webhooks) == 1
