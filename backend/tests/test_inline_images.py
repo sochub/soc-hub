@@ -149,3 +149,24 @@ def test_inline_rejects_non_image(monkeypatch, tmp_path):
             assert r.status_code == 415, r.text
 
     asyncio.run(run())
+
+
+def test_inline_rejects_content_not_matching_declared_image_and_audits_upload(monkeypatch, tmp_path):
+    """N15: inline uploads skip the evidence hash/timeline, so the bytes must really be the declared image type;
+    an accepted inline upload still writes an audit row."""
+    async def run():
+        async with _env(monkeypatch, tmp_path) as (client, cid, _o, state):
+            base = f"/api/v1/cases/{cid}/attachments"
+            for name, data, ctype in (("x.png", b"MZ\x90\x00 not a png", "image/png"),
+                                      ("x.jpg", PNG, "image/jpeg"), ("x.webp", b"RIFF\x00\x00\x00\x00WAVE", "image/webp")):
+                r = await client.post(base, files={"file": (name, data, ctype)}, data={"inline": "true"})
+                assert r.status_code == 415, (name, r.text)
+            r = await client.post(base, files={"file": ("p.png", PNG, "image/png")}, data={"inline": "true"})
+            assert r.status_code == 201
+            async with AsyncSessionLocal() as db:
+                row = (await db.execute(select(AuditLog).where(
+                    AuditLog.tenant_id == state["tenant"], AuditLog.entity_id == r.json()["id"],
+                    AuditLog.action == "upload"))).scalars().one()
+            assert row.changes["inline"] is True and row.changes["sha256"]
+
+    asyncio.run(run())

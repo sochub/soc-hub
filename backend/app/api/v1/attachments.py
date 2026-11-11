@@ -28,6 +28,17 @@ INLINE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _LOG = "attachment %s tenant=%s case=%s id=%s size=%s malicious=%s outcome=%s"
 
 
+def _is_image(ctype: str, head: bytes) -> bool:
+    """The bytes really are the declared raster type (inline uploads skip the evidence hash and timeline)."""
+    if ctype == "image/png":
+        return head.startswith(b"\x89PNG\r\n\x1a\n")
+    if ctype == "image/jpeg":
+        return head.startswith(b"\xff\xd8\xff")
+    if ctype == "image/gif":
+        return head.startswith((b"GIF87a", b"GIF89a"))
+    return ctype == "image/webp" and head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+
+
 async def _case(db: AsyncSession, case_id: int, tid: int) -> Case:
     c = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tid))).scalars().first()
     if c is None:
@@ -104,6 +115,11 @@ async def upload_attachment(
     case = await _case(db, case_id, tenant_id)
     if inline and file.content_type not in INLINE_IMAGE_TYPES:
         raise HTTPException(status_code=415, detail="Inline uploads must be PNG, JPEG, GIF or WebP images")
+    if inline:
+        head = await file.read(16)
+        await file.seek(0)
+        if not _is_image(file.content_type, head):
+            raise HTTPException(status_code=415, detail="The file content is not the declared image type")
     # store_upload rolls the session back on failure, expiring every ORM instance: capture plain values first.
     user_id, malicious = current_user.id, bool(is_malicious)
     try:
