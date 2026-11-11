@@ -19,7 +19,8 @@ _WEAK_DB_PASSWORDS = {"password", "sochub-change-me", "CHANGE_ME"}
 # Public/placeholder Redis passwords (the compose dev default is "devredispass").
 _WEAK_REDIS_PASSWORDS = {"devredispass", "changeme", "redis", "sochub-change-me", "CHANGE_ME"}
 # (sochub-change-me: the old Helm chart placeholder; CHANGE_ME: .env.prod.example.)
-_LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "0.0.0.0"}
+# Hosts REJECTED as public URLs in production (a deny list, nothing binds to them).
+_LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "0.0.0.0"}  # nosec B104
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sicms"
