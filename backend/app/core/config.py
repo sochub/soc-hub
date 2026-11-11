@@ -131,6 +131,16 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     SMTP_FROM_EMAIL: str | None = None
 
+    # --- Untrusted input / integrations hardening (security audit 2026-11-10) ---
+    # Dev only: allow SMTP login/send without TLS (a local relay such as mailpit). Never in production.
+    SMTP_ALLOW_PLAINTEXT: bool = False
+    # Email intake: messages above this size are not fetched; they are moved to the Failed folder.
+    EMAIL_MAX_MESSAGE_MB: int = Field(25, ge=1, le=200)
+    # email_ask_user workflow node: emails per tenant per hour.
+    EMAIL_ASK_HOURLY_CAP: int = Field(30, ge=1, le=10000)
+    # Alert webhook: requests per webhook key per minute (fixed window).
+    ALERT_WEBHOOK_PER_MINUTE: int = Field(600, ge=1, le=100000)
+
     # Invitation settings
     INVITATION_EXPIRE_HOURS: int = 48  # 2 days
     GUEST_LINK_EXPIRE_HOURS: int = 72  # guest magic link; the link is a bearer credential

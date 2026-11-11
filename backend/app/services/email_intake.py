@@ -32,7 +32,7 @@ from app.utils.hostguard import validate_outbound_host, vetted_ip
 from app.models.case import Alert, Case
 from app.models.email_artifact import EmailArtifact
 from app.models.tenant import Tenant
-from app.models.tenant_mailbox import MailboxSeen, TenantMailbox
+from app.models.tenant_mailbox import MailboxFailure, MailboxSeen, TenantMailbox
 from app.models.workflow import Workflow
 from app.services import suppression_service
 from app.services.attachments import clean_content_type, sanitize_filename, store_upload
@@ -48,6 +48,13 @@ BATCH_LIMIT = 50  # messages handled per mailbox per cycle
 BODY_MAX_BYTES = 64 * 1024
 MESSAGE_ID_MAX = 512  # mailbox_seen.message_id column width
 PROCESSED_FOLDER = "Processed"
+FAILED_FOLDER = "Failed"
+MAX_MESSAGE_FAILURES = 3  # attempts before a message is moved to FAILED_FOLDER instead of retried every poll
+# ponytail: failures are keyed by UID, not UID+UIDVALIDITY; after a server-side folder reset a reused UID may
+# inherit a count and move to Failed early (never deleted). Ceiling: store UIDVALIDITY with the counter.
+FETCH_DEADLINE_SECONDS = 60  # wall clock for one message's size check + fetch (socket timeouts are per read)
+MIME_MAX_PARTS = 200
+MIME_MAX_DEPTH = 20
 # poll_mailboxes_task runs with soft_time_limit=540 (app/tasks/email_intake.py). The sweep stops claiming new
 # mailboxes at ~80% of it, and one mailbox's loop is bounded so a slow server can't starve the other tenants.
 SWEEP_BUDGET_SECONDS = 432
@@ -77,7 +84,16 @@ def _pinned(cls, ip: str):
             sock = socket.create_connection((ip, self.port), timeout)
             ctx = getattr(self, "ssl_context", None)
             return ctx.wrap_socket(sock, server_hostname=self.host) if ctx is not None else sock
+
+        def read(self, size):  # a server may ignore the partial-fetch range; never buffer more than the cap
+            if size > _max_message_bytes() + 1024:
+                raise imaplib.IMAP4.abort("literal too large")
+            return super().read(size)
     return Pinned
+
+
+def _max_message_bytes() -> int:
+    return settings.EMAIL_MAX_MESSAGE_MB * 1024 * 1024
 
 
 def _fail(msg: str) -> dict:
@@ -219,6 +235,23 @@ def _addresses(*values) -> List[str]:
     return out[:TO_MAX_ENTRIES]
 
 
+def _walk(msg):
+    """msg.walk() with caps: at most MIME_MAX_DEPTH levels and MIME_MAX_PARTS parts; an attached email
+    (message/rfc822) is yielded whole, never descended into. Returns (parts, truncated)."""
+    parts, truncated, stack = [], False, [(msg, 0)]
+    while stack:
+        part, depth = stack.pop()
+        if len(parts) >= MIME_MAX_PARTS:
+            return parts, True
+        parts.append(part)
+        if part.is_multipart() and part.get_content_type() != "message/rfc822":
+            if depth >= MIME_MAX_DEPTH:
+                truncated = True
+                continue
+            stack.extend((p, depth + 1) for p in reversed(list(part.iter_parts())))
+    return parts, truncated
+
+
 @dataclass
 class ParsedEmail:
     email: dict  # the payload's `email` block
@@ -226,6 +259,7 @@ class ParsedEmail:
 
 
 def parse_email(raw: bytes) -> ParsedEmail:
+    """Raises RecursionError only if the parser itself can't cope; the poller counts that as a failure."""
     msg = message_from_bytes(raw, policy=policy.default)
 
     def hdr(name):
@@ -259,14 +293,20 @@ def parse_email(raw: bytes) -> ParsedEmail:
         message_id = hashlib.sha256(message_id.encode()).hexdigest()
 
     max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
-    attachments, skipped, found, inner = [], [], 0, set()
-    for part in msg.walk():
-        if id(part) in inner or part is plain or part is html:
+    attachments, skipped, found = [], [], 0
+    parts, truncated = _walk(msg)
+    if truncated:
+        skipped.append({"filename": "", "size_bytes": 0, "reason": "too many or too deeply nested MIME parts"})
+    for part in parts:
+        if part is plain or part is html:
             continue
         ctype = part.get_content_type()
         if ctype == "message/rfc822":  # an attached email: keep it whole, don't unpack its parts
-            inner.update(id(p) for p in part.walk() if p is not part)
-            data = b"".join(m.as_bytes() for m in part.get_payload())
+            try:
+                data = b"".join(m.as_bytes() for m in part.get_payload())
+            except RecursionError:
+                skipped.append({"filename": "", "size_bytes": 0, "reason": "too deeply nested"})
+                continue
         elif part.is_multipart():
             continue
         else:
@@ -302,24 +342,47 @@ def _imap_unseen(conn, folder: str) -> List[str]:
     return [u.decode() if isinstance(u, bytes) else u for u in (data[0] or b"").split()][:BATCH_LIMIT]
 
 
-def _imap_fetch(conn, uid: str) -> Optional[bytes]:
-    typ, data = conn.uid("FETCH", uid, "(BODY.PEEK[])")  # PEEK: fetching must not mark the message seen
+_SIZE = re.compile(rb"RFC822\.SIZE (\d+)")
+TOO_LARGE = object()
+
+
+def _imap_fetch(conn, uid: str):
+    """The raw message, None on an IMAP error, or TOO_LARGE above EMAIL_MAX_MESSAGE_MB (checked from RFC822.SIZE
+    first, and again on the bytes: the fetch asks for at most cap+1 bytes)."""
+    cap = _max_message_bytes()
+    typ, data = conn.uid("FETCH", uid, "(RFC822.SIZE)")
+    if typ != "OK":
+        return None
+    for item in data or []:
+        line = item[0] if isinstance(item, tuple) else item
+        m = _SIZE.search(line) if isinstance(line, bytes) else None
+        if m and int(m.group(1)) > cap:
+            return TOO_LARGE
+    typ, data = conn.uid("FETCH", uid, f"(BODY.PEEK[]<0.{cap + 1}>)")  # PEEK: fetching must not mark it seen
     if typ != "OK":
         return None
     for item in data or []:
         if isinstance(item, tuple):
-            return item[1]
+            return TOO_LARGE if len(item[1]) > cap else item[1]
     return None
 
 
-def _imap_archive(conn, uid: str) -> bool:
-    """Mark seen, COPY to Processed (created on first use), and only after a successful COPY flag the original
+def _abort(conn) -> None:
+    """Unblock a worker thread stuck reading from the server (the fetch deadline passed)."""
+    try:
+        conn.shutdown()
+    except Exception:
+        pass
+
+
+def _imap_archive(conn, uid: str, folder: str = PROCESSED_FOLDER) -> bool:
+    """Mark seen, COPY to `folder` (created on first use), and only after a successful COPY flag the original
     \\Deleted. Never a plain delete: if the copy fails the message stays in the inbox, merely marked seen."""
     conn.uid("STORE", uid, "+FLAGS", "(\\Seen)")
-    typ, _ = conn.uid("COPY", uid, PROCESSED_FOLDER)
+    typ, _ = conn.uid("COPY", uid, folder)
     if typ != "OK":
-        conn.create(PROCESSED_FOLDER)
-        typ, _ = conn.uid("COPY", uid, PROCESSED_FOLDER)
+        conn.create(folder)
+        typ, _ = conn.uid("COPY", uid, folder)
     if typ != "OK":
         return False
     conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
@@ -434,18 +497,42 @@ async def _process_message(db, *, mailbox_id: int, tenant_id: int, fallback: boo
     return True
 
 
+async def _record_failure(db, mailbox_id: int, uid: str) -> int:
+    """Count one more failure for this UID (own commit) and return the total."""
+    n = (await db.execute(
+        insert(MailboxFailure).values(mailbox_id=mailbox_id, uid=uid, failures=1)
+        .on_conflict_do_update(constraint="uq_mailbox_failures_mailbox_uid",
+                               set_={"failures": MailboxFailure.failures + 1, "last_failed_at": datetime.now(timezone.utc)})
+        .returning(MailboxFailure.failures))).scalar()
+    await db.commit()
+    return n
+
+
 async def poll_mailbox(db, mailbox, *, deadline: Optional[float] = None) -> int:
     """Fetch up to BATCH_LIMIT unseen emails and process each; returns how many were new (not duplicates).
 
     Each message commits on its own, then is archived on the server. A message that fails to process stays
-    unseen (retried next cycle); the others still go through and a MailboxError summarises the failures.
+    unseen and is retried next cycle, up to MAX_MESSAGE_FAILURES times; then (or at once, if it is over
+    EMAIL_MAX_MESSAGE_MB) it is moved to the Failed folder so hostile mail can't stall the mailbox. The others
+    still go through and a MailboxError summarises the failures (it becomes the mailbox's visible last_error).
     `deadline` (time.monotonic) stops the loop between messages; the rest stay unseen for the next cycle.
-    SoftTimeLimitExceeded is never swallowed."""
+    One fetch gets FETCH_DEADLINE_SECONDS of wall clock. SoftTimeLimitExceeded is never swallowed."""
     await db.refresh(mailbox)  # a rollback on an earlier message may have expired it
     mailbox_id, tenant_id, fallback, folder = mailbox.id, mailbox.tenant_id, mailbox.fallback_create_alert, mailbox.folder
     conn = await asyncio.to_thread(_open_connection, mailbox)
-    new = failed = 0
+    new = failed = quarantined = 0
     archived = False
+    fails = dict((await db.execute(select(MailboxFailure.uid, MailboxFailure.failures).where(
+        MailboxFailure.mailbox_id == mailbox_id))).all())
+
+    async def quarantine(uid):
+        nonlocal archived, quarantined
+        archived |= await asyncio.to_thread(_imap_archive, conn, uid, FAILED_FOLDER)  # marked seen even if COPY fails
+        quarantined += 1
+        logger.warning("email intake: message moved to %s mailbox=%s", FAILED_FOLDER, mailbox_id)
+        await db.execute(delete(MailboxFailure).where(MailboxFailure.mailbox_id == mailbox_id, MailboxFailure.uid == uid))
+        await db.commit()
+
     try:
         try:
             uids = await asyncio.to_thread(_imap_unseen, conn, folder)
@@ -456,26 +543,46 @@ async def poll_mailbox(db, mailbox, *, deadline: Optional[float] = None) -> int:
         for uid in uids:
             if deadline is not None and time.monotonic() > deadline:
                 break
-            raw = await asyncio.to_thread(_imap_fetch, conn, uid)
+            if fails.get(uid, 0) >= MAX_MESSAGE_FAILURES:  # e.g. its fetch timed out (connection was dropped)
+                await quarantine(uid)
+                continue
+            try:
+                raw = await asyncio.wait_for(asyncio.to_thread(_imap_fetch, conn, uid), FETCH_DEADLINE_SECONDS)
+            except asyncio.TimeoutError:
+                await asyncio.to_thread(_abort, conn)
+                await _record_failure(db, mailbox_id, uid)
+                raise MailboxError("IMAP fetch timed out") from None
+            if raw is TOO_LARGE:
+                await quarantine(uid)
+                continue
             if raw is None:
                 failed += 1
+                if await _record_failure(db, mailbox_id, uid) >= MAX_MESSAGE_FAILURES:
+                    await quarantine(uid)
                 continue
             try:
                 new += await _process_message(db, mailbox_id=mailbox_id, tenant_id=tenant_id, fallback=fallback,
                                               raw=raw)
             except SoftTimeLimitExceeded:
                 raise
-            except Exception as e:  # never log message content or addresses
+            except Exception as e:  # incl. RecursionError from hostile MIME; never log content or addresses
                 logger.warning("email intake: message failed mailbox=%s err=%s", mailbox_id, type(e).__name__)
+                await db.rollback()
                 failed += 1
+                if await _record_failure(db, mailbox_id, uid) >= MAX_MESSAGE_FAILURES:
+                    await quarantine(uid)
                 continue
             archived |= await asyncio.to_thread(_imap_archive, conn, uid)
         if archived:
             await asyncio.to_thread(conn.expunge)
     finally:
         await asyncio.to_thread(_close, conn)
-    if failed:
-        raise MailboxError(f"{failed} message(s) could not be processed")
+    if failed or quarantined:
+        msg = f"{failed} message(s) could not be processed" if failed else ""
+        if quarantined:
+            msg += ("; " if msg else "") + f"{quarantined} message(s) moved to the {FAILED_FOLDER} folder " \
+                "(too large or failed repeatedly)"
+        raise MailboxError(msg)
     return new
 
 
@@ -548,13 +655,21 @@ def evidence_ids(payload) -> List[int]:
     return [i for i in raw if isinstance(i, int) and not isinstance(i, bool)]
 
 
-async def link_alert_artifacts(db, *, alert_id: int, tenant_id: int, payload) -> None:
+async def link_alert_artifacts(db, *, alert_id: int, tenant_id: int, payload, trigger) -> None:
     """Hold this tenant's still-unclaimed email artifacts named in `payload` on the alert, so the 30-day cleanup
-    keeps them (same as the fallback path). Used by the alert_create node. Flushes only; the caller commits."""
-    ids = evidence_ids(payload)
-    if ids:
+    keeps them (same as the fallback path). Used by the alert_create node. Flushes only; the caller commits.
+
+    Only ids that the run's own email.received trigger produced (same mailbox) are honoured: the alert payload is
+    workflow-built, and a payload from any other source must never claim another email's evidence. Only linked
+    artifacts are ever copied into a case (copy_email_evidence)."""
+    if not isinstance(trigger, dict) or trigger.get("event") != "email.received":
+        return
+    ids = set(evidence_ids(payload)) & set(evidence_ids(trigger))
+    mailbox_id = trigger.get("mailbox_id")
+    if ids and isinstance(mailbox_id, int):
         await db.execute(update(EmailArtifact).where(
-            EmailArtifact.id.in_(ids), EmailArtifact.tenant_id == tenant_id, EmailArtifact.alert_id.is_(None)
+            EmailArtifact.id.in_(ids), EmailArtifact.tenant_id == tenant_id, EmailArtifact.mailbox_id == mailbox_id,
+            EmailArtifact.alert_id.is_(None)
         ).values(alert_id=alert_id))
 
 
@@ -571,7 +686,8 @@ async def copy_email_evidence(*, alert, case_id: int, user_id: Optional[int]) ->
     """After an email alert is promoted (and that commit is done), copy its .eml and attachments into the case as
     regular evidence and link each EmailArtifact to the new attachment (so retention keeps them). Own session:
     store_upload commits, and a failure of one file must not touch the caller's objects. Best effort; returns
-    the number copied. Only this tenant's artifacts that are unlinked and not another alert's are eligible."""
+    the number copied. Only this tenant's artifacts linked to THIS alert by intake (fallback alert or the
+    alert_create node of an email.received run) are eligible: ids in a webhook payload claim nothing."""
     ids = evidence_ids(alert.payload)
     if not ids:
         return 0
@@ -584,8 +700,7 @@ async def copy_email_evidence(*, alert, case_id: int, user_id: Optional[int]) ->
         items = [(r.id, r.filename, r.content_type, r.storage_key, r.kind) for r in (await db.execute(
             select(EmailArtifact).where(
                 EmailArtifact.id.in_(ids), EmailArtifact.tenant_id == alert.tenant_id,
-                EmailArtifact.case_attachment_id.is_(None),
-                (EmailArtifact.alert_id.is_(None)) | (EmailArtifact.alert_id == alert.id)
+                EmailArtifact.case_attachment_id.is_(None), EmailArtifact.alert_id == alert.id
             ).order_by(EmailArtifact.id))).scalars().all()]
         for art_id, filename, ctype, key, kind in items:
             try:
@@ -642,5 +757,9 @@ async def cleanup_email_artifacts(now: Optional[datetime] = None, *, tenant_ids=
         if tenant_ids is not None:
             sq = sq.where(MailboxSeen.mailbox_id.in_(select(TenantMailbox.id).where(TenantMailbox.tenant_id.in_(tenant_ids))))
         seen = (await db.execute(sq)).rowcount
+        fq = delete(MailboxFailure).where(MailboxFailure.last_failed_at < now - SEEN_RETENTION)
+        if tenant_ids is not None:
+            fq = fq.where(MailboxFailure.mailbox_id.in_(select(TenantMailbox.id).where(TenantMailbox.tenant_id.in_(tenant_ids))))
+        await db.execute(fq)
         await db.commit()
     return {"artifacts": removed, "seen": seen}

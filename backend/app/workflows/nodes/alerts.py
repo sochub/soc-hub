@@ -156,7 +156,8 @@ async def run_alert_create(nctx: NodeContext, config: dict) -> dict:
                                changes={"source": source, "external_id": external_id, "by": "automation"})
         alert = (await nctx.db.execute(select(Alert).where(Alert.id == alert_id))).scalars().one()
         from app.services.email_intake import link_alert_artifacts  # late: email_intake imports the workflow runtime
-        await link_alert_artifacts(nctx.db, alert_id=alert_id, tenant_id=tenant_id, payload=payload)
+        await link_alert_artifacts(nctx.db, alert_id=alert_id, tenant_id=tenant_id, payload=payload,
+                                   trigger=getattr(nctx.run, "trigger_payload", None))
         suppressed = await suppression_service.apply(nctx.db, alert)
         if suppressed is None:  # suppressed noise starts no workflows
             depth = nctx.run.depth + 1
