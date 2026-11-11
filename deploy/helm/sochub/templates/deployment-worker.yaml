@@ -6,10 +6,8 @@ metadata:
     {{- include "sochub.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
-  # Fixed at 1: the worker embeds Celery beat (-B); more replicas would duplicate scheduled jobs.
-  replicas: 1
-  strategy:
-    type: Recreate
+  # Beat runs in its own Deployment (deployment-beat.yaml), so workers scale freely.
+  replicas: {{ .Values.worker.replicas }}
   selector:
     matchLabels:
       {{- include "sochub.selectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}
@@ -20,12 +18,13 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
+      automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        {{- include "sochub.podSecurity" . | nindent 8 }}
+        {{- include "sochub.podSecurity" (dict "uid" 10001) | nindent 8 }}
       {{- if and .Values.persistence.attachments.enabled (eq .Values.persistence.attachments.accessMode "ReadWriteOnce") }}
       affinity:
         # RWO volume: the worker must land on the same node as the api to mount it.
@@ -40,7 +39,9 @@ spec:
         - name: worker
           image: {{ include "sochub.backendImage" . }}
           imagePullPolicy: {{ .Values.images.backend.pullPolicy }}
-          command: ["celery", "-A", "app.worker.celery_app", "worker", "-B", "--loglevel=info", "-s", "/tmp/celerybeat-schedule"]
+          # MERGE NOTE: consumes the default queue plus the 'automation' queue workflow tasks are routed to;
+          # keep this -Q list in step with the queue names in app/worker.py.
+          command: ["celery", "-A", "app.worker.celery_app", "worker", "-Q", "celery,automation", "--loglevel=info"]
           envFrom:
             {{- include "sochub.backendEnvFrom" . | nindent 12 }}
           env:
@@ -48,11 +49,11 @@ spec:
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- include "sochub.containerSecurity" . | nindent 12 }}
           volumeMounts:
             - name: attachments
               mountPath: /data/attachments
+            {{- include "sochub.scratchMounts" . | nindent 12 }}
       volumes:
         {{- include "sochub.attachmentsVolume" . | nindent 8 }}
+        {{- include "sochub.scratchVolumes" . | nindent 8 }}

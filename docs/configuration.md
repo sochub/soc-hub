@@ -1007,18 +1007,15 @@ per-IP slot (never below 0), so NATed users aren't throttled by their own succes
 If Redis is unreachable the check fails **open** (a warning is logged). Unknown emails cost the same
 Argon2 work as wrong passwords.
 
-**Client IP.** The backend uses nginx's `X-Real-IP` (nginx sets it, and
-overwrites `X-Forwarded-For`, from `$remote_addr`); client-supplied forwarding
-headers are ignored. This is safe because the backend port is bound to
-`127.0.0.1`. If nginx itself sits behind a load balancer or another proxy,
-`$remote_addr` is that proxy, so all users share one IP bucket — configure
-nginx's realip module to recover the client address from the trusted hop:
-
-```nginx
-set_real_ip_from 10.0.0.0/8;      # your LB / proxy addresses only
-real_ip_header   X-Forwarded-For;
-real_ip_recursive on;
-```
+**Client IP.** The backend believes `X-Real-IP` (else the right-most untrusted
+`X-Forwarded-For` hop) only when the TCP peer is in `TRUSTED_PROXY_CIDRS`
+(comma-separated; default loopback + private ranges, i.e. the bundled nginx on a
+Docker or Kubernetes network). Any other peer is keyed on its socket address.
+nginx overwrites both headers with `$remote_addr`. If nginx itself sits behind a
+load balancer or ingress controller, `$remote_addr` is that proxy and all users
+share one IP bucket: set the frontend's `REAL_IP_FROM` to the proxy's CIDR(s)
+(Helm: `frontend.realIpFrom`) and nginx recovers the client from `X-Forwarded-For`
+(`set_real_ip_from` + `real_ip_recursive`).
 
 > **Docker Desktop (macOS/Windows):** published ports are NATed, so nginx sees
 > every client as the Docker gateway (e.g. `172.18.0.1`) and all local clients

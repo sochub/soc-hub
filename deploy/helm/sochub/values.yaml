@@ -3,15 +3,18 @@
 nameOverride: ""
 fullnameOverride: ""
 
-# Defaults are local tags (e.g. built with `docker build`); point at your registry to override.
+# tag defaults to the chart's appVersion (never a floating "latest"). Set digest (sha256:...) to pin the
+# exact image; it is appended as repository:tag@digest.
 images:
   backend:
-    repository: sochub-backend
-    tag: latest
+    repository: docker.io/sochub/sochub-backend
+    tag: ""
+    digest: ""
     pullPolicy: IfNotPresent
   frontend:
-    repository: sochub-frontend
-    tag: latest
+    repository: docker.io/sochub/sochub-frontend
+    tag: ""
+    digest: ""
     pullPolicy: IfNotPresent
 imagePullSecrets: []
 
@@ -42,6 +45,10 @@ config:
   publicBaseUrl: "http://localhost"   # externally reachable URL (links, webhooks, OIDC)
   ollamaBaseUrl: ""              # used when ollama.enabled=false (empty = AI features off/unset)
   ollamaModel: "llama3.2:3b"
+  # Proxies whose X-Real-IP / X-Forwarded-For the backend believes (comma-separated CIDRs). The default (loopback
+  # + private ranges) covers the bundled frontend nginx on the pod network; the api NetworkPolicy below makes
+  # the frontend its only client.
+  trustedProxyCidrs: "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
 
 # Optional S3 attachment storage (set config.storageBackend=s3). Credentials: use IRSA / extraEnv.
 s3:
@@ -77,16 +84,35 @@ api:
   nodeSelector: {}
 
 worker:
-  # replicas is deliberately NOT configurable: the worker runs with `-B` (embedded Celery beat),
-  # so it must stay at exactly 1 or scheduled jobs would run multiple times.
+  # Celery beat runs in its own single-replica Deployment (below), so workers can scale.
+  replicas: 1
   resources:
     requests: {cpu: 250m, memory: 512Mi}
     limits: {memory: 1Gi}
 
+# alembic migration Job (hook).
+migrate:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+# Celery beat (periodic-task scheduler). Always exactly one replica: two would run every schedule twice.
+beat:
+  resources:
+    requests: {cpu: 25m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
 frontend:
   replicas: 1
   service: {type: ClusterIP}
-  hstsHeader: ""     # e.g. 'add_header Strict-Transport-Security "max-age=31536000" always;' (only behind TLS)
+  # Strict-Transport-Security header VALUE (not an add_header line), e.g. "max-age=31536000; includeSubDomains".
+  # Only behind TLS.
+  hstsHeader: ""
+  # CIDRs of the ingress controller / load balancer in front of the frontend (space- or comma-separated).
+  # nginx then takes the client IP from X-Forwarded-For, so login throttling and audit logs see real
+  # clients. Empty = every request appears to come from the ingress pod (one shared throttle bucket).
+  # Typically your cluster's pod CIDR, e.g. "10.244.0.0/16".
+  realIpFrom: ""
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {memory: 256Mi}
@@ -102,7 +128,7 @@ slackSocket:
 #   kubectl exec deploy/<release>-ollama -- ollama pull llama3.2:3b
 ollama:
   enabled: false
-  image: {repository: ollama/ollama, tag: latest, pullPolicy: IfNotPresent}
+  image: {repository: docker.io/ollama/ollama, tag: "0.40.15", digest: "", pullPolicy: IfNotPresent}
   persistence: {enabled: false, size: 10Gi, storageClass: ""}
   resources:
     requests: {cpu: "1", memory: 4Gi}
@@ -115,6 +141,8 @@ ingress:
   hosts:
     - host: sochub.example.com
   tls: []   # [{secretName: sochub-tls, hosts: [sochub.example.com]}]
+  # Production refuses an ingress without tls unless TLS is terminated by a load balancer in front of it.
+  tlsTerminatedUpstream: false
 
 # Attachments are written by BOTH api and worker. With ReadWriteOnce both pods must share a node
 # (the worker gets a podAffinity to the api automatically). Multi-node clusters: use ReadWriteMany
@@ -127,17 +155,56 @@ persistence:
     accessMode: ReadWriteOnce
     existingClaim: ""
 
-# Evaluation defaults (bundled Bitnami subcharts, passwords below are PLACEHOLDERS).
-# For production disable both and use managed services via secrets.DATABASE_URL / REDIS_URL.
+# NetworkPolicies for the SOC Hub pods: default deny, then frontend <- anyone (or ingressFrom), api <- frontend,
+# ollama <- api/worker, and egress limited to DNS, the bundled datastores/ollama and the ports below.
+networkPolicy:
+  enabled: true
+  # Peers allowed to reach the frontend on 8080 (NetworkPolicy "from" entries). Empty = any source, which an
+  # ingress controller in another namespace needs unless you name it here, e.g.
+  #   - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}
+  ingressFrom: []
+  # TCP ports api/worker/beat/slack-socket may open to any destination: HTTPS (IdPs, AI providers, Slack,
+  # threat intel, workflow HTTP nodes), SMTP submission and IMAPS. The external PostgreSQL/Redis/Ollama ports
+  # are added automatically when the bundled ones are disabled.
+  egressPorts: [443, 465, 587, 993]
+  # Extra raw egress rules for api/worker/beat/slack-socket (e.g. an on-prem MISP on 8443).
+  extraEgress: []
+
+# Evaluation defaults: bundled Bitnami subcharts. Their passwords are generated on first install and kept
+# across upgrades (Secret <release>-datastores); set auth.password to choose one. For production disable
+# both and use managed services via secrets.DATABASE_URL / REDIS_URL.
 postgresql:
   enabled: true
   auth:
     username: sochub
-    password: sochub-change-me
+    password: ""
     database: sicms
+    existingSecret: '{{ .Release.Name }}-datastores'
+  primary:
+    networkPolicy:
+      allowExternal: false
+      # Only the SOC Hub backend pods (api, worker, beat, slack-socket, migrate) may connect.
+      extraIngress:
+        - ports: [{port: 5432}]
+          from:
+            - podSelector:
+                matchLabels: {app.kubernetes.io/instance: '{{ .Release.Name }}'}
+                matchExpressions:
+                  - {key: app.kubernetes.io/component, operator: In, values: [api, worker, beat, slack-socket, migrate]}
 redis:
   enabled: true
   architecture: standalone
   auth:
     enabled: true
-    password: sochub-change-me
+    password: ""
+    existingSecret: '{{ .Release.Name }}-datastores'
+    existingSecretPasswordKey: redis-password
+  networkPolicy:
+    allowExternal: false
+    extraIngress:
+      - ports: [{port: 6379}]
+        from:
+          - podSelector:
+              matchLabels: {app.kubernetes.io/instance: '{{ .Release.Name }}'}
+              matchExpressions:
+                - {key: app.kubernetes.io/component, operator: In, values: [api, worker, beat, slack-socket, migrate]}

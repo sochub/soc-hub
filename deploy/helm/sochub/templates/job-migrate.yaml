@@ -23,15 +23,14 @@ spec:
       labels:
         {{- include "sochub.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
       restartPolicy: OnFailure
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
+        {{- include "sochub.podSecurity" (dict "uid" 10001) | nindent 8 }}
       containers:
         - name: migrate
           image: {{ include "sochub.backendImage" . }}
@@ -44,7 +43,11 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- include "sochub.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            {{- include "sochub.scratchMounts" . | nindent 12 }}
+      volumes:
+        {{- include "sochub.scratchVolumes" . | nindent 8 }}
