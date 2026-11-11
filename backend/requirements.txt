@@ -9,8 +9,6 @@ cryptography==50.0.2
 passlib[argon2]==1.7.4
 httpx==0.28.1
 mcp==2.3.0
-pytest==9.1.1
-pytest-asyncio==1.4.0
 redis==8.1.0
 celery==5.6.3
 python3-saml==1.16.0

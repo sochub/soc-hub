@@ -1,0 +1,4 @@
+# Test-only dependencies (CI, local dev images). Installed ON TOP of requirements.txt + overrides, never in
+# release images. Deliberately no `-r requirements.txt`: re-resolving it would undo requirements-overrides.txt.
+pytest==9.1.1
+pytest-asyncio==1.4.0
