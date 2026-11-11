@@ -4,6 +4,7 @@ Gracefully no-ops if SMTP is not configured.
 import html
 import logging
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -29,10 +30,21 @@ def _send_email(to_email: str, subject: str, html_body: str, log_recipient: bool
     msg.attach(MIMEText(html_body, "html"))
 
     try:
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+        ctx = ssl.create_default_context()  # verifies the certificate and host name
+        if settings.SMTP_PORT == 465:  # implicit TLS (SMTPS)
+            conn = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, context=ctx, timeout=30)
+        else:
+            conn = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+        with conn as server:
             server.ehlo()
-            if settings.SMTP_PORT != 25:
-                server.starttls()
+            if settings.SMTP_PORT != 465:
+                # Bearer links and credentials never cross the network in clear text: STARTTLS is required
+                # (port 25 included) unless the dev-only SMTP_ALLOW_PLAINTEXT is set.
+                if server.has_extn("starttls"):
+                    server.starttls(context=ctx)
+                    server.ehlo()
+                elif not settings.SMTP_ALLOW_PLAINTEXT:
+                    raise smtplib.SMTPNotSupportedError("server does not offer STARTTLS")
             if settings.SMTP_USER and settings.SMTP_PASSWORD:
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
             server.send_message(msg)
