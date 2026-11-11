@@ -68,6 +68,13 @@ def scan_graph(graph: dict) -> List[dict]:
     return out
 
 
+def plaintext_errors(graph: dict) -> List[dict]:
+    """Validation-style errors for plaintext credentials (never the literal itself): an enabled workflow must hold
+    them as secrets, which are host-bound and never shown again."""
+    return [{"node_id": f["node_id"], "message": f"plaintext credential in {f['location']} {f['key']!r}: convert it "
+             "to a secret (Secrets > Scan workflows) before enabling"} for f in scan_graph(graph)]
+
+
 def apply_conversion(graph: dict, items: List[dict]) -> dict:
     """items: findings (node_id, location, key, literal) plus `secret_name`. Returns a modified deep copy."""
     g = copy.deepcopy(graph)

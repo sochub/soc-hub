@@ -154,6 +154,28 @@ async def _scenario(delayed, ticks):
                 state["role"] = "viewer"
                 r = await c.post("/api/v1/workflows/", json=_wf())
                 assert r.status_code == 403, "i"
+                # old L4: viewers see the lists, never graphs, step inputs or run payloads
+                assert (await c.get("/api/v1/workflows/")).status_code == 200, "v list"
+                for path in (wid, f"/api/v1/workflow-runs/{run_id}"):
+                    assert (await c.get(path)).status_code == 403, path
+                assert (await c.post(wid + "/validate")).status_code == 403, "v validate"
+
+                # a plaintext credential blocks enabling (and saving while enabled); the literal is never echoed
+                state["role"] = "admin"
+                leak = {"nodes": [{"id": "start", "type": "trigger", "config": {}},
+                                  {"id": "h", "type": "http_request", "config": {
+                                      "method": "GET", "url": "https://api.example.com/x",
+                                      "headers": {"Authorization": "Bearer sk-live-PLAINTEXT-123"}}}],
+                        "edges": [{"id": "e1", "source": "start", "target": "h", "source_handle": None}]}
+                r = await c.post("/api/v1/workflows/", json=_wf(leak))
+                ids["workflows"].append(r.json()["id"])
+                lid = f"/api/v1/workflows/{r.json()['id']}"
+                r = await c.post(lid + "/enable")
+                assert r.status_code == 422 and "plaintext credential" in r.text, r.text
+                assert "sk-live-PLAINTEXT-123" not in r.text
+                await c.post(wid + "/enable")
+                r = await c.put(wid, json=_wf(leak))
+                assert r.status_code == 422 and "plaintext credential" in r.text
         finally:
             app.dependency_overrides.clear()
             await db.rollback()

@@ -10,6 +10,7 @@ from app.models.case import Case
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
+from app.secrets.scan import plaintext_errors
 from app.schemas.workflow import (AllowlistIn, DryRunIn, ManualRunIn, RunDetail, RunSummary,
                                   TemplateInstallIn, WorkflowIn, WorkflowOut, WorkflowSummary)
 from app.services import workflow_service
@@ -130,9 +131,10 @@ async def create_workflow(body: WorkflowIn, db: AsyncSession = Depends(deps.get_
     return _out(wf, {}, await _secret_names(db, tenant_id))
 
 
+# Graphs, step inputs and run payloads are analyst+ (viewers only see the summaries in the lists).
 @router.get("/{workflow_id}", response_model=WorkflowOut)
 async def get_workflow(workflow_id: int, db: AsyncSession = Depends(deps.get_db),
-                       current_user: User = Depends(deps.get_current_active_user),
+                       current_user: User = Depends(deps.require_analyst_or_above),
                        tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     wf = await _get_workflow(db, workflow_id, tenant_id)
     return _out(wf, await _run_stats(db, [wf.id]), await _secret_names(db, tenant_id))
@@ -169,15 +171,15 @@ async def delete_workflow(workflow_id: int, db: AsyncSession = Depends(deps.get_
 
 @router.post("/{workflow_id}/validate")
 async def validate_workflow(workflow_id: int, db: AsyncSession = Depends(deps.get_db),
-                            current_user: User = Depends(deps.get_current_active_user),
+                            current_user: User = Depends(deps.require_analyst_or_above),
                             tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     wf = await _get_workflow(db, workflow_id, tenant_id)
     return {"errors": workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter, await _secret_names(db, tenant_id))}
 
 
 async def _set_enabled(db, wf: Workflow, enabled: bool, user_id: int, tenant_id: int, names: Optional[set] = None) -> None:
-    if enabled:
-        errors = workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter, names)
+    if enabled:  # plaintext credentials block enabling: they must be converted to secrets first
+        errors = workflow_errors(wf.graph, wf.trigger_type, wf.trigger_filter, names) + plaintext_errors(wf.graph)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors})
     wf.enabled = enabled
@@ -275,7 +277,7 @@ async def list_runs(workflow_id: Optional[int] = None, case_id: Optional[int] = 
 
 @runs_router.get("/{run_id}", response_model=RunDetail)
 async def get_run(run_id: int, db: AsyncSession = Depends(deps.get_db),
-                  current_user: User = Depends(deps.get_current_active_user),
+                  current_user: User = Depends(deps.require_analyst_or_above),
                   tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
     run = await _get_run(db, run_id, tenant_id)
     steps = (await db.execute(select(WorkflowRunStep).where(WorkflowRunStep.run_id == run.id).order_by(WorkflowRunStep.id))).scalars().all()

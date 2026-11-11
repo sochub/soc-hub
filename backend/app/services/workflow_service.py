@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.case import Alert, Case
 from app.models.tenant_secret import TenantSecret
 from app.models.workflow import Workflow, WorkflowRun
+from app.secrets.scan import plaintext_errors
 from app.schemas.workflow import DryRunIn, WorkflowIn
 from app.utils.audit import create_audit_log
 from app.workflows.runtime import cancel_run, create_run, flush_withdrawals
@@ -37,7 +38,7 @@ async def save_workflow(db, wf: Workflow, *, name, description, trigger_type, tr
     """Shared by PUT /workflows/{id}, secret conversion and MCP: validate (only when enabled), bump version, audit.
     No commit."""
     if wf.enabled:
-        errors = workflow_errors(graph, trigger_type, trigger_filter, names)
+        errors = workflow_errors(graph, trigger_type, trigger_filter, names) + plaintext_errors(graph)
         if errors:
             raise HTTPException(status_code=422, detail={"errors": errors, "message": "Disable the workflow to save an invalid graph"})
     wf.name, wf.description, wf.trigger_type = name, description, trigger_type
