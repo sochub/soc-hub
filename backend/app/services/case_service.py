@@ -52,10 +52,10 @@ def _plain(value: Any) -> Any:
 
 
 async def check_case_update(db: AsyncSession, *, case: Case, data: dict, tenant_id: int, role: str) -> None:
-    """Guards for analyst-driven case edits (REST/MCP); Slack/workflow/copilot paths skip them.
+    """Guards for analyst-driven case edits (REST/MCP/copilot); Slack/workflow paths skip them.
 
     422 closing without an outcome, 403 guest_summary below analyst, 422 new owner not a tenant member."""
-    # ponytail: analysts must record an outcome to close; Slack/workflow/copilot paths can't supply one.
+    # ponytail: analysts must record an outcome to close; Slack/workflow paths can't supply one.
     if data.get("status") == CaseStatus.CLOSED and data.get("outcome", case.outcome) is None:
         raise HTTPException(status_code=422, detail="outcome is required to close a case")
     if "guest_summary" in data and role not in ("super_admin", "admin", "analyst"):

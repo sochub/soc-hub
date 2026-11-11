@@ -272,6 +272,38 @@ def test_slack_button_path_listen_off(monkeypatch):
     asyncio.run(go())
 
 
+def test_war_room_invites_only_tenant_members(monkeypatch):
+    """N12: followers and the owner are invited only while they are active members of the case's tenant."""
+    from app.models.notification import CaseFollower
+
+    async def go():
+        async with world(monkeypatch) as w:
+            async def slack_id_of(token, email):
+                return "U" + email.split("@")[0].replace("-", "").upper()
+            monkeypatch.setattr(slack_bot, "_slack_id", slack_id_of)
+            async with AsyncSessionLocal() as db:
+                made = {}
+                for name, tid in (("member", w["t"][0]), ("foreign", w["t"][1]), ("owner", w["t"][1])):
+                    u = User(email=f"wr-{w['h']}-{name}@example.test",
+                             hashed_password=get_password_hash(secrets.token_hex(8)), is_active=True)
+                    db.add(u)
+                    await db.flush()
+                    db.add(TenantMembership(user_id=u.id, tenant_id=tid, role="analyst"))
+                    w["u"].append(u.id)
+                    made[name] = u
+                for name in ("member", "foreign"):
+                    db.add(CaseFollower(case_id=w["case_id"], user_id=made[name].id, tenant_id=w["t"][0]))
+                case = (await db.execute(select(Case).where(Case.id == w["case_id"]))).scalars().one()
+                case.owner_id = made["owner"].id  # a foreign owner (set before N2 closed that door)
+                await db.commit()
+            r = await w["client"].post(f"/api/v1/cases/{w['case_id']}/war-room", json={"listen": False})
+            assert r.status_code == 200, r.text
+            invited = ",".join(kw["users"] for m, kw in w["calls"] if m == "conversations.invite")
+            assert f"WR{w['h'].upper()}MEMBER" in invited
+            assert "FOREIGN" not in invited and "OWNER" not in invited
+    asyncio.run(go())
+
+
 def test_war_room_url_falls_back_without_team_id():
     """team_id is only learned by the integration's Test call; the room must still be linkable."""
     from app.api.v1.cases import war_room_url
