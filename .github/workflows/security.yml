@@ -44,7 +44,7 @@ jobs:
           format: sarif
           output: trivy-fs.sarif
       - if: always() && env.UPLOAD_SARIF == 'true'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -88,7 +88,7 @@ jobs:
           checkov --config-file .checkov.yaml -d rendered -d backend -d frontend --framework kubernetes dockerfile \
             --output cli --output sarif --output-file-path console,checkov.sarif
       - if: always() && env.UPLOAD_SARIF == 'true'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: checkov.sarif
           category: checkov
@@ -115,7 +115,7 @@ jobs:
           semgrep scan --config p/default --metrics off --exclude docs --exclude frontend/node_modules \
             --sarif --output semgrep.sarif
       - if: always() && env.UPLOAD_SARIF == 'true'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -140,7 +140,7 @@ jobs:
           pip install "bandit[sarif]==1.9.4"
           bandit -r backend/app -ll -q -f sarif -o bandit.sarif
       - if: always() && env.UPLOAD_SARIF == 'true'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: bandit.sarif
           category: bandit
@@ -169,7 +169,7 @@ jobs:
           tar -xzf gitleaks.tgz gitleaks
           ./gitleaks git . --redact --no-banner --exit-code 1 --report-format sarif --report-path gitleaks.sarif
       - if: always() && env.UPLOAD_SARIF == 'true'
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
