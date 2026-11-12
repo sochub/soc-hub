@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional
 
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case
@@ -515,6 +515,41 @@ async def reap_stuck_steps(step_ids: Optional[Iterable[int]] = None) -> List[int
             logger.warning("could not queue advance for reaped run=%s err=%s", run_id, type(e).__name__)
     if reaped:
         logger.warning("reaped %d stuck workflow steps (runs=%s steps=%s)", len(reaped), run_ids, reaped)
+    return reaped
+
+
+RUN_STALLED = "run stalled: its queued task was lost (worker restart); no step ran"
+
+
+async def reap_stalled_runs(run_ids: Optional[Iterable[int]] = None) -> List[int]:
+    """Beat sweep for the other crash shape: a run left `running` with no step running or waiting (a queued
+    advance/execute message was lost), so nothing will ever move it. Failed, not resumed: replaying a days-old
+    pull would act on stale state. `run_ids` restricts the sweep (tests only)."""
+    from app.tasks.workflows import loop_tick_task
+
+    cutoff = _now() - timedelta(seconds=step_hard_limit_seconds() + REAP_MARGIN_SECONDS)
+    last_step = select(func.max(func.coalesce(WorkflowRunStep.finished_at, WorkflowRunStep.started_at))).where(
+        WorkflowRunStep.run_id == WorkflowRun.id).scalar_subquery()
+    busy = select(WorkflowRunStep.id).where(WorkflowRunStep.run_id == WorkflowRun.id,
+                                            WorkflowRunStep.status.in_(("running", "waiting"))).exists()
+    q = select(WorkflowRun).where(WorkflowRun.status == "running", WorkflowRun.started_at < cutoff, ~busy,
+                                  func.coalesce(last_step, WorkflowRun.started_at) < cutoff)
+    if run_ids is not None:
+        q = q.where(WorkflowRun.id.in_(list(run_ids)))
+    reaped, ticks = [], []
+    async with AsyncSessionLocal() as db:
+        for run in (await db.execute(q.order_by(WorkflowRun.id).limit(_REAP_BATCH * _REAP_MAX_BATCHES)
+                                     .with_for_update(skip_locked=True))).scalars().all():
+            await finalize_run(db, run, "failed", RUN_STALLED)
+            reaped.append(run.id)
+            if run.parent_step_id:
+                ticks.append(run.parent_step_id)
+        await db.commit()
+        flush_withdrawals(db)
+    for sid in ticks:
+        loop_tick_task.delay(sid)
+    if reaped:
+        logger.warning("reaped %d stalled workflow runs (runs=%s)", len(reaped), reaped)
     return reaped
 
 
