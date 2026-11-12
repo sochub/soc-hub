@@ -14,6 +14,7 @@ class TenantMembership(Base):
     __tablename__ = "tenant_memberships"
     __table_args__ = (
         UniqueConstraint("user_id", "tenant_id", name="uq_membership_user_tenant"),
+        UniqueConstraint("tenant_id", "slack_user_id", name="uq_membership_tenant_slack_user"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -21,6 +22,8 @@ class TenantMembership(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String, nullable=False, default="viewer")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Slack account bound on the first successful Slack action (services/slack_actions._platform_user).
+    slack_user_id = Column(String(32), nullable=True)
 
     user = relationship("User", back_populates="memberships")
     tenant = relationship("Tenant")

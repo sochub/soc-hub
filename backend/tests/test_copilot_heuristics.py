@@ -83,3 +83,28 @@ def test_meta_note_detection():
     assert is_meta_note("Recorded the log entry")
     assert not is_meta_note("user confirmed they clicked the link on their phone")
     assert not is_meta_note("Marcelo mentioned that he is the only one who received the phishing message.")
+
+
+def test_detect_indicators_is_linear_on_pathological_input():
+    """Tracked ReDoS: inputs that made the email/domain regexes quadratic finish well under a second, oversized
+    text is truncated, and real indicators still match."""
+    import time
+    from app.utils.copilot_heuristics import MAX_SCAN_CHARS
+    n = 64_000
+    for text in ("a" * n, "a." * (n // 2), "a@" + "a." * (n // 2), "a@a." * (n // 4), "a-" * (n // 2),
+                 "x" * 10 * n, ("a." * 40 + "@") * (n // 82)):
+        t0 = time.perf_counter()
+        detect_indicators(text, limit=20)
+        assert time.perf_counter() - t0 < 1, text[:20]
+    got = {i["value"] for i in detect_indicators("mail bob.smith+x@mail.evil-corp.co.uk then evil-corp.com", limit=10)}
+    assert {"bob.smith+x@mail.evil-corp.co.uk", "evil-corp.com"} <= got
+    assert detect_indicators("a" * MAX_SCAN_CHARS + " 8.8.8.8") == []  # past the scan window
+
+
+def test_copilot_message_length_capped():
+    import pytest
+    from pydantic import ValidationError
+    from app.schemas.copilot import CopilotChatRequest
+    CopilotChatRequest(message="x" * 16_000)
+    with pytest.raises(ValidationError):
+        CopilotChatRequest(message="x" * 16_001)

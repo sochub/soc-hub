@@ -1,7 +1,8 @@
 # Example production overrides:  helm install sochub deploy/helm/sochub -f values-production.yaml
+# tag defaults to the chart appVersion; pin the digest you verified (cosign verify, see docs/deployment.md).
 images:
-  backend: {repository: registry.example.com/sochub/sochub-backend, tag: "1.0.0"}
-  frontend: {repository: registry.example.com/sochub/sochub-frontend, tag: "1.0.0"}
+  backend: {repository: registry.example.com/sochub/sochub-backend, digest: ""}
+  frontend: {repository: registry.example.com/sochub/sochub-frontend, digest: ""}
 
 # Secret created out-of-band with keys SECRET_KEY, ENCRYPTION_KEY, DATABASE_URL, REDIS_URL:
 #   kubectl create secret generic sochub-secrets --from-literal=SECRET_KEY=$(openssl rand -hex 32) ...
@@ -17,7 +18,8 @@ config:
 
 frontend:
   replicas: 2
-  hstsHeader: 'add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'
+  hstsHeader: "max-age=31536000; includeSubDomains"
+  realIpFrom: "10.0.0.0/8"   # your cluster's pod CIDR (where the ingress controller pods live)
 
 api:
   replicas: 2   # >1 api replica requires RWX storage or S3 (below)
@@ -27,6 +29,10 @@ persistence:
     size: 50Gi
     storageClass: efs-sc        # RWX-capable class, required on multi-node clusters
     accessMode: ReadWriteMany   # api AND worker write attachments
+
+networkPolicy:
+  ingressFrom:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}
 
 ingress:
   enabled: true

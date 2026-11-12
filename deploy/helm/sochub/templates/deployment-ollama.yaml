@@ -35,19 +35,32 @@ spec:
       labels:
         {{- include "sochub.selectorLabels" (dict "ctx" . "component" "ollama") | nindent 8 }}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "sochub.podSecurity" (dict "uid" 10002) | nindent 8 }}
       containers:
         - name: ollama
-          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+          image: {{ include "sochub.image" (dict "img" .Values.ollama.image "ctx" .) }}
           imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 11434
+          env:
+            # Non-root: keys and models live under $HOME/.ollama, i.e. on the models volume.
+            - name: HOME
+              value: /ollama
           resources:
             {{- toYaml .Values.ollama.resources | nindent 12 }}
+          securityContext:
+            {{- include "sochub.containerSecurity" . | nindent 12 }}
           volumeMounts:
             - name: models
-              mountPath: /root/.ollama
+              mountPath: /ollama
+            - name: tmp
+              mountPath: /tmp
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: models
           {{- if .Values.ollama.persistence.enabled }}
           persistentVolumeClaim:

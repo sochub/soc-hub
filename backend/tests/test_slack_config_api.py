@@ -50,6 +50,8 @@ async def _scenario(calls, behavior):
 
                 r = await c.put(u, json={"bot_token": TOKEN, "signing_secret": SECRET, "default_channel": "#soc"})
                 assert r.status_code == 200 and r.json()["configured"] is True, "c"
+                assert r.json()["team_id"] == "T123" and calls == [(TOKEN, "auth.test")], "c team learned on save"
+                calls.clear()
                 assert TOKEN not in r.text and SECRET not in r.text, "c leak"
                 assert TOKEN not in (await c.get(u)).text, "c leak get"
                 async with AsyncSessionLocal() as db2:
@@ -61,10 +63,13 @@ async def _scenario(calls, behavior):
                 assert [x[1] for x in calls] == ["auth.test", "chat.postMessage"] and calls[0][0] == TOKEN, "d calls"
                 assert (await c.get(u)).json()["team_id"] == "T123", "d get"
 
+                # old L6: a new token's workspace is learned on save; an unverifiable token leaves it unknown
                 r = await c.put(u, json={"bot_token": "xoxb-new"})
-                assert r.json()["team_id"] is None and r.json()["default_channel"] == "#soc", "e"
+                assert r.json()["team_id"] == "T123" and r.json()["default_channel"] == "#soc", "e"
 
                 behavior["err"] = SlackError("auth.test: invalid_auth")
+                r = await c.put(u, json={"bot_token": "xoxb-bad"})
+                assert r.status_code == 200 and r.json()["team_id"] is None, "e unverified"
                 r = await c.post(u + "/test")
                 assert r.status_code == 400 and r.json()["detail"] == "auth.test: invalid_auth", "f"
 

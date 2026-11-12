@@ -195,3 +195,32 @@ async def test_reaper_idempotent(ids, monkeypatch):
     second = await get(WorkflowRunStep, sid)
     assert (second.status, second.error, second.finished_at) == (first.status, first.error, first.finished_at)
     assert len(sent["advance"]) == 1
+
+
+@scenario
+async def test_stalled_run_failed_recent_and_busy_untouched(ids, monkeypatch):
+    """A run whose queued advance was lost (start succeeded, nothing running) is failed; fresh or busy runs are not."""
+    from app.workflows import runtime
+    capture(monkeypatch)
+    old = _now() - timedelta(seconds=limit() + 60)
+    async with AsyncSessionLocal() as db:
+        t, w = await setup(db, ids)
+        made = []
+        for age, busy in ((old, None), (_now(), None), (old, "waiting")):
+            r = WorkflowRun(tenant_id=t.id, workflow_id=w.id, workflow_version=1, status="running",
+                            graph_snapshot=GRAPH, trigger_payload={}, started_at=age)
+            db.add(r)
+            await db.flush()
+            ids.runs.append(int(r.id))
+            db.add(WorkflowRunStep(run_id=r.id, node_id="start", status="succeeded", started_at=age, finished_at=age))
+            if busy:
+                db.add(WorkflowRunStep(run_id=r.id, node_id="a", status=busy, started_at=age))
+            made.append(r.id)
+        await db.commit()
+    stalled, fresh, waiting = made
+    assert await runtime.reap_stalled_runs(made) == [stalled]
+    run = await get(WorkflowRun, stalled)
+    assert run.status == "failed" and run.error == runtime.RUN_STALLED
+    assert (await get(WorkflowRun, fresh)).status == "running"
+    assert (await get(WorkflowRun, waiting)).status == "running"
+    assert await runtime.reap_stalled_runs(made) == []

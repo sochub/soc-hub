@@ -6,7 +6,7 @@ from typing import Any, List
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import aliased
-from sqlalchemy import func
+from sqlalchemy import delete, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -14,7 +14,9 @@ from app.api import deps
 from app.audit.events import audit_event
 from app.auth import sessions, web
 from app.core import security
+from app.models.case_task import CaseTask
 from app.models.membership import TenantMembership
+from app.models.notification import CaseFollower
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.membership import MembershipOut
@@ -22,7 +24,9 @@ from app.schemas.user import User as UserSchema, UserCreate, UserUpdate, UserRol
 from app.core.login_throttle import LoginThrottle, client_ip, get_pwd_throttle
 from app.services.avatars import MAX_BYTES, avatar_version, reencode_avatar
 from app.storage import StorageError, get_storage
-from app.utils.account_guard import GLOBAL, MEMBERSHIP, assert_can_manage_account
+from app.utils.account_guard import (
+    GLOBAL, MEMBERSHIP, assert_can_manage_account, assert_super_admin_may_bootstrap, tenant_has_admin,
+)
 from app.utils.audit import create_audit_log
 from app.schemas.notification import MentionableUser
 from app.utils.roles import resolve_active_role
@@ -44,24 +48,27 @@ async def read_users(
     ``account_manageable`` tells the caller whether account-wide actions (deactivate, activate, MFA reset) are
     open to them for that user (see app.utils.account_guard)."""
     other = aliased(TenantMembership)
-    elsewhere = (select(other.id).where(other.user_id == User.id, other.tenant_id != tenant_id)
-                 .exists().correlate(User))
+    home = (select(other.tenant_id).where(other.user_id == User.id).order_by(other.created_at, other.id)
+            .limit(1).correlate(User).scalar_subquery())
     rows = await db.execute(
-        select(User, TenantMembership.role, elsewhere)
+        select(User, TenantMembership.role, home)
         .join(TenantMembership, TenantMembership.user_id == User.id)
         .where(TenantMembership.tenant_id == tenant_id)
         .order_by(User.id)
         .offset(skip).limit(limit)
     )
+    # A super admin manages a tenant's users only until it has an active admin (app.utils.account_guard).
+    super_hands_off = current_user.is_super_admin and await tenant_has_admin(db, tenant_id)
     return [
         UserSchema(
             id=u.id, email=u.email, full_name=u.full_name,
             is_active=u.is_active, is_super_admin=u.is_super_admin, role=role,
             has_avatar=bool(u.avatar_key), avatar_version=avatar_version(u.avatar_key),
             mfa_enabled=u.mfa_enabled_at is not None,
-            account_manageable=current_user.is_super_admin or not (u.is_super_admin or other_tenants),
+            account_manageable=(u.id == current_user.id or not super_hands_off) if current_user.is_super_admin
+            else not (u.is_super_admin or home_tid != tenant_id),
         )
-        for u, role, other_tenants in rows.all()
+        for u, role, home_tid in rows.all()
     ]
 
 
@@ -112,6 +119,7 @@ async def create_user(
     """Create a new user and add them as a member of the active tenant."""
     if user_in.role == UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=400, detail="Cannot create super admin users through this endpoint.")
+    await assert_super_admin_may_bootstrap(db, current_user, tenant_id, action="create_user", role=user_in.role.value)
 
     result = await db.execute(select(User).where(func.lower(User.email) == user_in.email))
     if result.scalars().first():
@@ -405,7 +413,16 @@ async def update_user_role(
     user, membership = await _locked_member(db, user_id, tenant_id)
     await assert_can_manage_account(db, current_user, user, tenant_id, action="role_change", scope=MEMBERSHIP,
                                     request=request)
-    membership.role = role_in.role.value
+    old_role, new_role = membership.role, role_in.role.value
+    if old_role == UserRole.ADMIN.value and new_role != old_role:
+        if user_id == current_user.id and not current_user.is_super_admin:
+            raise HTTPException(status_code=400, detail="You cannot demote yourself.")
+        await _refuse_last_admin(db, tenant_id, "Cannot demote the last admin of this tenant.")
+    membership.role = new_role
+    if new_role != old_role:
+        await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="role_changed",
+                               tenant_id=tenant_id, user_id=current_user.id,
+                               changes={"role": {"from": old_role, "to": new_role}})
     await db.commit()
     return UserSchema(
         id=user.id, email=user.email, full_name=user.full_name,
@@ -429,16 +446,25 @@ async def remove_member(
     await assert_can_manage_account(db, current_user, target, tenant_id, action="remove_member", scope=MEMBERSHIP,
                                     request=request)
     if membership.role == UserRole.ADMIN.value:
-        count = (await db.execute(
-            select(func.count()).select_from(TenantMembership).where(
-                TenantMembership.tenant_id == tenant_id,
-                TenantMembership.role == UserRole.ADMIN.value,
-            )
-        )).scalar()
-        if count <= 1:
-            raise HTTPException(status_code=400, detail="Cannot remove the last admin of this tenant.")
+        await _refuse_last_admin(db, tenant_id, "Cannot remove the last admin of this tenant.")
     await db.delete(membership)
+    # A removed member stops following this tenant's cases (notifications, Slack war rooms) and drops their
+    # open task assignments here.
+    await db.execute(delete(CaseFollower).where(CaseFollower.tenant_id == tenant_id, CaseFollower.user_id == user_id))
+    await db.execute(update(CaseTask).where(CaseTask.tenant_id == tenant_id, CaseTask.assignee_id == user_id,
+                                            CaseTask.status != "done").values(assignee_id=None))
     await db.commit()
+
+
+async def _refuse_last_admin(db: AsyncSession, tenant_id: int, detail: str) -> None:
+    count = (await db.execute(
+        select(func.count()).select_from(TenantMembership).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.role == UserRole.ADMIN.value,
+        )
+    )).scalar()
+    if count <= 1:
+        raise HTTPException(status_code=400, detail=detail)
 
 
 @router.put("/{user_id}/deactivate", response_model=UserSchema)

@@ -291,16 +291,43 @@ def test_concurrent_burst_reaches_password_check_at_most_limit_times(monkeypatch
     asyncio.run(_with_user(scenario, FakeRedis(lambda: 1000.0)))
 
 
-def test_client_ip_prefers_x_real_ip_and_ignores_xff():
+def _req(headers, peer="172.18.0.5"):
     from starlette.requests import Request
+    return Request({"type": "http", "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+                    "client": (peer, 5555) if peer else None})
 
-    def req(headers):
-        return Request({"type": "http", "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
-                        "client": ("172.18.0.5", 5555)})
 
-    assert login_throttle.client_ip(req({"X-Real-IP": "203.0.113.7", "X-Forwarded-For": "1.2.3.4"})) == "203.0.113.7"
-    assert login_throttle.client_ip(req({"X-Forwarded-For": "1.2.3.4"})) == "172.18.0.5"
-    assert login_throttle.client_ip(req({})) == "172.18.0.5"
+def test_client_ip_from_trusted_proxy_uses_forwarding_headers():
+    # 172.18.0.5: a Docker bridge address (the bundled nginx), inside the default TRUSTED_PROXY_CIDRS.
+    assert login_throttle.client_ip(_req({"X-Real-IP": "203.0.113.7", "X-Forwarded-For": "1.2.3.4"})) == "203.0.113.7"
+    # No X-Real-IP: right-most X-Forwarded-For hop that isn't a trusted proxy (left hops are client-supplied).
+    assert login_throttle.client_ip(_req({"X-Forwarded-For": "6.6.6.6, 198.51.100.4, 10.0.0.9"})) == "198.51.100.4"
+    assert login_throttle.client_ip(_req({"X-Forwarded-For": "10.0.0.9"})) == "10.0.0.9"
+    assert login_throttle.client_ip(_req({})) == "172.18.0.5"
+    assert login_throttle.client_ip(_req({"X-Real-IP": "203.0.113.7"}, peer="127.0.0.1")) == "203.0.113.7"
+    assert login_throttle.client_ip(_req({"X-Real-IP": "203.0.113.7"}, peer="::1")) == "203.0.113.7"
+
+
+def test_client_ip_from_untrusted_peer_ignores_forwarding_headers():
+    """A client reaching the backend directly (public address) can't choose its throttle bucket."""
+    h = {"X-Real-IP": "203.0.113.7", "X-Forwarded-For": "1.2.3.4"}
+    assert login_throttle.client_ip(_req(h, peer="198.51.100.20")) == "198.51.100.20"
+    assert login_throttle.client_ip(_req(h, peer="testclient")) == "testclient"
+    assert login_throttle.client_ip(_req(h, peer=None)) == "unknown"
+
+
+def test_client_ip_honours_configured_proxy_cidrs(monkeypatch):
+    monkeypatch.setattr(login_throttle.settings, "TRUSTED_PROXY_CIDRS", "198.51.100.0/24")
+    h = {"X-Real-IP": "203.0.113.7"}
+    assert login_throttle.client_ip(_req(h, peer="198.51.100.20")) == "203.0.113.7"
+    assert login_throttle.client_ip(_req(h, peer="172.18.0.5")) == "172.18.0.5"  # no longer trusted
+
+
+def test_trusted_proxy_cidrs_rejects_garbage():
+    import pytest
+    from app.core.config import Settings
+    with pytest.raises(ValueError):
+        Settings(TRUSTED_PROXY_CIDRS="10.0.0.0/8,not-a-cidr", ENVIRONMENT="test")
 
 
 def test_redis_down_falls_back_to_memory():
@@ -344,6 +371,8 @@ def test_mixed_case_email_logs_in(caplog):
         with caplog.at_level(logging.WARNING, logger="app.api.v1.auth"):
             assert (await _login(c, email.upper(), "S3cret-in-logs?")).status_code == 401
         text = caplog.text
-        assert "203.0.113.7" in text and email in text and "S3cret-in-logs?" not in text
+        # the address itself is never logged, only its domain and a short hash (old #6)
+        assert "203.0.113.7" in text and email.split("@")[1] in text and "S3cret-in-logs?" not in text
+        assert email not in text
 
     asyncio.run(_with_user(scenario, FakeRedis(lambda: 1000.0)))

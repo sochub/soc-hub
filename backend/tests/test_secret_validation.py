@@ -182,6 +182,7 @@ async def _api_scenario():
             await db.commit()
             app.dependency_overrides[deps.get_current_active_user] = lambda: user
             app.dependency_overrides[deps.require_admin] = lambda: user
+            app.dependency_overrides[deps.require_analyst_or_above] = lambda: user  # /validate is analyst+ now
             app.dependency_overrides[deps.get_effective_tenant_id] = lambda: t.id
 
             def body(name):

@@ -41,16 +41,31 @@ app.kubernetes.io/component: {{ .component }}
 {{- default (printf "%s-attachments" (include "sochub.fullname" .)) .Values.persistence.attachments.existingClaim }}
 {{- end }}
 
-{{- define "sochub.backendImage" -}}
-{{- printf "%s:%s" .Values.images.backend.repository .Values.images.backend.tag }}
+{{/* repository:tag[@digest]; tag defaults to the chart appVersion. Call with (dict "img" .Values.images.x "ctx" .) */}}
+{{- define "sochub.image" -}}
+{{- $tag := .img.tag | default .ctx.Chart.AppVersion }}
+{{- if .img.digest }}
+{{- printf "%s:%s@%s" .img.repository $tag .img.digest }}
+{{- else }}
+{{- printf "%s:%s" .img.repository $tag }}
+{{- end }}
 {{- end }}
 
+{{- define "sochub.backendImage" -}}
+{{- include "sochub.image" (dict "img" .Values.images.backend "ctx" .) }}
+{{- end }}
+
+{{/* Bundled datastore URLs; call with (dict "ctx" . "password" $pw). */}}
 {{- define "sochub.databaseUrl" -}}
-{{- printf "postgresql+asyncpg://%s:%s@%s-postgresql:5432/%s" .Values.postgresql.auth.username .Values.postgresql.auth.password .Release.Name .Values.postgresql.auth.database }}
+{{- printf "postgresql+asyncpg://%s:%s@%s-postgresql:5432/%s" .ctx.Values.postgresql.auth.username .password .ctx.Release.Name .ctx.Values.postgresql.auth.database }}
 {{- end }}
 
 {{- define "sochub.redisUrl" -}}
-{{- printf "redis://:%s@%s-redis-master:6379/0" .Values.redis.auth.password .Release.Name }}
+{{- printf "redis://:%s@%s-redis-master:6379/0" .password .ctx.Release.Name }}
+{{- end }}
+
+{{- define "sochub.datastoreSecretName" -}}
+{{- printf "%s-datastores" .Release.Name }}
 {{- end }}
 
 {{/* Secret-backed env vars. With in-chart subcharts + inline secrets everything is in the Secret. */}}
@@ -95,9 +110,34 @@ app.kubernetes.io/component: {{ .component }}
   {{- end }}
 {{- end }}
 
+{{/* Pod securityContext; call with (dict "uid" 10001). */}}
 {{- define "sochub.podSecurity" -}}
 runAsNonRoot: true
-runAsUser: 10001
-runAsGroup: 10001
-fsGroup: 10001
+runAsUser: {{ .uid }}
+runAsGroup: {{ .uid }}
+fsGroup: {{ .uid }}
+seccompProfile:
+  type: RuntimeDefault
+{{- end }}
+
+{{- define "sochub.containerSecurity" -}}
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop: ["ALL"]
+{{- end }}
+
+{{/* Writable scratch for the read-only backend image: /tmp (beat schedule, spooled uploads) and HOME (fontconfig cache). */}}
+{{- define "sochub.scratchMounts" -}}
+- name: tmp
+  mountPath: /tmp
+- name: home
+  mountPath: /home/app
+{{- end }}
+
+{{- define "sochub.scratchVolumes" -}}
+- name: tmp
+  emptyDir: {}
+- name: home
+  emptyDir: {}
 {{- end }}

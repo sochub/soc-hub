@@ -1,4 +1,7 @@
 {{- if .Values.ingress.enabled }}
+{{- if and (eq .Values.config.environment "production") (not .Values.ingress.tls) (not .Values.ingress.tlsTerminatedUpstream) }}
+{{- fail "ingress.enabled without ingress.tls in production: session cookies would travel over plain HTTP. Add ingress.tls, or set ingress.tlsTerminatedUpstream=true if a load balancer in front terminates TLS." }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

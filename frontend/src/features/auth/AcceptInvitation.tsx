@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api } from '../../api/client';
+import { useQueryClient } from '@tanstack/react-query';
+import { api, session } from '../../api/client';
 import type { InvitationValidation } from '../../types';
+import { saveReturnTo } from './returnTo';
 
 export default function AcceptInvitation() {
     const { token } = useParams<{ token: string }>();
@@ -14,14 +16,50 @@ export default function AcceptInvitation() {
     const [error, setError] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [success, setSuccess] = useState(false);
+    // Existing accounts accept signed in as the invited account; null = not signed in.
+    const [meEmail, setMeEmail] = useState<string | null>(null);
+    const queryClient = useQueryClient();
 
     useEffect(() => {
         if (!token) return;
-        api.get(`/invitations/validate/${token}`)
-            .then(res => setValidation(res.data))
-            .catch(() => setValidation({ email: '', tenant_name: '', role: '', valid: false }))
-            .finally(() => setLoading(false));
+        (async () => {
+            try {
+                const v: InvitationValidation = (await api.get(`/invitations/validate/${token}`)).data;
+                setValidation(v);
+                if (v.valid && v.existing_account && session.active()) {
+                    try { setMeEmail((await api.get('/users/me')).data.email ?? null); } catch { setMeEmail(null); }
+                }
+            } catch {
+                setValidation({ email: '', tenant_name: '', role: '', valid: false });
+            } finally {
+                setLoading(false);
+            }
+        })();
     }, [token]);
+
+    const signInToAccept = async (signOutFirst: boolean) => {
+        if (signOutFirst) {
+            try { await api.post('/auth/logout'); } catch { /* session may already be gone */ }
+            session.clear();
+        }
+        saveReturnTo(`/invite/${token}`);
+        navigate('/login');
+    };
+
+    const handleJoin = async () => {
+        setError('');
+        setSubmitting(true);
+        try {
+            await api.post('/invitations/accept-existing', { token });
+            await queryClient.invalidateQueries();
+            navigate('/');
+        } catch (err) {
+            const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+            setError(typeof detail === 'string' ? detail : 'Failed to accept invitation.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -83,6 +121,47 @@ export default function AcceptInvitation() {
                 <div className="max-w-md w-full p-8 bg-panel rounded-xl border border-line text-center space-y-4">
                     <h2 className="text-2xl font-bold text-green-400">Account Created!</h2>
                     <p className="text-fg-2">Redirecting to login...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (validation.existing_account) {
+        const sameAccount = meEmail !== null && meEmail.toLowerCase() === validation.email.toLowerCase();
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-canvas text-fg p-4">
+                <div className="max-w-md w-full p-8 bg-panel rounded-xl border border-line space-y-6">
+                    <div className="space-y-2">
+                        <h2 className="text-2xl font-bold">Join {validation.tenant_name}</h2>
+                        <p className="text-fg-2 text-sm">
+                            You've been invited as <span className="text-fg font-medium">{validation.role}</span> to join {validation.tenant_name} on sochub.
+                        </p>
+                        <p className="text-fg-3 text-xs">{validation.email}</p>
+                    </div>
+                    {sameAccount ? (
+                        <button
+                            onClick={handleJoin}
+                            disabled={submitting}
+                            className="w-full bg-accent hover:bg-accent text-on-accent font-medium py-2 rounded-md transition-colors disabled:opacity-50"
+                        >
+                            {submitting ? 'Joining...' : `Join ${validation.tenant_name}`}
+                        </button>
+                    ) : (
+                        <>
+                            <p className="text-fg-2 text-sm">
+                                {meEmail
+                                    ? `You're signed in as ${meEmail}. Sign in as ${validation.email} to accept this invitation.`
+                                    : 'Sign in to your account to accept this invitation.'}
+                            </p>
+                            <button
+                                onClick={() => signInToAccept(meEmail !== null)}
+                                className="w-full bg-accent hover:bg-accent text-on-accent font-medium py-2 rounded-md transition-colors"
+                            >
+                                {meEmail ? 'Sign in as another account' : 'Sign in'}
+                            </button>
+                        </>
+                    )}
+                    {error && <p className="text-red-400 text-sm">{error}</p>}
                 </div>
             </div>
         );

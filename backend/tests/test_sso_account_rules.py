@@ -33,7 +33,7 @@ async def _setup():
         await db.flush()
         db.add(TenantSSOConfig(tenant_id=ta.id, idp_entity_id="https://idp.example.com",
                                idp_sso_url="https://idp.example.com/sso", idp_x509_cert="MIIB",
-                               auto_provision=True, default_role="analyst",
+                               auto_provision=True, default_role="analyst", allowed_email_domains=["example.com"],
                                saml_allow_idp_initiated=True))
         users = {}
         for name, tenants, sa in [("local", [ta], False), ("multi", [ta, tb], False),
@@ -142,6 +142,32 @@ def test_auto_provision_creates_new_user_only():
     _run(body)
 
 
+def test_auto_provision_only_for_allowed_domains():
+    """Old #9: JIT only creates accounts in the tenant's allowed email domains; none set = nobody."""
+    async def body(ids):
+        for email, detail in [(f"wf-test-{ids['h']}-x@victim.example", sso_mod.SSO_DOMAIN_NOT_ALLOWED),
+                              (f"wf-test-{ids['h']}-x@sub.example.com", sso_mod.SSO_DOMAIN_NOT_ALLOWED)]:
+            try:
+                await _resolve(ids, email)
+                raise AssertionError(f"{email} was provisioned")
+            except HTTPException as exc:
+                assert exc.status_code == 403 and exc.detail == detail
+        async with AsyncSessionLocal() as db:  # a config from before the migration: auto_provision, no domains
+            cfg = (await db.execute(select(TenantSSOConfig).where(
+                TenantSSOConfig.tenant_id == ids["ta"]))).scalars().one()
+            cfg.allowed_email_domains = []
+            await db.commit()
+        try:
+            await _resolve(ids, f"wf-test-{ids['h']}-y@example.com")
+            raise AssertionError("provisioned with no allowed domains")
+        except HTTPException as exc:
+            assert exc.detail == sso_mod.SSO_DOMAINS_UNSET
+        async with AsyncSessionLocal() as db:
+            n = (await db.execute(select(User).where(User.email.like(f"wf-test-{ids['h']}-%@%")))).scalars().all()
+        assert len(n) == 5  # only the fixture users
+    _run(body)
+
+
 def test_acs_redirects_with_clear_message(monkeypatch):
     class FakeAuth:
         def __init__(self, email):
@@ -183,7 +209,7 @@ def test_acs_redirects_with_clear_message(monkeypatch):
                 assert r.status_code == 303
                 loc = r.headers["location"]
                 assert "#sso_error=" in loc and "set-cookie" not in r.headers
-                assert unquote(loc.split("#sso_error=", 1)[1]) == sso_mod.SSO_NOT_ALLOWED
+                assert unquote(loc.split("#sso_error=", 1)[1]) == "not_allowed"
             for who in ("local",):
                 current["e"] = ids["emails"][who]
                 r = await c.post(url, data={"SAMLResponse": "x"})
@@ -224,6 +250,8 @@ def test_saml_invalid_stores_fixed_code_not_idp_text(monkeypatch):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             r = await c.post(f"/api/v1/auth/saml/{ids['slug']}/acs", data={"SAMLResponse": "x"})
         assert r.status_code == 303
+        # L-5: only a fixed code rides in the fragment, never the library's (response-derived) reason
+        assert r.headers["location"].endswith("#sso_error=failed"), r.headers["location"]
         async with AsyncSessionLocal() as db:
             rows = (await db.execute(select(AuditLog).where(AuditLog.tenant_id == ids["ta"]))).scalars().all()
         failed = [r for r in rows if r.action == "sso.failed"]
@@ -277,9 +305,9 @@ def test_acs_rejects_replayed_assertion(monkeypatch):
             url = f"/api/v1/auth/saml/{ids['slug']}/acs"
             r = await c.post(url, data={"SAMLResponse": "x"})
             assert r.status_code == 303 and _signed_in(r)
-            assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == sso_mod.SSO_FAILED
+            assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == "failed"
             cur["aid"] = None  # an assertion without an ID is refused too
-            assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == sso_mod.SSO_FAILED
+            assert _sso_error(await c.post(url, data={"SAMLResponse": "x"})) == "failed"
             cur["aid"], cur["na"] = "_fresh-2", int(__import__("time").time()) + 300
             r = await c.post(url, data={"SAMLResponse": "x"})
             assert _signed_in(r)
@@ -322,5 +350,5 @@ def test_acs_fails_closed_without_redis(monkeypatch):
                             lambda slug, cfg, req: _FixedAuth(ids["emails"]["local"], "_down-1"))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
             r = await c.post(f"/api/v1/auth/saml/{ids['slug']}/acs", data={"SAMLResponse": "x"})
-            assert _sso_error(r) == sso_mod.SSO_FAILED
+            assert _sso_error(r) == "failed"
     _run(body)

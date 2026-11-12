@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.copilot_action import ActionProposal
 
@@ -33,5 +33,5 @@ class CopilotSessionSchema(BaseModel):
 
 class CopilotChatRequest(BaseModel):
     case_id: Optional[int] = None
-    message: str
+    message: str = Field(..., max_length=16_000)
     session_id: Optional[int] = None

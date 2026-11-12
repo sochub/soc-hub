@@ -25,6 +25,8 @@ worker counts on its own) rather than removing it or locking everyone out.
 """
 import logging
 import time
+from functools import lru_cache
+from ipaddress import ip_address, ip_network
 from typing import Optional
 
 from fastapi import Request
@@ -106,18 +108,45 @@ def _local_refund(ip_key: str, email_keys: tuple[str, str]) -> None:
         _LOCAL[ip_key] = (count - 1, exp)
 
 
-def client_ip(request: Request) -> str:
-    """Client IP for throttling: nginx's X-Real-IP, else the socket peer.
+@lru_cache(maxsize=8)
+def _trusted_networks(cidrs: str) -> tuple:
+    return tuple(ip_network(c.strip(), strict=False) for c in cidrs.split(",") if c.strip())
 
-    X-Forwarded-For is deliberately ignored: its first hop is client-supplied
-    and would let an attacker rotate IP buckets. Trusting X-Real-IP is safe
-    because the backend port is published on 127.0.0.1 only, so only nginx
-    (which sets it from $remote_addr) or a local process can reach us.
+
+def _is_trusted(ip: str) -> bool:
+    try:
+        addr = ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in _trusted_networks(settings.TRUSTED_PROXY_CIDRS))
+
+
+def client_ip(request: Request) -> str:
+    """Client IP for throttling and audit rows.
+
+    Forwarding headers are believed only when the socket peer is a trusted proxy
+    (settings.TRUSTED_PROXY_CIDRS: loopback and private ranges by default, i.e. the
+    bundled nginx on a Docker/Kubernetes network). From a trusted peer we take
+    X-Real-IP (our nginx overwrites it with its own client address), else the
+    right-most X-Forwarded-For hop that is not itself a trusted proxy (the left
+    hops are client-supplied). Any other peer is identified by its socket address,
+    so a client that reaches the backend directly can't pick its own throttle bucket.
+
+    ponytail: the right-most-untrusted walk assumes every trusted proxy appends to
+    X-Forwarded-For; a client on a trusted (private) network can still spoof the
+    hops to its left. Narrow TRUSTED_PROXY_CIDRS to the proxy addresses if that matters.
     """
+    peer = request.client.host if request.client else "unknown"
+    if not _is_trusted(peer):
+        return peer
     real_ip = (request.headers.get("x-real-ip") or "").strip()
     if real_ip:
         return real_ip
-    return request.client.host if request.client else "unknown"
+    hops = [h.strip() for h in (request.headers.get("x-forwarded-for") or "").split(",") if h.strip()]
+    for hop in reversed(hops):
+        if not _is_trusted(hop):
+            return hop
+    return hops[0] if hops else peer
 
 
 class LoginThrottle:

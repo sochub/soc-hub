@@ -27,7 +27,7 @@ def _caller(**cfg):
             "edges": [{"id": "e", "source": "start", "target": "call", "source_handle": None}]}
 
 
-async def _scenario(q):
+async def _scenario(q, mp):
     h = secrets.token_hex(3)
     async with AsyncSessionLocal() as db:
         t, other = Tenant(name="wc", slug=f"wc-{h}"), Tenant(name="wc-o", slug=f"wc-o-{h}")
@@ -79,6 +79,27 @@ async def _scenario(q):
         parent, kids, _ = await run(_caller(workflow_id=str(esc_id)))  # by id; no inputs -> by hand wording
         assert parent.status == "succeeded" and len(kids) == 1
 
+        # N6: one root run starts at most MAX_CHILD_RUNS_PER_ROOT workflows
+        from app.workflows.nodes import logic
+        mp.setattr(logic, "MAX_CHILD_RUNS_PER_ROOT", 2)
+        call = {"workflow_name": "Escalate to incident"}
+        three = {"nodes": [{"id": "start", "type": "trigger", "config": {}}]
+                 + [{"id": f"c{i}", "type": "run_workflow", "config": call} for i in range(3)],
+                 "edges": [{"id": f"e{i}", "source": a, "target": b, "source_handle": None}
+                           for i, (a, b) in enumerate([("start", "c0"), ("c0", "c1"), ("c1", "c2")])]}
+        parent, kids, _ = await run(three)
+        assert parent.status == "failed" and "limit per run" in parent.error and len(kids) == 2, parent.error
+        assert {k.trigger_payload["started_by"]["root_run_id"] for k in kids} == {parent.id}
+        mp.setattr(logic, "MAX_CHILD_RUNS_PER_ROOT", 25)
+        # N6: run_workflow inside a for_each body is refused at save time and at run time
+        looped = {"nodes": [{"id": "start", "type": "trigger", "config": {}},
+                            {"id": "loop", "type": "for_each", "config": {"items": "{{ [1, 2] }}"}},
+                            {"id": "call", "type": "run_workflow", "parent_id": "loop", "config": call}],
+                  "edges": [{"id": "e", "source": "start", "target": "loop", "source_handle": None}]}
+        assert any("cannot be inside a loop" in e["message"] for e in validate_graph(looped, "manual"))
+        parent, kids, _ = await run(looped)
+        assert parent.status == "failed" and kids == [], parent.error
+
         for cfg, msg in (({"workflow_name": "Nope"}, "no manual workflow 'Nope'"),
                          ({"workflow_name": "Off"}, "is disabled"),
                          ({"workflow_id": theirs_id}, "no manual workflow"),  # another tenant's
@@ -124,4 +145,4 @@ async def _scenario(q):
 
 
 def test_run_workflow_node(monkeypatch):
-    asyncio.run(_scenario(_queue(monkeypatch)))
+    asyncio.run(_scenario(_queue(monkeypatch), monkeypatch))

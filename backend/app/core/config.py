@@ -1,6 +1,7 @@
 import warnings
 
 from typing import List, Literal, Optional
+from ipaddress import ip_network
 from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings
@@ -14,9 +15,12 @@ _WEAK_SECRET_KEYS = {
 }
 _MIN_SECRET_KEY_LENGTH = 32
 # The docker-compose local-dev Postgres password; never acceptable in production.
-_WEAK_DB_PASSWORDS = {"password"}
+_WEAK_DB_PASSWORDS = {"password", "sochub-change-me", "CHANGE_ME"}
 # Public/placeholder Redis passwords (the compose dev default is "devredispass").
-_WEAK_REDIS_PASSWORDS = {"devredispass", "changeme", "redis"}
+_WEAK_REDIS_PASSWORDS = {"devredispass", "changeme", "redis", "sochub-change-me", "CHANGE_ME"}
+# (sochub-change-me: the old Helm chart placeholder; CHANGE_ME: .env.prod.example.)
+# Hosts REJECTED as public URLs in production (a deny list, nothing binds to them).
+_LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "0.0.0.0"}  # nosec B104
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/sicms"
@@ -25,11 +29,19 @@ class Settings(BaseSettings):
     # from SECRET_KEY with HKDF under its own label (never SECRET_KEY itself). Set it (>= 32 random chars)
     # so a SECRET_KEY leak no longer exposes stored integration credentials. When changing it, move the old
     # value into ENCRYPTION_KEYS_PREVIOUS (comma-separated) and run `python -m app.scripts.reencrypt_secrets`.
+    # Required in production.
     ENCRYPTION_KEY: Optional[str] = None
     ENCRYPTION_KEYS_PREVIOUS: str = ""
+    # Keep the SECRET_KEY-derived keys (the legacy sha256(SECRET_KEY) key and, once ENCRYPTION_KEY is set, the
+    # HKDF(SECRET_KEY) key) in the decryption ring so data written before ENCRYPTION_KEY was configured still
+    # opens. Set False after `python -m app.scripts.reencrypt_secrets`, so a SECRET_KEY leak opens nothing.
+    ENCRYPTION_KEEP_LEGACY_KEYS: bool = True
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_IDLE_DAYS: int = 30
+    # Absolute lifetime of every session (web and OAuth/MCP), however active. A tenant's session_max_minutes
+    # can only make it shorter.
+    SESSION_MAX_DAYS: int = Field(30, ge=1)
 
     # Security mode. The credential guard below is enforced ONLY in
     # "production" (the default, so a forgotten setting fails closed);
@@ -46,6 +58,20 @@ class Settings(BaseSettings):
     LOGIN_MAX_PER_EMAIL_IP: int = Field(5, ge=1)   # hard lock for one (email, client IP)
     LOGIN_MAX_PER_EMAIL: int = Field(30, ge=1)     # global cap per email (distributed guessing)
     LOGIN_MAX_PER_IP: int = Field(20, ge=1)        # per client IP, failures only
+
+    # Reverse proxies whose X-Real-IP / X-Forwarded-For we believe (comma-separated CIDRs), see
+    # app.core.login_throttle.client_ip. The default covers loopback and the private ranges Docker
+    # bridge networks and Kubernetes pod networks use, i.e. the bundled nginx in compose/Helm. Any
+    # other peer is identified by its socket address and its forwarding headers are ignored.
+    TRUSTED_PROXY_CIDRS: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+
+    @field_validator("TRUSTED_PROXY_CIDRS")
+    @classmethod
+    def _valid_proxy_cidrs(cls, v: str) -> str:
+        for cidr in v.split(","):
+            if cidr.strip():
+                ip_network(cidr.strip(), strict=False)  # ValueError -> refuse to boot
+        return v
 
     REDIS_URL: str = "redis://localhost:6379"
 
@@ -131,6 +157,16 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     SMTP_FROM_EMAIL: str | None = None
 
+    # --- Untrusted input / integrations hardening (security audit 2026-11-10) ---
+    # Dev only: allow SMTP login/send without TLS (a local relay such as mailpit). Never in production.
+    SMTP_ALLOW_PLAINTEXT: bool = False
+    # Email intake: messages above this size are not fetched; they are moved to the Failed folder.
+    EMAIL_MAX_MESSAGE_MB: int = Field(25, ge=1, le=200)
+    # email_ask_user workflow node: emails per tenant per hour.
+    EMAIL_ASK_HOURLY_CAP: int = Field(30, ge=1, le=10000)
+    # Alert webhook: requests per webhook key per minute (fixed window).
+    ALERT_WEBHOOK_PER_MINUTE: int = Field(600, ge=1, le=100000)
+
     # Invitation settings
     INVITATION_EXPIRE_HOURS: int = 48  # 2 days
     GUEST_LINK_EXPIRE_HOURS: int = 72  # guest magic link; the link is a bearer credential
@@ -171,12 +207,17 @@ class Settings(BaseSettings):
                 f"{_MIN_SECRET_KEY_LENGTH} characters. Generate a strong key, e.g. "
                 "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
             )
-        if self.ENCRYPTION_KEY and (  # empty = unset
+        if not self.ENCRYPTION_KEY:
+            problems.append(
+                "ENCRYPTION_KEY is not set: stored secrets are then encrypted with a key derived from SECRET_KEY. "
+                f"Set ENCRYPTION_KEY (>= {_MIN_SECRET_KEY_LENGTH} random characters, different from SECRET_KEY)."
+            )
+        elif (
             len(self.ENCRYPTION_KEY) < _MIN_SECRET_KEY_LENGTH or self.ENCRYPTION_KEY == self.SECRET_KEY
         ):
             problems.append(
                 f"ENCRYPTION_KEY must be at least {_MIN_SECRET_KEY_LENGTH} characters and differ from "
-                "SECRET_KEY (or leave it unset)."
+                "SECRET_KEY."
             )
         redis_password = urlsplit(self.REDIS_URL).password
         if not redis_password:
@@ -188,6 +229,11 @@ class Settings(BaseSettings):
             problems.append(
                 "REDIS_URL uses a known default password. Set a strong REDIS_PASSWORD."
             )
+        for name in ("PUBLIC_BASE_URL", "FRONTEND_URL"):
+            # Session cookies are Secure only over https, and these URLs go into emails and SSO redirects.
+            url = urlsplit(getattr(self, name))
+            if url.scheme != "https" or (url.hostname or "") in _LOCAL_HOSTS:
+                problems.append(f"{name} must be the public https:// URL of this deployment (not localhost).")
         if urlsplit(self.DATABASE_URL).password in _WEAK_DB_PASSWORDS:
             problems.append(
                 "DATABASE_URL uses the local-development default password. Set a "

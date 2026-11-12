@@ -20,6 +20,7 @@ from app.models.membership import TenantMembership
 from app.models.notification import CaseFollower
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
+from app.notifications.service import _members as notify_members
 from app.services import slack_blocks as ui
 from app.services import war_room_naming as wr_naming
 from app.services.case_service import add_timeline_note, apply_case_update, create_case_record
@@ -41,7 +42,7 @@ def _token(integ: SlackIntegration) -> str:
 
 
 async def linked_user(db, tenant_id: int, token: str, slack_user_id: str) -> Optional[User]:
-    return await _platform_user(db, tenant_id, await _slack_email(token, slack_user_id))
+    return await _platform_user(db, tenant_id, await _slack_email(token, slack_user_id), slack_user_id)
 
 
 async def _names(db, user_ids) -> dict:
@@ -286,15 +287,16 @@ async def open_war_room(db, tenant_id: int, case: Case, user: User, clicker_slac
             if e.code != "name_taken" or attempt > 9:
                 raise
             name = wr_naming.collision_name(base, attempt)
-    followers = (await db.execute(select(User.email).join(CaseFollower, CaseFollower.user_id == User.id)
-                                  .where(CaseFollower.case_id == case.id, User.is_active.is_(True)))).scalars().all()
-    owner = await db.get(User, case.owner_id) if case.owner_id else None
+    # Followers and the owner, but only active members of this tenant (never a removed or foreign account).
+    follower_ids = (await db.execute(select(CaseFollower.user_id).where(CaseFollower.case_id == case.id))).scalars().all()
+    invitees = await notify_members(db, case.tenant_id, [*follower_ids, case.owner_id])
+    emails = (await db.execute(select(User.email).where(User.id.in_(invitees)))).scalars().all() if invitees else []
     ids = {clicker_slack_id} if clicker_slack_id else set()
     if not ids:  # no Slack click to identify the opener (opened from the case page): look them up
         opener = await _slack_id(token, user.email)
         if opener:
             ids.add(opener)
-    for email in set(followers) | ({owner.email} if owner else set()):
+    for email in set(emails):
         sid = await _slack_id(token, email)
         if sid:
             ids.add(sid)

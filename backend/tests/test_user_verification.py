@@ -15,7 +15,9 @@ from sqlalchemy import delete, select
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.audit_log import AuditLog
+from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
+from app.models.user import User
 from app.models.workflow import Workflow, WorkflowRun, WorkflowRunStep
 from app.services import email_service
 from app.workflows.nodes import WAIT, NodeContext, NodeError
@@ -37,8 +39,11 @@ async def _scenario(monkeypatch):
     ids = {"r": [], "s": []}
     async with AsyncSessionLocal() as db:
         t = Tenant(name=f"Acme {h}", slug=f"uv-{h}")
-        db.add(t)
+        member = User(email=f"analyst-{h}@acme.com", hashed_password="x", is_active=True)
+        db.add_all([t, member])
         await db.flush()
+        db.add(TenantMembership(user_id=member.id, tenant_id=t.id, role="analyst"))  # makes acme.com a tenant domain
+        uid = member.id
         wf = Workflow(tenant_id=t.id, name="uv", trigger_type="manual", graph={"nodes": [], "edges": []})
         db.add(wf)
         await db.commit()
@@ -132,7 +137,9 @@ async def _scenario(monkeypatch):
             await db.execute(delete(WorkflowRunStep).where(WorkflowRunStep.id.in_(ids["s"] or [-1])))
             await db.execute(delete(WorkflowRun).where(WorkflowRun.id.in_(ids["r"] or [-1])))
             await db.execute(delete(Workflow).where(Workflow.id == wid))
+            await db.execute(delete(TenantMembership).where(TenantMembership.tenant_id == tid))
             await db.execute(delete(Tenant).where(Tenant.id == tid))
+            await db.execute(delete(User).where(User.id == uid))
             await db.commit()
         await engine.dispose()
 
@@ -152,3 +159,55 @@ def test_verification_templates_branch_on_the_answer(key):
         assert eval_expr(expr, {"steps": {"ask": {"output": out}}}) is False  # no, or silence, escalates
     edges = {(e["source"], e.get("source_handle")): e["target"] for e in d["graph"]["edges"]}
     assert edges[("confirmed", "true")] == "dismiss" and edges[("confirmed", "false")] == "promote"
+
+
+def test_email_ask_user_only_tenant_domains_and_hourly_cap(monkeypatch):
+    """N13: recipients must be at the organization's own domains, and each tenant has an hourly send cap."""
+    from app.core.config import settings
+    from app.models.tenant_enrichment_config import TenantEnrichmentConfig
+
+    async def body():
+        await engine.dispose()
+        sent = []
+        monkeypatch.setattr(email_service, "_smtp_configured", lambda: True)
+        monkeypatch.setattr(email_service, "send_user_verification_email", lambda to, **kw: sent.append(to) or True)
+        h = secrets.token_hex(3)
+        async with AsyncSessionLocal() as db:
+            t = Tenant(name=f"Cap {h}", slug=f"uvcap-{h}")
+            u = User(email=f"soc-{h}@corp-{h}.example", hashed_password="x", is_active=True)
+            db.add_all([t, u])
+            await db.flush()
+            db.add(TenantMembership(user_id=u.id, tenant_id=t.id, role="admin"))
+            db.add(TenantEnrichmentConfig(tenant_id=t.id, internal_domains=[f"sub-{h}.example"]))
+            await db.commit()
+            tid, uid = t.id, u.id
+        try:
+            async def ask(email):
+                async with AsyncSessionLocal() as db:
+                    step = SimpleNamespace(wait_token=None, wait_expires_at=None, output=None)
+                    return await run_email_ask_user(NodeContext(db=db, run=SimpleNamespace(tenant_id=tid), step=step,
+                                                                node={}, ctx={}), {"email": email, "message": "x"})
+            # tenant ids are reused when the test DB is recreated but Redis survives: start from a clean window
+            import time as _time
+            import redis.asyncio as aioredis
+            r = aioredis.from_url(settings.REDIS_URL)
+            await r.delete(f"email_ask:{tid}:{int(_time.time() // 3600)}")
+            await r.aclose()
+            with pytest.raises(NodeError, match="domains"):
+                await ask("victim@bank.example")
+            assert await ask(f"bob@corp-{h}.example") is WAIT
+            assert await ask(f"amy@mail.sub-{h}.example") is WAIT  # internal domain, subdomain
+            monkeypatch.setattr(settings, "EMAIL_ASK_HOURLY_CAP", 3)
+            assert await ask(f"cy@corp-{h}.example") is WAIT
+            with pytest.raises(NodeError, match="last hour"):
+                await ask(f"dee@corp-{h}.example")
+            assert sent == [f"bob@corp-{h}.example", f"amy@mail.sub-{h}.example", f"cy@corp-{h}.example"]
+        finally:
+            async with AsyncSessionLocal() as db:
+                await db.execute(delete(TenantEnrichmentConfig).where(TenantEnrichmentConfig.tenant_id == tid))
+                await db.execute(delete(TenantMembership).where(TenantMembership.tenant_id == tid))
+                await db.execute(delete(Tenant).where(Tenant.id == tid))
+                await db.execute(delete(User).where(User.id == uid))
+                await db.commit()
+            await engine.dispose()
+    asyncio.run(body())

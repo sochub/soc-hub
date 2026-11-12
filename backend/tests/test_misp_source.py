@@ -20,6 +20,22 @@ from app.models.user import User
 def _allow_hosts(monkeypatch):
     from app.core.config import settings
     monkeypatch.setattr(settings, "MISP_PRIVATE_HOSTS", ["misp.example", "m2.example"])
+    _fake_dns(monkeypatch)
+
+
+def _fake_dns(monkeypatch, name_ip="10.9.9.9"):
+    """Stub DNS inside hostguard only: IP literals resolve to themselves, names to `name_ip`."""
+    import ipaddress
+    from types import SimpleNamespace
+    from app.utils import hostguard
+
+    def fake(h, *a, **k):
+        try:
+            ip = str(ipaddress.ip_address(h))
+        except ValueError:
+            ip = name_ip
+        return [(2, 1, 6, "", (ip, 0))]
+    monkeypatch.setattr(hostguard, "socket", SimpleNamespace(getaddrinfo=fake))
 
 
 CFG = json.dumps({"url": "https://misp.example/", "key": "MISP-SECRET-KEY", "verify": True})
@@ -42,7 +58,8 @@ async def test_hit_with_to_ids():
     seen = {}
 
     def handler(req):
-        seen["url"], seen["auth"] = str(req.url), req.headers["authorization"]
+        seen["url"], seen["auth"], seen["host"] = str(req.url), req.headers["authorization"], req.headers["host"]
+        seen["sni"] = req.extensions.get("sni_hostname")
         seen["body"] = json.loads(req.content)
         return _resp([
             {"event_id": "7", "to_ids": True, "Tag": [{"name": "misp-galaxy:x"}],
@@ -53,7 +70,9 @@ async def test_hit_with_to_ids():
         ])
 
     r = await misp.lookup("ip", "1.2.3.4", CFG, transport=_mock(handler))
-    assert seen["url"] == "https://misp.example/attributes/restSearch"
+    # N4: connects to the vetted IP; Host and SNI keep the configured name
+    assert seen["url"] == "https://10.9.9.9/attributes/restSearch"
+    assert seen["host"] == "misp.example" and seen["sni"] == "misp.example"
     assert seen["auth"] == "MISP-SECRET-KEY"
     assert seen["body"] == {"value": "1.2.3.4", "limit": 50, "includeContext": True, "includeEventTags": True}
     assert r.status == "ok" and r.verdict == "suspicious" and r.score == "3 attributes"
@@ -163,9 +182,21 @@ async def test_config_put_assembles_and_merges():
                     r = await c.put("/api/v1/enrichment/config", json={"misp_verify_tls": False})
                     assert r.json()["misp_verify_tls"] is False
                     assert await stored() == {"url": "https://misp.example", "key": "K1", "verify": False}
-                    # url only: keeps key
-                    await c.put("/api/v1/enrichment/config", json={"misp_url": "https://m2.example"})
-                    assert await stored() == {"url": "https://m2.example", "key": "K1", "verify": False}
+                    # url on the same host and port: keeps key
+                    await c.put("/api/v1/enrichment/config", json={"misp_url": "https://misp.example:443/"})
+                    assert await stored() == {"url": "https://misp.example:443", "key": "K1", "verify": False}
+                    # N4: url to another host without a new key is refused and the stored key stays put
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "https://m2.example"})
+                    assert r.status_code == 422 and "key is required" in r.text
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "https://misp.example:8443"})
+                    assert r.status_code == 422
+                    assert (await stored())["key"] == "K1"
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "https://m2.example", "misp_key": "K1b"})
+                    assert r.status_code == 200, r.text
+                    assert await stored() == {"url": "https://m2.example", "key": "K1b", "verify": False}
+                    # a key never goes over plain http
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "http://m2.example", "misp_key": "K1c"})
+                    assert r.status_code == 422 and "https" in r.text
                     # new key
                     await c.put("/api/v1/enrichment/config", json={"misp_key": "K2"})
                     assert (await stored())["key"] == "K2"
@@ -173,9 +204,9 @@ async def test_config_put_assembles_and_merges():
                     r = await c.put("/api/v1/enrichment/config", json={"misp_url": "ftp://x"})
                     assert r.status_code == 422
                     # SSRF guard / userinfo rejected at PUT
-                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "http://127.0.0.1:9"})
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "https://127.0.0.1:9", "misp_key": "K3"})
                     assert r.status_code == 422 and "MISP_PRIVATE_HOSTS" in r.text
-                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "https://u:p@m2.example"})
+                    r = await c.put("/api/v1/enrichment/config", json={"misp_url": "https://u:p@m2.example", "misp_key": "K3"})
                     assert r.status_code == 422
                     # clear
                     r = await c.put("/api/v1/enrichment/config", json={"clear_misp": True})
@@ -209,7 +240,7 @@ async def test_lookup_blocks_private_host(monkeypatch):
     from app.core.config import settings
     monkeypatch.setattr(settings, "MISP_PRIVATE_HOSTS", [])
     hit = []
-    r = await misp.lookup("ip", "1.2.3.4", json.dumps({"url": "http://127.0.0.1:8080", "key": "k"}),
+    r = await misp.lookup("ip", "1.2.3.4", json.dumps({"url": "https://127.0.0.1:8080", "key": "k"}),
                           transport=_mock(lambda req: hit.append(1) or _resp([])))
     assert r.status == "error" and r.error == "host not allowed" and not hit
 
@@ -266,3 +297,18 @@ async def test_clear_misp_with_undecryptable_credentials():
                     await s.execute(delete(User).where(User.id == ids["u"]))
                 await s.commit()
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_lookup_pins_vetted_ip_and_requires_https(monkeypatch):
+    """N4: the request goes to the address the guard vetted (no second DNS lookup), and never over http."""
+    calls = []
+
+    def handler(req):
+        calls.append((req.url.host, req.headers["host"]))
+        return _resp([])
+    r = await misp.lookup("ip", "1.2.3.4", json.dumps({"url": "http://misp.example", "key": "k"}), transport=_mock(handler))
+    assert r.status == "error" and "https" in r.error and not calls
+    _fake_dns(monkeypatch, "93.184.216.34")
+    await misp.lookup("ip", "1.2.3.4", json.dumps({"url": "https://misp.example:8443", "key": "k"}), transport=_mock(handler))
+    assert calls == [("93.184.216.34", "misp.example:8443")]

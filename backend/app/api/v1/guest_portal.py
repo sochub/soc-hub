@@ -182,7 +182,8 @@ async def guest_attachments(case_id: int, db: AsyncSession = Depends(deps.get_db
 async def guest_raw_attachment(case_id: int, att_id: int, db: AsyncSession = Depends(deps.get_db),
                                grant: CaseGuest = Depends(get_guest_grant)) -> Any:
     """Inline image for <img>. The only widening of guest attachment access: the image must be inline, live, in
-    this grant's case, and referenced by a note currently shared with this guest (unsharing closes access)."""
+    this grant's case, and referenced by a STAFF note currently shared with guests (unsharing closes access).
+    Guest-authored comments never count: otherwise a guest could list /attachments/N/raw and read every image."""
     a = (await db.execute(select(CaseAttachment).where(
         CaseAttachment.id == att_id, CaseAttachment.case_id == grant.case_id,
         CaseAttachment.tenant_id == grant.tenant_id, CaseAttachment.is_inline.is_(True),
@@ -190,7 +191,7 @@ async def guest_raw_attachment(case_id: int, att_id: int, db: AsyncSession = Dep
     shared = a is not None and (await db.execute(
         select(TimelineEvent.id).where(
             TimelineEvent.case_id == grant.case_id, TimelineEvent.shared_with_guests.is_(True),
-            (TimelineEvent.guest_id.is_(None)) | (TimelineEvent.guest_id == grant.id),
+            TimelineEvent.guest_id.is_(None),
             TimelineEvent.content.contains(f"/attachments/{att_id}/raw")).limit(1))).first() is not None
     if not shared:
         raise HTTPException(status_code=404, detail="Attachment not found")

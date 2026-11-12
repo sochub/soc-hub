@@ -157,6 +157,7 @@ export interface SSOConfig {
   idp_sso_url: string | null;
   idp_x509_cert: string | null;
   auto_provision: boolean;
+  allowed_email_domains?: string[];
   default_role: 'analyst' | 'viewer';
   saml_allow_idp_initiated: boolean;
   sp_entity_id: string;
@@ -235,6 +236,7 @@ export interface InvitationValidation {
   tenant_name: string;
   role: string;
   valid: boolean;
+  existing_account?: boolean;
 }
 
 export interface Artifact {

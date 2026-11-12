@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import secrets
 from typing import Optional
 from fastapi import Depends, Request, HTTPException, Query, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
@@ -213,9 +215,11 @@ async def get_effective_tenant_id(
 # returns 401, matching the invalid-key behavior verify_webhooks.py asserts).
 # Argon2 verify costs tens of ms; alert floods reuse the same few keys, so remember recent successes.
 # An entry only counts while the row still has the same id and hash (rotation/deletion invalidates it).
-# ponytail: per-process FIFO, plaintext keys in memory only; a shared cache isn't needed at this scale.
+# Keyed by sha256(key): plaintext keys never sit in process memory beyond the request.
+# ponytail: per-process FIFO; a shared cache isn't needed at this scale.
 _VERIFIED_CACHE_SIZE = 256
 _verified_webhooks: dict = {}
+_CACHE_SALT = secrets.token_bytes(16)
 
 webhook_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False, scheme_name="WebhookApiKey")
 
@@ -245,8 +249,12 @@ async def get_webhook_from_key(
         )
     )).scalars().all()
     webhook = None
+    # Cheap scrypt with a per-process random salt: the cache never holds the API key or an offline-checkable
+    # digest of it (storage verification stays Argon2: verify_webhook_key).
+    # ponytail: n=2**10 (~1 ms) is enough for a random 32-byte key; it only has to keep scanners and dumps honest.
+    cache_key = hashlib.scrypt(x_api_key.encode(), salt=_CACHE_SALT, n=2**10, r=8, p=1, dklen=32).hex()
     for row in candidates:
-        if _verified_webhooks.get(x_api_key) == (row.id, row.key_hash):
+        if _verified_webhooks.get(cache_key) == (row.id, row.key_hash):
             webhook = row
             break
     if webhook is None:
@@ -257,7 +265,7 @@ async def get_webhook_from_key(
         if webhook is not None:
             if len(_verified_webhooks) >= _VERIFIED_CACHE_SIZE:
                 _verified_webhooks.pop(next(iter(_verified_webhooks)))
-            _verified_webhooks[x_api_key] = (webhook.id, webhook.key_hash)
+            _verified_webhooks[cache_key] = (webhook.id, webhook.key_hash)
     if webhook is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -278,7 +286,7 @@ async def default_active_tenant_id(db: AsyncSession, user: User) -> Optional[int
         select(TenantMembership.tenant_id)
         .join(Tenant, Tenant.id == TenantMembership.tenant_id)
         .where(TenantMembership.user_id == user.id)
-        .order_by(Tenant.is_active.is_(False), TenantMembership.tenant_id)
+        .order_by(Tenant.is_active.is_(False), TenantMembership.created_at, TenantMembership.id)  # home first
         .limit(1)
     )
     return res.scalars().first()

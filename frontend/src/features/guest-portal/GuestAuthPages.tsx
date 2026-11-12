@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button, Input, Label } from '../../components/ui';
 import { guestApi, guestError, guestSession } from './guestApi';
+import { ssoErrorMessage } from '../auth/ssoErrors';
 
 export function GuestShell({ children }: { children: React.ReactNode }) {
     return (
@@ -65,7 +66,7 @@ export function GuestLoginPage() {
     const [error, setError] = useState<string | null>(() => {
         const h = new URLSearchParams(window.location.hash.slice(1)).get('sso_error');
         if (h) window.history.replaceState(null, '', window.location.pathname + window.location.search);
-        return h;
+        return h ? ssoErrorMessage(h) : null;
     });
     const m = params.get('m');
     const notice = m === 'account' ? 'Sign in with your guest password.' : m === 'reset' ? 'Password updated — sign in.' : null;

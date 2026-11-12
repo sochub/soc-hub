@@ -24,7 +24,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.user import Token
-from app.utils.account_guard import GLOBAL, assert_can_manage_account
+from app.utils.account_guard import GLOBAL, TENANT_HAS_ADMIN, any_tenant_has_admin, assert_can_manage_account, deny
 from app.utils.audit import create_audit_log
 from app.utils.crypto import decrypt, encrypt
 
@@ -244,7 +244,8 @@ async def mfa_reset(
     db: AsyncSession = Depends(deps.get_db),
     actor: User = Depends(deps.get_current_active_user),
 ) -> Response:
-    """Super admin, or an admin of the target's only tenant (the active one), clears the target's MFA."""
+    """An admin of the target's home tenant (the active one) clears the target's MFA; a super admin only while
+    none of the target's tenants has an active admin."""
     role = deps._active_role(actor)
     active = getattr(actor, "_active_tenant_id", None)
     if role not in ("super_admin", "admin"):
@@ -260,6 +261,9 @@ async def mfa_reset(
     if target is None:
         raise HTTPException(status_code=404, detail="Not found")
     if actor.is_super_admin:
+        # Bootstrap only: once any of the target's tenants has an active admin, that admin resets MFA.
+        if await any_tenant_has_admin(db, target.id):
+            await deny(request, actor, active, "mfa_reset", target_id=target.id, detail=TENANT_HAS_ADMIN)
         audit_tid = (await db.execute(
             select(func.min(TenantMembership.tenant_id)).where(TenantMembership.user_id == user_id)
         )).scalar() or (await db.execute(select(func.min(Tenant.id)))).scalar()

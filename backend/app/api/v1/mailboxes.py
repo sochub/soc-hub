@@ -72,10 +72,15 @@ async def update_mailbox(mailbox_id: int, body: MailboxUpdate, db: AsyncSession 
     mb = await _get(db, tenant_id, mailbox_id)
     if body.host is not None:
         _check_host(body.host)
+    target = (mb.host.lower(), mb.port, mb.username)
     # Partial update: only fields the client sent change.
     for k, v in body.model_dump(include=set(_FIELDS), exclude_unset=True).items():
         if v is not None:
             setattr(mb, k, v)
+    # The stored password only carries over to the same server and account: otherwise an admin (or a hijacked
+    # admin session) could point it at a host of their choosing and press Test.
+    if not body.password and (mb.host.lower(), mb.port, mb.username) != target:
+        raise HTTPException(status_code=422, detail="the password is required again when the host, port or username changes")
     if body.password:
         mb.password_enc = encrypt(body.password)
     await create_audit_log(db=db, entity_type="mailbox", entity_id=mb.id, action="updated", tenant_id=tenant_id,

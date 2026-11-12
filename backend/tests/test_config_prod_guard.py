@@ -11,7 +11,9 @@ DEV_DB = "postgresql+asyncpg://user:password@db:5432/sicms"
 
 
 def _settings(**kw):
-    base = dict(SECRET_KEY=STRONG, DATABASE_URL=GOOD_DB, REDIS_URL=GOOD_REDIS, ENVIRONMENT="production")
+    base = dict(SECRET_KEY=STRONG, DATABASE_URL=GOOD_DB, REDIS_URL=GOOD_REDIS, ENVIRONMENT="production",
+                ENCRYPTION_KEY="e" * 48, PUBLIC_BASE_URL="https://soc.example.com",
+                FRONTEND_URL="https://soc.example.com")
     base.update(kw)
     return Settings(_env_file=None, **base)
 
@@ -30,15 +32,17 @@ def test_production_rejects_redis_without_password(url):
         _settings(REDIS_URL=url)
 
 
-@pytest.mark.parametrize("pw", ["devredispass", "changeme", "redis"])
+@pytest.mark.parametrize("pw", ["devredispass", "changeme", "redis", "sochub-change-me", "CHANGE_ME"])
 def test_production_rejects_weak_redis_password(pw):
     with pytest.raises(ValueError, match="REDIS_URL"):
         _settings(REDIS_URL=f"redis://:{pw}@redis:6379/0")
 
 
-def test_production_rejects_default_db_password():
+@pytest.mark.parametrize("url", [DEV_DB, "postgresql+asyncpg://sochub:sochub-change-me@db:5432/sicms",
+                                 "postgresql+asyncpg://sochub:CHANGE_ME@db:5432/sochub"])
+def test_production_rejects_default_db_password(url):
     with pytest.raises(ValueError, match="DATABASE_URL"):
-        _settings(DATABASE_URL=DEV_DB)
+        _settings(DATABASE_URL=url)
 
 
 def test_debug_does_not_relax_production_guard():
@@ -65,3 +69,11 @@ def test_sql_echo_is_separate_from_debug():
 def test_login_throttle_settings_must_be_at_least_one(name):
     with pytest.raises(ValueError, match=name):
         _settings(**{name: 0})
+
+
+@pytest.mark.parametrize("name", ["PUBLIC_BASE_URL", "FRONTEND_URL"])
+@pytest.mark.parametrize("url", ["http://soc.example.com", "https://localhost", "http://localhost:80",
+                                 "https://127.0.0.1"])
+def test_production_requires_public_https_urls(name, url):
+    with pytest.raises(ValueError, match=name):
+        _settings(**{name: url})

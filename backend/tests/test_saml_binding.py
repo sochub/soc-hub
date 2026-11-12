@@ -227,6 +227,6 @@ def test_acs_without_saml_response_is_a_clean_refusal(monkeypatch):
         r = await c.post(f"/api/v1/auth/saml/{t.slug}/acs", data={"RelayState": "x"},
                          headers={"Cookie": f"{sso_mod.SAML_COOKIE}={bind}"})
         assert r.status_code == 303 and _err(r), r.text
-        assert unquote(r.headers["location"].split("#sso_error=", 1)[1]) == sso_mod.SSO_FAILED
+        assert unquote(r.headers["location"].split("#sso_error=", 1)[1]) == "failed"
         assert any(h.startswith(f'{sso_mod.SAML_COOKIE}=""') for h in r.headers.get_list("set-cookie"))
     _go(body)

@@ -4,6 +4,7 @@ API keys are write-only: responses, audit rows and log lines only ever say which
 import json
 import logging
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy import select
@@ -37,6 +38,14 @@ def _log(op, tid, outcome):
     logger.info("ti_config %s tenant=%s outcome=%s", op, tid, outcome)
 
 
+def _host_port(url: str):
+    try:
+        p = urlsplit(url)
+        return (p.hostname or "").lower(), p.port or (443 if p.scheme == "https" else 80)
+    except ValueError:
+        return None
+
+
 def _merge_misp(body, keys, key_error=False) -> bool:
     """Assemble the stored MISP triple from the three config fields, merging with what is stored."""
     if body.clear_misp:
@@ -45,11 +54,16 @@ def _merge_misp(body, keys, key_error=False) -> bool:
     if url is None and key is None and verify is None:
         return False
     cur = _misp_cfg(keys)
-    new = {"url": url or cur.get("url") or "", "key": key or cur.get("key") or "",
+    new_url = url or cur.get("url") or ""
+    # The stored key only carries over to the same host and port: otherwise an admin (or a hijacked admin session)
+    # could point the write-only key at a server of their choosing.
+    if key is None and cur.get("key") and _host_port(new_url) != _host_port(cur.get("url") or ""):
+        raise HTTPException(status_code=422, detail="the MISP API key is required again when the host or port changes")
+    new = {"url": new_url, "key": key or cur.get("key") or "",
            "verify": cur.get("verify", True) if verify is None else verify}
     if new == {"url": cur.get("url") or "", "key": cur.get("key") or "", "verify": cur.get("verify", True)}:
         return False
-    if (err := check_url(new["url"])):
+    if (err := check_url(new["url"], require_https=bool(new["key"]))):
         raise HTTPException(status_code=422, detail=err)
     keys["misp"] = json.dumps(new)
     return True

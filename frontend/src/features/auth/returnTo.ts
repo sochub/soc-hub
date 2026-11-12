@@ -1,11 +1,12 @@
-// Post-login return-to: only the OAuth consent screen is a valid destination, so a stored value can never
-// send the browser anywhere else (no open redirect via sessionStorage).
+// Post-login return-to: only the OAuth consent screen and an invitation link are valid destinations, so a
+// stored value can never send the browser anywhere else (no open redirect via sessionStorage).
 const KEY = 'return_to';
 
 export function safeReturnTo(v: string | null): string {
     if (typeof v === 'string' && v.startsWith('/oauth/consent?') && !v.includes('//') && !v.includes('\\')) {
         return v;
     }
+    if (typeof v === 'string' && /^\/invite\/[A-Za-z0-9_-]{1,128}$/.test(v)) return v;
     return '/';
 }
 

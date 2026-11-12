@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import secrets
@@ -37,6 +38,12 @@ _default_active_tenant_id = deps.default_active_tenant_id
 
 
 _DOMAIN_RE = re.compile(r"^[a-z0-9.-]{1,253}$")
+MAX_PASSWORD_LEN = 1024
+
+
+def _log_id(email: str) -> str:
+    """Log-safe login identity: the domain plus a short sha256 prefix of the address, never the address."""
+    return f"{_safe_domain(email) or '-'}#{hashlib.sha256(email.encode()).hexdigest()[:10]}"
 
 
 def _safe_domain(email: str) -> Optional[str]:
@@ -68,7 +75,8 @@ async def login_access_token(
     """OAuth2 compatible token login, get an access token for future requests."""
     email = form_data.username.strip().lower()
     ip = client_ip(request)
-    if len(email) > 320 or not _EMAIL_RE.match(email):
+    # Over-long passwords are refused before the throttle and Argon2 (no hashing DoS); same answer as bad creds.
+    if len(email) > 320 or not _EMAIL_RE.match(email) or len(form_data.password) > MAX_PASSWORD_LEN:
         await audit_event("security", "login.failed", request=request, outcome="denied",
                           changes={"email_domain": _safe_domain(email)})
         raise HTTPException(
@@ -81,7 +89,7 @@ async def login_access_token(
     # guesses can't all pass a check-then-act race.
     retry_after = await throttle.reserve(email, ip)
     if retry_after:
-        logger.warning("login throttled email=%r ip=%s retry_after=%ss", email[:64], ip, retry_after)
+        logger.warning("login throttled user=%s ip=%s retry_after=%ss", _log_id(email), ip, retry_after)
         await audit_event("security", "login.locked", request=request, outcome="denied",
                           tenant_id=await _login_tenant(db, email), changes={"email_domain": _safe_domain(email)})
         raise HTTPException(
@@ -97,15 +105,9 @@ async def login_access_token(
     password_ok = security.verify_password(
         form_data.password, user.hashed_password if user else _DUMMY_HASH
     )
-    reason = None
-    if not user:
-        reason = "unknown email"
-    elif not password_ok:
-        reason = "bad password"
-    elif not user.is_active:
-        reason = "inactive user"
-    if reason:
-        logger.warning("failed login email=%r ip=%s reason=%s", email[:64], ip, reason)
+    if not user or not password_ok or not user.is_active:
+        # One reason for every miss, and no full email in the logs (domain + short hash correlate attempts).
+        logger.warning("failed login user=%s ip=%s reason=denied", _log_id(email), ip)
         await audit_event("security", "login.failed", request=request, outcome="denied",
                           tenant_id=await _login_tenant(db, email), changes={"email_domain": _safe_domain(email)})
         raise HTTPException(

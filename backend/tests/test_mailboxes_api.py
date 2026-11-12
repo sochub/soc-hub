@@ -96,12 +96,17 @@ def test_crud_and_encryption():
         lst = await c.get("/api/v1/mailboxes/")
         assert [m["id"] for m in lst.json()] == [mid] and PW not in lst.text
 
-        # PUT without password keeps the old one
-        r = await c.put(f"/api/v1/mailboxes/{mid}", json={"name": "Renamed", "host": "h2.example.test",
-                                                         "username": "soc@example.test"})
+        # PUT without password keeps the old one (same server and account)
+        r = await c.put(f"/api/v1/mailboxes/{mid}", json={"name": "Renamed", "folder": "Phish"})
         assert r.status_code == 200, r.text
         assert r.json()["name"] == "Renamed" and r.json()["password_set"] is True
         assert (await _row(mid)).password_enc == old_enc
+        # N4: a new host, port or username without a password is refused; nothing changes
+        for change in ({"host": "h2.example.test"}, {"port": 1993}, {"username": "other@example.test"}):
+            r = await c.put(f"/api/v1/mailboxes/{mid}", json=change)
+            assert r.status_code == 422 and "password is required" in r.text, change
+        row = await _row(mid)
+        assert (row.host, row.port, row.username, row.password_enc) == ("imap.example.test", 993, "soc@example.test", old_enc)
         # PUT with password replaces it
         r = await c.put(f"/api/v1/mailboxes/{mid}", json=_body(password="new-pass-1"))
         assert decrypt((await _row(mid)).password_enc) == "new-pass-1"
@@ -231,8 +236,9 @@ def test_ssl_uses_verified_context_and_generic_errors(monkeypatch):
     ctx = seen["ssl_context"]
     assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
 
-    def tls(*a, **k): raise ssl.SSLError("cert for internal.corp invalid")
-    monkeypatch.setattr(imaplib, "IMAP4_SSL", tls)
+    class Tls:  # a class: the client is subclassed to pin the vetted IP
+        def __init__(self, *a, **k): raise ssl.SSLError("cert for internal.corp invalid")
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", Tls)
     assert email_intake.test_connection(_mb())["error"] == "TLS handshake failed"
 
 
@@ -248,3 +254,29 @@ def test_test_connection_scrubs_password(monkeypatch):
     mb = TenantMailbox(host="h", port=993, use_ssl=True, username="u", password_enc=encrypt(PW), folder="INBOX")
     res = email_intake.test_connection(mb)
     assert res == {"ok": False, "message_count": None, "error": "connection failed"}
+
+
+def test_imap_connects_to_vetted_ip_with_tls_name(monkeypatch):
+    """N4: the IMAP socket goes to the address the guard vetted; TLS still verifies the configured host name."""
+    import imaplib
+    from types import SimpleNamespace
+    from app.services import email_intake
+    seen = {}
+    monkeypatch.setattr(email_intake, "socket", SimpleNamespace(
+        getaddrinfo=lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))],
+        create_connection=lambda addr, timeout=None: seen.setdefault("addr", addr)))
+
+    class Ctx:
+        def wrap_socket(self, sock, server_hostname):
+            seen["sni"] = server_hostname
+            return sock
+
+    class Fake:
+        def __init__(self, host, port, ssl_context=None, timeout=None):
+            self.host, self.port, self.ssl_context = host, port, ssl_context
+            self._create_socket(timeout)
+            raise imaplib.IMAP4.error("stop")
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", Fake)
+    monkeypatch.setattr(email_intake.ssl, "create_default_context", lambda: Ctx())
+    email_intake.test_connection(_mb())
+    assert seen == {"addr": ("93.184.216.34", 993), "sni": "imap.example.test"}
