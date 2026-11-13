@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
+    JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text,
 )
 from sqlalchemy.sql import func
 
@@ -49,6 +49,9 @@ class EscalationTierGroup(Base):
 
 class CaseEscalation(Base):
     __tablename__ = "case_escalations"
+    # At most one pending escalation per case (concurrent escalates: the loser gets 409).
+    __table_args__ = (Index("uq_case_escalations_one_pending", "case_id", unique=True,
+                            postgresql_where=text("status = 'pending'")),)
 
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)

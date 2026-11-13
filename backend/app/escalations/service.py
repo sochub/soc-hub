@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional, Set
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.escalations import events
 from app.models.case import Case, TimelineEvent
@@ -116,6 +117,15 @@ async def _member_groups(db, tenant_id: int, user_id: Optional[int], group_ids: 
                TenantMembership.user_id == user_id, User.is_active.is_(True)))).scalars().all())
 
 
+async def _live(db, model, tenant_id: int, ids: Iterable[Optional[int]]) -> Set[int]:
+    """Ids (of UserGroup / EscalationTier) that still exist in the live policy; snapshots may name deleted ones."""
+    ids = [i for i in ids if i]
+    if not ids:
+        return set()
+    return set((await db.execute(select(model.id).where(model.tenant_id == tenant_id, model.id.in_(ids))))
+               .scalars().all())
+
+
 def _person(u: Optional[User]) -> Optional[dict]:
     return {"email": u.email, "name": u.full_name} if u else None
 
@@ -163,7 +173,12 @@ async def _open(db, case: Case, *, tiers: list, to: dict, to_tier_id: Optional[i
         summary=summary, requested_help=requested_help, status="pending",
         due_at=_now() + timedelta(minutes=timeout) if timeout else None,
         policy_snapshot={"tiers": tiers, "to": to, "from": frm})
-    db.add(row)
+    try:
+        async with db.begin_nested():  # a lost race trips uq_case_escalations_one_pending; keep the outer txn usable
+            db.add(row)
+            await db.flush()
+    except IntegrityError:
+        raise EscalationError(409, "Case already has a pending escalation") from None
     case.owner_id = None
     await db.flush()
     return row
@@ -178,21 +193,24 @@ async def escalate(db, *, case: Case, actor_id: int, to_tier_id: int, to_group_i
                    requested_help: str) -> CaseEscalation:
     reason, summary = _text(reason, "Reason"), _text(summary, "Summary")
     requested_help = _text(requested_help, "Requested help")
-    tiers = (await snapshot_policy(db, case.tenant_id))["tiers"]
+    # A pending row means the chain is still open: validate against, and keep, the chain's snapshot.
+    pending = await _locked(db, case)
+    tiers = pending.policy_snapshot["tiers"] if pending else (await snapshot_policy(db, case.tenant_id))["tiers"]
     if not tiers:
         raise EscalationError(422, "No escalation policy is configured")
     tier = _tier(tiers, id=to_tier_id)
     if tier is None:
         raise EscalationError(422, "Unknown tier")
-    cur = await current_position(db, case)
+    cur = pending.policy_snapshot["to"]["position"] if pending else await current_position(db, case)
     if tier["position"] <= cur:
         raise EscalationError(422, "Escalate to a tier above the current one")
     if to_group_id not in [g["id"] for g in tier["groups"]]:
         raise EscalationError(422, "That group is not on the selected tier")
+    if not await _live(db, UserGroup, case.tenant_id, [to_group_id]):
+        raise EscalationError(422, "That group no longer exists")
     to = _hop(tiers, tier["position"], to_group_id)
 
-    pending = await _locked(db, case)
-    if pending is not None:
+    if pending is not None:  # closed (flushed) before the new pending row is inserted
         await _close(db, case, pending, "superseded", actor_id, None, "case_escalation_superseded",
                      f"Escalation to {_label(pending.policy_snapshot['to'])} superseded by a new escalation", to)
 
@@ -200,13 +218,16 @@ async def escalate(db, *, case: Case, actor_id: int, to_tier_id: int, to_group_i
     from_tier = _tier(tiers, position=cur)
     from_group_id = None
     if from_tier and from_tier["groups"]:
-        gids = [g["id"] for g in from_tier["groups"]]
+        live = await _live(db, UserGroup, case.tenant_id, [g["id"] for g in from_tier["groups"]])
+        gids = [g["id"] for g in from_tier["groups"] if g["id"] in live]
         mine = await _member_groups(db, case.tenant_id, actor_id, gids)
-        from_group_id = next((g for g in gids if g in mine), gids[0])
+        from_group_id = next((g for g in gids if g in mine), gids[0] if gids else None)
     frm = _hop(tiers, cur, from_group_id)
+    live_tiers = await _live(db, EscalationTier, case.tenant_id, [tier["id"], from_tier["id"] if from_tier else None])
 
-    row = await _open(db, case, tiers=tiers, to=to, to_tier_id=tier["id"], frm=frm,
-                      from_tier_id=from_tier["id"] if from_tier else None, from_group_id=from_group_id,
+    row = await _open(db, case, tiers=tiers, to=to, to_tier_id=tier["id"] if tier["id"] in live_tiers else None,
+                      frm=frm, from_tier_id=from_tier["id"] if from_tier and from_tier["id"] in live_tiers else None,
+                      from_group_id=from_group_id,
                       requested_by=actor_id, reason=reason, summary=summary, requested_help=requested_help)
     await _record(db, case, row, actor_id, "case_escalated", f"Escalated to {_label(to)} — {reason}",
                   frm, to, None, None)
@@ -240,8 +261,7 @@ async def redirect(db, *, case: Case, actor_id: int, to_group_id: int, note: str
     if (tier is None or to_group_id == row.to_group_id
             or to_group_id not in [g["id"] for g in tier["groups"]]):
         raise EscalationError(422, "Redirect to another group on the same tier")
-    if (await db.execute(select(UserGroup.id).where(UserGroup.id == to_group_id,
-                                                    UserGroup.tenant_id == case.tenant_id))).first() is None:
+    if not await _live(db, UserGroup, case.tenant_id, [to_group_id]):
         raise EscalationError(422, "That group no longer exists")
     to = _hop(snap["tiers"], snap["to"]["position"], to_group_id)
     await _close(db, case, row, "redirected", actor_id, note, "case_escalation_redirected",

@@ -68,14 +68,14 @@ async def _scenario(emitted):
             await db.flush()
             for t, g in ((t1, "G1"), (t2, "G2"), (t2, "G2b"), (t3, "G3")):
                 db.add(EscalationTierGroup(tier_id=t.id, group_id=gs[g].id))
-            cases = [Case(title=f"c{i}", tenant_id=T, owner_id=us["l1"].id) for i in range(8)]
+            cases = [Case(title=f"c{i}", tenant_id=T, owner_id=us["l1"].id) for i in range(10)]
             db.add_all(cases)
             await db.flush()
             ids["cases"] += [c.id for c in cases]
             await db.commit()
             U = {n: u.id for n, u in us.items()}
             G = {n: g.id for n, g in gs.items()}
-            c1, c2, c3, c4, c5, c6, c7, c8 = cases
+            c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = cases
             t2_id, c8_id = t2.id, c8.id
 
             # snapshot shape
@@ -246,6 +246,50 @@ async def _scenario(emitted):
             assert r10.status == "cancelled" and r10.to_tier_id is None
             assert [(e[1], e[3]["escalation"]["tier"]["name"]) for e in emitted] == [("case.escalation_closed", "Tier 2")]
             await esc.on_case_closed(db, case=c6, actor_id=U["l1"])  # no-op
+
+            # (13) re-escalating a pending case validates against, and keeps, the chain's snapshot
+            r13 = await esc.escalate(db, case=c9, actor_id=U["l1"], to_tier_id=t2.id, to_group_id=G["G2"], **TEXTS)
+            await db.commit()
+            # live edit: swap tiers 2/3, rename tier 3, move G3 off it and G2b onto it
+            await db.execute(update(EscalationTier).where(EscalationTier.id == t2.id).values(position=3))
+            await db.execute(update(EscalationTier).where(EscalationTier.id == t3.id).values(position=2, name="Renamed"))
+            await db.execute(delete(EscalationTierGroup).where(EscalationTierGroup.tier_id == t3.id))
+            db.add(EscalationTierGroup(tier_id=t3.id, group_id=G["G2b"]))
+            await db.commit()
+            await _raises(422, esc.escalate(db, case=c9, actor_id=U["out"], to_tier_id=t3.id, to_group_id=G["G2b"], **TEXTS))
+            r13b = await esc.escalate(db, case=c9, actor_id=U["l2a"], to_tier_id=t3.id, to_group_id=G["G3"], **TEXTS)
+            await db.commit()
+            assert r13b.policy_snapshot["tiers"] == r13.policy_snapshot["tiers"], "chain snapshot kept"
+            assert r13b.policy_snapshot["to"]["tier_name"] == "Tier 3" and r13b.policy_snapshot["to"]["position"] == 3
+            assert r13b.from_tier_id == t2.id and r13b.from_group_id == G["G2"], "from resolved in the chain frame"
+            await db.refresh(r13)
+            assert r13.status == "superseded"
+            # restore the live policy
+            await db.execute(update(EscalationTier).where(EscalationTier.id == t2.id).values(position=2))
+            await db.execute(update(EscalationTier).where(EscalationTier.id == t3.id).values(position=3, name="Tier 3"))
+            await db.execute(delete(EscalationTierGroup).where(EscalationTierGroup.tier_id == t3.id))
+            db.add(EscalationTierGroup(tier_id=t3.id, group_id=G["G3"]))
+            await db.commit()
+
+            # (14) concurrent escalates on a case with nothing pending -> one pending row, the other 409
+            async def escalate_as(uid):
+                async with AsyncSessionLocal() as s:
+                    case = await s.get(Case, c10.id)
+                    try:
+                        await esc.escalate(s, case=case, actor_id=uid, to_tier_id=t2.id, to_group_id=G["G2"], **TEXTS)
+                        await s.commit()
+                        return "ok"
+                    except EscalationError as e:
+                        await s.rollback()
+                        return e.status_code
+            esc._member_groups = slow_member_groups  # both pass validation before either inserts
+            try:
+                results = await asyncio.gather(escalate_as(U["l1"]), escalate_as(U["out"]))
+            finally:
+                esc._member_groups = real_member_groups
+            assert sorted(results, key=str) == [409, "ok"], results
+            pend = (await db.execute(select(CaseEscalation).where(CaseEscalation.case_id == c10.id))).scalars().all()
+            assert [r.status for r in pend] == ["pending"], [r.status for r in pend]
 
             # (11) rolled-back session emits nothing
             emitted.clear()

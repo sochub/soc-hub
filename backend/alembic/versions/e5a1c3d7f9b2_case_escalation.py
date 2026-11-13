@@ -71,6 +71,8 @@ def upgrade() -> None:
     op.create_index("ix_case_escalations_case_id", "case_escalations", ["case_id"])
     op.create_index("ix_case_escalations_status", "case_escalations", ["status"])
     op.create_index("ix_case_escalations_due_at", "case_escalations", ["due_at"])
+    op.create_index("uq_case_escalations_one_pending", "case_escalations", ["case_id"], unique=True,
+                    postgresql_where=sa.text("status = 'pending'"))
     op.create_table(
         "escalation_integrations",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -89,6 +91,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("notifications", "escalation_id")
     op.drop_table("escalation_integrations")
+    op.drop_index("uq_case_escalations_one_pending", table_name="case_escalations")
     op.drop_index("ix_case_escalations_due_at", table_name="case_escalations")
     op.drop_index("ix_case_escalations_status", table_name="case_escalations")
     op.drop_index("ix_case_escalations_case_id", table_name="case_escalations")
