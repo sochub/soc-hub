@@ -3,8 +3,9 @@ from sqlalchemy.sql import func
 
 from app.db.base_class import Base
 
-NOTIFICATION_TYPES = ("mention", "assigned", "comment", "status_change", "severity_change", "sla_breach")
-EXTERNAL_TYPES = ("mention", "assigned", "sla_breach")
+NOTIFICATION_TYPES = ("mention", "assigned", "comment", "status_change", "severity_change", "sla_breach",
+                      "escalated", "escalation_overdue", "escalation_returned")
+EXTERNAL_TYPES = ("mention", "assigned", "sla_breach", "escalated", "escalation_overdue", "escalation_returned")
 
 
 class Notification(Base):
@@ -18,6 +19,7 @@ class Notification(Base):
     type = Column(String(32), nullable=False)
     actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     timeline_event_id = Column(Integer, ForeignKey("timeline_events.id", ondelete="SET NULL"), nullable=True)
+    escalation_id = Column(Integer, ForeignKey("case_escalations.id", ondelete="SET NULL"), nullable=True)
     summary = Column(String(200), nullable=False)
     read_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
