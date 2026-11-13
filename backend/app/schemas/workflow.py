@@ -3,7 +3,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-TriggerType = Literal["case.created", "case.updated", "alert.ingested", "manual", "schedule", "email.received"]
+TriggerType = Literal["case.created", "case.updated", "alert.ingested", "manual", "schedule", "email.received",
+                      "case.escalated", "case.escalation_closed"]
 
 
 class WorkflowIn(BaseModel):

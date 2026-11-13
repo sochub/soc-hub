@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.case import Case
+from app.models.escalation import UserGroupMember
 from app.models.membership import TenantMembership
 from app.models.notification import EXTERNAL_TYPES, CaseFollower, Notification
 from app.models.user import User
@@ -69,7 +70,7 @@ def _add(db, case: Case, user_id: int, type_: str, summary: str, actor_id, event
     return n
 
 
-async def _guarded(db, case: Case, type_: str, body) -> None:
+async def _guarded(db, case: Case, type_: str, body) -> list:
     created = []
     await db.flush()  # a caller's own flush failure must not be mislabelled as a notification failure
     try:
@@ -78,10 +79,11 @@ async def _guarded(db, case: Case, type_: str, body) -> None:
             await db.flush()
     except Exception as e:  # never block the triggering action
         logger.warning("notification write failed case=%s type=%s err=%s", case.id, type_, type(e).__name__)
-        return
+        return []
     ext = [n.id for n in created if n.type in EXTERNAL_TYPES]
     if ext:
         db.info.setdefault("notif_external", []).extend(ext)
+    return created
 
 
 async def follow(db, case: Case, user_id: int) -> None:
@@ -162,3 +164,24 @@ async def on_sla_breach(db, case: Case, breach_type: str) -> None:
         label = "response" if breach_type == "response" else "resolution"
         return [_add(db, case, u, "sla_breach", f"Case #{case.id} breached its {label} SLA", None) for u in users]
     await _guarded(db, case, "sla_breach", body)
+
+
+async def on_escalation(db, case: Case, row, type_: str, summary: str, actor_id: Optional[int]) -> list:
+    """One notification per active member of the row's receiving group, except the actor."""
+    async def body():
+        if not row.to_group_id:
+            return []
+        users = (await db.execute(
+            select(TenantMembership.user_id)
+            .join(UserGroupMember, UserGroupMember.membership_id == TenantMembership.id)
+            .join(User, User.id == TenantMembership.user_id)
+            .where(UserGroupMember.group_id == row.to_group_id, TenantMembership.tenant_id == case.tenant_id,
+                   User.is_active.is_(True)).order_by(TenantMembership.user_id))).scalars().all()
+        out = []
+        for u in users:
+            if u != actor_id:
+                n = _add(db, case, u, type_, summary, actor_id)
+                n.escalation_id = row.id
+                out.append(n)
+        return out
+    return await _guarded(db, case, type_, body)
