@@ -5,22 +5,27 @@ Each row carries `policy_snapshot = {"tiers": [...], "to": hop, "from": hop}` wh
 policy (their FKs on the row are SET NULL). Every transition writes a case activity entry, an audit entry, and
 stashes a workflow event that is emitted after commit (app/escalations/events.py).
 """
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional, Set
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.db.session import AsyncSessionLocal
 from app.escalations import events
 from app.models.case import Case, TimelineEvent
 from app.models.escalation import CaseEscalation, EscalationTier, EscalationTierGroup, UserGroup, UserGroupMember
 from app.models.membership import TenantMembership
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.notifications.delivery import _link as case_url
 from app.notifications.service import on_escalation
 from app.utils.audit import create_audit_log
 
 MAX_TEXT = 4000
+SWEEP_BATCH = 500
+logger = logging.getLogger(__name__)
 
 
 class EscalationError(Exception):
@@ -368,4 +373,80 @@ async def history(db, case: Case) -> list:
                     "from_group_name": frm.get("group_name"), "reason": r.reason, "summary": r.summary,
                     "requested_help": r.requested_help, "accepted_via": r.accepted_via,
                     "closed_by_name": names.get(r.closed_by), "closed_at": r.closed_at, "close_note": r.close_note})
+    return out
+
+
+async def _climb_target(db, tenant_id: int, snap: dict) -> Optional[tuple]:
+    """(tier, group_id) of the next snapshot tier above the row's with a group that still exists, else None."""
+    for tier in sorted((t for t in snap["tiers"] if t["position"] > snap["to"]["position"]),
+                       key=lambda t: t["position"]):
+        live = await _live(db, UserGroup, tenant_id, [g["id"] for g in tier["groups"]])
+        gid = next((g["id"] for g in tier["groups"] if g["id"] in live), None)
+        if gid is not None:
+            return tier, gid
+    return None
+
+
+async def _sweep_one(db, row_id: int, now: datetime) -> Optional[str]:
+    """Act on one due pending row in the caller's transaction: 'climbed', 'overdue' or None (nothing to do)."""
+    row = (await db.execute(
+        select(CaseEscalation).where(CaseEscalation.id == row_id, CaseEscalation.status == "pending",
+                                     CaseEscalation.due_at.isnot(None), CaseEscalation.due_at < now,
+                                     CaseEscalation.overdue_notified.is_(False))
+        .with_for_update(skip_locked=True).execution_options(populate_existing=True))).scalars().first()
+    if row is None:
+        return None
+    if (await db.execute(select(Tenant.id).where(Tenant.id == row.tenant_id, Tenant.is_active.is_(False)))).first():
+        return None
+    case = await db.get(Case, row.case_id)
+    if case is None or case.tenant_id != row.tenant_id:
+        return None
+    snap = row.policy_snapshot
+    target = await _climb_target(db, case.tenant_id, snap)
+    if target is None:  # last tier (or every higher group is gone): tell the group once
+        row.overdue_notified = True
+        await db.flush()
+        await on_escalation(db, case, row, "escalation_overdue",
+                            f"Escalation of case #{case.id} to {_label(snap['to'])} is overdue", None)
+        return "overdue"
+    tier, group_id = target
+    cur = _tier(snap["tiers"], position=snap["to"]["position"])
+    note = f"not accepted within {cur['accept_timeout_minutes']} min" if cur else "not accepted in time"
+    to = _hop(snap["tiers"], tier["position"], group_id)
+    await _close(db, case, row, "climbed", None, note, "case_escalation_climbed",
+                 f"Escalation to {_label(snap['to'])} {note}; climbed to {_label(to)}", to)
+    live_tiers = await _live(db, EscalationTier, case.tenant_id, [tier["id"]])
+    new = await _open(db, case, tiers=snap["tiers"], to=to, to_tier_id=tier["id"] if tier["id"] in live_tiers else None,
+                      frm=snap["to"], from_tier_id=row.to_tier_id, from_group_id=row.to_group_id,
+                      requested_by=row.requested_by, reason=row.reason, summary=row.summary,
+                      requested_help=row.requested_help)
+    await _announce(db, case, new, None, "escalated", f"Case #{case.id} escalated to {_label(to)} (not accepted in time)")
+    return "climbed"
+
+
+async def sweep(now: Optional[datetime] = None, case_ids: Optional[list] = None) -> dict:
+    """Climb pending escalations whose accept timeout passed; notify once when there is nowhere higher to go.
+
+    Each row runs in its own session and transaction (FOR UPDATE SKIP LOCKED), so one failure never aborts the batch.
+    Workflow events are emitted by the after-commit hook of each session. At most SWEEP_BATCH rows per call.
+    """
+    now = now or _now()
+    q = (select(CaseEscalation.id).join(Tenant, Tenant.id == CaseEscalation.tenant_id)
+         .where(CaseEscalation.status == "pending", CaseEscalation.due_at.isnot(None), CaseEscalation.due_at < now,
+                CaseEscalation.overdue_notified.is_(False), Tenant.is_active.isnot(False))
+         .order_by(CaseEscalation.due_at, CaseEscalation.id).limit(SWEEP_BATCH))
+    if case_ids is not None:
+        q = q.where(CaseEscalation.case_id.in_(case_ids))
+    async with AsyncSessionLocal() as db:
+        ids = (await db.execute(q)).scalars().all()
+    out = {"climbed": [], "overdue": []}
+    for row_id in ids:
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await _sweep_one(db, row_id, now)
+                await db.commit()
+            if result:
+                out[result].append(row_id)
+        except Exception as e:
+            logger.warning("escalation sweep failed row=%s err=%s", row_id, type(e).__name__)
     return out
