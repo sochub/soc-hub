@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.escalations import service as esc
 from app.guests import notify as guest_notify
 from app.models.artifact import Artifact, ArtifactType
 from app.models.artifact_type_definition import ArtifactTypeDefinition
@@ -112,6 +113,12 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
         db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="severity_change",
                              content=f"Severity changed from {changes['severity']['from']} to {changes['severity']['to']}"
                              + (f" — {reason}" if reason else "")))
+
+    # Escalation sits beside owner_id: assigning an owner accepts a pending escalation, closing cancels it.
+    if "owner_id" in changes and case.owner_id is not None:
+        await esc.on_owner_set(db, case=case, new_owner_id=case.owner_id, actor_id=user_id)
+    if "status" in changes and update_data["status"] in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
+        await esc.on_case_closed(db, case=case, actor_id=user_id)
 
     if changes:
         await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="update",

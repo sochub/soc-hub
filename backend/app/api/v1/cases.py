@@ -8,6 +8,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.audit.context import audit_read
+from app.escalations import service as esc
 from app.api import deps
 from app.models.case import Case, CaseStatus, TimelineEvent
 from app.models.membership import TenantMembership
@@ -48,6 +49,9 @@ async def _attach_sla(db: AsyncSession, tenant_id: int, cases: List[Case]) -> Li
         case.sla_resolution_due_at = state["resolution_due_at"]
         case.sla_overall_status = state["overall_status"]
     await _attach_war_room(db, tenant_id, cases)
+    summaries = await esc.case_summaries(db, tenant_id, [c.id for c in cases])
+    for case in cases:
+        case.escalation = summaries.get(case.id)
     return cases
 
 

@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -70,3 +71,61 @@ class TierOut(BaseModel):
 
 class PolicyOut(BaseModel):
     tiers: List[TierOut]
+
+
+class EscalationSummary(BaseModel):
+    """A case's open escalation (pending or accepted), embedded in the case read schema."""
+    id: int
+    status: str
+    tier_position: int
+    tier_name: str
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+    requested_by_name: Optional[str] = None
+    requested_at: datetime
+    due_at: Optional[datetime] = None
+    accepted_by_name: Optional[str] = None
+    accepted_at: Optional[datetime] = None
+
+
+class EscalateIn(BaseModel):
+    to_tier_id: int
+    to_group_id: int
+    reason: str = ""
+    summary: str = ""
+    requested_help: str = ""
+
+
+class RedirectIn(BaseModel):
+    to_group_id: int
+    note: str = ""
+
+
+class NoteIn(BaseModel):
+    note: Optional[str] = None
+
+
+class HistoryRow(EscalationSummary):
+    from_tier_name: Optional[str] = None
+    from_group_name: Optional[str] = None
+    reason: str
+    summary: str
+    requested_help: str
+    accepted_via: Optional[str] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    close_note: Optional[str] = None
+
+
+class QueueRow(BaseModel):
+    id: int
+    case_id: int
+    case_title: str
+    severity: str
+    tier_position: int
+    tier_name: str
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+    requested_by_name: Optional[str] = None
+    created_at: datetime
+    due_at: Optional[datetime] = None

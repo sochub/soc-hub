@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -6,11 +7,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.escalations import service as svc
+from app.escalations.service import EscalationError
+from app.models.case import Case
 from app.models.escalation import (
     CaseEscalation, EscalationTier, EscalationTierGroup, UserGroup, UserGroupMember,
 )
 from app.models.membership import TenantMembership
 from app.models.user import User
+from app.schemas.escalation import (
+    EscalateIn, HistoryRow, NoteIn, QueueRow, RedirectIn,
+)
 from app.schemas.escalation import GroupIn, GroupMemberOut, GroupOut, PolicyIn, PolicyOut, TierOut
 from app.utils.account_guard import assert_super_admin_may_bootstrap
 from app.utils.audit import create_audit_log
@@ -192,3 +199,101 @@ async def put_policy(body: PolicyIn, request: Request, db: AsyncSession = Depend
                            {"before": before, "after": after})
     await db.commit()
     return await _policy(db, tenant_id)
+
+
+# ── Case escalation actions ──────────────────────────────────────
+
+async def _case(db: AsyncSession, tenant_id: int, case_id: int) -> Case:
+    case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalars().first()
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+async def _act(db: AsyncSession, case: Case, coro) -> HistoryRow:
+    """Run a service transition and commit; a refused one is rolled back whole (e.g. a failed supersede)."""
+    try:
+        row = await coro
+        await db.commit()
+    except EscalationError as e:
+        await db.rollback()
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+    return next(h for h in await svc.history(db, case) if h["id"] == row.id)
+
+
+@router.post("/cases/{case_id}/escalate", response_model=HistoryRow)
+async def escalate_case(case_id: int, body: EscalateIn, db: AsyncSession = Depends(deps.get_db),
+                        tenant_id: int = Depends(deps.get_effective_tenant_id),
+                        user: User = Depends(deps.require_analyst_or_above)):
+    case = await _case(db, tenant_id, case_id)
+    return await _act(db, case, svc.escalate(
+        db, case=case, actor_id=user.id, to_tier_id=body.to_tier_id, to_group_id=body.to_group_id,
+        reason=body.reason, summary=body.summary, requested_help=body.requested_help))
+
+
+@router.post("/cases/{case_id}/accept", response_model=HistoryRow)
+async def accept_case(case_id: int, db: AsyncSession = Depends(deps.get_db),
+                      tenant_id: int = Depends(deps.get_effective_tenant_id),
+                      user: User = Depends(deps.require_analyst_or_above)):
+    case = await _case(db, tenant_id, case_id)
+    is_admin = deps._active_role(user) in ("admin", "super_admin")
+    return await _act(db, case, svc.accept(db, case=case, actor_id=user.id, is_admin=is_admin))
+
+
+@router.post("/cases/{case_id}/redirect", response_model=HistoryRow)
+async def redirect_case(case_id: int, body: RedirectIn, db: AsyncSession = Depends(deps.get_db),
+                        tenant_id: int = Depends(deps.get_effective_tenant_id),
+                        user: User = Depends(deps.require_analyst_or_above)):
+    case = await _case(db, tenant_id, case_id)
+    return await _act(db, case, svc.redirect(db, case=case, actor_id=user.id, to_group_id=body.to_group_id,
+                                             note=body.note))
+
+
+@router.post("/cases/{case_id}/return", response_model=HistoryRow)
+async def return_case(case_id: int, body: NoteIn, db: AsyncSession = Depends(deps.get_db),
+                      tenant_id: int = Depends(deps.get_effective_tenant_id),
+                      user: User = Depends(deps.require_analyst_or_above)):
+    case = await _case(db, tenant_id, case_id)
+    return await _act(db, case, svc.return_down(db, case=case, actor_id=user.id, note=body.note or ""))
+
+
+@router.post("/cases/{case_id}/withdraw", response_model=HistoryRow)
+async def withdraw_case(case_id: int, body: NoteIn, db: AsyncSession = Depends(deps.get_db),
+                        tenant_id: int = Depends(deps.get_effective_tenant_id),
+                        user: User = Depends(deps.require_analyst_or_above)):
+    case = await _case(db, tenant_id, case_id)
+    return await _act(db, case, svc.withdraw(db, case=case, actor_id=user.id, note=body.note))
+
+
+@router.get("/cases/{case_id}/history", response_model=List[HistoryRow])
+async def case_history(case_id: int, db: AsyncSession = Depends(deps.get_db),
+                       tenant_id: int = Depends(deps.get_effective_tenant_id),
+                       _user: User = Depends(deps.require_analyst_or_above)):
+    return await svc.history(db, await _case(db, tenant_id, case_id))
+
+
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+@router.get("/queue", response_model=List[QueueRow])
+async def queue(db: AsyncSession = Depends(deps.get_db), tenant_id: int = Depends(deps.get_effective_tenant_id),
+                user: User = Depends(deps.require_analyst_or_above)):
+    """Pending escalations waiting on a group the caller belongs to, most severe then most overdue first."""
+    mine = select(UserGroupMember.group_id).join(
+        TenantMembership, TenantMembership.id == UserGroupMember.membership_id).where(
+        TenantMembership.user_id == user.id, TenantMembership.tenant_id == tenant_id)
+    rows = (await db.execute(
+        select(CaseEscalation, Case.title, Case.severity).join(Case, Case.id == CaseEscalation.case_id)
+        .where(CaseEscalation.tenant_id == tenant_id, Case.tenant_id == tenant_id,
+               CaseEscalation.status == "pending", CaseEscalation.to_group_id.in_(mine)))).all()
+    names = await svc._names(db, [r.requested_by for r, _, _ in rows])
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    out = []
+    for r, title, sev in rows:
+        sev = getattr(sev, "value", sev)
+        s = svc._summary(r, names)
+        out.append((_SEVERITY_RANK.get(sev, 5), r.due_at or far, r.id, QueueRow(
+            id=r.id, case_id=r.case_id, case_title=title, severity=sev, tier_position=s["tier_position"],
+            tier_name=s["tier_name"], group_id=s["group_id"], group_name=s["group_name"],
+            requested_by_name=s["requested_by_name"], created_at=r.created_at, due_at=r.due_at)))
+    return [q for *_, q in sorted(out, key=lambda t: t[:3])]

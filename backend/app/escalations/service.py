@@ -322,3 +322,50 @@ async def on_case_closed(db, *, case: Case, actor_id: Optional[int]) -> None:
     if row is not None:
         await _close(db, case, row, "cancelled", actor_id, None, "case_escalation_cancelled",
                      "Escalation cancelled: case closed")
+
+
+def _name(u: Optional[User]) -> Optional[str]:
+    return (u.full_name or u.email) if u else None
+
+
+async def _names(db, ids: Iterable[Optional[int]]) -> dict:
+    ids = {i for i in ids if i}
+    if not ids:
+        return {}
+    return {u.id: _name(u) for u in (await db.execute(select(User).where(User.id.in_(ids)))).scalars().all()}
+
+
+def _summary(row: CaseEscalation, names: dict) -> dict:
+    to = row.policy_snapshot["to"]
+    return {"id": row.id, "status": row.status, "tier_position": to["position"], "tier_name": to["tier_name"],
+            "group_id": to["group_id"], "group_name": to["group_name"],
+            "requested_by_name": names.get(row.requested_by), "requested_at": row.created_at, "due_at": row.due_at,
+            "accepted_by_name": names.get(row.accepted_by), "accepted_at": row.accepted_at}
+
+
+async def case_summaries(db, tenant_id: int, case_ids: list) -> dict:
+    """{case_id: summary} for cases whose latest escalation is pending/accepted. Two queries, any number of cases."""
+    if not case_ids:
+        return {}
+    rows = (await db.execute(
+        select(CaseEscalation).where(CaseEscalation.tenant_id == tenant_id, CaseEscalation.case_id.in_(case_ids))
+        .distinct(CaseEscalation.case_id).order_by(CaseEscalation.case_id, CaseEscalation.id.desc()))).scalars().all()
+    rows = [r for r in rows if r.status in ("pending", "accepted")]
+    names = await _names(db, [i for r in rows for i in (r.requested_by, r.accepted_by)])
+    return {r.case_id: _summary(r, names) for r in rows}
+
+
+async def history(db, case: Case) -> list:
+    """Every hop for the case, newest first, with actor names."""
+    rows = (await db.execute(select(CaseEscalation).where(
+        CaseEscalation.case_id == case.id, CaseEscalation.tenant_id == case.tenant_id)
+        .order_by(CaseEscalation.id.desc()))).scalars().all()
+    names = await _names(db, [i for r in rows for i in (r.requested_by, r.accepted_by, r.closed_by)])
+    out = []
+    for r in rows:
+        frm = r.policy_snapshot.get("from") or {}
+        out.append({**_summary(r, names), "from_tier_name": frm.get("tier_name"),
+                    "from_group_name": frm.get("group_name"), "reason": r.reason, "summary": r.summary,
+                    "requested_help": r.requested_help, "accepted_via": r.accepted_via,
+                    "closed_by_name": names.get(r.closed_by), "closed_at": r.closed_at, "close_note": r.close_note})
+    return out
