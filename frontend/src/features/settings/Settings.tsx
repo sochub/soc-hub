@@ -365,6 +365,7 @@ export default function Settings() {
     const save = useMutation({
         mutationFn: async () => (await api.put('/tenants/sso-config', {
             ...form,
+            groups_claim: form.groups_claim.trim() || 'groups',
             allowed_email_domains: form.allowed_email_domains.split(/[\s,]+/).map(d => d.trim()).filter(Boolean),
         })).data as SSOConfig,
         onSuccess: () => {
@@ -423,6 +424,11 @@ export default function Settings() {
                                     </label>
                                     <p className="text-[11px] text-fg-3 mt-1">Guest sign-in is set in the Case guests section below.</p>
                                 </div>
+                                {field('groups claim / attribute', 'groups_claim', 'groups')}
+                                <p className="text-[11px] text-fg-3 -mt-2">
+                                    Name of the SAML attribute or OIDC claim carrying the user's groups, used to sync escalation
+                                    groups at sign-in. If the IdP omits it, memberships are left unchanged.
+                                </p>
                                 <p className="label-mono">// saml</p>
                                 <p className="label-mono">// identity provider (from your idp)</p>
                                 {field('idp entity id', 'idp_entity_id', 'https://idp.example.com/entityid')}
@@ -453,11 +459,6 @@ export default function Settings() {
                                 {field('client id', 'oidc_client_id', '')}
                                 {field('client secret', 'oidc_client_secret', cfg?.has_oidc_client_secret ? 'saved (leave blank to keep)' : '', 'password')}
                                 {field('scopes', 'oidc_scopes', 'openid email profile')}
-                                {field('groups claim / attribute', 'groups_claim', 'groups')}
-                                <p className="text-[11px] text-fg-3 -mt-2">
-                                    Name of the SAML attribute or OIDC claim carrying the user's groups, used to sync escalation
-                                    groups at sign-in. If the IdP omits it, memberships are left unchanged.
-                                </p>
                                 <div className="flex items-center gap-4 flex-wrap">
                                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                         <input type="checkbox" checked={form.auto_provision}

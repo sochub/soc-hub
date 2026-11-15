@@ -410,6 +410,7 @@ async def _finish_member_sso(request: Request, db: AsyncSession, tenant: Tenant,
 
     await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="sso_login",
                            tenant_id=tenant.id, user_id=user.id, changes={"protocol": amr})
+    await db.flush()  # an earlier flush failure must not be mislogged as a sync failure
     try:  # IdP-authoritative group sync; in a savepoint so a failure can't poison the login transaction
         async with db.begin_nested():
             await sync_user_groups(db, tenant_id=tenant.id, user_id=user.id, idp_groups=idp_groups)

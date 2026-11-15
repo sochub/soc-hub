@@ -24,7 +24,10 @@ from tests.test_oidc_login import (
 
 def test_oidc_claim_parsing():
     assert oidc_groups({"groups": ["a", "b", 3, None]}, "groups") == ["a", "b"]
-    assert oidc_groups({"groups": "a, b  c"}, "groups") == ["a", "b", "c"]
+    assert oidc_groups({"groups": "a, b c"}, "groups") == ["a", "b c"]
+    assert oidc_groups({"groups": "CN=SOC,OU=G,DC=x"}, "groups") == ["CN=SOC,OU=G,DC=x"]
+    assert oidc_groups({"_claim_names": 1, "groups": ["a"]}, "groups") == ["a"]
+    assert oidc_groups({"_claim_names": ["groups"]}, "groups") is None
     assert oidc_groups({}, "groups") is None
     assert oidc_groups({"groups": 5}, "groups") is None
     assert oidc_groups({"roles": ["x"]}, "roles") == ["x"]
@@ -286,4 +289,18 @@ def test_saml_acs_syncs_groups(monkeypatch):
         await c.post(f"/api/v1/auth/saml/{t.slug}/acs", data={"SAMLResponse": "x"})
         async with AsyncSessionLocal() as db:
             assert await _members(db, gid) == set()
+    _go(body)
+
+
+def test_malformed_claim_names_never_blocks_login(monkeypatch):
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _oidc_tenant(db, ids)
+            u = await _member(db, ids, "an", [t])
+            gid = await _group(db, t, ["x"])
+        idp = FakeIdP(monkeypatch)
+        idp.email = u.email
+        idp.claims = {"_claim_names": 1, "groups": ["x"]}
+        r = await _flow(c, idp, t.slug)
+        assert r.status_code == 303 and r.headers["location"].endswith("#sso=ok")
     _go(body)

@@ -37,7 +37,7 @@ export default function GroupsSection() {
     const submit = () => {
         if (!editing) return;
         save.mutate(
-            { id: editing === 'new' ? undefined : editing.id, body: { name, description: description.trim() || null, member_user_ids: members, idp_groups: idpGroups.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean) } },
+            { id: editing === 'new' ? undefined : editing.id, body: { name, description: description.trim() || null, member_user_ids: members, idp_groups: idpGroups.split(/\n+/).map((s) => s.trim()).filter(Boolean) } },
             { onSuccess: () => setEditing(null), onError: (e) => setError(errMsg(e, 'Could not save the group.')) },
         );
     };
@@ -113,10 +113,10 @@ export default function GroupsSection() {
                     <div className="space-y-1.5">
                         <Label htmlFor="grp-idp">SSO groups</Label>
                         <textarea id="grp-idp" rows={3} value={idpGroups} onChange={(e) => setIdpGroups(e.target.value)}
-                            placeholder="soc-tier2, 3f2a9c1e-…"
+                            placeholder={"soc-tier2\n3f2a9c1e-…\nCN=SOC,OU=Groups,DC=corp"}
                             className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
                         <p className="text-xs text-fg-3">
-                            IdP group names or IDs, separated by commas or new lines. When set, membership is synced from the
+                            One group name, ID or DN per line. When set, membership is synced from the
                             identity provider at each SSO sign-in and replaces manual changes; analysts and admins only.
                         </p>
                     </div>

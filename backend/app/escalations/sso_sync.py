@@ -3,7 +3,6 @@
 A group with a non-empty `idp_groups` is *mapped*: the IdP decides who is in it. Unmapped groups are never touched.
 """
 import logging
-import re
 from typing import Any, List, Optional
 
 from sqlalchemy import delete, select
@@ -23,14 +22,19 @@ def _clean(values: List[Any]) -> List[str]:
 
 def oidc_groups(claims: dict, claim: str) -> Optional[List[str]]:
     """Group values from verified ID-token claims; None = not usable (absent, or Entra group overage)."""
-    if claim in (claims.get("_claim_names") or {}):
-        logger.warning("OIDC group overage: %r is in _claim_names, groups not synced", claim)
-        return None
-    raw = claims.get(claim)
-    if isinstance(raw, str):
-        return _clean(re.split(r"[,\s]+", raw))
-    if isinstance(raw, list):
-        return _clean(raw)
+    try:
+        names = claims.get("_claim_names")
+        if isinstance(names, dict) and claim in names:
+            logger.warning("OIDC group overage: %r is in _claim_names, groups not synced", claim)
+            return None
+        raw = claims.get(claim)
+        if isinstance(raw, str):
+            # names may contain spaces; commas separate only plain names, never inside a DN (has "=")
+            return _clean([raw] if "=" in raw else raw.split(","))
+        if isinstance(raw, list):
+            return _clean(raw)
+    except Exception:
+        logger.warning("OIDC group claim could not be parsed, groups not synced")
     return None
 
 
