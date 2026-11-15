@@ -9,6 +9,8 @@ def _no_real_enrichment_enqueue(monkeypatch):
     # Commits with external notifications must never reach the real broker either.
     import app.notifications.delivery as delivery
     monkeypatch.setattr(delivery, "_enqueue", lambda ids: None)
+    import app.escalations.events as esc_events
+    monkeypatch.setattr(esc_events, "_enqueue_channel", lambda rid: None)
     # Guest digests: never touch real Redis or the broker in tests.
     import app.guests.notify as gnotify
 

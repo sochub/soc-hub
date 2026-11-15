@@ -192,6 +192,10 @@ async def _open(db, case: Case, *, tiers: list, to: dict, to_tier_id: Optional[i
 async def _announce(db, case: Case, row: CaseEscalation, actor_id: Optional[int], type_: str, summary: str) -> None:
     await on_escalation(db, case, row, type_, summary, actor_id)
     events.stash(db, case.tenant_id, "case.escalated", case.id, await _payload(db, case, row))
+    snap = row.policy_snapshot
+    tier = _tier(snap["tiers"], position=snap["to"]["position"])
+    if row.status == "pending" and tier and tier.get("slack_channel"):
+        events.stash_channel(db, row.id)  # one channel card per opened row, posted after commit
 
 
 async def escalate(db, *, case: Case, actor_id: int, to_tier_id: int, to_group_id: int, reason: str, summary: str,
