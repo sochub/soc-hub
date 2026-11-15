@@ -18,7 +18,7 @@ function NoteModal({ caseId, kind, groupOptions, onClose }: {
     const [groupId, setGroupId] = useState<number | ''>(groupOptions[0]?.id ?? '');
     const [error, setError] = useState('');
     const m = useEscalationAction(caseId, kind);
-    const needsNote = kind === 'return';
+    const needsNote = kind === 'return' || kind === 'redirect';
     const submit = (ev: React.FormEvent) => {
         ev.preventDefault();
         setError('');
@@ -69,7 +69,9 @@ export default function EscalationActions({ caseData, me }: { caseData: Case; me
     if (!isAnalyst) return null;
     const tiers = policy?.tiers ?? [];
     const current = esc?.tier_position ?? 1;
-    const canEscalate = tiers.some((t) => (t.position ?? 0) > current);
+    // Resolved/closed cases can't be escalated, redirected or returned (the server answers 409).
+    const closed = caseData.status === 'resolved' || caseData.status === 'closed';
+    const canEscalate = !closed && tiers.some((t) => (t.position ?? 0) > current);
     const isMember = !!user && groups.some((g) => g.id === esc?.group_id && g.members.some((m) => m.user_id === user.id));
     const pending = esc?.status === 'pending';
     const sameTier = tiers.find((t) => t.position === esc?.tier_position);
@@ -88,9 +90,9 @@ export default function EscalationActions({ caseData, me }: { caseData: Case; me
                     Accept
                 </button>
             )}
-            {pending && redirectGroups.length > 0 && <button type="button" className={btn} onClick={() => setModal('redirect')}>Redirect</button>}
+            {pending && !closed && redirectGroups.length > 0 && <button type="button" className={btn} onClick={() => setModal('redirect')}>Redirect</button>}
             {pending && <button type="button" className={btn} onClick={() => setModal('withdraw')}>Withdraw</button>}
-            {esc?.status === 'accepted' && esc.tier_position > 1 && <button type="button" className={btn} onClick={() => setModal('return')}>Return</button>}
+            {!closed && esc?.status === 'accepted' && esc.tier_position > 1 && <button type="button" className={btn} onClick={() => setModal('return')}>Return</button>}
             {acceptErr && <span role="alert" className="text-xs text-severity-critical">{acceptErr}</span>}
             <EscalateModal open={modal === 'escalate'} onClose={() => setModal(null)} caseId={caseId} tiers={tiers} groups={groups} currentTier={current} />
             {(modal === 'redirect' || modal === 'return' || modal === 'withdraw') && (

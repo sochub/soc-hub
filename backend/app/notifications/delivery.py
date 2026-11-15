@@ -150,7 +150,7 @@ async def post_escalation_channel(db, row_id: int) -> str:
         if row is None or row.status != "pending" or await tenant_deactivated(db, row.tenant_id):
             return "skipped"
         tier = _row_tier(row)
-        channel = tier.get("slack_channel")
+        channel = tier.get("slack_channel") if tier.get("notify_slack") else None  # Slack unchecked: no post
         case = (await db.execute(select(Case).where(Case.id == row.case_id, Case.tenant_id == row.tenant_id))).scalars().first()
         if not channel or case is None:
             return "skipped"

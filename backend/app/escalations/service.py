@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.session import AsyncSessionLocal
 from app.escalations import events
-from app.models.case import Case, TimelineEvent
+from app.models.case import Case, CaseStatus, TimelineEvent
 from app.models.escalation import CaseEscalation, EscalationTier, EscalationTierGroup, UserGroup, UserGroupMember
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -27,6 +27,10 @@ from app.utils.audit import create_audit_log
 MAX_TEXT = 4000
 SWEEP_BATCH = 500
 logger = logging.getLogger(__name__)
+
+
+CLOSED_STATUSES = (CaseStatus.RESOLVED, CaseStatus.CLOSED)  # same as case_service.apply_case_update
+ONE_PENDING = "uq_case_escalations_one_pending"
 
 
 class EscalationError(Exception):
@@ -88,23 +92,34 @@ async def snapshot_policy(db, tenant_id: int) -> dict:
                       for t in tiers]}
 
 
-async def current_row(db, case_id: int) -> Optional[CaseEscalation]:
-    return (await db.execute(select(CaseEscalation).where(CaseEscalation.case_id == case_id)
-                             .order_by(CaseEscalation.id.desc()).limit(1))).scalars().first()
+# The case's current tier is its latest row that is still pending or accepted (withdrawn / cancelled / returned /
+# superseded rows never count). One rule for current_position, case_summaries and return_down.
+CURRENT_STATUSES = ("pending", "accepted")
+
+
+def _is_closed(case: Case) -> bool:
+    return case.status in CLOSED_STATUSES
+
+
+def _assert_open(case: Case) -> None:
+    if _is_closed(case):
+        raise EscalationError(409, "Case is closed")
 
 
 async def current_position(db, case: Case) -> int:
     row = (await db.execute(select(CaseEscalation).where(
         CaseEscalation.case_id == case.id, CaseEscalation.tenant_id == case.tenant_id,
-        CaseEscalation.status.in_(("pending", "accepted"))).order_by(CaseEscalation.id.desc()).limit(1))
+        CaseEscalation.status.in_(CURRENT_STATUSES)).order_by(CaseEscalation.id.desc()).limit(1))
     ).scalars().first()
     return row.policy_snapshot["to"]["position"] if row else 1
 
 
-async def _locked(db, case: Case, status: Optional[str] = "pending") -> Optional[CaseEscalation]:
-    """The case's latest row (with `status`, if given), locked FOR UPDATE and refreshed from the database."""
+async def _locked(db, case: Case, status: Optional[str | tuple] = "pending") -> Optional[CaseEscalation]:
+    """The case's latest row (with `status`, or one of them, if given), locked FOR UPDATE and refreshed."""
     q = select(CaseEscalation).where(CaseEscalation.case_id == case.id, CaseEscalation.tenant_id == case.tenant_id)
-    if status:
+    if isinstance(status, tuple):
+        q = q.where(CaseEscalation.status.in_(status))
+    elif status:
         q = q.where(CaseEscalation.status == status)
     q = q.order_by(CaseEscalation.id.desc()).limit(1).with_for_update().execution_options(populate_existing=True)
     return (await db.execute(q)).scalars().first()
@@ -168,6 +183,15 @@ async def _close(db, case: Case, row: CaseEscalation, status: str, actor_id: Opt
                   "case.escalation_closed")
 
 
+def _violates(e: IntegrityError, constraint: str) -> bool:
+    """True when the IntegrityError was raised by `constraint` (asyncpg names it on the cause; else the message)."""
+    orig = getattr(e, "orig", None)
+    for err in (orig, getattr(orig, "__cause__", None)):
+        if getattr(err, "constraint_name", None) == constraint:
+            return True
+    return constraint in str(orig)
+
+
 async def _open(db, case: Case, *, tiers: list, to: dict, to_tier_id: Optional[int], frm: dict,
                 from_tier_id: Optional[int], from_group_id: Optional[int], requested_by: Optional[int],
                 reason: str, summary: str, requested_help: str) -> CaseEscalation:
@@ -183,7 +207,9 @@ async def _open(db, case: Case, *, tiers: list, to: dict, to_tier_id: Optional[i
         async with db.begin_nested():  # a lost race trips uq_case_escalations_one_pending; keep the outer txn usable
             db.add(row)
             await db.flush()
-    except IntegrityError:
+    except IntegrityError as e:
+        if not _violates(e, ONE_PENDING):
+            raise
         raise EscalationError(409, "Case already has a pending escalation") from None
     case.owner_id = None
     await db.flush()
@@ -195,12 +221,13 @@ async def _announce(db, case: Case, row: CaseEscalation, actor_id: Optional[int]
     events.stash(db, case.tenant_id, "case.escalated", case.id, await _payload(db, case, row))
     snap = row.policy_snapshot
     tier = _tier(snap["tiers"], position=snap["to"]["position"])
-    if row.status == "pending" and tier and tier.get("slack_channel"):
+    if row.status == "pending" and tier and tier.get("notify_slack") and tier.get("slack_channel"):
         events.stash_channel(db, row.id)  # one channel card per opened row, posted after commit
 
 
 async def escalate(db, *, case: Case, actor_id: int, to_tier_id: int, to_group_id: int, reason: str, summary: str,
                    requested_help: str) -> CaseEscalation:
+    _assert_open(case)
     reason, summary = _text(reason, "Reason"), _text(summary, "Summary")
     requested_help = _text(requested_help, "Requested help")
     # A pending row means the chain is still open: validate against, and keep, the chain's snapshot.
@@ -323,6 +350,7 @@ async def accept_external(db, *, tenant_id: int, dedup_key: Optional[str], email
 
 
 async def redirect(db, *, case: Case, actor_id: int, to_group_id: int, note: str) -> CaseEscalation:
+    _assert_open(case)
     note = _text(note, "Note")
     row = await _locked(db, case)
     if row is None:
@@ -345,13 +373,31 @@ async def redirect(db, *, case: Case, actor_id: int, to_group_id: int, note: str
     return new
 
 
+async def _return_group(db, tenant_id: int, tiers: list, frm: dict) -> int:
+    """The group a return reopens to: the from-hop's group if it still exists, else the from-tier's first live
+    snapshot group."""
+    if frm.get("group_id") and await _live(db, UserGroup, tenant_id, [frm["group_id"]]):
+        return frm["group_id"]
+    tier = _tier(tiers, position=frm["position"])
+    gids = [g["id"] for g in (tier["groups"] if tier else [])]
+    live = await _live(db, UserGroup, tenant_id, gids)
+    gid = next((g for g in gids if g in live), None)
+    if gid is None:
+        raise EscalationError(422, "No group left on that tier")
+    return gid
+
+
 async def return_down(db, *, case: Case, actor_id: int, note: str) -> CaseEscalation:
+    _assert_open(case)
     note = _text(note, "Note")
-    row = await _locked(db, case, status=None)
+    row = await _locked(db, case, status=CURRENT_STATUSES)  # the current row: return needs it to be accepted
     snap = row.policy_snapshot if row else {}
     frm, to = snap.get("from"), snap.get("to")
     if row is None or row.status != "accepted" or not frm or frm["position"] >= to["position"]:
         raise EscalationError(409, "Only an accepted escalation from a lower tier can be returned")
+    gid = await _return_group(db, case.tenant_id, snap["tiers"], frm)
+    if gid != frm.get("group_id"):
+        frm = _hop(snap["tiers"], frm["position"], gid)
     row.status, row.closed_by, row.closed_at, row.close_note = "returned", actor_id, _now(), note
     await db.flush()
     await _record(db, case, row, actor_id, "case_escalation_returned",
@@ -415,13 +461,13 @@ def _summary(row: CaseEscalation, names: dict) -> dict:
 
 
 async def case_summaries(db, tenant_id: int, case_ids: list) -> dict:
-    """{case_id: summary} for cases whose latest escalation is pending/accepted. Two queries, any number of cases."""
+    """{case_id: summary of the current (latest pending/accepted) row}. Two queries, any number of cases."""
     if not case_ids:
         return {}
     rows = (await db.execute(
-        select(CaseEscalation).where(CaseEscalation.tenant_id == tenant_id, CaseEscalation.case_id.in_(case_ids))
+        select(CaseEscalation).where(CaseEscalation.tenant_id == tenant_id, CaseEscalation.case_id.in_(case_ids),
+                                     CaseEscalation.status.in_(CURRENT_STATUSES))
         .distinct(CaseEscalation.case_id).order_by(CaseEscalation.case_id, CaseEscalation.id.desc()))).scalars().all()
-    rows = [r for r in rows if r.status in ("pending", "accepted")]
     names = await _names(db, [i for r in rows for i in (r.requested_by, r.accepted_by)])
     return {r.case_id: _summary(r, names) for r in rows}
 
@@ -454,7 +500,8 @@ async def _climb_target(db, tenant_id: int, snap: dict) -> Optional[tuple]:
 
 
 async def _sweep_one(db, row_id: int, now: datetime) -> Optional[str]:
-    """Act on one due pending row in the caller's transaction: 'climbed', 'overdue' or None (nothing to do)."""
+    """Act on one due pending row in the caller's transaction: 'climbed', 'overdue', 'cancelled' (the case is
+    closed) or None (nothing to do)."""
     row = (await db.execute(
         select(CaseEscalation).where(CaseEscalation.id == row_id, CaseEscalation.status == "pending",
                                      CaseEscalation.due_at.isnot(None), CaseEscalation.due_at < now,
@@ -467,6 +514,9 @@ async def _sweep_one(db, row_id: int, now: datetime) -> Optional[str]:
     case = await db.get(Case, row.case_id)
     if case is None or case.tenant_id != row.tenant_id:
         return None
+    if _is_closed(case):  # a case closed without passing through on_case_closed: cancel, never climb/notify
+        await on_case_closed(db, case=case, actor_id=None)
+        return "cancelled"
     snap = row.policy_snapshot
     target = await _climb_target(db, case.tenant_id, snap)
     if target is None:  # last tier (or every higher group is gone): tell the group once
@@ -505,7 +555,7 @@ async def sweep(now: Optional[datetime] = None, case_ids: Optional[list] = None)
         q = q.where(CaseEscalation.case_id.in_(case_ids))
     async with AsyncSessionLocal() as db:
         ids = (await db.execute(q)).scalars().all()
-    out = {"climbed": [], "overdue": []}
+    out = {"climbed": [], "overdue": [], "cancelled": []}
     for row_id in ids:
         try:
             async with AsyncSessionLocal() as db:
@@ -514,5 +564,5 @@ async def sweep(now: Optional[datetime] = None, case_ids: Optional[list] = None)
             if result:
                 out[result].append(row_id)
         except Exception as e:
-            logger.warning("escalation sweep failed row=%s err=%s", row_id, type(e).__name__)
+            logger.warning("escalation sweep failed row=%s err=%s", row_id, type(e).__name__, exc_info=True)
     return out

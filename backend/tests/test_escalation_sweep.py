@@ -97,7 +97,7 @@ async def _scenario(emitted):
 
         # not yet due -> untouched; no timeout (due_at NULL) -> never climbs
         emitted.clear()
-        assert await esc.sweep(now=real + timedelta(minutes=10), case_ids=mine) == {"climbed": [], "overdue": []}
+        assert await esc.sweep(now=real + timedelta(minutes=10), case_ids=mine) == {"climbed": [], "overdue": [], "cancelled": []}
         assert emitted == []
         assert [r.status for r in await _rows(c2)] == ["pending"]
 
@@ -107,7 +107,7 @@ async def _scenario(emitted):
             await db.commit()
         old1 = (await _rows(c1))[0]
         res = await esc.sweep(now=real + timedelta(minutes=31), case_ids=[c1, c3, cb])
-        assert res == {"climbed": [old1.id], "overdue": []}, res
+        assert res == {"climbed": [old1.id], "overdue": [], "cancelled": []}, res
         r1 = await _rows(c1)
         assert [r.status for r in r1] == ["climbed", "pending"]
         assert r1[0].closed_by is None and r1[0].close_note == "not accepted within 30 min"
@@ -141,7 +141,7 @@ async def _scenario(emitted):
         assert [n.case_id for n in await _overdue_notes(U["l3"])] == [c7]
         assert [r.status for r in await _rows(c7)] == ["pending"] and (await _rows(c7))[0].overdue_notified
         assert emitted == []
-        assert await esc.sweep(now=real + timedelta(minutes=120), case_ids=[c7]) == {"climbed": [], "overdue": []}
+        assert await esc.sweep(now=real + timedelta(minutes=120), case_ids=[c7]) == {"climbed": [], "overdue": [], "cancelled": []}
         assert len(await _overdue_notes(U["l3"])) == 1
 
         # (3) policy edited after escalating: climb uses the snapshot and skips a vanished group

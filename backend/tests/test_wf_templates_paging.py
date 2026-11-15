@@ -114,11 +114,22 @@ async def _scenario(queue):
                 wd = await run("opsgenie-alert-on-escalation", og, "case.escalated", LONG)
                 assert wd["url"] == f"https://{OG_HOST}/v2/alerts"
                 b = wd["body"]
-                assert b["message"] == f"[SOC Hub] Case #{cid} escalated to {LONG}: Ransomware on FS01"[:127] + "..." and len(b["message"]) == 130
+                full = f"[SOC Hub] Case #{cid} escalated to {LONG}: Ransomware on FS01"
+                assert b["message"] == full[:129] + "\u2026" and len(b["message"]) == 130
                 assert b["alias"] == dedup and b["priority"] == "P2"
                 assert b["responders"] == [{"name": "SOC", "type": "team"}]
                 assert b["description"] == "Possible ransomware\n\nHost encrypting shares"
                 assert "GenieKey" in wd["headers"]["Authorization"]
+
+                # just over the limit (Opsgenie rejects > 130): no leeway, truncated to exactly 130
+                g132 = "G" * (132 - len(f"[SOC Hub] Case #{cid} escalated to : Ransomware on FS01"))
+                full = f"[SOC Hub] Case #{cid} escalated to {g132}: Ransomware on FS01"
+                assert len(full) == 132
+                m = (await run("opsgenie-alert-on-escalation", og, "case.escalated", g132))["body"]["message"]
+                assert m == full[:129] + "\u2026" and len(m) == 130, m
+                ok = "G" * (130 - len(f"[SOC Hub] Case #{cid} escalated to : Ransomware on FS01"))
+                m = (await run("opsgenie-alert-on-escalation", og, "case.escalated", ok))["body"]["message"]
+                assert len(m) == 130 and m.endswith("FS01")  # exactly 130: untouched
 
                 wd = await run("opsgenie-close-on-escalation-closed", {"OPSGENIE_API_HOST": OG_HOST}, "case.escalation_closed")
                 assert wd["url"] == f"https://{OG_HOST}/v2/alerts/{dedup}/close?identifierType=alias"

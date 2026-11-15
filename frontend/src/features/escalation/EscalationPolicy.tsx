@@ -97,6 +97,7 @@ function PolicyForm() {
                                     <div className="space-y-1.5">
                                         <Label htmlFor={`ch-${i}`}>Slack channel (optional)</Label>
                                         <Input id={`ch-${i}`} placeholder="#soc-tier2" value={t.slack_channel ?? ''}
+                                            disabled={!t.notify_slack} title={t.notify_slack ? undefined : 'Turn on Slack to post to a channel'}
                                             onChange={(e) => edit(i, { slack_channel: e.target.value || null })} />
                                     </div>
                                 </div>

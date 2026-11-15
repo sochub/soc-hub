@@ -104,7 +104,8 @@ export default function GroupsSection() {
                     </div>
                     <div className="space-y-1.5">
                         <Label>Members</Label>
-                        <CheckList options={users.map((u) => ({ id: u.id, label: u.full_name ? `${u.full_name} (${u.email})` : u.email }))}
+                        {/* Viewers can't act on escalations; one already in the group stays listed so it can be unchecked. */}
+                        <CheckList options={users.filter((u) => u.role !== 'viewer' || members.includes(u.id)).map((u) => ({ id: u.id, label: u.full_name ? `${u.full_name} (${u.email})` : u.email }))}
                             value={members} onChange={setMembers} empty="No users available." />
                     </div>
                     {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}

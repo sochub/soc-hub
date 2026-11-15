@@ -3,7 +3,7 @@
   "name": "Opsgenie: close on escalation closed",
   "vendor": "Opsgenie",
   "kind": "triage",
-  "description": "When an escalation is closed (accepted, withdrawn or superseded), close the matching Opsgenie alert by its alias.",
+  "description": "Whenever an escalation leaves pending (accepted, redirected, climbed, superseded, withdrawn or cancelled), close the matching Opsgenie alert by its alias.",
   "trigger_type": "case.escalation_closed",
   "trigger_filter": null,
   "params": [
@@ -23,7 +23,7 @@
       ]
     }
   ],
-  "setup": "## Opsgenie side\nSame API key as *Opsgenie: alert on case escalation*. Store it as `OPSGENIE_API_KEY`, allowed host = the API host you chose.\n\n## How it works\n- Runs when an escalation closes (trigger `case.escalation_closed`): `POST https://<API host>/v2/alerts/<alias>/close?identifierType=alias`.\n\n\n## Ack to accept\nTo let an acknowledgement in Opsgenie accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into Opsgenie (an incoming webhook integration, action *Acknowledge*). It is tied to this tenant and keeps working until you rotate it there.\n",
+  "setup": "## Opsgenie side\nSame API key as *Opsgenie: alert on case escalation*. Store it as `OPSGENIE_API_KEY`, allowed host = the API host you chose.\n\n## How it works\n- Runs when an escalation closes (trigger `case.escalation_closed`): `POST https://<API host>/v2/alerts/<alias>/close?identifierType=alias`.\n\n\n## Ack to accept\nTo let an acknowledgement in Opsgenie accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into Opsgenie (an incoming webhook integration, action *Acknowledge*). It is tied to this tenant.\n",
   "graph": {
     "nodes": [
       {

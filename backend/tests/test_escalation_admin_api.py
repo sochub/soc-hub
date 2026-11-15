@@ -38,9 +38,11 @@ async def _scenario():
                 return User(email=f"{tag}-{h}@example.test", full_name=name, is_active=True, is_super_admin=sa,
                             hashed_password=get_password_hash(pysecrets.token_hex(8)))
             admin, u1, u2, ux, sa = mk("adm", "Ada Admin"), mk("u1", "Una"), mk("u2", "Dos"), mk("ux", "Foreign"), mk("sa", "Root", True)
-            db.add_all([admin, u1, u2, ux, sa])
+            uv = mk("uv", "Vera Viewer")
+            db.add_all([admin, u1, u2, ux, sa, uv])
             await db.flush()
-            ids["users"] += [x.id for x in (admin, u1, u2, ux, sa)]
+            ids["users"] += [x.id for x in (admin, u1, u2, ux, sa, uv)]
+            db.add(TenantMembership(user_id=uv.id, tenant_id=ta.id, role="viewer"))
             db.add(TenantMembership(user_id=admin.id, tenant_id=ta.id, role="admin"))
             m1 = TenantMembership(user_id=u1.id, tenant_id=ta.id, role="analyst")
             db.add_all([m1, TenantMembership(user_id=u2.id, tenant_id=ta.id, role="analyst"),
@@ -53,6 +55,7 @@ async def _scenario():
             state["tenant"], state["user"] = ta.id, admin
             ta_id, tx_id, gx_id, case_id = ta.id, tx.id, gx.id, case.id
             u1_id, u2_id, ux_id, m1_id, admin_obj, sa_obj = u1.id, u2.id, ux.id, m1.id, admin, sa
+            uv_id = uv.id
 
             app.dependency_overrides[deps.get_current_active_user] = lambda: state["user"]
             app.dependency_overrides[deps.get_effective_tenant_id] = lambda: state["tenant"]
@@ -78,6 +81,11 @@ async def _scenario():
                 assert (await c.put(f"{E}/groups/{gx_id}", json={"name": "z", "member_user_ids": []})).status_code == 404
                 assert (await c.delete(f"{E}/groups/{gx_id}")).status_code == 404
                 assert (await c.post(f"{E}/groups", json={"name": "bad", "member_user_ids": [ux_id]})).status_code == 422
+                # viewers can't act on escalations, so they can't be group members
+                r = await c.post(f"{E}/groups", json={"name": "bad", "member_user_ids": [u1_id, uv_id]})
+                assert r.status_code == 422 and r.json()["detail"] == "Viewers can't be in escalation groups", r.text
+                r = await c.put(f"{E}/groups/{g2['id']}", json={"name": "L2", "member_user_ids": [uv_id]})
+                assert r.status_code == 422, r.text
                 # policy validation
                 P = f"{E}/policy"
                 t = lambda **k: {"name": "T", "notify_email": True, "notify_slack": False, "group_ids": [g1["id"]], **k}

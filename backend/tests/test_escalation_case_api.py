@@ -176,7 +176,8 @@ async def _scenario():
                 await esc_svc.escalate(s, case=case, actor_id=U["l1"], to_tier_id=t2_id, to_group_id=g2_id, **TEXTS)
                 await apply_case_update(s, case=case, update_data={"owner_id": U["adm"]}, user_id=None)
                 await s.commit()
-                row = await esc_svc.current_row(s, C[5])
+                row = (await s.execute(select(CaseEscalation).where(CaseEscalation.case_id == C[5])
+                                       .order_by(CaseEscalation.id.desc()).limit(1))).scalars().first()
                 assert row.status == "accepted" and row.accepted_via == "assignment" and row.accepted_by == U["adm"]
         finally:
             app.dependency_overrides.clear()

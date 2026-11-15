@@ -62,11 +62,13 @@ async def _membership_ids(db: AsyncSession, tenant_id: int, user_ids: List[int])
     uids = sorted(set(user_ids))
     if not uids:
         return []
-    rows = (await db.execute(select(TenantMembership.id, TenantMembership.user_id).where(
+    rows = (await db.execute(select(TenantMembership.id, TenantMembership.user_id, TenantMembership.role).where(
         TenantMembership.tenant_id == tenant_id, TenantMembership.user_id.in_(uids)))).all()
     if len(rows) != len(uids):
         raise HTTPException(status_code=422, detail="Every member must belong to this organization")
-    return [r[0] for r in rows]
+    if any(r.role == "viewer" for r in rows):  # viewers can't accept or act on an escalation
+        raise HTTPException(status_code=422, detail="Viewers can't be in escalation groups")
+    return [r.id for r in rows]
 
 
 @router.get("/groups", response_model=List[GroupOut])

@@ -29,7 +29,7 @@
       ]
     }
   ],
-  "setup": "## Opsgenie side\n1. Create an **API** integration in Opsgenie (Settings > Integrations) with create and close access. Store its key as `OPSGENIE_API_KEY`, allowed host = the API host you chose.\n\n## How it works\n- Runs when a case is escalated (trigger `case.escalated`): `POST https://<API host>/v2/alerts` addressed to the team, `alias` = `sochub-case-<case id>-esc-<escalation id>`.\n- Priority follows the case: critical → P1, high → P2, medium → P3, anything else → P4.\n- Install *Opsgenie: close on escalation closed* so closing the escalation closes the alert.\n\n\n## Ack to accept\nTo let an acknowledgement in Opsgenie accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into Opsgenie (an incoming webhook integration, action *Acknowledge*). It is tied to this tenant and keeps working until you rotate it there.\n",
+  "setup": "## Opsgenie side\n1. Create an **API** integration in Opsgenie (Settings > Integrations) with create and close access. Store its key as `OPSGENIE_API_KEY`, allowed host = the API host you chose.\n\n## How it works\n- Runs when a case is escalated (trigger `case.escalated`): `POST https://<API host>/v2/alerts` addressed to the team, `alias` = `sochub-case-<case id>-esc-<escalation id>`.\n- Priority follows the case: critical → P1, high → P2, medium → P3, anything else → P4.\n- Install *Opsgenie: close on escalation closed* so closing the escalation closes the alert.\n\n\n## Ack to accept\nTo let an acknowledgement in Opsgenie accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into Opsgenie (an incoming webhook integration, action *Acknowledge*). It is tied to this tenant.\n",
   "graph": {
     "nodes": [
       {
@@ -57,7 +57,7 @@
             "Accept": "application/json"
           },
           "body": {
-            "message": "{{ ('[SOC Hub] Case #' ~ case.id ~ ' escalated to ' ~ trigger.changes.escalation.group.name ~ ': ' ~ case.title) | truncate(130, True) }}",
+            "message": "{{ ('[SOC Hub] Case #' ~ case.id ~ ' escalated to ' ~ trigger.changes.escalation.group.name ~ ': ' ~ case.title) | truncate(130, True, '\u2026', 0) }}",
             "alias": "{{ trigger.changes.escalation.dedup_key }}",
             "description": "{{ trigger.changes.escalation.reason }}\n\n{{ trigger.changes.escalation.summary }}",
             "responders": [

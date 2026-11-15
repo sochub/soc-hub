@@ -85,7 +85,6 @@ async def _scenario(emitted):
             assert set(snap["tiers"][0]) == {"id", "position", "name", "accept_timeout_minutes", "notify_email",
                                              "notify_slack", "slack_channel", "groups"}
             assert await esc.current_position(db, c1) == 1
-            assert await esc.current_row(db, c1.id) is None
 
             # (1) escalate -> pending, owner cleared, notifications, timeline, audit, stash
             before = datetime.now(timezone.utc)
@@ -322,3 +321,146 @@ def test_escalation_service(monkeypatch):
                         emitted.append((tenant_id, event_type, case_id, changes)))
     monkeypatch.setattr(delivery, "_enqueue", lambda ids: None)
     asyncio.run(_scenario(emitted))
+
+
+async def _scenario_final(emitted):
+    """Final-review fixes: closed cases, current tier after withdraw, Slack channel gating, return to a deleted
+    group, and only the one-pending constraint maps to 409."""
+    from sqlalchemy.exc import IntegrityError
+    from app.escalations import events as esc_events
+    from app.models.case import CaseStatus
+
+    h = pysecrets.token_hex(3)
+    ids = {"tenants": [], "users": [], "cases": []}
+    await engine.dispose()
+    async with AsyncSessionLocal() as db:
+        try:
+            ta = Tenant(name="esc-svc", slug=f"esc-svcf-{h}")
+            db.add(ta)
+            await db.flush()
+            ids["tenants"].append(ta.id)
+            T = ta.id
+            us = {n: User(email=f"{n}-f-{h}@example.test", full_name=n.upper(), is_active=True,
+                          hashed_password=get_password_hash(pysecrets.token_hex(8))) for n in ("l1", "l2", "l3")}
+            db.add_all(us.values())
+            await db.flush()
+            ids["users"] += [u.id for u in us.values()]
+            ms = {n: TenantMembership(user_id=u.id, tenant_id=T, role="analyst") for n, u in us.items()}
+            db.add_all(ms.values())
+            gs = {n: UserGroup(tenant_id=T, name=n) for n in ("G1", "G1b", "G2", "G2b", "G3")}
+            db.add_all(gs.values())
+            await db.flush()
+            for g, m in (("G1", "l1"), ("G2", "l2"), ("G3", "l3")):
+                db.add(UserGroupMember(group_id=gs[g].id, membership_id=ms[m].id))
+            t1 = EscalationTier(tenant_id=T, position=1, name="Tier 1")
+            # tier 2 keeps a channel but has Slack unchecked: no channel post
+            t2 = EscalationTier(tenant_id=T, position=2, name="Tier 2", accept_timeout_minutes=30,
+                                notify_slack=False, slack_channel="#soc-t2")
+            t3 = EscalationTier(tenant_id=T, position=3, name="Tier 3", notify_slack=True, slack_channel="#soc-t3")
+            db.add_all([t1, t2, t3])
+            await db.flush()
+            for t, g in ((t1, "G1"), (t1, "G1b"), (t2, "G2"), (t2, "G2b"), (t3, "G3")):
+                db.add(EscalationTierGroup(tier_id=t.id, group_id=gs[g].id))
+            cases = [Case(title=f"f{i}", tenant_id=T) for i in range(6)]
+            db.add_all(cases)
+            await db.flush()
+            ids["cases"] += [c.id for c in cases]
+            await db.commit()
+            U = {n: u.id for n, u in us.items()}
+            G = {n: g.id for n, g in gs.items()}
+            c1, c2, c3, c4, c5, c6 = cases
+
+            def channel_posts():
+                return list(db.sync_session.info.get(esc_events._CH_KEY, []))
+
+            # current tier after withdraw: accepted at T2 -> escalate to T3 -> withdraw -> back at T2 accepted
+            r2 = await esc.escalate(db, case=c1, actor_id=U["l1"], to_tier_id=t2.id, to_group_id=G["G2"], **TEXTS)
+            assert channel_posts() == [], "tier 2 channel set but Slack unchecked: no channel post"
+            await esc.accept(db, case=c1, actor_id=U["l2"], is_admin=False)
+            await db.commit()
+            r3 = await esc.escalate(db, case=c1, actor_id=U["l2"], to_tier_id=t3.id, to_group_id=G["G3"], **TEXTS)
+            assert channel_posts() == [r3.id], "tier 3 has Slack on and a channel"
+            await esc.withdraw(db, case=c1, actor_id=U["l2"], note="")
+            await db.commit()
+            s = (await esc.case_summaries(db, T, [c1.id]))[c1.id]
+            assert (s["id"], s["status"], s["tier_position"]) == (r2.id, "accepted", 2), s
+            assert await esc.current_position(db, c1) == 2
+            await _raises(422, esc.escalate(db, case=c1, actor_id=U["l2"], to_tier_id=t2.id, to_group_id=G["G2"], **TEXTS))
+            await esc.escalate(db, case=c1, actor_id=U["l2"], to_tier_id=t3.id, to_group_id=G["G3"], **TEXTS)
+            await esc.withdraw(db, case=c1, actor_id=U["l2"], note="")
+            await db.commit()
+            back = await esc.return_down(db, case=c1, actor_id=U["l2"], note="Need more")  # T2 row is current
+            await db.commit()
+            await db.refresh(r2)
+            assert r2.status == "returned" and back.status == "pending" and back.to_group_id == G["G1"]
+
+            # closed / resolved case: escalate, redirect and return are refused
+            await esc.escalate(db, case=c2, actor_id=U["l1"], to_tier_id=t2.id, to_group_id=G["G2"], **TEXTS)
+            await esc.accept(db, case=c2, actor_id=U["l2"], is_admin=False)
+            await db.commit()
+            c2.status = CaseStatus.CLOSED
+            await db.commit()
+            await _raises(409, esc.escalate(db, case=c2, actor_id=U["l2"], to_tier_id=t3.id, to_group_id=G["G3"], **TEXTS))
+            await _raises(409, esc.return_down(db, case=c2, actor_id=U["l2"], note="x"))
+            await esc.escalate(db, case=c3, actor_id=U["l1"], to_tier_id=t2.id, to_group_id=G["G2"], **TEXTS)
+            await db.commit()
+            c3.status = CaseStatus.RESOLVED  # closed without passing through on_case_closed
+            await db.commit()
+            await _raises(409, esc.redirect(db, case=c3, actor_id=U["l2"], to_group_id=G["G2b"], note="other team"))
+            # ... and the sweep cancels its due pending row instead of climbing
+            res = await esc.sweep(now=datetime.now(timezone.utc) + timedelta(minutes=31), case_ids=[c3.id, c1.id])
+            assert res["cancelled"] and not res["climbed"] and not res["overdue"], res
+            async with AsyncSessionLocal() as s2:
+                rows = (await s2.execute(select(CaseEscalation.status).where(CaseEscalation.case_id == c3.id)
+                                         .order_by(CaseEscalation.id))).scalars().all()
+            assert rows == ["cancelled"], rows
+
+            # return reopens to the from-tier's next live group when the stored one was deleted; 422 when none left
+            for c in (c4, c5):
+                row = await esc.escalate(db, case=c, actor_id=U["l1"], to_tier_id=t2.id, to_group_id=G["G2"], **TEXTS)
+                assert row.from_group_id == G["G1"]
+                await esc.accept(db, case=c, actor_id=U["l2"], is_admin=False)
+            await db.commit()
+            await db.execute(delete(UserGroup).where(UserGroup.id == G["G1"]))
+            await db.commit()
+            back = await esc.return_down(db, case=c4, actor_id=U["l2"], note="more")
+            await db.commit()
+            assert back.to_group_id == G["G1b"] and back.policy_snapshot["to"]["group_name"] == "G1b"
+            await db.execute(delete(UserGroup).where(UserGroup.id == G["G1b"]))
+            await db.commit()
+            try:
+                await esc.return_down(db, case=c5, actor_id=U["l2"], note="more")
+                raise AssertionError("expected 422")
+            except EscalationError as e:
+                assert (e.status_code, e.detail) == (422, "No group left on that tier"), e.detail
+
+            # only uq_case_escalations_one_pending maps to 409; any other integrity error propagates
+            tiers = (await esc.snapshot_policy(db, T))["tiers"]
+            bad = {"position": 2, "tier_name": "Tier 2", "group_id": 2**31 - 7, "group_name": None}
+            try:
+                await esc._open(db, c6, tiers=tiers, to=bad, to_tier_id=None, frm={"position": 1},
+                                from_tier_id=None, from_group_id=None, requested_by=U["l1"],
+                                reason="r", summary="s", requested_help="h")
+                raise AssertionError("expected IntegrityError")
+            except IntegrityError as e:
+                assert "uq_case_escalations_one_pending" not in str(e.orig)
+        finally:
+            await db.rollback()
+            async with AsyncSessionLocal() as s3:
+                await s3.execute(delete(TimelineEvent).where(TimelineEvent.case_id.in_(ids["cases"])))
+                await s3.execute(delete(AuditLog).where(AuditLog.tenant_id.in_(ids["tenants"])))
+                await s3.execute(delete(Case).where(Case.id.in_(ids["cases"])))
+                await s3.execute(delete(Tenant).where(Tenant.id.in_(ids["tenants"])))
+                await s3.execute(delete(User).where(User.id.in_(ids["users"])))
+                await s3.commit()
+    await engine.dispose()
+
+
+def test_escalation_final_fixes(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(wf_events, "emit_event", lambda tenant_id, event_type, *, case_id=None, changes=None, **kw:
+                        emitted.append((tenant_id, event_type, case_id, changes)))
+    monkeypatch.setattr(delivery, "_enqueue", lambda ids: None)
+    from app.escalations import events as esc_events
+    monkeypatch.setattr(esc_events, "_enqueue_channel", lambda rid: None)
+    asyncio.run(_scenario_final(emitted))

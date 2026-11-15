@@ -106,14 +106,14 @@ async def test_channel_replaces_dms_email_stays(db, ctx, mp):
 
 @run
 async def test_channel_post_failure_is_logged_not_raised(db, ctx, mp):
-    row, _ = await make_esc(db, ctx, slack_channel="#soc-t2")
+    row, _ = await make_esc(db, ctx, notify_slack=True, slack_channel="#soc-t2")
     wire(mp, slack=FakeSlack("chat.postMessage", SlackError("chat.postMessage: channel_not_found", code="channel_not_found")))
     assert await delivery.post_escalation_channel(db, row.id) == "failed"
 
 
 @run
 async def test_channel_post_skips_closed_row(db, ctx, mp):
-    row, _ = await make_esc(db, ctx, status="withdrawn", slack_channel="#soc-t2")
+    row, _ = await make_esc(db, ctx, status="withdrawn", notify_slack=True, slack_channel="#soc-t2")
     slack = FakeSlack()
     wire(mp, slack=slack)
     assert await delivery.post_escalation_channel(db, row.id) == "skipped"
@@ -126,7 +126,7 @@ async def test_announce_enqueues_channel_post_after_commit(db, ctx, mp):
     events.register_after_commit_hook()
     posted = []
     mp.setattr(events, "_enqueue_channel", lambda rid: posted.append(rid))
-    row, _ = await make_esc(db, ctx, slack_channel="#soc-t2")
+    row, _ = await make_esc(db, ctx, notify_slack=True, slack_channel="#soc-t2")
     case = await case_of(db, ctx)
     await esc._announce(db, case, row, ctx["ids"]["A"], "escalated", "x")
     assert posted == []  # not before the commit
@@ -136,6 +136,22 @@ async def test_announce_enqueues_channel_post_after_commit(db, ctx, mp):
     await esc._announce(db, case, row2, ctx["ids"]["A"], "escalated", "x")
     await db.commit()
     assert posted == [row.id]
+    row.status = "accepted"  # one pending row per case
+    await db.commit()
+    row3, _ = await make_esc(db, ctx, slack_channel="#soc-t2")  # channel kept, Slack unchecked: no post
+    await esc._announce(db, case, row3, ctx["ids"]["A"], "escalated", "x")
+    await db.commit()
+    assert posted == [row.id]
+
+
+@run
+async def test_channel_not_posted_when_slack_unchecked(db, ctx, mp):
+    row, n = await make_esc(db, ctx, notify_email=True, slack_channel="#soc-t2")
+    slack, sent = FakeSlack(), []
+    wire(mp, slack=slack, smtp=True, sent=sent)
+    assert await delivery.post_escalation_channel(db, row.id) == "skipped"
+    assert await delivery.deliver_one(db, n.id, FakeRedis()) == "email"
+    assert slack.calls == [] and len(sent) == 1
 
 
 @run

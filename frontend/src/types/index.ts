@@ -446,7 +446,7 @@ export interface SecretScanItem {
   reason?: string;
 }
 
-export type NotificationType = 'mention' | 'assigned' | 'comment' | 'status_change' | 'severity_change' | 'sla_breach' | 'escalation_requested' | 'escalation_accepted' | 'escalation_redirected';
+export type NotificationType = 'mention' | 'assigned' | 'comment' | 'status_change' | 'severity_change' | 'sla_breach' | 'escalated' | 'escalation_overdue' | 'escalation_returned';
 
 export interface AppNotification {
   id: number;
