@@ -445,7 +445,7 @@ export interface SecretScanItem {
   reason?: string;
 }
 
-export type NotificationType = 'mention' | 'assigned' | 'comment' | 'status_change' | 'severity_change' | 'sla_breach';
+export type NotificationType = 'mention' | 'assigned' | 'comment' | 'status_change' | 'severity_change' | 'sla_breach' | 'escalation_requested' | 'escalation_accepted' | 'escalation_redirected';
 
 export interface AppNotification {
   id: number;
@@ -503,4 +503,21 @@ export interface WarRoomSuggestion {
   status: string;
   permalink: string | null;
   created_at: string;
+}
+
+export interface EscalationGroupMember { user_id: number; email: string; full_name: string | null }
+export interface EscalationGroup {
+  id: number; name: string; description: string | null;
+  members: EscalationGroupMember[]; tier_ids: number[];
+}
+export interface EscalationGroupInput { name: string; description: string | null; member_user_ids: number[] }
+export interface EscalationTier {
+  id: number | null; position?: number; name: string;
+  accept_timeout_minutes: number | null;
+  notify_email: boolean; notify_slack: boolean; slack_channel: string | null;
+  group_ids: number[];
+}
+export interface EscalationIntegrations {
+  pagerduty_url: string; opsgenie_url: string;
+  has_pagerduty_webhook_secret: boolean; has_pagerduty_api_key: boolean; has_opsgenie_token: boolean;
 }
