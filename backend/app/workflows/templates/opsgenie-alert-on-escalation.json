@@ -1,0 +1,86 @@
+{
+  "key": "opsgenie-alert-on-escalation",
+  "name": "Opsgenie: alert on case escalation",
+  "vendor": "Opsgenie",
+  "kind": "response",
+  "description": "When a case is escalated to a tier, create an Opsgenie alert addressed to a team. The alert alias is the escalation's dedup key, so a later close closes exactly this one.",
+  "trigger_type": "case.escalated",
+  "trigger_filter": null,
+  "params": [
+    {
+      "key": "OPSGENIE_API_HOST",
+      "label": "Opsgenie API host",
+      "placeholder": "api.opsgenie.com",
+      "help": "`api.opsgenie.com` (US) or `api.eu.opsgenie.com` (EU), matching your Opsgenie instance."
+    },
+    {
+      "key": "OPSGENIE_TEAM",
+      "label": "Opsgenie team",
+      "placeholder": "SOC",
+      "help": "Name of the Opsgenie team to alert (letters, digits and . _ : / - only)."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "OPSGENIE_API_KEY",
+      "description": "Opsgenie API integration key (sent as `Authorization: GenieKey <key>`) with create and close rights.",
+      "hosts": [
+        "%%OPSGENIE_API_HOST%%"
+      ]
+    }
+  ],
+  "setup": "## Opsgenie side\n1. Create an **API** integration in Opsgenie (Settings > Integrations) with create and close access. Store its key as `OPSGENIE_API_KEY`, allowed host = the API host you chose.\n\n## How it works\n- Runs when a case is escalated (trigger `case.escalated`): `POST https://<API host>/v2/alerts` addressed to the team, `alias` = `sochub-case-<case id>-esc-<escalation id>`.\n- Priority follows the case: critical → P1, high → P2, medium → P3, anything else → P4.\n- Install *Opsgenie: close on escalation closed* so closing the escalation closes the alert.\n\n\n## Ack to accept\nTo let an acknowledgement in Opsgenie accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into Opsgenie (an incoming webhook integration, action *Acknowledge*). It is tied to this tenant and keeps working until you rotate it there.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "alert",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://%%OPSGENIE_API_HOST%%/v2/alerts",
+          "headers": {
+            "Authorization": "GenieKey {{ secrets.OPSGENIE_API_KEY }}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "message": "[SOC Hub] Case #{{ case.id }} escalated to {{ trigger.changes.escalation.group.name }}: {{ case.title | truncate(100, True) }}",
+            "alias": "{{ trigger.changes.escalation.dedup_key }}",
+            "description": "{{ trigger.changes.escalation.reason }}\n\n{{ trigger.changes.escalation.summary }}",
+            "responders": [
+              {
+                "name": "%%OPSGENIE_TEAM%%",
+                "type": "team"
+              }
+            ],
+            "priority": "{{ {'critical': 'P1', 'high': 'P2', 'medium': 'P3'}.get(case.severity, 'P4') }}",
+            "details": {
+              "case_url": "{{ trigger.changes.escalation.case_url }}"
+            }
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_alert",
+        "source": "start",
+        "target": "alert",
+        "source_handle": null
+      }
+    ]
+  }
+}
