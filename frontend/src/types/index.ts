@@ -315,6 +315,7 @@ export interface Case {
   sla_resolution_status?: SLAStatus | null;
   sla_resolution_due_at?: string | null;
   sla_overall_status?: SLAStatus | null;
+  escalation?: EscalationSummary | null;
 }
 
 export interface SLAPolicyItem {
@@ -520,4 +521,21 @@ export interface EscalationTier {
 export interface EscalationIntegrations {
   pagerduty_url: string; opsgenie_url: string;
   has_pagerduty_webhook_secret: boolean; has_pagerduty_api_key: boolean; has_opsgenie_token: boolean;
+}
+
+export interface EscalationSummary {
+  id: number; status: string; tier_position: number; tier_name: string;
+  group_id: number | null; group_name: string | null;
+  requested_by_name: string | null; requested_at: string; due_at: string | null;
+  accepted_by_name: string | null; accepted_at: string | null;
+}
+export interface EscalationHistoryRow extends EscalationSummary {
+  from_tier_name: string | null; from_group_name: string | null;
+  reason: string; summary: string; requested_help: string;
+  accepted_via: string | null; closed_by_name: string | null; closed_at: string | null; close_note: string | null;
+}
+export interface EscalationQueueRow {
+  id: number; case_id: number; case_title: string; severity: string;
+  tier_position: number; tier_name: string; group_id: number | null; group_name: string | null;
+  requested_by_name: string | null; created_at: string; due_at: string | null;
 }

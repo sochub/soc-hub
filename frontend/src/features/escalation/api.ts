@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
 import type {
-    EscalationGroup, EscalationGroupInput, EscalationIntegrations, EscalationTier,
+    EscalationGroup, EscalationGroupInput, EscalationHistoryRow, EscalationIntegrations, EscalationQueueRow, EscalationTier,
 } from '../../types';
 
 const base = '/escalations';
@@ -77,4 +77,41 @@ export function useOpsgenieToken() {
         mutationFn: async () => (await api.post(`${base}/integrations/opsgenie-token`)).data as { token: string },
         onSuccess: () => qc.invalidateQueries({ queryKey: ['escalation-integrations'] }),
     });
+}
+
+export const queueKey = ['escalation-queue'];
+
+export const useEscalationQueue = () => useQuery({
+    queryKey: queueKey,
+    queryFn: async () => (await api.get(`${base}/queue`)).data as EscalationQueueRow[],
+});
+
+export const useEscalationHistory = (caseId: number) => useQuery({
+    queryKey: ['escalation-history', caseId],
+    queryFn: async () => (await api.get(`${base}/cases/${caseId}/history`)).data as EscalationHistoryRow[],
+});
+
+/** Mutation for one case escalation action; refreshes the case, case lists, history and queue. */
+export function useEscalationAction(caseId: number, action: 'escalate' | 'accept' | 'redirect' | 'return' | 'withdraw') {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async (body: Record<string, unknown> = {}) =>
+            (await api.post(`${base}/cases/${caseId}/${action}`, body)).data as EscalationHistoryRow,
+        onSettled: () => {
+            qc.invalidateQueries({ queryKey: ['case', String(caseId)] });
+            qc.invalidateQueries({ queryKey: ['cases'] });
+            qc.invalidateQueries({ queryKey: ['escalation-history', caseId] });
+            qc.invalidateQueries({ queryKey: queueKey });
+            qc.invalidateQueries({ queryKey: ['audit-logs', 'case', String(caseId)] });
+        },
+    });
+}
+
+/** "12m" / "3h" / "2d" since an ISO timestamp (naive timestamps are UTC). */
+export function sinceShort(iso: string): string {
+    const v = /^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(iso) ? `${iso}Z` : iso;
+    const m = Math.max(0, Math.floor((Date.now() - new Date(v).getTime()) / 60000));
+    if (m < 60) return `${m}m`;
+    if (m < 1440) return `${Math.floor(m / 60)}h`;
+    return `${Math.floor(m / 1440)}d`;
 }

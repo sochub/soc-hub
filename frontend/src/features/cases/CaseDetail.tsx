@@ -34,6 +34,9 @@ import { useCanRun } from '../enrichment/useCanRun';
 import { useArtifactTypes } from '../artifacts/useArtifactTypes';
 import ArtifactMindMap from '../artifacts/ArtifactMindMap';
 import CaseTime from './CaseTime';
+import EscalationBadge from '../escalation/EscalationBadge';
+import EscalationActions from '../escalation/EscalationActions';
+import EscalationHistory from '../escalation/EscalationHistory';
 import { formatDuration, useCaseTime, useTimeHeartbeat } from './timeApi';
 
 const ARTIFACT_ICONS: Record<string, any> = {
@@ -282,6 +285,8 @@ export default function CaseDetail() {
                                     <Hash size={12} /> Open war room
                                 </button>
                             )}
+                            {caseData.escalation && <EscalationBadge e={caseData.escalation} />}
+                            <EscalationActions caseData={caseData} me={me} />
                             {id && <FollowButton caseId={parseInt(id)} ready={!!me} isOwner={!!me && caseData.owner_id === me.id} />}
                             <button onClick={() => setShowEditModal(true)} aria-label="Edit case" title="Edit case"
                                 className="inline-flex items-center justify-center h-8 w-8 text-fg-3 hover:text-fg hover:bg-raised rounded-lg transition-colors">
@@ -309,6 +314,7 @@ export default function CaseDetail() {
                     {id && <OpenWarRoomModal open={showWarRoom} onClose={() => setShowWarRoom(false)} caseId={parseInt(id)} title={caseData.title} template={slackCfg?.war_room_name_template ?? null} />}
                     {id && <TriagePanel caseId={parseInt(id)} />}
                     <SLAPanel caseData={caseData} />
+                    {id && <EscalationHistory caseId={parseInt(id)} />}
 
                 </div>
 
