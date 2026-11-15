@@ -70,7 +70,7 @@ export default function EscalationPagingCard() {
                     <div className="flex gap-2">
                         <Input id="pd-secret" type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)}
                             placeholder={data?.has_pagerduty_webhook_secret ? 'Enter a new value to replace' : ''} />
-                        {data?.has_pagerduty_webhook_secret && <Button variant="ghost" size="sm" onClick={() => clear('pagerduty_webhook_secret')}>Clear</Button>}
+                        {data?.has_pagerduty_webhook_secret && <Button variant="ghost" size="sm" aria-label="Clear PagerDuty signing secret" onClick={() => clear('pagerduty_webhook_secret')}>Clear</Button>}
                     </div>
                 </div>
                 <div className="space-y-1">
@@ -78,7 +78,7 @@ export default function EscalationPagingCard() {
                     <div className="flex gap-2">
                         <Input id="pd-key" type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
                             placeholder={data?.has_pagerduty_api_key ? 'Enter a new value to replace' : ''} />
-                        {data?.has_pagerduty_api_key && <Button variant="ghost" size="sm" onClick={() => clear('pagerduty_api_key')}>Clear</Button>}
+                        {data?.has_pagerduty_api_key && <Button variant="ghost" size="sm" aria-label="Clear PagerDuty API key" onClick={() => clear('pagerduty_api_key')}>Clear</Button>}
                     </div>
                 </div>
             </div>
@@ -95,6 +95,7 @@ export default function EscalationPagingCard() {
                         <div className="flex items-center gap-2">
                             <code className="flex-1 min-w-0 truncate font-mono text-xs text-fg">{token}</code>
                             <Button variant="secondary" size="sm" aria-label="Copy token" onClick={copyToken}>{tokenCopied ? <Check size={14} /> : <Copy size={14} />}</Button>
+                            <Button variant="ghost" size="sm" onClick={() => setToken(null)}>Done</Button>
                         </div>
                     </div>
                 )}

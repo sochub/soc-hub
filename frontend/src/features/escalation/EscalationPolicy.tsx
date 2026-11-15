@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../api/client';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import PageContainer from '../../components/layout/PageContainer';
 import { Button, Input, Label } from '../../components/ui';
-import type { EscalationTier } from '../../types';
+import type { EscalationTier, User } from '../../types';
 import CheckList from './CheckList';
 import { errMsg, useGroups, usePolicy, useSavePolicy } from './api';
 
@@ -11,7 +13,7 @@ const blank = (): EscalationTier => ({
     slack_channel: null, group_ids: [],
 });
 
-export default function EscalationPolicy() {
+function PolicyForm() {
     const { data: policy, isLoading } = usePolicy();
     const { data: groups = [] } = useGroups();
     const save = useSavePolicy();
@@ -105,4 +107,14 @@ export default function EscalationPolicy() {
             )}
         </PageContainer>
     );
+}
+
+// Keyed on the active organization so a switch drops any unsaved draft.
+export default function EscalationPolicy() {
+    const { data: me } = useQuery({
+        queryKey: ['currentUser'],
+        queryFn: async () => (await api.get('/users/me')).data as User,
+        staleTime: 300_000,
+    });
+    return <PolicyForm key={me?.active_tenant_id ?? 'none'} />;
 }
