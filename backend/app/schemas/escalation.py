@@ -129,3 +129,21 @@ class QueueRow(BaseModel):
     requested_by_name: Optional[str] = None
     created_at: datetime
     due_at: Optional[datetime] = None
+
+
+class IntegrationOut(BaseModel):
+    pagerduty_url: str
+    opsgenie_url: str
+    has_pagerduty_webhook_secret: bool
+    has_pagerduty_api_key: bool
+    has_opsgenie_token: bool
+
+
+class IntegrationIn(BaseModel):
+    """Omitted = unchanged; empty string clears."""
+    pagerduty_webhook_secret: Optional[str] = Field(default=None, max_length=512)
+    pagerduty_api_key: Optional[str] = Field(default=None, max_length=512)
+
+
+class OpsgenieTokenOut(BaseModel):
+    token: str

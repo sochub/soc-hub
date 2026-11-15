@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timezone
 from typing import Dict, List
 
@@ -7,20 +8,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
+from app.core.config import settings
 from app.escalations import service as svc
 from app.escalations.service import EscalationError
 from app.models.case import Case
 from app.models.escalation import (
-    CaseEscalation, EscalationTier, EscalationTierGroup, UserGroup, UserGroupMember,
+    CaseEscalation, EscalationIntegration, EscalationTier, EscalationTierGroup, UserGroup, UserGroupMember,
 )
 from app.models.membership import TenantMembership
 from app.models.user import User
 from app.schemas.escalation import (
     EscalateIn, HistoryRow, NoteIn, QueueRow, RedirectIn,
 )
+from app.schemas.escalation import IntegrationIn, IntegrationOut, OpsgenieTokenOut
 from app.schemas.escalation import GroupIn, GroupMemberOut, GroupOut, PolicyIn, PolicyOut, TierOut
 from app.utils.account_guard import assert_super_admin_may_bootstrap
 from app.utils.audit import create_audit_log
+from app.utils.crypto import encrypt
 
 router = APIRouter()
 
@@ -297,3 +301,76 @@ async def queue(db: AsyncSession = Depends(deps.get_db), tenant_id: int = Depend
             tier_name=s["tier_name"], group_id=s["group_id"], group_name=s["group_name"],
             requested_by_name=s["requested_by_name"], created_at=r.created_at, due_at=r.due_at)))
     return [q for *_, q in sorted(out, key=lambda t: t[:3])]
+
+
+# ── External paging integration (inbound acks) ──────────────────
+
+async def _integration(db: AsyncSession, tenant_id: int) -> EscalationIntegration:
+    """The tenant's row, created with a fresh opaque inbound key on first use."""
+    q = select(EscalationIntegration).where(EscalationIntegration.tenant_id == tenant_id)
+    integ = (await db.execute(q)).scalars().first()
+    if integ is not None:
+        return integ
+    try:
+        async with db.begin_nested():  # a concurrent first GET trips the tenant_id unique; reuse its row
+            integ = EscalationIntegration(tenant_id=tenant_id, inbound_key=secrets.token_urlsafe(32))
+            db.add(integ)
+            await db.flush()
+    except IntegrityError:
+        integ = (await db.execute(q)).scalars().one()
+    return integ
+
+
+def _integration_out(integ: EscalationIntegration) -> IntegrationOut:
+    base = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/v1/escalations/inbound/{integ.inbound_key}"
+    return IntegrationOut(pagerduty_url=f"{base}/pagerduty", opsgenie_url=f"{base}/opsgenie",
+                          has_pagerduty_webhook_secret=bool(integ.pagerduty_webhook_secret_enc),
+                          has_pagerduty_api_key=bool(integ.pagerduty_api_key_enc),
+                          has_opsgenie_token=bool(integ.opsgenie_token_enc))
+
+
+@router.get("/integrations", response_model=IntegrationOut)
+async def get_integrations(db: AsyncSession = Depends(deps.get_db),
+                           tenant_id: int = Depends(deps.get_effective_tenant_id),
+                           _user: User = Depends(deps.require_admin)):
+    integ = await _integration(db, tenant_id)
+    await db.commit()
+    return _integration_out(integ)
+
+
+@router.put("/integrations", response_model=IntegrationOut)
+async def put_integrations(body: IntegrationIn, request: Request, db: AsyncSession = Depends(deps.get_db),
+                           tenant_id: int = Depends(deps.get_effective_tenant_id),
+                           user: User = Depends(deps.require_admin)):
+    await assert_super_admin_may_bootstrap(db, user, tenant_id, action="escalation_integration_update",
+                                           request=request)
+    integ = await _integration(db, tenant_id)
+    changed = {}
+    for field in ("pagerduty_webhook_secret", "pagerduty_api_key"):
+        value = getattr(body, field)
+        if value is None:
+            continue
+        value = value.strip()
+        setattr(integ, f"{field}_enc", encrypt(value) if value else None)
+        changed[field] = "set" if value else "cleared"  # never the value itself
+    if changed:
+        await create_audit_log(db, "escalation_integration", integ.id, "escalation_integration_updated",
+                               tenant_id, user.id, changed)
+    await db.commit()
+    return _integration_out(integ)
+
+
+@router.post("/integrations/opsgenie-token", response_model=OpsgenieTokenOut)
+async def regenerate_opsgenie_token(request: Request, db: AsyncSession = Depends(deps.get_db),
+                                    tenant_id: int = Depends(deps.get_effective_tenant_id),
+                                    user: User = Depends(deps.require_admin)):
+    """A new random token for Opsgenie's custom header, shown once; the previous token stops working."""
+    await assert_super_admin_may_bootstrap(db, user, tenant_id, action="escalation_integration_update",
+                                           request=request)
+    integ = await _integration(db, tenant_id)
+    token = secrets.token_urlsafe(32)
+    integ.opsgenie_token_enc = encrypt(token)
+    await create_audit_log(db, "escalation_integration", integ.id, "escalation_integration_opsgenie_token_rotated",
+                           tenant_id, user.id, {})
+    await db.commit()
+    return OpsgenieTokenOut(token=token)

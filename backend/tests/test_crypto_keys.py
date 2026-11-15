@@ -106,6 +106,8 @@ def test_reencrypt_covers_every_enc_column():
         ("tenant_sso_configs", "oidc_client_secret_enc"), ("tenant_secrets", "value_enc"),
         ("tenant_enrichment_configs", "credentials_enc"), ("ticket_connections", "credentials_enc"),
         ("tenant_mailboxes", "password_enc"),
+        ("escalation_integrations", "pagerduty_webhook_secret_enc"),
+        ("escalation_integrations", "pagerduty_api_key_enc"), ("escalation_integrations", "opsgenie_token_enc"),
     }, found
 
 

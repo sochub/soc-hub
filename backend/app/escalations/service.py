@@ -6,10 +6,11 @@ policy (their FKs on the row are SET NULL). Every transition writes a case activ
 stashes a workflow event that is emitted after commit (app/escalations/events.py).
 """
 import logging
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional, Set
+from typing import Iterable, Literal, Optional, Set
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import AsyncSessionLocal
@@ -258,6 +259,67 @@ async def accept(db, *, case: Case, actor_id: int, is_admin: bool) -> CaseEscala
     await _close(db, case, row, "accepted", actor_id, None, "case_escalation_accepted",
                  f"Accepted escalation at {_label(row.policy_snapshot['to'])}{suffix}")
     return row
+
+
+_DEDUP_RE = re.compile(r"sochub-case-(\d{1,10})-esc-(\d{1,10})", re.ASCII)
+_INT_MAX = 2**31 - 1
+VIA_LABELS = {"pagerduty": "PagerDuty", "opsgenie": "Opsgenie"}
+
+
+def parse_dedup_key(value) -> Optional[tuple]:
+    """(case_id, escalation_id) from a key in exactly our `dedup_key` format, else None."""
+    m = _DEDUP_RE.fullmatch(value) if isinstance(value, str) else None
+    if not m:
+        return None
+    case_id, esc_id = int(m[1]), int(m[2])
+    return (case_id, esc_id) if 0 < case_id <= _INT_MAX and 0 < esc_id <= _INT_MAX else None
+
+
+async def accept_external(db, *, tenant_id: int, dedup_key: Optional[str], email: Optional[str], via: str,
+                          actor_ref: Optional[str] = None) -> Literal["accepted", "unmatched", "ignored"]:
+    """An ack from PagerDuty/Opsgenie. Accepts as the acker when their email is an active member of the row's group;
+    otherwise records the ack and leaves the row pending (the auto-climb timer keeps running).
+
+    Idempotent: the pending row is locked FOR UPDATE, so redeliveries (concurrent or late) find it no longer pending
+    and are ignored. `actor_ref` (the vendor's user id) labels the ack when no email is known.
+    """
+    label = VIA_LABELS[via]
+    ids = parse_dedup_key(dedup_key)
+    if ids is None:
+        return "ignored"
+    case_id, esc_id = ids
+    if (await db.execute(select(Tenant.id).where(Tenant.id == tenant_id, Tenant.is_active.is_(True)))).first() is None:
+        return "ignored"
+    case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalars().first()
+    if case is None:
+        return "ignored"
+    row = await _locked(db, case)
+    if row is None or row.id != esc_id:
+        return "ignored"
+    email = (email or "").strip()[:320] or None
+    if email:
+        for user in (await db.execute(select(User).where(func.lower(User.email) == email.lower(),
+                                                          User.is_active.is_(True)))).scalars().all():
+            if await _member_groups(db, tenant_id, user.id, [row.to_group_id]):
+                row.accepted_by, row.accepted_at, row.accepted_via = user.id, _now(), via
+                case.owner_id = user.id
+                await _close(db, case, row, "accepted", user.id, None, "case_escalation_accepted",
+                             f"Accepted via {label} by {_name(user)}")
+                return "accepted"
+    ref = (actor_ref or "").strip()[:64]
+    who = email or (f"{label} user {ref}" if ref else "an unknown user")
+    group = row.policy_snapshot["to"].get("group_name") or "the receiving group"
+    text = _one_line(f"Acknowledged in {label} by {who} (no matching member of {group})")
+    dup = (await db.execute(select(TimelineEvent.id).where(
+        TimelineEvent.case_id == case.id, TimelineEvent.event_type == "escalation",
+        TimelineEvent.content == text, TimelineEvent.created_at >= row.created_at).limit(1))).first()
+    if dup is None:  # a redelivered unmatched ack is recorded once per escalation
+        db.add(TimelineEvent(case_id=case.id, user_id=None, event_type="escalation", content=text))
+        await create_audit_log(db, "case", case.id, "case_escalation_external_ack_unmatched", tenant_id, None, {
+            "escalation_id": row.id, "via": via, "email": email, "agent_id": ref or None,
+            "group": group})
+        await db.flush()
+    return "unmatched"
 
 
 async def redirect(db, *, case: Case, actor_id: int, to_group_id: int, note: str) -> CaseEscalation:
