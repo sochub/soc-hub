@@ -25,7 +25,7 @@ from app.core.login_throttle import LoginThrottle, client_ip, get_pwd_throttle
 from app.services.avatars import MAX_BYTES, avatar_version, reencode_avatar
 from app.storage import StorageError, get_storage
 from app.utils.account_guard import (
-    GLOBAL, MEMBERSHIP, assert_can_manage_account, assert_super_admin_may_bootstrap, tenant_has_admin,
+    GLOBAL, MEMBERSHIP, assert_can_manage_account, assert_super_admin_may_bootstrap, bootstraps_only, tenant_has_admin,
 )
 from app.utils.audit import create_audit_log
 from app.schemas.notification import MentionableUser
@@ -57,16 +57,19 @@ async def read_users(
         .order_by(User.id)
         .offset(skip).limit(limit)
     )
-    # A super admin manages a tenant's users only until it has an active admin (app.utils.account_guard).
-    super_hands_off = current_user.is_super_admin and await tenant_has_admin(db, tenant_id)
+    # A super admin manages a tenant's users only until it has an active admin, unless they hold an admin
+    # membership there and so act as its admin (app.utils.account_guard).
+    bootstrapper = await bootstraps_only(db, current_user, tenant_id)
+    super_hands_off = bootstrapper and await tenant_has_admin(db, tenant_id)
     return [
         UserSchema(
             id=u.id, email=u.email, full_name=u.full_name,
             is_active=u.is_active, is_super_admin=u.is_super_admin, role=role,
             has_avatar=bool(u.avatar_key), avatar_version=avatar_version(u.avatar_key),
             mfa_enabled=u.mfa_enabled_at is not None,
-            account_manageable=(u.id == current_user.id or not super_hands_off) if current_user.is_super_admin
-            else not (u.is_super_admin or home_tid != tenant_id),
+            account_manageable=(u.id == current_user.id or not super_hands_off) if bootstrapper
+            else (current_user.is_super_admin and u.id == current_user.id)
+            or not (u.is_super_admin or home_tid != tenant_id),
         )
         for u, role, home_tid in rows.all()
     ]

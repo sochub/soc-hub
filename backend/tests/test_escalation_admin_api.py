@@ -55,7 +55,7 @@ async def _scenario():
             state["tenant"], state["user"] = ta.id, admin
             ta_id, tx_id, gx_id, case_id = ta.id, tx.id, gx.id, case.id
             u1_id, u2_id, ux_id, m1_id, admin_obj, sa_obj = u1.id, u2.id, ux.id, m1.id, admin, sa
-            uv_id = uv.id
+            uv_id, sa_id = uv.id, sa.id
 
             app.dependency_overrides[deps.get_current_active_user] = lambda: state["user"]
             app.dependency_overrides[deps.get_effective_tenant_id] = lambda: state["tenant"]
@@ -154,6 +154,13 @@ async def _scenario():
                           await c.put(P, json={"tiers": []}),
                           await c.delete(f"{E}/groups/{g1['id']}")):
                     assert r.status_code == 403 and r.json()["detail"] == TENANT_HAS_ADMIN, r.text
+                # ... but a super admin who also holds an admin membership acts as that tenant's admin
+                async with AsyncSessionLocal() as s2:
+                    s2.add(TenantMembership(user_id=sa_id, tenant_id=ta_id, role="admin"))
+                    await s2.commit()
+                r = await c.post(f"{E}/groups", json={"name": "sa", "member_user_ids": []})
+                assert r.status_code == 201, r.text
+                assert (await c.put(P, json={"tiers": []})).status_code == 200
         finally:
             app.dependency_overrides.clear()
             await db.rollback()

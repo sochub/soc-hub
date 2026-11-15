@@ -16,7 +16,7 @@ from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas import invitation as invitation_schema
 from app.services.email_service import send_invitation_email
-from app.utils.account_guard import assert_super_admin_may_bootstrap, deny
+from app.utils.account_guard import assert_super_admin_may_bootstrap, bootstraps_only, deny
 from app.utils.emails import normalize_email
 
 router = APIRouter()
@@ -76,8 +76,9 @@ async def create_invitation(
             # SSO-only accounts may belong to a single tenant (SSO refuses multi-tenant users),
             # so adding one elsewhere would lock them out of their own organization.
             raise HTTPException(status_code=409, detail=CANNOT_ADD_EXISTING)
-    if existing_user and (current_user.is_super_admin or not await _has_members(db, tenant_id)):
-        # (a super admin got here only while the tenant has no active admin: assert_super_admin_may_bootstrap)
+    if existing_user and (await bootstraps_only(db, current_user, tenant_id) or not await _has_members(db, tenant_id)):
+        # (a bootstrapping super admin got here only while the tenant has no active admin:
+        # assert_super_admin_may_bootstrap; one with an admin membership invites like any tenant admin)
         db.add(TenantMembership(
             user_id=existing_user.id, tenant_id=tenant_id, role=invitation_in.role.value
         ))
