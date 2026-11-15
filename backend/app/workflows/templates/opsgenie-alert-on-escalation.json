@@ -2,7 +2,7 @@
   "key": "opsgenie-alert-on-escalation",
   "name": "Opsgenie: alert on case escalation",
   "vendor": "Opsgenie",
-  "kind": "response",
+  "kind": "triage",
   "description": "When a case is escalated to a tier, create an Opsgenie alert addressed to a team. The alert alias is the escalation's dedup key, so a later close closes exactly this one.",
   "trigger_type": "case.escalated",
   "trigger_filter": null,
@@ -57,7 +57,7 @@
             "Accept": "application/json"
           },
           "body": {
-            "message": "[SOC Hub] Case #{{ case.id }} escalated to {{ trigger.changes.escalation.group.name }}: {{ case.title | truncate(100, True) }}",
+            "message": "{{ ('[SOC Hub] Case #' ~ case.id ~ ' escalated to ' ~ trigger.changes.escalation.group.name ~ ': ' ~ case.title) | truncate(130, True) }}",
             "alias": "{{ trigger.changes.escalation.dedup_key }}",
             "description": "{{ trigger.changes.escalation.reason }}\n\n{{ trigger.changes.escalation.summary }}",
             "responders": [

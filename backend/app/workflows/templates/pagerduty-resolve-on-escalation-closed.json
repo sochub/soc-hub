@@ -2,7 +2,7 @@
   "key": "pagerduty-resolve-on-escalation-closed",
   "name": "PagerDuty: resolve on escalation closed",
   "vendor": "PagerDuty",
-  "kind": "response",
+  "kind": "triage",
   "description": "When an escalation is closed (accepted, withdrawn or superseded), resolve the matching PagerDuty incident using the same dedup key.",
   "trigger_type": "case.escalation_closed",
   "trigger_filter": null,

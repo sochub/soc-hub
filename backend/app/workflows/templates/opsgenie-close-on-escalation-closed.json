@@ -2,7 +2,7 @@
   "key": "opsgenie-close-on-escalation-closed",
   "name": "Opsgenie: close on escalation closed",
   "vendor": "Opsgenie",
-  "kind": "response",
+  "kind": "triage",
   "description": "When an escalation is closed (accepted, withdrawn or superseded), close the matching Opsgenie alert by its alias.",
   "trigger_type": "case.escalation_closed",
   "trigger_filter": null,

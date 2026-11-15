@@ -29,9 +29,9 @@ KEYS = {
 OG_HOST = "api.eu.opsgenie.com"
 
 
-def _payload(case_id, event):
+def _payload(case_id, event, group="Senior SOC"):
     esc = {"id": 7, "dedup_key": f"sochub-case-{case_id}-esc-7", "status": "pending",
-           "tier": {"position": 1, "name": "Tier 2"}, "group": {"id": 3, "name": "Senior SOC"},
+           "tier": {"position": 1, "name": "Tier 2"}, "group": {"id": 3, "name": group},
            "reason": "Possible ransomware", "summary": "Host encrypting shares", "requested_help": "Contain the host",
            "case_url": f"https://soc.example.com/cases/{case_id}"}
     return {"event": event, "case_id": case_id, "alert_id": None, "changes": {"escalation": esc}}
@@ -41,7 +41,7 @@ def test_paging_templates_load_and_validate():
     tpl.reset_cache()
     for key, trig in KEYS.items():
         t = tpl.get_template(key)
-        assert t["trigger_type"] == trig and t["kind"] == "response" and t["trigger_filter"] is None
+        assert t["trigger_type"] == trig and t["kind"] == "triage"  # paging, not containment: exempt from the guard/task invariants of kind=response and t["trigger_filter"] is None
         assert t["vendor"] in ("PagerDuty", "Opsgenie")
         assert "Escalation paging" in t["setup"]
         params = {p["key"]: ("SOC" if p["key"] == "OPSGENIE_TEAM" else OG_HOST) for p in t["params"]}
@@ -81,7 +81,7 @@ async def _scenario(queue):
             tpl.reset_cache()
             dedup = f"sochub-case-{cid}-esc-7"
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-                async def run(key, params, event):
+                async def run(key, params, event, group="Senior SOC"):
                     r = await c.post(f"/api/v1/workflows/templates/{key}/install", json={"params": params})
                     assert r.status_code == 201, r.text
                     d = r.json()
@@ -89,7 +89,7 @@ async def _scenario(queue):
                     assert d["workflow"]["validation_errors"] in (None, []), d["workflow"]
                     assert d["missing_secrets"] == [], key
                     r = await c.post(f"/api/v1/workflows/{d['workflow']['id']}/dry-run", json={
-                        "payload": _payload(cid, event), "case_id": cid})
+                        "payload": _payload(cid, event, group), "case_id": cid})
                     assert r.status_code == 200, r.text
                     await _drain(queue)
                     steps = await _steps(r.json()["run_id"])
@@ -110,9 +110,11 @@ async def _scenario(queue):
                 assert wd["body"]["event_action"] == "resolve" and wd["body"]["dedup_key"] == dedup
 
                 og = {"OPSGENIE_API_HOST": OG_HOST, "OPSGENIE_TEAM": "SOC"}
-                wd = await run("opsgenie-alert-on-escalation", og, "case.escalated")
+                LONG = "Very long on-call group name " * 6
+                wd = await run("opsgenie-alert-on-escalation", og, "case.escalated", LONG)
                 assert wd["url"] == f"https://{OG_HOST}/v2/alerts"
                 b = wd["body"]
+                assert b["message"] == f"[SOC Hub] Case #{cid} escalated to {LONG}: Ransomware on FS01"[:127] + "..." and len(b["message"]) == 130
                 assert b["alias"] == dedup and b["priority"] == "P2"
                 assert b["responders"] == [{"name": "SOC", "type": "team"}]
                 assert b["description"] == "Possible ransomware\n\nHost encrypting shares"

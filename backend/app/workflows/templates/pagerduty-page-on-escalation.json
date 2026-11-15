@@ -2,7 +2,7 @@
   "key": "pagerduty-page-on-escalation",
   "name": "PagerDuty: page on case escalation",
   "vendor": "PagerDuty",
-  "kind": "response",
+  "kind": "triage",
   "description": "When a case is escalated to a tier, trigger a PagerDuty incident through the Events API v2. The incident's dedup key is the escalation's, so a later close resolves exactly this one.",
   "trigger_type": "case.escalated",
   "trigger_filter": null,
