@@ -338,6 +338,7 @@ export default function Settings() {
         auto_provision: false, default_role: 'viewer' as 'analyst' | 'viewer',
         allowed_email_domains: '', // comma-separated in the form, a list on the wire
         saml_allow_idp_initiated: false,
+        groups_claim: 'groups',
     });
     const [savedFlash, setSavedFlash] = useState(false);
 
@@ -356,6 +357,7 @@ export default function Settings() {
                 allowed_email_domains: (cfg.allowed_email_domains ?? []).join(', '),
                 default_role: cfg.default_role,
                 saml_allow_idp_initiated: cfg.saml_allow_idp_initiated,
+                groups_claim: cfg.groups_claim ?? 'groups',
             });
         }
     }, [cfg]);
@@ -373,7 +375,7 @@ export default function Settings() {
         },
     });
 
-    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url' | 'oidc_issuer' | 'oidc_client_id' | 'oidc_client_secret' | 'oidc_scopes',
+    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url' | 'oidc_issuer' | 'oidc_client_id' | 'oidc_client_secret' | 'oidc_scopes' | 'groups_claim',
         placeholder: string, type = 'text') => (
         <div>
             <label className="label-mono block mb-1">{label}</label>
@@ -451,6 +453,11 @@ export default function Settings() {
                                 {field('client id', 'oidc_client_id', '')}
                                 {field('client secret', 'oidc_client_secret', cfg?.has_oidc_client_secret ? 'saved (leave blank to keep)' : '', 'password')}
                                 {field('scopes', 'oidc_scopes', 'openid email profile')}
+                                {field('groups claim / attribute', 'groups_claim', 'groups')}
+                                <p className="text-[11px] text-fg-3 -mt-2">
+                                    Name of the SAML attribute or OIDC claim carrying the user's groups, used to sync escalation
+                                    groups at sign-in. If the IdP omits it, memberships are left unchanged.
+                                </p>
                                 <div className="flex items-center gap-4 flex-wrap">
                                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                         <input type="checkbox" checked={form.auto_provision}

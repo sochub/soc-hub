@@ -21,6 +21,7 @@ export default function GroupsSection() {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [members, setMembers] = useState<number[]>([]);
+    const [idpGroups, setIdpGroups] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [listError, setListError] = useState<string | null>(null);
 
@@ -31,11 +32,12 @@ export default function GroupsSection() {
         setName(g === 'new' ? '' : g.name);
         setDescription(g === 'new' ? '' : g.description ?? '');
         setMembers(g === 'new' ? [] : g.members.map((m) => m.user_id));
+        setIdpGroups(g === 'new' ? '' : (g.idp_groups ?? []).join('\n'));
     };
     const submit = () => {
         if (!editing) return;
         save.mutate(
-            { id: editing === 'new' ? undefined : editing.id, body: { name, description: description.trim() || null, member_user_ids: members } },
+            { id: editing === 'new' ? undefined : editing.id, body: { name, description: description.trim() || null, member_user_ids: members, idp_groups: idpGroups.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean) } },
             { onSuccess: () => setEditing(null), onError: (e) => setError(errMsg(e, 'Could not save the group.')) },
         );
     };
@@ -107,6 +109,16 @@ export default function GroupsSection() {
                         {/* Viewers can't act on escalations; one already in the group stays listed so it can be unchecked. */}
                         <CheckList options={users.filter((u) => u.role !== 'viewer' || members.includes(u.id)).map((u) => ({ id: u.id, label: u.full_name ? `${u.full_name} (${u.email})` : u.email }))}
                             value={members} onChange={setMembers} empty="No users available." />
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="grp-idp">SSO groups</Label>
+                        <textarea id="grp-idp" rows={3} value={idpGroups} onChange={(e) => setIdpGroups(e.target.value)}
+                            placeholder="soc-tier2, 3f2a9c1e-…"
+                            className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
+                        <p className="text-xs text-fg-3">
+                            IdP group names or IDs, separated by commas or new lines. When set, membership is synced from the
+                            identity provider at each SSO sign-in and replaces manual changes; analysts and admins only.
+                        </p>
                     </div>
                     {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
                 </div>

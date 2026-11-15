@@ -46,7 +46,7 @@ async def _group_out(db: AsyncSession, tenant_id: int, groups: List[UserGroup]) 
                 select(EscalationTierGroup.group_id, EscalationTierGroup.tier_id)
                 .where(EscalationTierGroup.group_id.in_(ids)).order_by(EscalationTierGroup.tier_id))).all():
             tiers[gid].append(tid)
-    return [GroupOut(id=g.id, name=g.name, description=g.description, members=members[g.id], tier_ids=tiers[g.id])
+    return [GroupOut(id=g.id, name=g.name, description=g.description, idp_groups=list(g.idp_groups or []), members=members[g.id], tier_ids=tiers[g.id])
             for g in groups]
 
 
@@ -85,7 +85,7 @@ async def create_group(body: GroupIn, request: Request, db: AsyncSession = Depen
                        user: User = Depends(deps.require_admin)):
     await assert_super_admin_may_bootstrap(db, user, tenant_id, action="escalation_group_create", request=request)
     mids = await _membership_ids(db, tenant_id, body.member_user_ids)
-    g = UserGroup(tenant_id=tenant_id, name=body.name, description=body.description)
+    g = UserGroup(tenant_id=tenant_id, name=body.name, description=body.description, idp_groups=body.idp_groups)
     db.add(g)
     try:
         await db.flush()
@@ -94,7 +94,8 @@ async def create_group(body: GroupIn, request: Request, db: AsyncSession = Depen
         raise HTTPException(status_code=409, detail="A group with that name already exists")
     db.add_all([UserGroupMember(group_id=g.id, membership_id=m) for m in mids])
     await create_audit_log(db, "user_group", g.id, "user_group_created", tenant_id, user.id,
-                           {"name": g.name, "member_user_ids": sorted(set(body.member_user_ids))})
+                           {"name": g.name, "member_user_ids": sorted(set(body.member_user_ids)),
+                            "idp_groups": body.idp_groups})
     await db.commit()
     return (await _group_out(db, tenant_id, [g]))[0]
 
@@ -106,8 +107,8 @@ async def update_group(group_id: int, body: GroupIn, request: Request, db: Async
     await assert_super_admin_may_bootstrap(db, user, tenant_id, action="escalation_group_update", request=request)
     g = await _get_group(db, tenant_id, group_id)
     mids = await _membership_ids(db, tenant_id, body.member_user_ids)
-    before = {"name": g.name, "description": g.description}
-    g.name, g.description = body.name, body.description
+    before = {"name": g.name, "description": g.description, "idp_groups": list(g.idp_groups or [])}
+    g.name, g.description, g.idp_groups = body.name, body.description, body.idp_groups
     try:
         await db.flush()
     except IntegrityError:
@@ -117,7 +118,8 @@ async def update_group(group_id: int, body: GroupIn, request: Request, db: Async
     db.add_all([UserGroupMember(group_id=g.id, membership_id=m) for m in mids])
     await create_audit_log(db, "user_group", g.id, "user_group_updated", tenant_id, user.id,
                            {"before": before, "after": {"name": g.name, "description": g.description,
-                                                        "member_user_ids": sorted(set(body.member_user_ids))}})
+                                                        "member_user_ids": sorted(set(body.member_user_ids)),
+                                                        "idp_groups": body.idp_groups}})
     await db.commit()
     return (await _group_out(db, tenant_id, [g]))[0]
 

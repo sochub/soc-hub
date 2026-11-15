@@ -17,6 +17,8 @@ class UserGroup(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(100), nullable=False)
     description = Column(String(500), nullable=True)
+    # IdP group names/ids mapped to this group; non-empty = membership is synced at SSO login
+    idp_groups = Column(JSON, nullable=False, default=list, server_default="[]")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

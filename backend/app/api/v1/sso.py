@@ -20,6 +20,7 @@ from app.auth.login_policy import AMR_OIDC, AMR_SAML
 from app.core import security, session_cookie
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
+from app.escalations.sso_sync import oidc_groups, saml_groups, sync_user_groups
 from app.guests import tokens as guest_tokens
 from app.guests.access import ACTIVE as GUEST_ACTIVE, domain_allowed
 from app.models.case_guest import CaseGuest
@@ -394,11 +395,13 @@ async def _saml_acs(request: Request, db: AsyncSession, slug: str) -> RedirectRe
             full_name = vals[0].strip()
             break
 
-    return await _finish_member_sso(request, db, tenant, cfg, email, full_name, AMR_SAML)
+    return await _finish_member_sso(request, db, tenant, cfg, email, full_name, AMR_SAML,
+                                    idp_groups=saml_groups(attrs, cfg.groups_claim or "groups"))
 
 
 async def _finish_member_sso(request: Request, db: AsyncSession, tenant: Tenant, cfg: TenantSSOConfig,
-                             email: str, full_name: str, amr: str) -> RedirectResponse:
+                             email: str, full_name: str, amr: str,
+                             idp_groups: Optional[list[str]] = None) -> RedirectResponse:
     """The IdP proved `email`: resolve the member, audit, and set a session that opens only this tenant."""
     try:
         user = await _resolve_sso_user(db, tenant, cfg, email, full_name)
@@ -407,6 +410,11 @@ async def _finish_member_sso(request: Request, db: AsyncSession, tenant: Tenant,
 
     await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="sso_login",
                            tenant_id=tenant.id, user_id=user.id, changes={"protocol": amr})
+    try:  # IdP-authoritative group sync; in a savepoint so a failure can't poison the login transaction
+        async with db.begin_nested():
+            await sync_user_groups(db, tenant_id=tenant.id, user_id=user.id, idp_groups=idp_groups)
+    except Exception:
+        logger.exception("SSO group sync failed tenant=%s user=%s", tenant.id, user.id)
     await db.commit()
     await audit_event("security", "sso.success", request=request, user_id=user.id, user_email=user.email,
                       tenant_id=tenant.id)
@@ -577,7 +585,8 @@ async def _oidc_callback(request: Request, db: AsyncSession, slug: str, code: Op
 
     if is_guest:
         return await _guest_acs(request, db, tenant, email, proto="oidc")
-    return await _finish_member_sso(request, db, tenant, cfg, email, full_name, AMR_OIDC)
+    return await _finish_member_sso(request, db, tenant, cfg, email, full_name, AMR_OIDC,
+                                    idp_groups=oidc_groups(claims, cfg.groups_claim or "groups"))
 
 
 def _config_out(tenant: Tenant, cfg: Optional[TenantSSOConfig]) -> SSOConfigOut:
@@ -596,6 +605,7 @@ def _config_out(tenant: Tenant, cfg: Optional[TenantSSOConfig]) -> SSOConfigOut:
         allowed_email_domains=list((cfg.allowed_email_domains if cfg else None) or []),
         default_role=(cfg.default_role if cfg else "viewer"),
         saml_allow_idp_initiated=bool(cfg and cfg.saml_allow_idp_initiated),
+        groups_claim=(cfg.groups_claim if cfg and cfg.groups_claim else "groups"),
         sp_entity_id=urls["entity_id"],
         sp_acs_url=urls["acs_url"],
         sp_metadata_url=urls["metadata_url"],
@@ -641,7 +651,7 @@ async def update_sso_config(
 
     for field in ("idp_entity_id", "idp_sso_url", "idp_x509_cert", "oidc_issuer", "oidc_client_id",
                   "oidc_scopes", "auto_provision", "allowed_email_domains", "default_role",
-                  "saml_allow_idp_initiated"):
+                  "saml_allow_idp_initiated", "groups_claim"):
         value = getattr(body, field)
         if value is not None:
             setattr(cfg, field, value)

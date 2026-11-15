@@ -160,6 +160,7 @@ export interface SSOConfig {
   allowed_email_domains?: string[];
   default_role: 'analyst' | 'viewer';
   saml_allow_idp_initiated: boolean;
+  groups_claim: string;
   sp_entity_id: string;
   sp_acs_url: string;
   sp_metadata_url: string;
@@ -509,9 +510,9 @@ export interface WarRoomSuggestion {
 export interface EscalationGroupMember { user_id: number; email: string; full_name: string | null }
 export interface EscalationGroup {
   id: number; name: string; description: string | null;
-  members: EscalationGroupMember[]; tier_ids: number[];
+  members: EscalationGroupMember[]; tier_ids: number[]; idp_groups: string[];
 }
-export interface EscalationGroupInput { name: string; description: string | null; member_user_ids: number[] }
+export interface EscalationGroupInput { name: string; description: string | null; member_user_ids: number[]; idp_groups: string[] }
 export interface EscalationTier {
   id: number | null; position?: number; name: string;
   accept_timeout_minutes: number | null;

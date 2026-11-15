@@ -17,6 +17,22 @@ class GroupIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=500)
     member_user_ids: List[int] = []
+    idp_groups: List[str] = []
+
+    @field_validator("idp_groups")
+    @classmethod
+    def _idp(cls, v: List[str]) -> List[str]:
+        out: dict = {}
+        for raw in v:
+            s = raw.strip()
+            if not s:
+                continue
+            if len(s) > 256:
+                raise ValueError("each SSO group must be at most 256 characters")
+            out.setdefault(s.casefold(), s)
+        if len(out) > 50:
+            raise ValueError("at most 50 SSO groups per group")
+        return list(out.values())
 
     @field_validator("name")
     @classmethod
@@ -32,6 +48,7 @@ class GroupOut(BaseModel):
     name: str
     description: Optional[str] = None
     members: List[GroupMemberOut] = []
+    idp_groups: List[str] = []
     tier_ids: List[int] = []
 
 

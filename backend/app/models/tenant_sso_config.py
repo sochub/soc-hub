@@ -35,5 +35,7 @@ class TenantSSOConfig(Base):
     # Accept unsolicited (IdP-initiated) SAML responses. Off by default: they carry no browser binding, so
     # anyone with an account at the same IdP can sign a victim's browser into their account (login CSRF).
     saml_allow_idp_initiated = Column(Boolean, nullable=False, default=False, server_default="false")
+    # SAML attribute / OIDC claim carrying the user's IdP groups (escalation group sync)
+    groups_claim = Column(String(200), nullable=False, default="groups", server_default="groups")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
