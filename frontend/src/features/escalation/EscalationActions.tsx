@@ -85,13 +85,15 @@ export default function EscalationActions({ caseData, me }: { caseData: Case; me
                     <ArrowUpCircle size={12} /> {esc ? 'Re-escalate' : 'Escalate'}
                 </button>
             )}
-            {!canEscalate && !closed && !pending && (
+            {!!policy && !canEscalate && !closed && !pending && (
                 <>
                     <button type="button" className={btn} disabled aria-describedby="escalate-hint">
                         <ArrowUpCircle size={12} /> {esc ? 'Re-escalate' : 'Escalate'}
                     </button>
                     <span id="escalate-hint" className="text-xs text-fg-3">
-                        {isAdmin
+                        {tiers.length >= 2
+                            ? 'Already at the highest tier'
+                            : isAdmin
                             ? <Link to="/settings/escalation" className="text-accent hover:underline">Set up escalation tiers</Link>
                             : 'Ask an admin to set up escalation tiers (Settings → Escalation)'}
                     </span>
