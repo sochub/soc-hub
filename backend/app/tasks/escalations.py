@@ -95,7 +95,7 @@ async def _process_ack(tenant_id: int, vendor: str, dedup_key: Optional[str], ag
             try:
                 api_key = decrypt(integ.pagerduty_api_key_enc)
             except Exception:
-                _logger.warning("PagerDuty API key undecryptable tenant=%s", tenant_id)
+                _logger.warning("PagerDuty integration undecryptable tenant=%s", tenant_id)
         if dedup_key is None and incident_id and api_key:
             try:
                 dedup_key = ((await _pd_get(api_key, f"incidents/{incident_id}")).get("incident") or {}).get(

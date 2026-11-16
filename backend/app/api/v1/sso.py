@@ -595,7 +595,7 @@ async def _oidc_callback(request: Request, db: AsyncSession, slug: str, code: Op
             if info is not None:
                 groups = oidc_groups(info, claim)
             if groups is None:  # claim NAMES only (never values) so admins can see what the IdP sent
-                logger.warning("OIDC groups claim %r absent tenant=%s id_token_claims=%s userinfo=%s", claim,
+                logger.warning("OIDC groups claim %r absent tenant=%s id_claims=%s userinfo=%s", claim,
                                tenant.id, sorted(claims), "failed" if info is None else sorted(info))
     except Exception:
         logger.warning("OIDC group claim lookup failed tenant=%s", tenant.id)
