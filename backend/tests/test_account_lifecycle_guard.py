@@ -339,3 +339,44 @@ def test_existing_user_added_directly_to_empty_tenant():
         m = await _membership(ids["single"], ids["tc"])
         assert m is not None and m.role == "admin"
     _scenario(body)
+
+
+def test_super_admin_with_admin_membership_acts_as_tenant_admin(monkeypatch):
+    """A super admin who also holds an admin membership in the active tenant is that tenant's admin: tenant-admin
+    rules apply (invite, create users, existing accounts must accept). Without one, still bootstrap-only."""
+    async def body(c, ids):
+        async def fake_send(email, link, tenant_id, db):
+            pass
+        monkeypatch.setattr(invitations_mod, "send_invitation_email", fake_send)
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(TenantMembership).where(
+                TenantMembership.user_id == ids["sa"], TenantMembership.tenant_id == ids["ta"]).values(role="admin"))
+            await db.commit()
+        sa = await _hdr(ids["sa"], ids["ta"])  # A also has regular admins
+        r = await c.post("/api/v1/invitations/", headers=sa, json={"email": "sa-inv-wf-test@example.com",
+                                                                     "role": "analyst"})
+        assert r.status_code == 201 and r.json()["added_directly"] is False, r.text
+        r = await c.post("/api/v1/users/", headers=sa, json={"email": "sa-new-wf-test@example.com",
+                                                             "password": "A-Strong-Passw0rd!x", "role": "analyst"})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["id"]
+        # an existing account still gets an invitation it must accept, never a direct add
+        admin_b = await _user(ids["admin_b"])
+        r = await c.post("/api/v1/invitations/", headers=sa, json={"email": admin_b.email, "role": "analyst"})
+        assert r.status_code == 201 and r.json()["added_directly"] is False, r.text
+        assert await _membership(ids["admin_b"], ids["ta"]) is None
+        # manages A's users like A's admin does
+        r = await c.put(f"/api/v1/users/{ids['single']}/role", headers=sa, json={"role": "viewer"})
+        assert r.status_code == 200, r.text
+        r = await c.get("/api/v1/users/", headers=sa)
+        flags = {u["id"]: u["account_manageable"] for u in r.json()}
+        assert flags[ids["single"]] is True and flags[ids["sa"]] is True
+        # a super admin without a membership there is still bootstrap-only
+        r = await c.post("/api/v1/invitations/", headers=await _hdr(ids["sa2"], ids["ta"]),
+                         json={"email": "sa2-inv-wf-test@example.com", "role": "admin"})
+        assert r.status_code == 403 and r.json()["detail"] == TENANT_HAS_ADMIN, r.text
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(TenantMembership).where(TenantMembership.user_id == new_id))
+            await db.execute(delete(User).where(User.id == new_id))
+            await db.commit()
+    _scenario(body)

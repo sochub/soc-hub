@@ -191,4 +191,6 @@ export const TRIGGER_LABEL: Record<TriggerType, string> = {
     manual: 'Manual',
     schedule: 'Schedule (cron, UTC)',
     'email.received': 'Email received',
+    'case.escalated': 'Case escalated',
+    'case.escalation_closed': 'Escalation closed',
 };

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.case import Case
+from app.models.escalation import CaseEscalation
 from app.models.notification import EXTERNAL_TYPES, Notification
 from app.models.membership import TenantMembership
 from app.models.user import User
@@ -62,12 +63,31 @@ def _link(case_id: int) -> str:
     return f"{base}/cases/{case_id}" if base else ""
 
 
+def _row_tier(row) -> dict:
+    """The tier an escalation row targets, resolved from its own snapshot (the live tier may be gone)."""
+    snap = row.policy_snapshot or {}
+    pos = (snap.get("to") or {}).get("position")
+    return next((t for t in snap.get("tiers", []) if t.get("position") == pos), None) or {}
+
+
 async def deliver_one(db, notification_id: int, redis) -> str:
     n = (await db.execute(select(Notification).where(Notification.id == notification_id))).scalars().first()
     if n is None or n.type not in EXTERNAL_TYPES:
         return "skipped"
     if await tenant_deactivated(db, n.tenant_id):  # no email/Slack for a deactivated tenant
         return "skipped"
+    if n.escalation_id is not None:  # additive per-tier channels; never rate limited
+        row = (await db.execute(select(CaseEscalation).where(
+            CaseEscalation.id == n.escalation_id, CaseEscalation.tenant_id == n.tenant_id))).scalars().first()
+        if row is None:
+            return "skipped"
+        tier = _row_tier(row)
+        # a tier Slack channel replaces the per-member DMs; email stays per member
+        dm = bool(tier.get("notify_slack")) and not tier.get("slack_channel")
+        email = bool(tier.get("notify_email"))
+        if not dm and not email:
+            return "skipped"
+        return await _deliver(db, n, slack=dm, email=email, additive=True)
     key = f"notif:ext:{n.user_id}:{n.case_id}"
     if not await redis.set(key, "1", nx=True, ex=300):
         return "rate_limited"
@@ -81,7 +101,8 @@ async def deliver_one(db, notification_id: int, redis) -> str:
         raise
 
 
-async def _deliver(db, n) -> str:
+async def _deliver(db, n, slack: bool = True, email: bool = True, additive: bool = False) -> str:
+    """Default: Slack DM, falling back to email. additive (escalations): every enabled channel is sent."""
     user = (await db.execute(select(User).where(User.id == n.user_id))).scalars().first()
     case = (await db.execute(select(Case).where(Case.id == n.case_id, Case.tenant_id == n.tenant_id))).scalars().first()
     if not user or not case or not user.is_active:
@@ -91,10 +112,13 @@ async def _deliver(db, n) -> str:
     if member is None:
         return "skipped"
     title, link = (case.title or "")[:120], _link(case.id)
-    try:
-        _, token = await load_integration(db, n.tenant_id)
-    except SlackError:
-        token = None
+    sent = []
+    token = None
+    if slack:
+        try:
+            _, token = await load_integration(db, n.tenant_id)
+        except SlackError:
+            token = None
     if token:
         try:
             uid = (await slack_call(token, "users.lookupByEmail", email=user.email))["user"]["id"]
@@ -103,15 +127,43 @@ async def _deliver(db, n) -> str:
             owner = (await db.get(User, case.owner_id)) if case.owner_id else None
             blocks = case_card(case, (owner.full_name or owner.email) if owner else None, note=n.summary)
             await slack_call(token, "chat.postMessage", channel=channel, text=text, blocks=blocks)
-            return "slack"
+            if not additive:
+                return "slack"
+            sent.append("slack")
         except SlackError as e:
             if _is_transient(e):
                 raise TransientDeliveryError(e.code or type(e).__name__) from None
             # users_not_found etc.: fall through to email
-    if _smtp_configured():
+    if email and _smtp_configured():
         body = f"<p>{html.escape(n.summary)}: <strong>{html.escape(title)}</strong></p>"
         if link:
             body += f'<p><a href="{html.escape(link)}">Open case</a></p>'
         if _send_email(user.email, n.summary, body, log_recipient=False):
-            return "email"
-    return "none"
+            sent.append("email")
+    return "+".join(sent) or "none"
+
+
+async def post_escalation_channel(db, row_id: int) -> str:
+    """Post one case card to the tier's Slack channel for a still-pending escalation row. Never raises."""
+    try:
+        row = (await db.execute(select(CaseEscalation).where(CaseEscalation.id == row_id))).scalars().first()
+        if row is None or row.status != "pending" or await tenant_deactivated(db, row.tenant_id):
+            return "skipped"
+        tier = _row_tier(row)
+        channel = tier.get("slack_channel") if tier.get("notify_slack") else None  # Slack unchecked: no post
+        case = (await db.execute(select(Case).where(Case.id == row.case_id, Case.tenant_id == row.tenant_id))).scalars().first()
+        if not channel or case is None:
+            return "skipped"
+        try:
+            _, token = await load_integration(db, row.tenant_id)
+        except SlackError:
+            return "skipped"
+        title, link = (case.title or "")[:120], _link(case.id)
+        head = f"Case escalated to {tier.get('name') or 'next tier'}"
+        text = f"{slack_escape(head)}: {slack_escape(title)}" + (f"\n<{link}|Open case>" if link else "")
+        blocks = case_card(case, None, note=f"{head}: {row.summary}"[:500])
+        await slack_call(token, "chat.postMessage", channel=channel, text=text, blocks=blocks)
+        return "posted"
+    except Exception as e:  # channel posts are best effort
+        logger.warning("escalation channel post failed row=%s err=%s", row_id, type(e).__name__)
+        return "failed"

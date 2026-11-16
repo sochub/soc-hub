@@ -6,6 +6,8 @@ tenant. So:
 - a super admin only bootstraps tenants: they may create and manage users of a tenant that has no active
   admin yet (to set up its first admin); once a tenant has an active admin, users there are that admin's to
   manage and the super admin may not create or edit any of them (they can still deactivate the tenant);
+- a super admin who also holds an ``admin`` membership in the tenant acts there as that tenant's regular admin
+  (the tenant-admin rules below apply instead of the bootstrap-only rule);
 - nobody else may act on a super admin (break-glass accounts must never be locked out by a tenant);
 - a tenant admin may change GLOBAL account state only for a user whose HOME tenant (oldest membership) is the
   admin's active tenant; any other tenant manages that user's membership in its own tenant only. Memberships
@@ -59,12 +61,27 @@ async def any_tenant_has_admin(db: AsyncSession, user_id: int) -> bool:
     return False
 
 
+async def is_tenant_admin_member(db: AsyncSession, actor: User, tenant_id: Optional[int]) -> bool:
+    """True when ``actor`` holds an ``admin`` membership in ``tenant_id`` (a super admin then acts as its admin)."""
+    if tenant_id is None:
+        return False
+    return (await db.execute(select(TenantMembership.id).where(
+        TenantMembership.user_id == actor.id, TenantMembership.tenant_id == tenant_id,
+        TenantMembership.role == "admin").limit(1))).first() is not None
+
+
+async def bootstraps_only(db: AsyncSession, actor: User, tenant_id: Optional[int]) -> bool:
+    """True when the bootstrap-only super-admin rule applies: a super admin without an admin membership here."""
+    return actor.is_super_admin and not await is_tenant_admin_member(db, actor, tenant_id)
+
+
 async def refusal(db: AsyncSession, actor: User, target: User, tenant_id: Optional[int], scope: str) -> Optional[str]:
     """The refusal message for ``actor`` acting on ``target`` from ``tenant_id``, or None when allowed."""
     if actor.is_super_admin:
         if target.id == actor.id:
             return None
-        return TENANT_HAS_ADMIN if await tenant_has_admin(db, tenant_id) else None
+        if not await is_tenant_admin_member(db, actor, tenant_id):
+            return TENANT_HAS_ADMIN if await tenant_has_admin(db, tenant_id) else None
     if target.is_super_admin:
         return NOT_ALLOWED
     if scope == GLOBAL and await home_tenant_id(db, target.id) != tenant_id:
@@ -84,8 +101,10 @@ async def deny(request: Optional[Request], actor: User, tenant_id: Optional[int]
 async def assert_super_admin_may_bootstrap(db: AsyncSession, actor: User, tenant_id: Optional[int], *,
                                            action: str, role: Optional[str] = None,
                                            request: Optional[Request] = None) -> None:
-    """A super admin may add users to a tenant only while it has no active admin, and only as its admin."""
-    if not actor.is_super_admin:
+    """A super admin may add users to a tenant only while it has no active admin, and only as its admin.
+
+    A super admin with an admin membership in the tenant is that tenant's admin: no extra rule applies."""
+    if not await bootstraps_only(db, actor, tenant_id):
         return
     if await tenant_has_admin(db, tenant_id):
         await deny(request, actor, tenant_id, action, target_id=None, detail=TENANT_HAS_ADMIN)

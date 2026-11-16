@@ -338,6 +338,7 @@ export default function Settings() {
         auto_provision: false, default_role: 'viewer' as 'analyst' | 'viewer',
         allowed_email_domains: '', // comma-separated in the form, a list on the wire
         saml_allow_idp_initiated: false,
+        groups_claim: 'groups',
     });
     const [savedFlash, setSavedFlash] = useState(false);
 
@@ -356,6 +357,7 @@ export default function Settings() {
                 allowed_email_domains: (cfg.allowed_email_domains ?? []).join(', '),
                 default_role: cfg.default_role,
                 saml_allow_idp_initiated: cfg.saml_allow_idp_initiated,
+                groups_claim: cfg.groups_claim ?? 'groups',
             });
         }
     }, [cfg]);
@@ -363,6 +365,7 @@ export default function Settings() {
     const save = useMutation({
         mutationFn: async () => (await api.put('/tenants/sso-config', {
             ...form,
+            groups_claim: form.groups_claim.trim() || 'groups',
             allowed_email_domains: form.allowed_email_domains.split(/[\s,]+/).map(d => d.trim()).filter(Boolean),
         })).data as SSOConfig,
         onSuccess: () => {
@@ -373,7 +376,7 @@ export default function Settings() {
         },
     });
 
-    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url' | 'oidc_issuer' | 'oidc_client_id' | 'oidc_client_secret' | 'oidc_scopes',
+    const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url' | 'oidc_issuer' | 'oidc_client_id' | 'oidc_client_secret' | 'oidc_scopes' | 'groups_claim',
         placeholder: string, type = 'text') => (
         <div>
             <label className="label-mono block mb-1">{label}</label>
@@ -421,6 +424,13 @@ export default function Settings() {
                                     </label>
                                     <p className="text-[11px] text-fg-3 mt-1">Guest sign-in is set in the Case guests section below.</p>
                                 </div>
+                                {field('groups claim / attribute', 'groups_claim', 'groups')}
+                                <p className="text-[11px] text-fg-3 -mt-2">
+                                    Name of the SAML attribute or OIDC claim carrying the user's groups, used to sync escalation
+                                    groups at sign-in. If the IdP omits it, memberships are left unchanged. Okta: add <code>groups</code> to the OIDC
+                                    scopes above and set the app's Groups claim (filter e.g. "Matches regex .*"). Entra: add the groups
+                                    claim under Token configuration. SAML: use the attribute name your IdP sends.
+                                </p>
                                 <p className="label-mono">// saml</p>
                                 <p className="label-mono">// identity provider (from your idp)</p>
                                 {field('idp entity id', 'idp_entity_id', 'https://idp.example.com/entityid')}

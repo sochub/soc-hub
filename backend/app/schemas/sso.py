@@ -26,6 +26,17 @@ class SSOConfigUpdate(BaseModel):
     allowed_email_domains: Optional[List[str]] = None
     default_role: Optional[str] = None
     saml_allow_idp_initiated: Optional[bool] = None
+    groups_claim: Optional[str] = None
+
+    @field_validator("groups_claim")
+    @classmethod
+    def _claim_ok(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not 1 <= len(v) <= 200:
+            raise ValueError("groups_claim must be 1-200 characters")
+        return v
 
     @field_validator("allowed_email_domains")
     @classmethod
@@ -94,6 +105,7 @@ class SSOConfigOut(BaseModel):
     allowed_email_domains: List[str] = []
     default_role: str
     saml_allow_idp_initiated: bool = False
+    groups_claim: str = "groups"
     # Service-provider values the admin pastes into their IdP
     sp_entity_id: str
     sp_acs_url: str

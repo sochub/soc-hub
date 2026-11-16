@@ -7,6 +7,7 @@ import InviteUserModal from './InviteUserModal';
 import PageContainer from '../../components/layout/PageContainer';
 import Modal, { btnDanger, btnSecondary } from '../../components/layout/Modal';
 import Avatar from '../../components/Avatar';
+import GroupsSection from '../escalation/GroupsSection';
 import { mfaErrorMessage } from '../profile/mfaErrors';
 
 const roleBadgeColors: Record<string, string> = {
@@ -27,6 +28,7 @@ export default function UserManagement() {
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [editingRoleUser, setEditingRoleUser] = useState<number | null>(null);
     const [resetTarget, setResetTarget] = useState<User | null>(null);
+    const [tab, setTab] = useState<'members' | 'groups'>('members');
     const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
     const queryClient = useQueryClient();
 
@@ -76,8 +78,27 @@ export default function UserManagement() {
         },
     });
 
+    const toggle = (
+        <div role="tablist" aria-label="Users view" className="inline-flex border border-line rounded-lg overflow-hidden text-sm">
+            {(['members', 'groups'] as const).map((t) => (
+                <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+                    className={`px-4 py-1.5 capitalize ${tab === t ? 'bg-raised text-fg font-medium' : 'text-fg-3 hover:text-fg'}`}>{t}</button>
+            ))}
+        </div>
+    );
+
+    if (tab === 'groups') {
+        return (
+            <PageContainer>
+                {toggle}
+                <GroupsSection />
+            </PageContainer>
+        );
+    }
+
     return (
         <PageContainer>
+            {toggle}
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-fg">Users</h1>

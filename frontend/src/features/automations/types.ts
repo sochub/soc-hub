@@ -1,4 +1,4 @@
-export type TriggerType = 'case.created' | 'case.updated' | 'alert.ingested' | 'manual' | 'schedule' | 'email.received';
+export type TriggerType = 'case.created' | 'case.updated' | 'alert.ingested' | 'manual' | 'schedule' | 'email.received' | 'case.escalated' | 'case.escalation_closed';
 
 export interface WfNode {
     id: string;

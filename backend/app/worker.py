@@ -51,6 +51,7 @@ import app.tasks.guest_digest  # noqa: E402,F401
 import app.tasks.slack  # noqa: E402,F401
 import app.tasks.war_room  # noqa: E402,F401
 import app.tasks.email_intake  # noqa: E402,F401
+import app.tasks.escalations  # noqa: E402,F401
 
 # Beat schedule: run exactly one beat process per deployment (see the queue note above).
 celery_app.conf.beat_schedule = {
@@ -65,6 +66,10 @@ celery_app.conf.beat_schedule = {
     "reap-stuck-workflow-steps": {
         "task": "app.tasks.workflows.reap_stuck_steps_task",
         "schedule": 300.0,
+    },
+    "escalation-sweep": {
+        "task": "app.tasks.escalations.escalation_sweep_task",
+        "schedule": 60.0,
     },
     "run-workflow-schedules": {
         "task": "app.tasks.workflows.run_schedules_task",

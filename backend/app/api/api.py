@@ -3,6 +3,8 @@ from fastapi import APIRouter
 from app.oauth import routes as oauth
 
 from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, ticketing, portfolio, containment, user_verification, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room, case_time, mailboxes, misp
+from app.escalations import api as escalation_api
+from app.escalations import inbound as escalation_inbound
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -55,3 +57,6 @@ api_router.include_router(notifications.router, prefix="/notifications", tags=["
 api_router.include_router(guest_auth.router, prefix="/guest/auth", tags=["guest"])
 api_router.include_router(guest_portal.router, prefix="/guest", tags=["guest"])
 api_router.include_router(oauth.router, prefix="/oauth", tags=["oauth"])
+api_router.include_router(escalation_api.router, prefix="/escalations", tags=["escalations"])
+# Public, no auth dependencies: trust comes only from the per-tenant URL key plus the vendor signature/token.
+api_router.include_router(escalation_inbound.router, prefix="/escalations/inbound", tags=["escalations"])

@@ -2,6 +2,7 @@ import json
 from typing import Optional, List, Any, Literal
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field, field_validator, model_validator
+from app.schemas.escalation import EscalationSummary
 from app.services.avatars import avatar_version
 from app.models.case import CaseStatus, CaseSeverity, CASE_OUTCOMES
 
@@ -241,6 +242,8 @@ class Case(CaseBase):
     slack_listen: Optional[bool] = False
     war_room_url: Optional[str] = None
     war_room_silent: bool = False
+    # Open escalation (pending/accepted), attached by cases._attach_sla.
+    escalation: Optional[EscalationSummary] = None
 
     class Config:
         from_attributes = True

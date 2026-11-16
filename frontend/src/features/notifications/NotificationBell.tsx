@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, AlertTriangle, AtSign, Bell, Clock, MessageSquare, UserPlus } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowDownCircle, ArrowUpCircle, AtSign, Bell, Clock, MessageSquare, TimerOff, UserPlus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { AppNotification } from '../../types';
@@ -13,6 +13,7 @@ import { useMyTimezone } from '../../utils/useMyTimezone';
 const ICONS: Record<string, LucideIcon> = {
     mention: AtSign, assigned: UserPlus, comment: MessageSquare,
     status_change: Activity, severity_change: AlertTriangle, sla_breach: Clock,
+    escalated: ArrowUpCircle, escalation_overdue: TimerOff, escalation_returned: ArrowDownCircle,
 };
 
 export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpen: (n: AppNotification) => void; role?: 'menuitem' }) {

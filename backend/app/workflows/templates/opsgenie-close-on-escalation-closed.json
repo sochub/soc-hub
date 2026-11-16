@@ -1,0 +1,69 @@
+{
+  "key": "opsgenie-close-on-escalation-closed",
+  "name": "Opsgenie: close on escalation closed",
+  "vendor": "Opsgenie",
+  "kind": "triage",
+  "description": "Whenever an escalation leaves pending (accepted, redirected, climbed, superseded, withdrawn or cancelled), close the matching Opsgenie alert by its alias.",
+  "trigger_type": "case.escalation_closed",
+  "trigger_filter": null,
+  "params": [
+    {
+      "key": "OPSGENIE_API_HOST",
+      "label": "Opsgenie API host",
+      "placeholder": "api.opsgenie.com",
+      "help": "`api.opsgenie.com` (US) or `api.eu.opsgenie.com` (EU), matching your Opsgenie instance."
+    }
+  ],
+  "secrets": [
+    {
+      "name": "OPSGENIE_API_KEY",
+      "description": "Opsgenie API integration key (sent as `Authorization: GenieKey <key>`) with create and close rights.",
+      "hosts": [
+        "%%OPSGENIE_API_HOST%%"
+      ]
+    }
+  ],
+  "setup": "## Opsgenie side\nSame API key as *Opsgenie: alert on case escalation*. Store it as `OPSGENIE_API_KEY`, allowed host = the API host you chose.\n\n## How it works\n- Runs when an escalation closes (trigger `case.escalation_closed`): `POST https://<API host>/v2/alerts/<alias>/close?identifierType=alias`.\n\n\n## Ack to accept\nTo let an acknowledgement in Opsgenie accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into Opsgenie (an incoming webhook integration, action *Acknowledge*). It is tied to this tenant.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "close",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://%%OPSGENIE_API_HOST%%/v2/alerts/{{ trigger.changes.escalation.dedup_key }}/close?identifierType=alias",
+          "headers": {
+            "Authorization": "GenieKey {{ secrets.OPSGENIE_API_KEY }}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "source": "soc-hub",
+            "note": "Escalation closed in SOC Hub"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_close",
+        "source": "start",
+        "target": "close",
+        "source_handle": null
+      }
+    ]
+  }
+}

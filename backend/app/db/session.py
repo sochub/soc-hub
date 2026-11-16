@@ -21,6 +21,11 @@ from app.notifications.delivery import register_after_commit_hook  # noqa: E402
 
 register_after_commit_hook()
 
+# After-commit case.escalated / case.escalation_closed workflow events (stash: app/escalations/service.py).
+from app.escalations.events import register_after_commit_hook as register_escalation_hook  # noqa: E402
+
+register_escalation_hook()
+
 from app.services.war_room_events import register_war_room_hook  # noqa: E402
 
 register_war_room_hook()

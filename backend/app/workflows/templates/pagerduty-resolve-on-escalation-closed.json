@@ -1,0 +1,62 @@
+{
+  "key": "pagerduty-resolve-on-escalation-closed",
+  "name": "PagerDuty: resolve on escalation closed",
+  "vendor": "PagerDuty",
+  "kind": "triage",
+  "description": "Whenever an escalation leaves pending (accepted, redirected, climbed, superseded, withdrawn or cancelled), resolve the matching PagerDuty incident using the same dedup key.",
+  "trigger_type": "case.escalation_closed",
+  "trigger_filter": null,
+  "params": [],
+  "secrets": [
+    {
+      "name": "PAGERDUTY_ROUTING_KEY",
+      "description": "PagerDuty Events API v2 integration (routing) key of the service that should be paged.",
+      "hosts": [
+        "events.pagerduty.com"
+      ]
+    }
+  ],
+  "setup": "## PagerDuty side\nSame integration key as *PagerDuty: page on case escalation*. Store it as `PAGERDUTY_ROUTING_KEY`, allowed host `events.pagerduty.com`.\n\n## How it works\n- Runs when an escalation closes (trigger `case.escalation_closed`): `POST https://events.pagerduty.com/v2/enqueue` with `event_action: resolve` and the escalation's `dedup_key`.\n\n\n## Ack to accept\nTo let an acknowledgement in PagerDuty accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into PagerDuty (a Generic Webhooks (V3) subscription on the service, event *incident.acknowledged*). It is tied to this tenant.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "resolve",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://events.pagerduty.com/v2/enqueue",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "routing_key": "{{ secrets.PAGERDUTY_ROUTING_KEY }}",
+            "event_action": "resolve",
+            "dedup_key": "{{ trigger.changes.escalation.dedup_key }}"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_resolve",
+        "source": "start",
+        "target": "resolve",
+        "source_handle": null
+      }
+    ]
+  }
+}

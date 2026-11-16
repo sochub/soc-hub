@@ -1,0 +1,79 @@
+{
+  "key": "pagerduty-page-on-escalation",
+  "name": "PagerDuty: page on case escalation",
+  "vendor": "PagerDuty",
+  "kind": "triage",
+  "description": "When a case is escalated to a tier, trigger a PagerDuty incident through the Events API v2. The incident's dedup key is the escalation's, so a later close resolves exactly this one.",
+  "trigger_type": "case.escalated",
+  "trigger_filter": null,
+  "params": [],
+  "secrets": [
+    {
+      "name": "PAGERDUTY_ROUTING_KEY",
+      "description": "PagerDuty Events API v2 integration (routing) key of the service that should be paged.",
+      "hosts": [
+        "events.pagerduty.com"
+      ]
+    }
+  ],
+  "setup": "## PagerDuty side\n1. In the service to page, add an **Events API v2** integration and copy its integration key. Store it as `PAGERDUTY_ROUTING_KEY`, allowed host `events.pagerduty.com`.\n\n## How it works\n- Runs when a case is escalated (trigger `case.escalated`): `POST https://events.pagerduty.com/v2/enqueue` with `event_action: trigger`.\n- `dedup_key` is `sochub-case-<case id>-esc-<escalation id>`; install *PagerDuty: resolve on escalation closed* so closing the escalation resolves the incident.\n- Severity follows the case: critical → critical, high → error, medium → warning, anything else → info.\n\n\n## Ack to accept\nTo let an acknowledgement in PagerDuty accept the escalation in SOC Hub, open **Settings → Integrations → Escalation paging**: the card shows the inbound URL to paste into PagerDuty (a Generic Webhooks (V3) subscription on the service, event *incident.acknowledged*). It is tied to this tenant.\n",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "type": "trigger",
+        "position": {
+          "x": 250,
+          "y": 40
+        },
+        "config": {}
+      },
+      {
+        "id": "page",
+        "type": "http_request",
+        "position": {
+          "x": 250,
+          "y": 160
+        },
+        "config": {
+          "method": "POST",
+          "url": "https://events.pagerduty.com/v2/enqueue",
+          "headers": {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          "body": {
+            "routing_key": "{{ secrets.PAGERDUTY_ROUTING_KEY }}",
+            "event_action": "trigger",
+            "dedup_key": "{{ trigger.changes.escalation.dedup_key }}",
+            "payload": {
+              "summary": "[SOC Hub] Case #{{ case.id }} escalated to {{ trigger.changes.escalation.group.name }}: {{ case.title | truncate(150, True) }}",
+              "source": "soc-hub",
+              "severity": "{{ {'critical': 'critical', 'high': 'error', 'medium': 'warning'}.get(case.severity, 'info') }}",
+              "custom_details": {
+                "reason": "{{ trigger.changes.escalation.reason }}",
+                "summary": "{{ trigger.changes.escalation.summary }}",
+                "requested_help": "{{ trigger.changes.escalation.requested_help }}",
+                "tier": "{{ trigger.changes.escalation.tier.name }}"
+              }
+            },
+            "links": [
+              {
+                "href": "{{ trigger.changes.escalation.case_url }}",
+                "text": "Open the case in SOC Hub"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_start_page",
+        "source": "start",
+        "target": "page",
+        "source_handle": null
+      }
+    ]
+  }
+}

@@ -24,7 +24,9 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.user import Token
-from app.utils.account_guard import GLOBAL, TENANT_HAS_ADMIN, any_tenant_has_admin, assert_can_manage_account, deny
+from app.utils.account_guard import (
+    GLOBAL, TENANT_HAS_ADMIN, any_tenant_has_admin, assert_can_manage_account, bootstraps_only, deny,
+)
 from app.utils.audit import create_audit_log
 from app.utils.crypto import decrypt, encrypt
 
@@ -260,8 +262,9 @@ async def mfa_reset(
     )).scalars().first()
     if target is None:
         raise HTTPException(status_code=404, detail="Not found")
-    if actor.is_super_admin:
+    if await bootstraps_only(db, actor, active):
         # Bootstrap only: once any of the target's tenants has an active admin, that admin resets MFA.
+        # (A super admin with an admin membership in the active tenant resets like that tenant's admin, below.)
         if await any_tenant_has_admin(db, target.id):
             await deny(request, actor, active, "mfa_reset", target_id=target.id, detail=TENANT_HAS_ADMIN)
         audit_tid = (await db.execute(

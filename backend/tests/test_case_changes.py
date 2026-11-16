@@ -25,6 +25,9 @@ class _DB:
 
             def all(self):
                 return []
+
+            def first(self):  # escalation lookup: no pending escalation on the stub case
+                return None
         return _R()
 
 
