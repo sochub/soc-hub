@@ -200,14 +200,14 @@ export default function AlertsList() {
                                     </td>
                                     {cols.isVisible('severity') && <td className="px-4 py-2.5"><span className={cn(badge, severityColor[a.severity] || severityColor.info)}>{a.severity}</span></td>}
                                     {cols.isVisible('source') && <td className="px-4 py-2.5"><span className="font-mono text-xs text-fg-2">{a.source}</span></td>}
-                                    <td className="px-4 py-2.5 font-medium text-fg">{a.title}</td>
-                                    {cols.isVisible('status') && <td className="px-4 py-2.5">
-                                        <span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
+                                    <td className="px-4 py-2.5 font-medium text-fg">
+                                        {a.title}
                                         {a.suppression_rule_id && (
                                             <Link to="/alerts/suppressions" title="Dismissed at ingest by a suppression rule"
-                                                className="ml-1.5 text-[10px] text-muted hover:text-fg-2">rule #{a.suppression_rule_id}</Link>
+                                                className="ml-1.5 text-[10px] font-normal text-muted hover:text-fg-2">rule #{a.suppression_rule_id}</Link>
                                         )}
-                                    </td>}
+                                    </td>
+                                    {cols.isVisible('status') && <td className="px-4 py-2.5"><span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span></td>}
                                     {cols.isVisible('created_at') && <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>}
                                     <td className="px-4 py-2.5">
                                         {a.status === 'pending' ? (
