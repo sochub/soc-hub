@@ -1,16 +1,20 @@
 import csv
 import io
+from collections import defaultdict
 from datetime import date
 from typing import Any, Literal, Optional
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, cast, Date, text
+from sqlalchemy import func, cast, Date, or_, text
 from sqlalchemy.future import select
 
 from app.api import deps
+from app.models.audit_log import AuditLog
 from app.models.case import Case, CaseStatus
+from app.models.membership import TenantMembership
 from app.models.artifact import Artifact
 from app.models.case_artifact import CaseArtifact
 from app.models.ioc import IOC
@@ -352,3 +356,114 @@ async def time_rollup(
     # header is already in buf; body() yields it with the first chunk
     return StreamingResponse(body(), media_type="text/csv", headers={
         "Content-Disposition": f'attachment; filename="time-{start}-{end}.csv"'})
+
+
+# ---- Analyst workload (admin) ----------------------------------------------------------------------------------
+# Snapshot = cases owned right now. Period metrics come from the `change` audit rows that apply_case_update and the
+# escalation service write: `owner_id` {from,to} for assignments, `status` {to} for resolve/close. Resolve/close is
+# credited to the user who made the change (the audit row's user), not to the owner.
+
+_SNAPSHOT = ("new", "open", "in_progress", "pending")
+_WorkloadMetric = Literal["current", "new", "open", "in_progress", "pending", "handled", "resolved", "closed"]
+
+
+def _period(start: Optional[date], end: Optional[date]) -> tuple:
+    """[lo, hi) in UTC for inclusive dates; defaults to this week (Monday through today)."""
+    start = start or _this_monday().date()
+    end = end or datetime.now(timezone.utc).date()
+    if start > end:
+        raise HTTPException(status_code=422, detail="start must be on or before end")
+    lo = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
+    hi = datetime(end.year, end.month, end.day, tzinfo=timezone.utc) + timedelta(days=1)
+    return start, end, lo, hi
+
+
+async def _workload(db: AsyncSession, tenant_id: int, lo: datetime, hi: datetime) -> dict:
+    """{user_id: {metric: set(case_id)}}; every case id belongs to `tenant_id`."""
+    out: dict = defaultdict(lambda: defaultdict(set))
+    for cid, owner, st in (await db.execute(select(Case.id, Case.owner_id, Case.status).where(
+            Case.tenant_id == tenant_id, Case.owner_id.isnot(None), Case.status.in_(_OPEN_STATUSES)))).all():
+        out[owner][st.value].add(cid)
+        out[owner]["current"].add(cid)
+
+    # Handled: rebuild each case's ownership spans from its owner_id changes and credit every owner whose span
+    # overlaps [lo, hi). The first change's `from` is the owner at creation; no changes = the current owner.
+    # Cases already resolved before the period are skipped (resolved_at is cleared on reopen).
+    js = cast(AuditLog.changes, JSONB)
+    case_q = select(Case.id, Case.owner_id, Case.created_at).where(
+        Case.tenant_id == tenant_id, Case.created_at < hi, or_(Case.resolved_at.is_(None), Case.resolved_at >= lo))
+    cases = (await db.execute(case_q)).all()
+    moves: dict = defaultdict(list)
+    for cid, at, ch in (await db.execute(select(AuditLog.entity_id, AuditLog.created_at, AuditLog.changes).where(
+            AuditLog.tenant_id == tenant_id, AuditLog.category == "change", AuditLog.entity_type == "case",
+            AuditLog.entity_id.in_(select(case_q.subquery().c.id)), js.has_key("owner_id"),
+    ).order_by(AuditLog.id))).all():
+        moves[cid].append((at, ch["owner_id"].get("from"), ch["owner_id"].get("to")))
+    for cid, owner, created in cases:
+        seq = moves.get(cid, [])
+        spans = [(created, seq[0][1] if seq else owner)] + [(at, to) for at, _, to in seq]
+        for i, (begin, uid) in enumerate(spans):
+            finish = spans[i + 1][0] if i + 1 < len(spans) else None
+            if uid is not None and begin < hi and (finish is None or finish > lo):
+                out[uid]["handled"].add(cid)
+
+    # Resolved / closed: whoever made the status change inside the period; the two are counted separately.
+    to_status = js["status"]["to"].astext
+    for uid, cid, st in (await db.execute(
+            select(AuditLog.user_id, AuditLog.entity_id, to_status)
+            .join(Case, (Case.id == AuditLog.entity_id) & (Case.tenant_id == tenant_id))
+            .where(AuditLog.tenant_id == tenant_id, AuditLog.category == "change", AuditLog.entity_type == "case",
+                   AuditLog.user_id.isnot(None), AuditLog.created_at >= lo, AuditLog.created_at < hi,
+                   to_status.in_(("resolved", "closed"))))).all():
+        out[uid][st].add(cid)
+    return out
+
+
+@router.get("/analyst-workload")
+async def analyst_workload(
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    db: AsyncSession = Depends(deps.get_db),
+    admin: User = Depends(deps.require_admin),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """One row per active non-viewer member: current workload snapshot plus cases handled/resolved/closed in
+    [start, end] (inclusive dates, default this week)."""
+    start, end, lo, hi = _period(start, end)
+    data = await _workload(db, tenant_id, lo, hi)
+    members = (await db.execute(
+        select(User.id, User.email, User.full_name, TenantMembership.role)
+        .join(TenantMembership, TenantMembership.user_id == User.id)
+        .where(TenantMembership.tenant_id == tenant_id, TenantMembership.role != "viewer", User.is_active.is_(True))
+        .order_by(User.email))).all()
+    analysts = []
+    for uid, email, name, role in members:
+        m = data.get(uid, {})
+        analysts.append({
+            "user_id": uid, "email": email, "full_name": name, "role": role,
+            "current": {**{s: len(m.get(s, ())) for s in _SNAPSHOT}, "total": len(m.get("current", ()))},
+            "handled": len(m.get("handled", ())), "resolved": len(m.get("resolved", ())),
+            "closed": len(m.get("closed", ())),
+        })
+    return {"start": start, "end": end, "analysts": analysts}
+
+
+@router.get("/analyst-workload/cases")
+async def analyst_workload_cases(
+    user_id: int,
+    metric: _WorkloadMetric,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    db: AsyncSession = Depends(deps.get_db),
+    admin: User = Depends(deps.require_admin),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """The cases behind one count in the workload table."""
+    start, end, lo, hi = _period(start, end)
+    ids = (await _workload(db, tenant_id, lo, hi)).get(user_id, {}).get(metric, set())
+    if not ids:
+        return {"cases": []}
+    rows = (await db.execute(select(Case.id, Case.title, Case.status, Case.severity, Case.owner_id).where(
+        Case.tenant_id == tenant_id, Case.id.in_(ids)).order_by(Case.id.desc()))).all()
+    return {"cases": [{"id": i, "title": t, "status": s.value, "severity": getattr(v, "value", v), "owner_id": o}
+                      for i, t, s, v, o in rows]}
