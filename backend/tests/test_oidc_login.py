@@ -40,12 +40,20 @@ class FakeIdP:
         self.email = "nobody@corp.example"
         self.claims = {}
         self.pending = {}
+        self.userinfo = None  # dict or Exception served at {ISSUER}/userinfo
+        self.userinfo_calls = []
         self.binds = {}  # state -> the browser-binding cookie set by the login route
         doc = discovery_doc()
+        doc["userinfo_endpoint"] = f"{ISSUER}/userinfo"
         if auth_endpoint:
             doc["authorization_endpoint"] = auth_endpoint
 
-        async def get_json(url, code="discovery"):
+        async def get_json(url, code="discovery", headers=None):
+            if url == f"{ISSUER}/userinfo":
+                self.userinfo_calls.append(headers)
+                if isinstance(self.userinfo, Exception):
+                    raise self.userinfo
+                return self.userinfo
             if url == f"{ISSUER}/.well-known/openid-configuration":
                 return doc
             if url == f"{ISSUER}/jwks":
@@ -58,7 +66,7 @@ class FakeIdP:
             digest = hashlib.sha256(data["code_verifier"].encode()).digest()
             assert base64.urlsafe_b64encode(digest).rstrip(b"=").decode() == q["code_challenge"]
             assert data["client_secret"] == SECRET and data["redirect_uri"] == q["redirect_uri"]
-            return {"id_token": sign_token(self.key, self.kid, nonce=q["nonce"], email=self.email, **self.claims)}
+            return {"access_token": "at-123", "id_token": sign_token(self.key, self.kid, nonce=q["nonce"], email=self.email, **self.claims)}
 
         monkeypatch.setattr(oidc_service, "_get_json", get_json)
         monkeypatch.setattr(oidc_service, "_post_form", post_form)

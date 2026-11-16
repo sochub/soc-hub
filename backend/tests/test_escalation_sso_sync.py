@@ -281,8 +281,10 @@ def test_saml_acs_syncs_groups(monkeypatch):
         assert r.status_code == 303 and r.headers["location"].endswith("#sso=ok"), r.headers["location"]
         async with AsyncSessionLocal() as db:
             assert len(await _members(db, gid)) == 1
+        assert await _last_login_groups(u.id) == 1
         GroupAuth.groups = None  # attribute absent: untouched
         await c.post(f"/api/v1/auth/saml/{t.slug}/acs", data={"SAMLResponse": "x"})
+        assert await _last_login_groups(u.id) == "absent"
         async with AsyncSessionLocal() as db:
             assert len(await _members(db, gid)) == 1
         GroupAuth.groups = ["other"]
@@ -304,3 +306,75 @@ def test_malformed_claim_names_never_blocks_login(monkeypatch):
         r = await _flow(c, idp, t.slug)
         assert r.status_code == 303 and r.headers["location"].endswith("#sso=ok")
     _go(body)
+
+
+# ---- userinfo fallback + audit claim presence -----------------------------------------------------------------
+
+async def _last_login_groups(uid):
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(AuditLog).where(
+            AuditLog.action == "sso_login", AuditLog.entity_id == uid).order_by(AuditLog.id.desc()))).scalars().all()
+        return rows[0].changes["groups"]
+
+
+def test_oidc_groups_from_userinfo(monkeypatch):
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _oidc_tenant(db, ids)
+            u = await _member(db, ids, "an", [t])
+            gid = await _group(db, t, ["on-call"])
+        idp = FakeIdP(monkeypatch)
+        idp.email = u.email
+        idp.claims = {}
+        idp.userinfo = {"sub": "u1", "groups": ["on-call", "x"]}
+        assert (await _flow(c, idp, t.slug)).headers["location"].endswith("#sso=ok")
+        assert idp.userinfo_calls == [{"Authorization": "Bearer at-123", "Accept": "application/json"}]
+        async with AsyncSessionLocal() as db:
+            assert len(await _members(db, gid)) == 1
+        assert await _last_login_groups(u.id) == 2
+        # claim already in the ID token: userinfo is not consulted
+        idp.userinfo_calls.clear()
+        idp.claims = {"groups": ["on-call"]}
+        await _flow(c, idp, t.slug)
+        assert idp.userinfo_calls == []
+        assert await _last_login_groups(u.id) == 1
+    _go(body)
+
+
+def test_oidc_userinfo_sub_mismatch_and_error(monkeypatch):
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            t = await _oidc_tenant(db, ids)
+            u = await _member(db, ids, "an", [t])
+            gid = await _group(db, t, ["on-call"])
+        idp = FakeIdP(monkeypatch)
+        idp.email = u.email
+        idp.claims = {"groups": ["on-call"]}
+        await _flow(c, idp, t.slug)
+        idp.claims = {}
+        idp.userinfo = {"sub": "someone-else", "groups": []}  # would remove the user if trusted
+        assert (await _flow(c, idp, t.slug)).headers["location"].endswith("#sso=ok")
+        async with AsyncSessionLocal() as db:
+            assert len(await _members(db, gid)) == 1
+        assert await _last_login_groups(u.id) == "absent"
+        idp.userinfo = RuntimeError("boom")
+        r = await _flow(c, idp, t.slug)
+        assert r.status_code == 303 and r.headers["location"].endswith("#sso=ok") and _cookie(r)
+        async with AsyncSessionLocal() as db:
+            assert len(await _members(db, gid)) == 1
+        assert await _last_login_groups(u.id) == "absent"
+    _go(body)
+
+
+def test_oidc_fetch_userinfo_unit(monkeypatch):
+    import asyncio
+    from app.services import oidc_service as o
+
+    async def ok(url, code="discovery", headers=None):
+        return {"sub": "s", "groups": ["a"]}
+    monkeypatch.setattr(o, "_get_json", ok)
+    meta = {"userinfo_endpoint": "https://idp.example/userinfo"}
+    assert asyncio.run(o.fetch_userinfo(meta, "t", sub="s")) == {"sub": "s", "groups": ["a"]}
+    assert asyncio.run(o.fetch_userinfo(meta, "t", sub="other")) is None
+    assert asyncio.run(o.fetch_userinfo({}, "t", sub="s")) is None
+    assert asyncio.run(o.fetch_userinfo(meta, "", sub="s")) is None

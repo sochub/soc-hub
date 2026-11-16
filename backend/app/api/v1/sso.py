@@ -409,7 +409,7 @@ async def _finish_member_sso(request: Request, db: AsyncSession, tenant: Tenant,
         return await _acs_fail(request, tenant, exc.detail, "not_allowed", guest=False, retry_tenant=None)
 
     await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="sso_login",
-                           tenant_id=tenant.id, user_id=user.id, changes={"protocol": amr})
+                           tenant_id=tenant.id, user_id=user.id, changes={"protocol": amr, "groups": "absent" if idp_groups is None else len(idp_groups)})
     await db.flush()  # an earlier flush failure must not be mislogged as a sync failure
     try:  # IdP-authoritative group sync; in a savepoint so a failure can't poison the login transaction
         async with db.begin_nested():
@@ -586,8 +586,18 @@ async def _oidc_callback(request: Request, db: AsyncSession, slug: str, code: Op
 
     if is_guest:
         return await _guest_acs(request, db, tenant, email, proto="oidc")
-    return await _finish_member_sso(request, db, tenant, cfg, email, full_name, AMR_OIDC,
-                                    idp_groups=oidc_groups(claims, cfg.groups_claim or "groups"))
+    claim = cfg.groups_claim or "groups"
+    groups = None
+    try:  # never blocks login; Okta etc. often keep group claims off the ID token and serve them at userinfo
+        groups = oidc_groups(claims, claim)
+        if groups is None and claim not in claims and "_claim_names" not in claims:
+            info = await oidc_service.fetch_userinfo(meta, tok.get("access_token") or "", sub=str(claims.get("sub") or ""))
+            if info is not None:
+                groups = oidc_groups(info, claim)
+    except Exception:
+        logger.warning("OIDC group claim lookup failed tenant=%s", tenant.id)
+        groups = None
+    return await _finish_member_sso(request, db, tenant, cfg, email, full_name, AMR_OIDC, idp_groups=groups)
 
 
 def _config_out(tenant: Tenant, cfg: Optional[TenantSSOConfig]) -> SSOConfigOut:

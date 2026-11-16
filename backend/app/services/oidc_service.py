@@ -46,11 +46,11 @@ def _guard(url: str, code: str) -> None:
         raise OIDCError(code, str(e)) from e
 
 
-async def _get_json(url: str, code: str = "discovery") -> dict:
+async def _get_json(url: str, code: str = "discovery", headers: dict | None = None) -> dict:
     _guard(url, code)
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as c:
-            r = await c.get(url)
+            r = await c.get(url, headers=headers)
             r.raise_for_status()
             return r.json()
     except (httpx.HTTPError, ValueError) as e:
@@ -152,6 +152,22 @@ def _find_key(ks: jwt.PyJWKSet, kid):
         if k.key_id == kid:
             return k
     return None
+
+
+async def fetch_userinfo(meta: dict, access_token: str, *, sub: str) -> dict | None:
+    """Claims from the issuer's own userinfo endpoint (discovery only), or None on any problem.
+    Only trusted when its `sub` equals the verified ID token's `sub`. Never raises."""
+    try:
+        ep = meta.get("userinfo_endpoint")
+        if not ep or not access_token or not sub:
+            return None
+        info = await _get_json(ep, "userinfo", headers={"Authorization": f"Bearer {access_token}",
+                                                        "Accept": "application/json"})
+        if not isinstance(info, dict) or info.get("sub") != sub:
+            return None
+        return info
+    except Exception:
+        return None
 
 
 async def verify_id_token(id_token: str, meta: dict, *, client_id: str, nonce: str) -> dict:
