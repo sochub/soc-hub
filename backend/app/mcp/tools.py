@@ -452,7 +452,8 @@ async def update_case(db: AsyncSession, p: OAuthPrincipal, case_id: int, status:
                       reason: Optional[str] = None) -> dict:
     """Update a case's title, description, status (new, in_progress, resolved, closed), severity, owner, tags
     (replaces the list), outcome or closing note. Closing requires an outcome (unknown, false_positive,
-    true_positive_with_impact, true_positive_without_impact, legitimate). reason (max 300 characters) is shown
+    true_positive_with_impact, true_positive_without_impact, legitimate) and a non-empty closing_note, given here
+    or already on the case. reason (max 300 characters) is shown
     in the activity log next to a status or severity change."""
     c = await _case(db, p, case_id)
     fields = {"status": status, "severity": severity, "owner_id": owner_id, "outcome": outcome,

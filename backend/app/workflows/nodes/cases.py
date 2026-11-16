@@ -4,12 +4,13 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.models.artifact import Artifact
-from app.models.case import Case, CaseSeverity, CaseStatus, TimelineEvent
+from app.models.case import CASE_OUTCOMES, Case, CaseSeverity, CaseStatus, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.membership import TenantMembership
 from app.models.user import User
 from app.services.artifact_types import UnknownArtifactType
-from app.services.case_service import add_artifact_by_key, add_timeline_note, apply_case_update
+from app.services.case_service import (CaseClosureIncomplete, add_artifact_by_key, add_timeline_note,
+                                       apply_case_update)
 from app.utils.audit import create_audit_log
 from app.utils.playbooks import apply_playbook_to_case
 from app.workflows.events import emit_event
@@ -46,6 +47,13 @@ async def run_case_update(nctx: NodeContext, config: dict) -> dict:
             update["status"] = CaseStatus(config["status"])
     except ValueError as e:
         raise NodeError(str(e))
+    # Closing needs an outcome and a closing note: supplied here, or already on the case (else the node fails).
+    if config.get("outcome"):
+        if config["outcome"] not in CASE_OUTCOMES:
+            raise NodeError(f"outcome must be one of {', '.join(CASE_OUTCOMES)}")
+        update["outcome"] = config["outcome"]
+    if str(config.get("closing_note") or "").strip():
+        update["closing_note"] = str(config["closing_note"])[:8000]
     if config.get("owner_email"):
         user = (await nctx.db.execute(
             select(User).join(TenantMembership, TenantMembership.user_id == User.id)
@@ -59,7 +67,10 @@ async def run_case_update(nctx: NodeContext, config: dict) -> dict:
         tags = [t for t in (case.tags or []) if t not in remove]
         tags += [t for t in add if t not in tags]
         update["tags"] = tags
-    changes = await apply_case_update(nctx.db, case=case, update_data=update, user_id=None)
+    try:
+        changes = await apply_case_update(nctx.db, case=case, update_data=update, user_id=None)
+    except CaseClosureIncomplete as e:
+        raise NodeError(f"{e.detail}: set outcome and closing_note on this node")
     _emit_updated(nctx, case.id, changes)
     return {"case_id": case.id, "changes": changes}
 
