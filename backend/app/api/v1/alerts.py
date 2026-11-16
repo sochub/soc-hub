@@ -1,7 +1,8 @@
 import logging
 import time
 from typing import Any, List, Optional
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -94,6 +95,7 @@ async def ingest_alert(
 
 @router.get("/", response_model=List[case_schema.Alert])
 async def read_alerts(
+    response: Response,
     db: AsyncSession = Depends(deps.get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -104,13 +106,30 @@ async def read_alerts(
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """Retrieve alerts scoped to tenant, optionally filtered and sorted."""
+    """Retrieve alerts scoped to tenant, optionally filtered and sorted.
+
+    The body stays a bare list; the total number of matches (ignoring skip/limit) is in `X-Total-Count`.
+    """
     q = select(Alert).where(Alert.tenant_id == tenant_id)
     for col, val in ((Alert.status, status), (Alert.severity, severity), (Alert.source, source)):
         if val:
             q = q.where(col == val)
+    total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
+    response.headers["X-Total-Count"] = str(total)
     result = await db.execute(q.order_by(alert_service.SORTS[sort], Alert.id.desc()).offset(skip).limit(limit))
     return result.scalars().all()
+
+
+@router.get("/sources", response_model=List[str])
+async def alert_sources(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Distinct alert sources in this tenant (for the Alerts source filter)."""
+    rows = await db.execute(select(Alert.source).where(Alert.tenant_id == tenant_id, Alert.source != "")
+                            .distinct().order_by(Alert.source))
+    return list(rows.scalars().all())
 
 
 async def _get_alert(db: AsyncSession, alert_id: int, tenant_id: int) -> Alert:

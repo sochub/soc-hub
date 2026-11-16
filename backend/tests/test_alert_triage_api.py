@@ -69,6 +69,20 @@ async def _scenario(monkeypatch):
                 r = await c.get("/api/v1/alerts/", params={"severity": "low"})
                 assert [a["id"] for a in r.json()] == [id2], r.json()
                 assert {a["id"] for a in (await c.get("/api/v1/alerts/")).json()} == {id1, id2, id3}
+                # a2) X-Total-Count: matches ignoring paging, tenant-scoped, honours filters
+                r = await c.get("/api/v1/alerts/", params={"limit": 2, "sort": "severity"})
+                assert len(r.json()) == 2 and r.headers["x-total-count"] == "3", r.headers
+                r = await c.get("/api/v1/alerts/", params={"skip": 2, "limit": 2, "sort": "severity"})
+                assert [a["id"] for a in r.json()] == [id2] and r.headers["x-total-count"] == "3"
+                r = await c.get("/api/v1/alerts/", params={"severity": "low", "source": "s"})
+                assert r.headers["x-total-count"] == "1"
+                r = await c.get("/api/v1/alerts/", params={"source": "nope"})
+                assert r.json() == [] and r.headers["x-total-count"] == "0"
+                assert (await c.get("/api/v1/alerts/sources")).json() == ["s"]
+                state["tenant"] = ids["tenants"][1]
+                r = await c.get("/api/v1/alerts/")
+                assert r.headers["x-total-count"] == "1" and [a["id"] for a in r.json()] == [idx]
+                state["tenant"] = ids["tenants"][0]
                 # b) PATCH validates severity, persists owner/severity
                 r = await c.patch(f"/api/v1/alerts/{id1}", json={"severity": "bogus"})
                 assert r.status_code == 422, r.text
