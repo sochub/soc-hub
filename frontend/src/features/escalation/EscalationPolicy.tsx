@@ -61,6 +61,9 @@ function PolicyForm() {
             </div>
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
             {saved && <p role="status" className="text-sm text-emerald-300">Policy saved.</p>}
+            {!isLoading && tiers.length < 2 && (
+                <p className="text-sm text-fg-3">Tier 1 is where cases start. Add at least a second tier so cases can be escalated.</p>
+            )}
             {isLoading ? <p className="text-sm text-muted">Loading…</p> : tiers.length === 0 ? (
                 <p className="text-sm text-fg-3">No tiers yet. Add a tier to enable escalation.</p>
             ) : (

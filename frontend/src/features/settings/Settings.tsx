@@ -427,7 +427,9 @@ export default function Settings() {
                                 {field('groups claim / attribute', 'groups_claim', 'groups')}
                                 <p className="text-[11px] text-fg-3 -mt-2">
                                     Name of the SAML attribute or OIDC claim carrying the user's groups, used to sync escalation
-                                    groups at sign-in. If the IdP omits it, memberships are left unchanged.
+                                    groups at sign-in. If the IdP omits it, memberships are left unchanged. Okta: add <code>groups</code> to the OIDC
+                                    scopes above and set the app's Groups claim (filter e.g. "Matches regex .*"). Entra: add the groups
+                                    claim under Token configuration. SAML: use the attribute name your IdP sends.
                                 </p>
                                 <p className="label-mono">// saml</p>
                                 <p className="label-mono">// identity provider (from your idp)</p>
