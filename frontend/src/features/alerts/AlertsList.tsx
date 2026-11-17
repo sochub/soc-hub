@@ -9,6 +9,9 @@ import { AlertRuns } from '../automations/CaseAutomation';
 import PageContainer from '../../components/layout/PageContainer';
 import { FIXED_COLUMN_COUNT, useAlertColumns } from './alertColumns';
 import ColumnsMenu from './ColumnsMenu';
+import Modal from '../../components/layout/Modal';
+import { useCanRun } from '../enrichment/useCanRun';
+import { apiErrorMessage } from '../../api/errors';
 
 interface Alert {
     id: number;
@@ -64,6 +67,37 @@ function SimilarAlerts({ alertId, onOpen }: { alertId: number; onOpen: (id: numb
     );
 }
 
+/** One alert by id (GET /alerts/{id}), wherever it sits in the list: similar-alert links open here. */
+function AlertDetailModal({ alertId, onOpen, onClose }: { alertId: number; onOpen: (id: number) => void; onClose: () => void }) {
+    const { data: a, isLoading, isError, error } = useQuery<Alert>({
+        queryKey: ['alerts', alertId, 'detail'],
+        queryFn: async () => (await api.get(`/alerts/${alertId}`)).data,
+    });
+    return (
+        <Modal open onClose={onClose} size="xl" title={a ? `Alert #${a.id}` : `Alert #${alertId}`}>
+            {isLoading ? (
+                <div className="py-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-line-strong" /></div>
+            ) : isError || !a ? (
+                <p className="text-sm text-severity-critical">{apiErrorMessage(error, 'Could not load this alert.')}</p>
+            ) : (
+                <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className={cn(badge, severityColor[a.severity] || severityColor.info)}>{a.severity}</span>
+                        <span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
+                        <span className="font-mono text-xs text-fg-2">{a.source}</span>
+                        <span className="text-xs text-fg-3">{new Date(a.created_at).toLocaleString()}</span>
+                        {a.case_id && <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>}
+                    </div>
+                    <p className="font-medium text-fg">{a.title}</p>
+                    <SimilarAlerts alertId={a.id} onOpen={onOpen} />
+                    <AlertRuns alertId={a.id} />
+                    <pre className="text-xs text-fg-2 overflow-x-auto bg-surface p-3 rounded-sm">{JSON.stringify(a.payload, null, 2)}</pre>
+                </div>
+            )}
+        </Modal>
+    );
+}
+
 export default function AlertsList() {
     const qc = useQueryClient();
     const [statusFilter, setStatusFilter] = useState('pending');
@@ -74,6 +108,9 @@ export default function AlertsList() {
     const [sourceFilter, setSourceFilter] = useState('all');
     const [expanded, setExpanded] = useState<number | null>(null);
     const [promoting, setPromoting] = useState<Alert | null>(null);
+    const [viewing, setViewing] = useState<number | null>(null);
+    const [actionError, setActionError] = useState<string | null>(null);
+    const canAct = useCanRun();  // promote/dismiss/suppress need analyst or admin
     const cols = useAlertColumns();
     const colSpan = FIXED_COLUMN_COUNT + cols.visibleCount;
 
@@ -109,12 +146,16 @@ export default function AlertsList() {
 
     const dismiss = useMutation({
         mutationFn: async (id: number) => (await api.post(`/alerts/${id}/dismiss`)).data,
+        onMutate: () => setActionError(null),
         onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
+        onError: (e) => setActionError(apiErrorMessage(e, 'Could not dismiss the alert.')),
     });
 
     const bulkDismiss = useMutation({
         mutationFn: async (ids: number[]) => (await api.post('/alerts/bulk', { ids, action: 'dismiss' })).data,
+        onMutate: () => setActionError(null),
         onSuccess: () => { setSelected(new Set()); qc.invalidateQueries({ queryKey: ['alerts'] }); },
+        onError: (e) => setActionError(apiErrorMessage(e, 'Could not dismiss the selected alerts.')),
     });
 
     const selectedIds = filtered.filter(a => selected.has(a.id)).map(a => a.id);
@@ -130,7 +171,7 @@ export default function AlertsList() {
             {label}{sort.key === key && (sort.dir === -1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />)}
         </button>
     );
-    const openAlert = (id: number) => { setStatusFilter('all'); setSeverityFilter('all'); setSourceFilter('all'); resetView(); setExpanded(id); };
+    const openAlert = (id: number) => setViewing(id);
 
     if (isLoading) {
         return <PageContainer><div className="flex items-center justify-center h-[50vh]">
@@ -175,7 +216,14 @@ export default function AlertsList() {
                 </div>
             </div>
 
-            {selectedIds.length > 0 && (
+            {actionError && (
+                <div role="alert" className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-severity-critical/40 bg-severity-critical/10 text-sm text-severity-critical">
+                    <span>{actionError}</span>
+                    <button onClick={() => setActionError(null)} className="text-xs text-fg-2 hover:text-fg">Dismiss</button>
+                </div>
+            )}
+
+            {canAct && selectedIds.length > 0 && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-line bg-panel text-sm">
                     <span className="text-fg-2">{selectedIds.length} selected</span>
                     <button onClick={() => setBulkPromote(true)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent text-on-accent hover:bg-accent-hover flex items-center gap-1"><CheckCircle size={12} />Promote selected…</button>
@@ -189,8 +237,8 @@ export default function AlertsList() {
                     <thead className="bg-panel border-b border-line text-xs uppercase text-fg-3 font-semibold tracking-wider">
                         <tr>
                             <th className="px-4 py-3 w-8">
-                                <input type="checkbox" aria-label="Select all" checked={allSelected}
-                                    onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map(a => a.id)))} />
+                                {canAct && <input type="checkbox" aria-label="Select all" checked={allSelected}
+                                    onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map(a => a.id)))} />}
                             </th>
                             <th className="px-4 py-3 w-8"></th>
                             {cols.isVisible('severity') && <th className="px-4 py-3 w-28">{sortHeader('severity', 'Severity')}</th>}
@@ -209,7 +257,7 @@ export default function AlertsList() {
                             <Fragment key={a.id}>
                                 <tr className="group hover:bg-raised">
                                     <td className="px-4 py-2.5">
-                                        <input type="checkbox" aria-label={`Select alert ${a.id}`} checked={selected.has(a.id)} onChange={() => toggle(a.id)} />
+                                        {canAct && <input type="checkbox" aria-label={`Select alert ${a.id}`} checked={selected.has(a.id)} onChange={() => toggle(a.id)} />}
                                     </td>
                                     <td className="px-4 py-2.5">
                                         <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="text-muted hover:text-fg-2">
@@ -228,7 +276,10 @@ export default function AlertsList() {
                                     {cols.isVisible('status') && <td className="px-4 py-2.5"><span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span></td>}
                                     {cols.isVisible('created_at') && <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>}
                                     <td className="px-4 py-2.5">
-                                        {a.status === 'pending' ? (
+                                        {!canAct ? (
+                                            a.case_id ? <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
+                                                : <span className="text-xs text-muted">—</span>
+                                        ) : a.status === 'pending' ? (
                                             <div className="flex items-center gap-2">
                                                 <button onClick={() => setPromoting(a)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent text-on-accent hover:bg-accent-hover flex items-center gap-1"><CheckCircle size={12} />Promote</button>
                                                 <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 flex items-center gap-1"><X size={12} />Dismiss</button>
@@ -266,6 +317,7 @@ export default function AlertsList() {
                 </div>
             )}
 
+            {viewing !== null && <AlertDetailModal alertId={viewing} onOpen={setViewing} onClose={() => setViewing(null)} />}
             {promoting && <PromoteAlertModal alert={promoting} onClose={() => setPromoting(null)} />}
             {bulkPromote && selectedIds.length > 0 && (
                 <PromoteAlertModal alert={filtered.find(a => a.id === selectedIds[0])!} ids={selectedIds}
