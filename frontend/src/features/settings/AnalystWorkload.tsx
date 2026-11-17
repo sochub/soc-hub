@@ -4,27 +4,29 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import PageContainer from '../../components/layout/PageContainer';
 import { Badge, Input, severityVariant } from '../../components/ui';
+import { fmtDuration } from '../../lib/utils';
+import TeamDashboard from './TeamDashboard';
 
-type Metric = 'current' | 'new' | 'open' | 'in_progress' | 'pending' | 'handled' | 'resolved' | 'closed';
+type Metric = 'current' | 'new' | 'open' | 'in_progress' | 'pending' | 'handled' | 'resolved' | 'closed' | 'sla_breached';
+type PeriodMetric = 'handled' | 'resolved' | 'closed' | 'sla_breached';
 
 interface Row {
     user_id: number; email: string; full_name: string | null; role: string;
     current: { new: number; open: number; in_progress: number; pending: number; total: number };
-    handled: number; resolved: number; closed: number;
+    handled: number; resolved: number; closed: number; sla_breached: number; median_resolve_minutes: number | null;
 }
 interface CaseRow { id: number; title: string; status: string; severity: string }
 
-// Local calendar dates (toISOString would shift across midnight in non-UTC zones).
-const ymd = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// UTC calendar dates: the backend reads the range as whole UTC days.
+const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const monday = () => {
     const d = new Date();
-    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
     return d;
 };
 
 const SNAPSHOT: [Metric, string][] = [['new', 'New'], ['open', 'Open'], ['in_progress', 'In progress'], ['pending', 'Pending'], ['current', 'Total']];
-const PERIOD: [Metric, string][] = [['handled', 'Handled'], ['resolved', 'Resolved'], ['closed', 'Closed']];
+const PERIOD: [Metric, string][] = [['handled', 'Handled'], ['resolved', 'Resolved'], ['closed', 'Closed'], ['sla_breached', 'SLA breaches']];
 
 export default function AnalystWorkload() {
     const [start, setStart] = useState(() => ymd(monday()));
@@ -46,7 +48,7 @@ export default function AnalystWorkload() {
     });
     const rows = data?.analysts ?? [];
     const value = (r: Row, m: Metric) =>
-        m === 'current' ? r.current.total : m in r.current ? r.current[m as keyof Row['current']] : r[m as 'handled' | 'resolved' | 'closed'];
+        m === 'current' ? r.current.total : m in r.current ? r.current[m as keyof Row['current']] : r[m as PeriodMetric];
 
     const cell = (r: Row, m: Metric, label: string) => {
         const n = value(r, m);
@@ -69,11 +71,10 @@ export default function AnalystWorkload() {
         <PageContainer>
             <div className="space-y-6">
             <div>
-                <h1 className="text-3xl font-bold text-fg tracking-tight">Analyst workload</h1>
+                <h1 className="text-3xl font-bold text-fg tracking-tight">Team workload</h1>
                 <p className="text-sm text-muted mt-1">
-                    Current workload is a live snapshot of cases each analyst owns. Period columns count distinct cases
-                    for the selected dates: handled = owned at any time in the period; resolved and closed are credited
-                    to whoever made the status change.
+                    SOC manager view of the active organization. Dates and times are UTC; period figures cover whole UTC
+                    days and compare against the previous period of equal length.
                 </p>
             </div>
             <div className="flex flex-wrap items-end gap-3">
@@ -86,6 +87,18 @@ export default function AnalystWorkload() {
             </div>
             {!valid && <p role="alert" className="text-sm text-severity-critical">Pick a valid date range.</p>}
             {isError && <p role="alert" className="text-sm text-severity-critical">Could not load analyst workload.</p>}
+            {valid && <TeamDashboard start={start} end={end} />}
+            {valid && (
+                <div>
+                    <h2 className="text-lg font-semibold text-fg">Per analyst</h2>
+                    <p className="text-sm text-muted mt-1">
+                        Current workload is a live snapshot of cases each analyst owns. Period columns count distinct
+                        cases for the selected dates: handled = owned at any time in the period; resolved and closed are
+                        credited to whoever made the status change; median TTR is created → resolved over those cases;
+                        SLA breaches = cases they own now with a breach recorded in the period.
+                    </p>
+                </div>
+            )}
             {isLoading ? <p className="text-sm text-muted">Loading…</p> : valid && (
                 <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -93,11 +106,12 @@ export default function AnalystWorkload() {
                         <tr className="text-xs uppercase tracking-wider text-muted">
                             <th />
                             <th colSpan={SNAPSHOT.length} className="pb-1 pr-4 text-right border-b border-line">Current (now)</th>
-                            <th colSpan={PERIOD.length} className="pb-1 pl-4 text-right border-b border-line">{range}</th>
+                            <th colSpan={PERIOD.length + 1} className="pb-1 pl-4 text-right border-b border-line">{range}</th>
                         </tr>
                         <tr className="text-left text-xs uppercase tracking-wider text-muted border-b border-line">
                             <th className="py-2 pr-4">Analyst</th>
-                            {[...SNAPSHOT, ...PERIOD].map(([m, l]) => <th key={m} className="pr-4 text-right">{l}</th>)}
+                            {[...SNAPSHOT, ...PERIOD].map(([m, l]) => <th key={m} className="pr-4 text-right whitespace-nowrap">{l}</th>)}
+                            <th className="pr-4 text-right whitespace-nowrap" title="Median time from creation to resolution">Median TTR</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -109,9 +123,12 @@ export default function AnalystWorkload() {
                                 </td>
                                 {SNAPSHOT.map(([m, l]) => cell(r, m, `Current ${l.toLowerCase()}`))}
                                 {PERIOD.map(([m, l]) => cell(r, m, l))}
+                                <td className="py-2 pr-4 text-right tabular-nums">
+                                    {r.median_resolve_minutes == null ? <span className="text-muted">—</span> : fmtDuration(r.median_resolve_minutes)}
+                                </td>
                             </tr>
                         ))}
-                        {rows.length === 0 && <tr><td colSpan={9} className="py-4 text-muted">No analysts in this organization.</td></tr>}
+                        {rows.length === 0 && <tr><td colSpan={SNAPSHOT.length + PERIOD.length + 2} className="py-4 text-muted">No analysts in this organization.</td></tr>}
                     </tbody>
                 </table>
                 </div>
@@ -121,7 +138,7 @@ export default function AnalystWorkload() {
                     <div className="flex items-center justify-between gap-3">
                         <h2 className="text-sm font-semibold text-fg">
                             {drill.label} — {drill.row.full_name || drill.row.email}
-                            {['handled', 'resolved', 'closed'].includes(drill.metric) && <span className="text-muted font-normal"> ({range})</span>}
+                            {['handled', 'resolved', 'closed', 'sla_breached'].includes(drill.metric) && <span className="text-muted font-normal"> ({range})</span>}
                         </h2>
                         <button type="button" onClick={() => setDrill(null)} className="text-xs text-muted hover:text-fg">Close</button>
                     </div>
