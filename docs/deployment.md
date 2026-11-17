@@ -1,6 +1,6 @@
 # Deployment
 
-Publishing a GitHub release (tag `vX.Y.Z`) builds two multi-arch
+Publishing a GitHub release (tag `vX.Y` or `vX.Y.Z`) builds two multi-arch
 (`linux/amd64`, `linux/arm64`) images and pushes them to Docker Hub
 (`.github/workflows/images.yml`). Nothing else publishes: pushes to `main` and pull
 requests (including from forks) never do.
@@ -10,8 +10,9 @@ requests (including from forks) never do.
 | `sochub/sochub-backend` | API (default command), Celery worker, migrations, admin scripts | 8000 |
 | `sochub/sochub-frontend` | nginx: the web UI, proxies `/api/v1` to `BACKEND_UPSTREAM` | 8080 |
 
-Tags: `1.4.0` and `1.4` from release `v1.4.0`, `sha-<short>`, and `latest` for the newest
-non-pre-release. Pin a version in production, not `latest`.
+Tags: `7.4` from release `v7.4`; `7.4.1` and `7.4` from release `v7.4.1`; plus `sha-<short>`, and `latest`
+for the newest non-pre-release. A release whose tag is neither form fails instead of publishing only
+`sha-<short>`. Pin a version in production, not `latest`; the Helm chart defaults to its `appVersion`.
 
 Both images run as non-root users (backend uid 10001, frontend uid 101) and
 carry no secrets; all configuration comes from environment variables.
@@ -48,7 +49,7 @@ frontend: also `/etc/nginx/conf.d`, where the config templates are rendered at s
 Release images are signed keylessly with cosign (GitHub OIDC). Verify before deploying:
 
 ```bash
-cosign verify docker.io/sochub/sochub-backend:1.4.0 \
+cosign verify docker.io/sochub/sochub-backend:7.4 \
   --certificate-identity-regexp '^https://github.com/sochub/soc-hub/.github/workflows/images.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -58,7 +59,7 @@ cosign verify docker.io/sochub/sochub-backend:1.4.0 \
 ```bash
 curl -O https://raw.githubusercontent.com/sochub/soc-hub/main/docker-compose.prod.yml
 curl -o .env https://raw.githubusercontent.com/sochub/soc-hub/main/.env.prod.example
-# edit .env: replace every CHANGE_ME (SOCHUB_TAG too: a release such as 1.4.0)
+# edit .env: replace every CHANGE_ME (SOCHUB_TAG too: a release such as 7.4)
 docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml run --rm backend python -m app.scripts.create_super_admin --email you@example.com
 ```
@@ -104,6 +105,6 @@ another TLS proxy in front of `HTTP_PORT`.
    `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` there (not as repository secrets).
    Recommended protection: deployment branches and tags limited to `v*`, and yourself
    as required reviewer.
-3. Publish a release: `gh release create v1.4.0 --generate-notes` (or from the GitHub
+3. Publish a release: `gh release create v7.5 --generate-notes` (or from the GitHub
    UI). Only people with write access can create releases, so contributors' pull
    requests can't trigger a publish.

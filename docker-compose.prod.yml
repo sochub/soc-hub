@@ -13,8 +13,8 @@
 # upload temp files, nginx pid/temp) and the app user's HOME (fontconfig cache for PDF export).
 
 x-backend: &backend
-  # No floating default: pin a release (e.g. 1.4.0) in .env so an upgrade is a deliberate change.
-  image: docker.io/sochub/sochub-backend:${SOCHUB_TAG:?set SOCHUB_TAG in .env to a release such as 1.4.0}
+  # No floating default: pin a release (e.g. 7.4) in .env so an upgrade is a deliberate change.
+  image: docker.io/sochub/sochub-backend:${SOCHUB_TAG:?set SOCHUB_TAG in .env to a release such as 7.4}
   restart: unless-stopped
   security_opt:
     - no-new-privileges:true
@@ -138,7 +138,7 @@ services:
         condition: service_healthy
 
   frontend:
-    image: docker.io/sochub/sochub-frontend:${SOCHUB_TAG:?set SOCHUB_TAG in .env to a release such as 1.4.0}
+    image: docker.io/sochub/sochub-frontend:${SOCHUB_TAG:?set SOCHUB_TAG in .env to a release such as 7.4}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
