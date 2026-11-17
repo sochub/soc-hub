@@ -1,10 +1,12 @@
 import secrets
-from typing import Any, List
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.api import deps
+from app.api.v1.sso import oidc_ready, saml_ready
+from app.models.tenant_sso_config import TenantSSOConfig
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -30,6 +32,8 @@ async def create_tenant(
     current_user: User = Depends(deps.require_super_admin),
 ) -> Any:
     """Create a new tenant. Super admin only."""
+    if not tenant_schema.slug_ok(tenant_in.slug):
+        raise HTTPException(status_code=422, detail=tenant_schema.SLUG_RULE)
     result = await db.execute(select(Tenant).where(Tenant.slug == tenant_in.slug))
     if result.scalars().first():
         raise HTTPException(status_code=409, detail="A tenant with this slug already exists.")
@@ -126,9 +130,13 @@ async def update_tenant(
     db: AsyncSession = Depends(deps.get_db),
     tenant_id: int,
     tenant_in: tenant_schema.TenantUpdate,
+    confirm_sso_slug_change: bool = Query(False),
     current_user: User = Depends(deps.require_super_admin),
 ) -> Any:
-    """Update a tenant. Super admin only."""
+    """Update a tenant. Super admin only.
+
+    The slug is part of the tenant's SAML/OIDC URLs (entity ID, ACS, redirect URI): with SSO configured, a
+    rename is refused (409) unless ``?confirm_sso_slug_change=true``, so the IdP side is not broken silently."""
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = result.scalars().first()
     if not tenant:
@@ -137,6 +145,15 @@ async def update_tenant(
     update_data = tenant_in.model_dump(exclude_unset=True)
 
     if "slug" in update_data and update_data["slug"] != tenant.slug:
+        if not tenant_schema.slug_ok(update_data["slug"]):
+            raise HTTPException(status_code=422, detail=tenant_schema.SLUG_RULE)
+        cfg: Optional[TenantSSOConfig] = (await db.execute(
+            select(TenantSSOConfig).where(TenantSSOConfig.tenant_id == tenant.id))).scalars().first()
+        if (saml_ready(cfg) or oidc_ready(cfg)) and not confirm_sso_slug_change:
+            raise HTTPException(status_code=409, detail=(
+                "This tenant has single sign-on configured and its SAML/OIDC URLs contain the slug. "
+                "Renaming breaks sign-in until the identity provider is updated with the new URLs. "
+                "Repeat with confirm_sso_slug_change=true to rename anyway."))
         slug_check = await db.execute(select(Tenant).where(Tenant.slug == update_data["slug"]))
         if slug_check.scalars().first():
             raise HTTPException(status_code=409, detail="A tenant with this slug already exists.")
