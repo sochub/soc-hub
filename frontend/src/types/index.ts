@@ -290,7 +290,7 @@ export interface CaseEditPayload {
 export interface Case {
   id: number;
   title: string;
-  description: string;
+  description: string | null;
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   status: string;
   owner_id?: number | null;

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import PageSkeleton from './PageSkeleton';
 import Avatar from '../Avatar';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
@@ -7,7 +7,7 @@ import {
     Inbox, Menu, X, PanelLeftClose, PanelLeftOpen, BookText, Code, Workflow, Search, Building2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, session } from '../../api/client';
 import type { Tenant, User } from '../../types';
 import CopilotWidget from '../../features/copilot/CopilotWidget';
@@ -55,7 +55,21 @@ export default function Layout() {
         queryKey: ['currentUser'],
         queryFn: async () => (await api.get('/users/me')).data as User,
         staleTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: 'always',  // another tab may have switched organization
     });
+
+    // The active organization changed under this tab (switched in another one): its cached data is stale.
+    const qc = useQueryClient();
+    const seenTenant = useRef<number | null | undefined>(undefined);
+    const activeTenant = currentUser?.active_tenant_id;
+    useEffect(() => {
+        const prev = seenTenant.current;
+        seenTenant.current = activeTenant;
+        if (prev != null && activeTenant != null && prev !== activeTenant) {
+            qc.clear();
+            navigate('/');
+        }
+    }, [activeTenant, qc, navigate]);
 
     const handleLogout = () => {
         if (DEMO) { window.location.assign('/'); return; }  // demo: back to the website
