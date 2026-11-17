@@ -23,7 +23,7 @@ carry no secrets; all configuration comes from environment variables.
 |---|---|
 | PostgreSQL 15+ | Container, RDS, Cloud SQL, ... → `DATABASE_URL=postgresql+asyncpg://...` |
 | Redis 7 | With a password → `REDIS_URL=redis://:<password>@host:6379/0` |
-| Backend env | `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `ENVIRONMENT=production`, `PUBLIC_BASE_URL`, `BACKEND_CORS_ORIGINS`, optional `AI_*` / `STORAGE_*` ([configuration.md](configuration.md)) |
+| Backend env | `SECRET_KEY`, `ENCRYPTION_KEY` (≥32 chars, different from `SECRET_KEY`), `DATABASE_URL`, `REDIS_URL`, `ENVIRONMENT=production`, `PUBLIC_BASE_URL` and `FRONTEND_URL` (public `https://` URLs), `BACKEND_CORS_ORIGINS`, optional `AI_*` / `STORAGE_*` / `DB_POOL_*` ([configuration.md](configuration.md)). Production refuses to start without these |
 | Frontend env | `BACKEND_UPSTREAM` (default `http://backend:8000`), `MAX_UPLOAD_MB`, `HSTS_HEADER` (value only, e.g. `max-age=31536000; includeSubDomains`), `REAL_IP_FROM` (CIDRs of the proxy in front of nginx) |
 | Attachments | A persistent volume at `/data/attachments`, or `STORAGE_BACKEND=s3` (required where disks are ephemeral, e.g. Fargate) |
 | TLS | Terminate at a proxy or load balancer in front of the frontend's port 8080 |
@@ -65,6 +65,9 @@ docker compose -f docker-compose.prod.yml run --rm backend python -m app.scripts
 ```
 
 `migrate` runs on every `up` and exits; backend and worker wait for it.
+Redis keeps queued background tasks in the `redis_data` volume (append-only file), so they survive restarts.
+Backend temp files (spooled uploads) live on the `backend_tmp` volume: keep free disk for
+(concurrent uploads) x `MAX_UPLOAD_MB` ([configuration.md](configuration.md#evidence-attachments)).
 Upgrade by changing `SOCHUB_TAG` and running `up -d` again. Put Caddy or
 another TLS proxy in front of `HTTP_PORT`.
 
@@ -74,14 +77,22 @@ another TLS proxy in front of `HTTP_PORT`.
   in a task share `localhost`, so set `BACKEND_UPSTREAM=http://localhost:8000`.
   Expose 8080 through an Application Load Balancer (HTTPS listener).
 - **Worker**: a second service from the backend image with the worker command,
-  desired count 1. Slack Socket Mode: one more service with `python -m app.slack_socket`
+  desired count 1 or more.
+- **Beat (scheduler)**: a third service from the backend image with the beat command,
+  desired count **exactly 1** (set maximum percent to 100 so a deployment never runs two:
+  scheduled jobs would run twice). Without it, periodic jobs (SLA checks, scheduled workflows,
+  email intake, digests) never run.
+- **Slack Socket Mode**: one more service with `python -m app.slack_socket`
   (outbound only, so no load balancer target).
 - **Migrations**: a one-off task (`aws ecs run-task` with command
   `alembic upgrade head`) before rolling a new tag.
 - **State**: RDS PostgreSQL and ElastiCache Redis (or Redis as its own small
   service). Fargate disks are ephemeral: use `STORAGE_BACKEND=s3`.
-- **Secrets**: pass `SECRET_KEY`, DB and Redis passwords from Secrets Manager
-  or SSM Parameter Store via the task definition's `secrets`.
+- **Secrets**: pass `SECRET_KEY`, `ENCRYPTION_KEY`, DB and Redis passwords (or the whole
+  `DATABASE_URL` / `REDIS_URL`) from Secrets Manager or SSM Parameter Store via the task
+  definition's `secrets`, to the API, worker, beat, Slack and migration tasks alike. Set
+  `PUBLIC_BASE_URL` and `FRONTEND_URL` to the ALB's public `https://` URL in every one of them
+  (the migration task too: it loads the same settings and refuses to start otherwise).
 - **AI**: `AI_PROVIDER=bedrock` uses the task role, with no keys in config
   ([configuration.md](configuration.md#ai-provider)).
 
@@ -92,7 +103,11 @@ another TLS proxy in front of `HTTP_PORT`.
   Expose `frontend` through an Ingress with TLS.
 - Worker: a `Deployment` with the worker command; beat: a `Deployment` with `replicas: 1`; Slack Socket Mode: a
   `Deployment` with `python -m app.slack_socket` (no Service needed, it only connects out).
-- Migrations: a `Job` (or a Helm pre-upgrade hook) running `alembic upgrade head`.
+- Migrations: a `Job` (or a Helm pre-upgrade hook) running `alembic upgrade head`, with the same env as the
+  API (`ENVIRONMENT`, `PUBLIC_BASE_URL`, `FRONTEND_URL`, secrets).
+- Ingress: raise the controller's body size to at least `MAX_UPLOAD_MB` and its timeouts (MCP streams stay open
+  up to an hour, AI calls about two minutes); ingress-nginx: `proxy-body-size`, `proxy-read-timeout: "3600"`,
+  `proxy-send-timeout: "300"`.
 - Attachments: a `PersistentVolumeClaim` at `/data/attachments`, or S3.
 - Secrets: a `Secret` mounted with `envFrom`; images run fine with
   `runAsNonRoot: true`, `allowPrivilegeEscalation: false` and `readOnlyRootFilesystem: true` (see above).
