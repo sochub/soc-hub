@@ -2,7 +2,7 @@
 
 Invitation and "was this you?" links carry their credential in the path
 (/api/v1/invitations/validate/{token}, /api/v1/user-verification/{token}); the
-frontend nginx redacts the same paths in its own log (nginx/logging.conf.template).
+frontend nginx redacts the same paths in its own log (nginx/access-log.conf.template).
 """
 import logging
 import re
