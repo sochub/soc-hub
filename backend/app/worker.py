@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_init
 from app.core.config import settings
 
@@ -32,7 +33,13 @@ celery_app.conf.update(
 # run a worker for each queue (or one worker with `-Q celery,automation`): a queue nobody consumes is
 # published but never picked up. Beat runs as its own process (`celery -A app.worker beat`), not `-B`.
 AUTOMATION_QUEUE = "automation"
+# Exact task names win over the globs below: the global beat sweeps (cron schedules, ask-user expiry, the
+# stuck-step reaper) stay on the default queue so a backlog of tenant runs can't delay them; they only
+# create/mark rows and enqueue the real work on the automation queue.
 celery_app.conf.task_routes = {
+    "app.tasks.workflows.run_schedules_task": {"queue": "celery"},
+    "app.tasks.workflows.expire_waits_task": {"queue": "celery"},
+    "app.tasks.workflows.reap_stuck_steps_task": {"queue": "celery"},
     "app.tasks.workflows.*": {"queue": AUTOMATION_QUEUE},
     "app.tasks.email_intake.*": {"queue": AUTOMATION_QUEUE},
 }
@@ -54,6 +61,9 @@ import app.tasks.email_intake  # noqa: E402,F401
 import app.tasks.escalations  # noqa: E402,F401
 
 # Beat schedule: run exactly one beat process per deployment (see the queue note above).
+# Beat's schedule file can live on tmpfs (read-only containers), so a restart forgets when an interval entry
+# last ran and starts its countdown again: a 24 h interval would never fire if beat restarts daily. Anything
+# longer than a few minutes is therefore a wall-clock crontab (UTC), which fires regardless of restarts.
 celery_app.conf.beat_schedule = {
     "check-sla-breaches": {
         "task": "app.tasks.sla.check_sla_breaches_task",
@@ -73,11 +83,11 @@ celery_app.conf.beat_schedule = {
     },
     "run-workflow-schedules": {
         "task": "app.tasks.workflows.run_schedules_task",
-        "schedule": 60.0,
+        "schedule": crontab(minute="*"),  # on the minute; the sweep also catches up missed minutes
     },
     "send-client-digests": {
         "task": "app.tasks.portfolio.send_client_digests_task",
-        "schedule": 3600.0,
+        "schedule": crontab(minute=0),  # hourly
     },
     "sync-tickets": {
         "task": "app.tasks.ticketing.sync_tickets_task",
@@ -89,10 +99,10 @@ celery_app.conf.beat_schedule = {
     },
     "cleanup-email-artifacts": {
         "task": "app.tasks.email_intake.cleanup_email_artifacts_task",
-        "schedule": 86400.0,
+        "schedule": crontab(hour=3, minute=0),  # daily, 03:00 UTC
     },
     "prune-notifications": {
         "task": "app.tasks.notifications.prune_notifications_task",
-        "schedule": 86400.0,
+        "schedule": crontab(hour=3, minute=15),  # daily, 03:15 UTC
     },
 }

@@ -94,11 +94,11 @@ async def _sweep(monkeypatch):
             # next minute, first run not succeeded yet (still running / failed): re-read the same window
             nxt = await fire(now + timedelta(minutes=1))
             assert nxt.trigger_payload["since"] == fmt(now + timedelta(minutes=1) - timedelta(hours=1))
-            # once a run succeeded, the window starts at that run's fire time
+            # once a run succeeded, the window starts at that run's fire time minus the safety overlap
             mine[0].status = "succeeded"
             await db.commit()
             nxt = await fire(now + timedelta(minutes=2))
-            assert nxt.trigger_payload["since"] == fmt(now)
+            assert nxt.trigger_payload["since"] == fmt(now - timedelta(minutes=10))
             # never more than 24 h back
             nxt.status = "succeeded"
             nxt.trigger_payload = {**nxt.trigger_payload, "fired_at": (now - timedelta(days=3)).isoformat()}
@@ -119,3 +119,64 @@ async def _sweep(monkeypatch):
 
 def test_run_due_schedules(monkeypatch):
     asyncio.run(_sweep(monkeypatch))
+
+
+def test_cron_matches_between():
+    from app.workflows.cron import cron_matches_between
+    assert cron_matches_between("30 * * * *", _at(2026, 10, 19, 10, 25), _at(2026, 10, 19, 10, 35))
+    assert not cron_matches_between("30 * * * *", _at(2026, 10, 19, 10, 31), _at(2026, 10, 19, 10, 59))
+    assert cron_matches_between("30 * * * *", _at(2026, 10, 19, 10, 30), _at(2026, 10, 19, 10, 30))
+    assert not cron_matches_between("bad", _at(2026, 10, 19, 10, 0), _at(2026, 10, 19, 11, 0))
+
+
+async def _catch_up(monkeypatch):
+    """A tick lost (or late) at the cron minute still fires on the next sweep, once; a workflow created or edited
+    after the matching minute does not fire retroactively; catch-up never reaches back past 60 minutes."""
+    import app.tasks.workflows as tw
+    from app.workflows.runtime import run_due_schedules
+    monkeypatch.setattr(tw.advance_run_task, "delay", lambda rid: None)
+    h = secrets.token_hex(3)
+    ids = {"t": [], "w": []}
+    now = datetime.now(timezone.utc).replace(second=20, microsecond=0)
+    missed = now - timedelta(minutes=5)
+    cron = f"{missed.minute} {missed.hour} * * *"
+    long_ago = (now - timedelta(minutes=90)).replace(second=0)
+    async with AsyncSessionLocal() as db:
+        try:
+            t = Tenant(name="wf-test", slug=f"wf-cu-{h}")
+            db.add(t)
+            await db.flush()
+            ids["t"] = [t.id]
+            old = Workflow(tenant_id=t.id, name="old", enabled=True, trigger_type="schedule", trigger_filter=cron,
+                           graph=GRAPH, created_at=now - timedelta(days=2), last_fired_at=now - timedelta(days=1))
+            fresh = Workflow(tenant_id=t.id, name="fresh", enabled=True, trigger_type="schedule",
+                             trigger_filter=cron, graph=GRAPH)  # created now, after the matching minute
+            stale = Workflow(tenant_id=t.id, name="stale", enabled=True, trigger_type="schedule",
+                             trigger_filter=f"{long_ago.minute} {long_ago.hour} * * *", graph=GRAPH,
+                             created_at=now - timedelta(days=2), last_fired_at=now - timedelta(days=1))
+            db.add_all([old, fresh, stale])
+            await db.flush()
+            ids["w"] = [old.id, fresh.id, stale.id]
+            await db.commit()
+
+            async def fired(at):
+                rids = await run_due_schedules(at)
+                return set((await db.execute(select(WorkflowRun.workflow_id).where(
+                    WorkflowRun.id.in_(rids or [-1]), WorkflowRun.workflow_id.in_(ids["w"])))).scalars().all())
+
+            assert await fired(now) == {old.id}
+            assert await fired(now + timedelta(minutes=1)) == set()  # fired once, not again for the same minute
+        finally:
+            await db.rollback()
+            run_ids = (await db.execute(select(WorkflowRun.id).where(WorkflowRun.workflow_id.in_(ids["w"])))).scalars().all()
+            await db.execute(delete(WorkflowRunStep).where(WorkflowRunStep.run_id.in_(run_ids)))
+            await db.execute(delete(WorkflowRun).where(WorkflowRun.id.in_(run_ids)))
+            await db.execute(delete(Workflow).where(Workflow.id.in_(ids["w"])))
+            await db.execute(delete(AuditLog).where(AuditLog.tenant_id.in_(ids["t"])))
+            await db.execute(delete(Tenant).where(Tenant.id.in_(ids["t"])))
+            await db.commit()
+    await engine.dispose()
+
+
+def test_run_due_schedules_catches_up_missed_minutes(monkeypatch):
+    asyncio.run(_catch_up(monkeypatch))
