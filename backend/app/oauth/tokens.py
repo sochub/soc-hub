@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth.login_policy import member_may_enter
+from app.auth.login_policy import member_may_enter, mfa_setup_blocks
 from app.core.config import settings
 from app.models.auth_session import AuthSession
 from app.models.membership import TenantMembership
@@ -40,7 +40,8 @@ async def tenant_role(db: AsyncSession, user: User, *, tenant_id: Optional[int],
     """The live membership role if this session may act in the tenant for this resource, else None.
 
     Requires: active user, active tenant, the resource's tenant gate (e.g. MCP enabled), a real membership
-    (super admins included), and the tenant's member login method satisfied by the session's amr."""
+    (super admins included), the tenant's member login method satisfied by the session's amr, and the
+    tenant's "require two-factor" (a password session without MFA is refused; super admins exempt)."""
     if not user.is_active or tenant_id is None:
         return None
     resource = resource_by_url(resource_url) if resource_url else None
@@ -57,6 +58,9 @@ async def tenant_role(db: AsyncSession, user: User, *, tenant_id: Optional[int],
     if not member_may_enter(tenant.member_login_method, amr=amr, sso_tenant_id=sso_tenant_id, tenant_id=tenant_id,
                             role=role, mfa_enabled=user.mfa_enabled_at is not None,
                             is_super_admin=bool(user.is_super_admin)):
+        return None
+    if mfa_setup_blocks(tenant.require_mfa, amr=amr, mfa_enabled=user.mfa_enabled_at is not None,
+                        is_super_admin=bool(user.is_super_admin)):
         return None
     return role
 

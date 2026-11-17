@@ -17,6 +17,13 @@ def is_password_fallback(method: str, amr: str) -> bool:
     return method != "password" and amr == AMR_PWD
 
 
+def mfa_setup_blocks(require_mfa: bool | None, *, amr: str, mfa_enabled: bool, is_super_admin: bool) -> bool:
+    """A tenant's "require two-factor" refuses this session: a password session of a member without MFA.
+    SSO sessions are left to the IdP. The super admin (break-glass) is never refused here; its password
+    sign-in already enforces the setting."""
+    return bool(require_mfa) and amr == AMR_PWD and not mfa_enabled and not is_super_admin
+
+
 def member_may_enter(
     method: str,
     *,

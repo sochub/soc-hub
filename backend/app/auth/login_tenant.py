@@ -7,7 +7,7 @@ from sqlalchemy.future import select
 
 from app.audit.events import audit_event
 from app.auth.login_policy import (
-    AMR_PWD, is_password_fallback, member_may_enter, password_required_error, sso_required_error,
+    AMR_PWD, is_password_fallback, member_may_enter, mfa_setup_blocks, password_required_error, sso_required_error,
 )
 from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
@@ -34,6 +34,12 @@ def session_may_enter(user: User, tenant_id: int, method: str, *, mfa_enabled: O
         method, amr=getattr(user, "_amr", AMR_PWD), sso_tenant_id=getattr(user, "_sso_tenant_id", None),
         tenant_id=tenant_id, role=_member_role(user, tenant_id), mfa_enabled=mfa_enabled,
         is_super_admin=bool(user.is_super_admin))
+
+
+def session_mfa_blocked(user: User, require_mfa: Optional[bool]) -> bool:
+    """Would the tenant's "require two-factor" refuse this request's session (see mfa_setup_blocks)?"""
+    return mfa_setup_blocks(require_mfa, amr=getattr(user, "_amr", AMR_PWD), mfa_enabled=user.mfa_enabled_at is not None,
+                            is_super_admin=bool(user.is_super_admin))
 
 
 def method_refusal(user: User, tenant_id: int, method: str, slug: str) -> HTTPException:
