@@ -164,23 +164,35 @@ async def _payload(db, case: Case, row: CaseEscalation) -> dict:
         "accepted_by": _person(acc), "accepted_via": row.accepted_via, "case_url": case_url(case.id)}}
 
 
+def _set_owner(case: Case, owner_id: Optional[int]) -> Optional[dict]:
+    """Change the owner; returns the {from, to} that _record puts in its audit row (workload ownership history)."""
+    if case.owner_id == owner_id:
+        return None
+    change = {"from": case.owner_id, "to": owner_id}
+    case.owner_id = owner_id
+    return change
+
+
 async def _record(db, case: Case, row: CaseEscalation, actor_id: Optional[int], action: str, text: str,
-                  frm: Optional[dict], to: Optional[dict], note: Optional[str], event_type: Optional[str]) -> None:
+                  frm: Optional[dict], to: Optional[dict], note: Optional[str], event_type: Optional[str],
+                  owner: Optional[dict] = None) -> None:
     db.add(TimelineEvent(case_id=case.id, user_id=actor_id, event_type="escalation", content=_one_line(text)))
-    await create_audit_log(db, "case", case.id, action, case.tenant_id, actor_id, {
-        "escalation_id": row.id, "from": _label(frm) if frm else None, "to": _label(to) if to else None,
-        "note": note or None})
+    changes = {"escalation_id": row.id, "from": _label(frm) if frm else None, "to": _label(to) if to else None,
+               "note": note or None}
+    if owner:  # same shape apply_case_update writes, so owner history reads one way
+        changes.update(owner_id=owner, assignee=dict(owner))
+    await create_audit_log(db, "case", case.id, action, case.tenant_id, actor_id, changes)
     if event_type:
         events.stash(db, case.tenant_id, event_type, case.id, await _payload(db, case, row))
 
 
 async def _close(db, case: Case, row: CaseEscalation, status: str, actor_id: Optional[int], note: Optional[str],
-                 action: str, text: str, to: Optional[dict] = None) -> None:
+                 action: str, text: str, to: Optional[dict] = None, owner: Optional[dict] = None) -> None:
     """Move a pending row to `status`; fires case.escalation_closed."""
     row.status, row.closed_by, row.closed_at, row.close_note = status, actor_id, _now(), note or None
     await db.flush()
     await _record(db, case, row, actor_id, action, text, row.policy_snapshot["to"], to, note,
-                  "case.escalation_closed")
+                  "case.escalation_closed", owner)
 
 
 def _violates(e: IntegrityError, constraint: str) -> bool:
@@ -262,12 +274,13 @@ async def escalate(db, *, case: Case, actor_id: int, to_tier_id: int, to_group_i
     frm = _hop(tiers, cur, from_group_id)
     live_tiers = await _live(db, EscalationTier, case.tenant_id, [tier["id"], from_tier["id"] if from_tier else None])
 
+    prev_owner = case.owner_id  # _open clears it
     row = await _open(db, case, tiers=tiers, to=to, to_tier_id=tier["id"] if tier["id"] in live_tiers else None,
                       frm=frm, from_tier_id=from_tier["id"] if from_tier and from_tier["id"] in live_tiers else None,
                       from_group_id=from_group_id,
                       requested_by=actor_id, reason=reason, summary=summary, requested_help=requested_help)
     await _record(db, case, row, actor_id, "case_escalated", f"Escalated to {_label(to)} — {reason}",
-                  frm, to, None, None)
+                  frm, to, None, None, owner={"from": prev_owner, "to": None} if prev_owner is not None else None)
     await _announce(db, case, row, actor_id, "escalated", f"Case #{case.id} escalated to {_label(to)}")
     return row
 
@@ -281,10 +294,10 @@ async def accept(db, *, case: Case, actor_id: int, is_admin: bool) -> CaseEscala
         raise EscalationError(403, "Only members of the receiving group can accept")
     row.accepted_by, row.accepted_at = actor_id, _now()
     row.accepted_via = "soc_hub" if in_group else "admin_override"
-    case.owner_id = actor_id
+    owner = _set_owner(case, actor_id)
     suffix = "" if in_group else " (admin override)"
     await _close(db, case, row, "accepted", actor_id, None, "case_escalation_accepted",
-                 f"Accepted escalation at {_label(row.policy_snapshot['to'])}{suffix}")
+                 f"Accepted escalation at {_label(row.policy_snapshot['to'])}{suffix}", owner=owner)
     return row
 
 
@@ -329,9 +342,9 @@ async def accept_external(db, *, tenant_id: int, dedup_key: Optional[str], email
                                                           User.is_active.is_(True)))).scalars().all():
             if await _member_groups(db, tenant_id, user.id, [row.to_group_id]):
                 row.accepted_by, row.accepted_at, row.accepted_via = user.id, _now(), via
-                case.owner_id = user.id
+                owner = _set_owner(case, user.id)
                 await _close(db, case, row, "accepted", user.id, None, "case_escalation_accepted",
-                             f"Accepted via {label} by {_name(user)}")
+                             f"Accepted via {label} by {_name(user)}", owner=owner)
                 return "accepted"
     ref = (actor_ref or "").strip()[:64]
     who = email or (f"{label} user {ref}" if ref else "an unknown user")
@@ -415,9 +428,9 @@ async def withdraw(db, *, case: Case, actor_id: int, note: Optional[str]) -> Cas
     row = await _locked(db, case)
     if row is None:
         raise EscalationError(409, "No pending escalation")
-    case.owner_id = row.requested_by
+    owner = _set_owner(case, row.requested_by)
     await _close(db, case, row, "withdrawn", actor_id, note, "case_escalation_withdrawn",
-                 "Escalation withdrawn" + (f" — {note}" if note else ""))
+                 "Escalation withdrawn" + (f" — {note}" if note else ""), owner=owner)
     return row
 
 

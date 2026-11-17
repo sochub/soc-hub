@@ -19,6 +19,7 @@ export default function SettingsHub() {
             { label: 'Audit log', to: '/settings/audit', show: isAdmin },
             { label: 'Escalation', to: '/settings/escalation', show: isAdmin },
             { label: 'Time', to: '/settings/time', show: isAdmin },
+            { label: 'Workload', to: '/settings/workload', show: isAdmin },
             { label: 'Tenants', to: '/settings/tenants', show: !!me?.is_super_admin },
         ]} />
     );
