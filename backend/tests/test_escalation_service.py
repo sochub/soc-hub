@@ -316,6 +316,7 @@ async def _scenario(emitted):
 
 
 def test_escalation_service(monkeypatch):
+    monkeypatch.setattr(delivery.settings, "FRONTEND_URL", "https://soc.example.com")  # don't rely on another test's leak
     emitted = []
     monkeypatch.setattr(wf_events, "emit_event", lambda tenant_id, event_type, *, case_id=None, changes=None, **kw:
                         emitted.append((tenant_id, event_type, case_id, changes)))
