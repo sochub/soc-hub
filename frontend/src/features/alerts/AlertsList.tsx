@@ -7,6 +7,8 @@ import { Link } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
 import { AlertRuns } from '../automations/CaseAutomation';
 import PageContainer from '../../components/layout/PageContainer';
+import { FIXED_COLUMN_COUNT, useAlertColumns } from './alertColumns';
+import ColumnsMenu from './ColumnsMenu';
 
 interface Alert {
     id: number;
@@ -72,6 +74,8 @@ export default function AlertsList() {
     const [sourceFilter, setSourceFilter] = useState('all');
     const [expanded, setExpanded] = useState<number | null>(null);
     const [promoting, setPromoting] = useState<Alert | null>(null);
+    const cols = useAlertColumns();
+    const colSpan = FIXED_COLUMN_COUNT + cols.visibleCount;
 
     const [page, setPage] = useState(0);
     // Server sort keys: 'severity' = most severe first, '-severity' = least severe first.
@@ -167,6 +171,7 @@ export default function AlertsList() {
                         </select>
                         <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                     </div>
+                    <ColumnsMenu cols={cols} />
                 </div>
             </div>
 
@@ -188,17 +193,17 @@ export default function AlertsList() {
                                     onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map(a => a.id)))} />
                             </th>
                             <th className="px-4 py-3 w-8"></th>
-                            <th className="px-4 py-3 w-28">{sortHeader('severity', 'Severity')}</th>
-                            <th className="px-4 py-3 w-40">Source</th>
+                            {cols.isVisible('severity') && <th className="px-4 py-3 w-28">{sortHeader('severity', 'Severity')}</th>}
+                            {cols.isVisible('source') && <th className="px-4 py-3 w-40">Source</th>}
                             <th className="px-4 py-3">Title</th>
-                            <th className="px-4 py-3 w-28">Status</th>
-                            <th className="px-4 py-3 w-40">{sortHeader('created_at', 'Received')}</th>
+                            {cols.isVisible('status') && <th className="px-4 py-3 w-28">Status</th>}
+                            {cols.isVisible('created_at') && <th className="px-4 py-3 w-40">{sortHeader('created_at', 'Received')}</th>}
                             <th className="px-4 py-3 w-56">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
                         {filtered.length === 0 ? (
-                            <tr><td colSpan={8} className="px-6 py-12 text-center text-muted">
+                            <tr><td colSpan={colSpan} className="px-6 py-12 text-center text-muted">
                                 <Search size={32} className="mb-2 opacity-50 mx-auto" />No alerts</td></tr>
                         ) : filtered.map(a => (
                             <Fragment key={a.id}>
@@ -211,17 +216,17 @@ export default function AlertsList() {
                                             {expanded === a.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                         </button>
                                     </td>
-                                    <td className="px-4 py-2.5"><span className={cn(badge, severityColor[a.severity] || severityColor.info)}>{a.severity}</span></td>
-                                    <td className="px-4 py-2.5"><span className="font-mono text-xs text-fg-2">{a.source}</span></td>
-                                    <td className="px-4 py-2.5 font-medium text-fg">{a.title}</td>
-                                    <td className="px-4 py-2.5">
-                                        <span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
+                                    {cols.isVisible('severity') && <td className="px-4 py-2.5"><span className={cn(badge, severityColor[a.severity] || severityColor.info)}>{a.severity}</span></td>}
+                                    {cols.isVisible('source') && <td className="px-4 py-2.5"><span className="font-mono text-xs text-fg-2">{a.source}</span></td>}
+                                    <td className="px-4 py-2.5 font-medium text-fg">
+                                        {a.title}
                                         {a.suppression_rule_id && (
                                             <Link to="/alerts/suppressions" title="Dismissed at ingest by a suppression rule"
-                                                className="ml-1.5 text-[10px] text-muted hover:text-fg-2">rule #{a.suppression_rule_id}</Link>
+                                                className="ml-1.5 text-[10px] font-normal text-muted hover:text-fg-2">rule #{a.suppression_rule_id}</Link>
                                         )}
                                     </td>
-                                    <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>
+                                    {cols.isVisible('status') && <td className="px-4 py-2.5"><span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span></td>}
+                                    {cols.isVisible('created_at') && <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>}
                                     <td className="px-4 py-2.5">
                                         {a.status === 'pending' ? (
                                             <div className="flex items-center gap-2">
@@ -239,7 +244,7 @@ export default function AlertsList() {
                                     </td>
                                 </tr>
                                 {expanded === a.id && (
-                                    <tr><td colSpan={8} className="px-6 py-3 bg-surface">
+                                    <tr><td colSpan={colSpan} className="px-6 py-3 bg-surface">
                                         <SimilarAlerts alertId={a.id} onOpen={openAlert} />
                                         <AlertRuns alertId={a.id} />
                                         <pre className="text-xs text-fg-2 overflow-x-auto">{JSON.stringify(a.payload, null, 2)}</pre>
