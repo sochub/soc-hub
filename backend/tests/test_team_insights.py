@@ -262,7 +262,7 @@ def test_workload_median_resolve_and_sla_breaches(monkeypatch):
         c1 = await ctx.case(owner_id=U["a"], created_at=_ago(hours=2))
         c2 = await ctx.case(owner_id=U["a"], created_at=_ago(hours=4))
         await ctx.update(c1, {"status": CaseStatus.RESOLVED}, U["a"])
-        await ctx.update(c2, {"status": CaseStatus.CLOSED, "outcome": "legitimate"}, U["a"])
+        await ctx.update(c2, {"status": CaseStatus.CLOSED, "outcome": "legitimate", "closing_note": "expected activity"}, U["a"])
         breached = await ctx.case(owner_id=U["b"], sla_resolution_breach_notified_at=_ago(hours=1))
         await ctx.case(owner_id=U["b"], sla_response_breach_notified_at=_ago(days=40))  # outside the period
         await ctx.case(tenant=ctx.T2, owner_id=U["a"], sla_response_breach_notified_at=_ago(hours=1))

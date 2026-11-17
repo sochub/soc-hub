@@ -107,7 +107,7 @@ def test_workload_attribution_snapshot_and_isolation(monkeypatch):
         # A owned "handover", hands it to B; A resolves it, B closes it.
         await _update(c["handover"], {"owner_id": u["b"]}, u["admin"])
         await _update(c["handover"], {"status": CaseStatus.RESOLVED}, u["a"])
-        await _update(c["handover"], {"status": CaseStatus.CLOSED, "outcome": "false_positive"}, u["b"])
+        await _update(c["handover"], {"status": CaseStatus.CLOSED, "outcome": "false_positive", "closing_note": "benign"}, u["b"])
         # The other tenant: A resolves a case there; must not leak into the active tenant.
         await _update(c["other"], {"status": CaseStatus.RESOLVED}, u["a"])
         # Old case: reassigned and closed 40 days ago -> outside this week.
