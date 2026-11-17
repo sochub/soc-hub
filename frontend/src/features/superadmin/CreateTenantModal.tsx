@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { apiErrorMessage } from '../../api/errors';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 
 interface CreateTenantModalProps {
@@ -23,8 +24,8 @@ export default function CreateTenantModal({ isOpen, onClose }: CreateTenantModal
             queryClient.invalidateQueries({ queryKey: ['tenants'] });
             handleClose();
         },
-        onError: (err: any) => {
-            setError(err.response?.data?.detail || 'Failed to create tenant.');
+        onError: (err) => {
+            setError(apiErrorMessage(err, 'Failed to create tenant.'));
         },
     });
 

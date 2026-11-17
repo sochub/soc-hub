@@ -1,22 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
+import { apiErrorMessage } from '../../api/errors';
 import type {
     EscalationGroup, EscalationGroupInput, EscalationHistoryRow, EscalationIntegrations, EscalationQueueRow, EscalationTier,
 } from '../../types';
 
 const base = '/escalations';
 
-/** Server message for a failed request: string detail, or the first 422 validation entry. */
-export function errMsg(e: unknown, fallback: string): string {
-    if (!isAxiosError(e)) return fallback;
-    const d = e.response?.data?.detail;
-    if (typeof d === 'string') return d;
-    if (Array.isArray(d) && d.length) {
-        return d.map((x) => (typeof x?.msg === 'string' ? x.msg.replace(/^Value error, /, '') : '')).filter(Boolean).join('; ') || fallback;
-    }
-    return fallback;
-}
+/** Server message for a failed request (shared helper; kept under this name for existing callers). */
+export const errMsg = apiErrorMessage;
 
 export const useGroups = () => useQuery({
     queryKey: ['escalation-groups'],
