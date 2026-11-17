@@ -1,8 +1,8 @@
 import { Fragment, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
-import { ChevronDown, ChevronRight, ChevronUp, Search, X, CheckCircle } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Search, X, CheckCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
 import { AlertRuns } from '../automations/CaseAutomation';
@@ -38,6 +38,7 @@ const severityColor: Record<string, string> = {
 };
 const badge = 'inline-flex px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border';
 type SortKey = 'severity' | 'created_at';
+const PAGE_SIZE = 100;
 
 function SimilarAlerts({ alertId, onOpen }: { alertId: number; onOpen: (id: number) => void }) {
     const { data } = useQuery<Alert[]>({
@@ -72,10 +73,35 @@ export default function AlertsList() {
     const [expanded, setExpanded] = useState<number | null>(null);
     const [promoting, setPromoting] = useState<Alert | null>(null);
 
-    const { data: alerts, isLoading } = useQuery<Alert[]>({
-        queryKey: ['alerts'],
-        queryFn: async () => (await api.get('/alerts/')).data,
+    const [page, setPage] = useState(0);
+    // Server sort keys: 'severity' = most severe first, '-severity' = least severe first.
+    const sortParam = sort.key === 'severity' ? (sort.dir === -1 ? 'severity' : '-severity') : (sort.dir === -1 ? '-created_at' : 'created_at');
+    const params = {
+        skip: page * PAGE_SIZE, limit: PAGE_SIZE, sort: sortParam,
+        ...(statusFilter !== 'all' && { status: statusFilter }),
+        ...(severityFilter !== 'all' && { severity: severityFilter }),
+        ...(sourceFilter !== 'all' && { source: sourceFilter }),
+    };
+    const { data: result, isLoading } = useQuery({
+        queryKey: ['alerts', 'list', params],
+        queryFn: async () => {
+            const r = await api.get<Alert[]>('/alerts/', { params });
+            return { items: r.data, total: Number(r.headers['x-total-count'] ?? r.data.length) };
+        },
+        placeholderData: keepPreviousData,
     });
+    const filtered = result?.items ?? [];
+    const total = result?.total ?? 0;
+    const { data: sources = [] } = useQuery<string[]>({
+        queryKey: ['alerts', 'sources'],
+        queryFn: async () => (await api.get('/alerts/sources')).data,
+    });
+    // Changing a filter or the sort order returns to page 1 and drops the selection.
+    const resetView = () => { setPage(0); setSelected(new Set()); };
+    // If the current page emptied (e.g. last alert dismissed), step back to the last page that has rows.
+    if (result && result.items.length === 0 && result.total > 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
+    }
 
     const dismiss = useMutation({
         mutationFn: async (id: number) => (await api.post(`/alerts/${id}/dismiss`)).data,
@@ -87,14 +113,6 @@ export default function AlertsList() {
         onSuccess: () => { setSelected(new Set()); qc.invalidateQueries({ queryKey: ['alerts'] }); },
     });
 
-    const sources = Array.from(new Set((alerts || []).map(a => a.source).filter(Boolean)));
-    const filtered = (alerts || []).filter(a =>
-        (statusFilter === 'all' || a.status === statusFilter) &&
-        (sourceFilter === 'all' || a.source === sourceFilter) &&
-        (severityFilter === 'all' || a.severity === severityFilter)
-    ).sort((x, y) => sort.dir * (sort.key === 'severity'
-        ? SEVERITIES.indexOf(y.severity) - SEVERITIES.indexOf(x.severity)
-        : x.created_at.localeCompare(y.created_at)));
     const selectedIds = filtered.filter(a => selected.has(a.id)).map(a => a.id);
     const allSelected = filtered.length > 0 && selectedIds.length === filtered.length;
     const toggle = (id: number) => setSelected(prev => {
@@ -103,12 +121,12 @@ export default function AlertsList() {
         return next;
     });
     const sortHeader = (key: SortKey, label: string) => (
-        <button onClick={() => setSort(s => ({ key, dir: s.key === key ? (-s.dir as 1 | -1) : -1 }))}
+        <button onClick={() => { setSort(s => ({ key, dir: s.key === key ? (-s.dir as 1 | -1) : -1 })); resetView(); }}
             className="inline-flex items-center gap-1 uppercase hover:text-fg">
             {label}{sort.key === key && (sort.dir === -1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />)}
         </button>
     );
-    const openAlert = (id: number) => { setStatusFilter('all'); setSeverityFilter('all'); setSourceFilter('all'); setExpanded(id); };
+    const openAlert = (id: number) => { setStatusFilter('all'); setSeverityFilter('all'); setSourceFilter('all'); resetView(); setExpanded(id); };
 
     if (isLoading) {
         return <PageContainer><div className="flex items-center justify-center h-[50vh]">
@@ -120,11 +138,11 @@ export default function AlertsList() {
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-fg tracking-tight">Alerts</h1>
-                    <p className="text-fg-3 text-sm mt-0.5">{filtered.length} alerts</p>
+                    <p className="text-fg-3 text-sm mt-0.5">{total === 0 ? '0 alerts' : `Showing ${(page * PAGE_SIZE + 1).toLocaleString()}–${(page * PAGE_SIZE + filtered.length).toLocaleString()} of ${total.toLocaleString()} alerts`}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
-                        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+                        <select value={sourceFilter} onChange={e => { setSourceFilter(e.target.value); resetView(); }}
                             className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
                             <option value="all">All Sources</option>
                             {sources.map(s => <option key={s} value={s}>{s}</option>)}
@@ -132,7 +150,7 @@ export default function AlertsList() {
                         <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                     </div>
                     <div className="relative">
-                        <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)}
+                        <select value={severityFilter} onChange={e => { setSeverityFilter(e.target.value); resetView(); }}
                             className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
                             <option value="all">All Severities</option>
                             {SEVERITIES.map(s => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
@@ -140,7 +158,7 @@ export default function AlertsList() {
                         <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                     </div>
                     <div className="relative">
-                        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                        <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); resetView(); }}
                             className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
                             <option value="all">All Statuses</option>
                             <option value="pending">Pending</option>
@@ -232,6 +250,16 @@ export default function AlertsList() {
                     </tbody>
                 </table>
             </div>
+
+            {total > PAGE_SIZE && (
+                <div className="flex items-center justify-end gap-2 text-sm text-fg-3">
+                    <span>Page {page + 1} of {Math.ceil(total / PAGE_SIZE)}</span>
+                    <button disabled={page === 0} onClick={() => { setPage(p => p - 1); setSelected(new Set()); }}
+                        className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 disabled:opacity-50 flex items-center gap-1"><ChevronLeft size={12} />Prev</button>
+                    <button disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => { setPage(p => p + 1); setSelected(new Set()); }}
+                        className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 disabled:opacity-50 flex items-center gap-1">Next<ChevronRight size={12} /></button>
+                </div>
+            )}
 
             {promoting && <PromoteAlertModal alert={promoting} onClose={() => setPromoting(null)} />}
             {bulkPromote && selectedIds.length > 0 && (
