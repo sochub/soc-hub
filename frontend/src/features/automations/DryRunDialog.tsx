@@ -1,14 +1,16 @@
-import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, keepPreviousData } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { FlaskConical } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import Modal, { modalInput, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import { NODE_DEF } from './nodeCatalog';
+import { getPage } from '../../api/paging';
 import type { Workflow } from './types';
 
 type Source = 'case' | 'alert' | 'payload';
+const PICKER_LIMIT = 100;
 
 export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow; onClose: () => void }) {
     const navigate = useNavigate();
@@ -21,8 +23,24 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [error, setError] = useState<string | null>(null);
 
-    const { data: cases = [] } = useQuery({ queryKey: ['cases', 'dry-run-picker'], queryFn: async () => (await api.get('/cases/')).data as { id: number; title: string }[], enabled: source === 'case' });
-    const { data: alerts = [] } = useQuery({ queryKey: ['alerts', 'dry-run-picker'], queryFn: async () => (await api.get('/alerts/')).data as { id: number; title: string; status: string }[], enabled: source === 'alert' });
+    // Cases are searched server-side; alerts list the newest PICKER_LIMIT (older ones: type the ID).
+    const [caseQ, setCaseQ] = useState('');
+    useEffect(() => {
+        const t = setTimeout(() => setCaseQ(filter.trim()), 300);
+        return () => clearTimeout(t);
+    }, [filter]);
+    const { data: casePage } = useQuery({
+        queryKey: ['cases', 'dry-run-picker', caseQ],
+        queryFn: () => getPage<{ id: number; title: string }>('/cases/', { ...(caseQ && { q: caseQ }), limit: PICKER_LIMIT }),
+        enabled: source === 'case', placeholderData: keepPreviousData,
+    });
+    const { data: alertPage } = useQuery({
+        queryKey: ['alerts', 'dry-run-picker'],
+        queryFn: () => getPage<{ id: number; title: string; status: string }>('/alerts/', { limit: PICKER_LIMIT }),
+        enabled: source === 'alert',
+    });
+    const cases = casePage?.items ?? [];
+    const alerts = alertPage?.items ?? [];
 
     const sideEffectNodes = workflow.graph.nodes.filter((n) => NODE_DEF[n.type]?.sideEffect && n.type !== 'slack_ask_user');
     const askNodes = workflow.graph.nodes.filter((n) => n.type === 'slack_ask_user');
@@ -73,7 +91,9 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
                     const label = isCase ? 'cases' : 'alerts';
                     const q = filter.trim().toLowerCase();
                     const items: { id: number; title: string; status?: string }[] = isCase ? cases : alerts;
-                    const shown = items.filter((x) => !q || `#${x.id}`.includes(q) || String(x.id) === q.replace('#', '') || x.title.toLowerCase().includes(q));
+                    const shown = isCase ? items : items.filter((x) => !q || `#${x.id}`.includes(q) || String(x.id) === q.replace('#', '') || x.title.toLowerCase().includes(q));
+                    const page = isCase ? casePage : alertPage;
+                    const truncated = !!page && page.total > page.items.length;
                     const value = isCase ? caseId : alertId;
                     const setValue = isCase ? setCaseId : setAlertId;
                     return (
@@ -86,6 +106,11 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
                                 <option value="">Select {isCase ? 'a case' : 'an alert'}…</option>
                                 {shown.map((x) => <option key={x.id} value={x.id}>#{x.id} {x.title}{x.status ? ` (${x.status})` : ''}</option>)}
                             </select>
+                            {truncated && (
+                                <p className="text-xs text-muted">
+                                    Listing the newest {page.items.length} of {page.total} {label}{isCase ? ' matching the filter' : ''}. Enter an ID for any other.
+                                </p>
+                            )}
                         </div>
                     );
                 })()}

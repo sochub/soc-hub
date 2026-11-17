@@ -1,6 +1,6 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { AlertOctagon, ChevronDown, ChevronRight, Plus, Send, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -8,8 +8,11 @@ import type { IOC } from '../../types';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
 import { useCanRun } from '../enrichment/useCanRun';
 import PageContainer from '../../components/layout/PageContainer';
+import { Pager } from '../../components/ui';
+import { getPage, showingText } from '../../api/paging';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 
+const PAGE_SIZE = 100;
 const VERDICT_DOT: Record<string, string> = { malicious: 'bg-red-600', suspicious: 'bg-amber-500', harmless: 'bg-green-600' };
 
 const IOC_TYPES = ['ip_address', 'domain', 'url', 'file_hash', 'email', 'registry_key', 'mutex', 'user_agent', 'other'];
@@ -78,13 +81,25 @@ export default function IOCList() {
     const [mispResult, setMispResult] = useState<MispPushResult | null>(null);
     const [mispError, setMispError] = useState<string | null>(null);
 
-    const { data: iocs, isLoading } = useQuery<IOC[]>({
-        queryKey: ['iocs'],
-        queryFn: async () => {
-            const res = await api.get('/iocs/');
-            return res.data;
-        },
+    // Value search runs server-side (?q=) after a pause in typing; the URL keeps the raw text.
+    const [page, setPage] = useState(0);
+    const [q, setQ] = useState(searchParams.get('q') ?? '');
+    const rawQ = searchParams.get('q') ?? '';
+    useEffect(() => {
+        const t = setTimeout(() => { setQ(rawQ.trim()); setPage(0); setSelected(new Set()); }, 300);
+        return () => clearTimeout(t);
+    }, [rawQ]);
+    const params = { ...(q && { q }), skip: page * PAGE_SIZE, limit: PAGE_SIZE };
+    const { data: result, isLoading } = useQuery({
+        queryKey: ['iocs', 'list', params],
+        queryFn: () => getPage<IOC>('/iocs/', params),
+        placeholderData: keepPreviousData,
     });
+    const iocs = result?.items;
+    const total = result?.total ?? 0;
+    if (result && result.items.length === 0 && result.total > 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
+    }
 
     const createMutation = useMutation({
         mutationFn: async (data: typeof defaultForm) => {
@@ -109,7 +124,7 @@ export default function IOCList() {
         },
     });
 
-    const visible = (iocs ?? []).filter(i => i.value.toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase()));
+    const visible = iocs ?? [];
     const selectedIocs = (iocs ?? []).filter(i => selected.has(i.id));
     const selectedCaseIds = new Set(selectedIocs.map(i => i.case_id));
     const singleCaseId = selectedIocs.length > 0 && selectedCaseIds.size === 1 ? selectedIocs[0].case_id : null;
@@ -149,7 +164,10 @@ export default function IOCList() {
                         <AlertOctagon size={24} className="text-magenta" />
                         Indicators of Compromise
                     </h1>
-                    <p className="text-fg-3 text-sm mt-1">Track and manage threat indicators across all cases.</p>
+                    <p className="text-fg-3 text-sm mt-1">
+                        Track and manage threat indicators across all cases.
+                        {result && <span className="ml-1">{showingText(page, PAGE_SIZE, visible.length, total, 'IOCs')}</span>}
+                    </p>
                 </div>
                 <div className="flex items-center gap-2">
                 <input type="search" value={searchParams.get('q') ?? ''} placeholder="Filter by value…"
@@ -210,7 +228,7 @@ export default function IOCList() {
                 ) : !iocs || iocs.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20 text-muted">
                         <AlertOctagon size={40} className="mb-3 opacity-30" />
-                        <p className="text-sm">No IOCs recorded yet. Add one to get started.</p>
+                        <p className="text-sm">{q ? 'No IOCs match this filter.' : 'No IOCs recorded yet. Add one to get started.'}</p>
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -316,6 +334,7 @@ export default function IOCList() {
                     </div>
                 )}
             </div>
+            <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={(p) => { setPage(p); setSelected(new Set()); }} />
 
             {/* Add IOC Modal */}
             <Modal

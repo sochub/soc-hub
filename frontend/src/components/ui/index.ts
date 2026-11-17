@@ -6,3 +6,4 @@ export { default as Label } from './Label';
 export { Card, CardHeader, CardTitle, CardContent } from './Card';
 export { default as Badge, severityVariant } from './Badge';
 export type { BadgeProps } from './Badge';
+export { default as Pager } from './Pager';

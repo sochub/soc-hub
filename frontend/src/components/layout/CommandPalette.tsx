@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Search, ShieldAlert, Plus, Hash, Database, AlertOctagon, CornerDownLeft, type LucideIcon } from 'lucide-react';
-import { api } from '../../api/client';
+import { getPage } from '../../api/paging';
 import { cn } from '../../lib/utils';
 
 interface Item { id: string; label: string; hint: string; icon: LucideIcon; to: string }
@@ -31,17 +31,27 @@ export default function CommandPalette({ nav }: { nav: PaletteNavItem[] }) {
         return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('palette:open', onOpen); };
     }, []);
 
-    const { data: cases = [] } = useQuery<{ id: number; title: string; status: string }[]>({
-        queryKey: ['cases'], queryFn: async () => (await api.get('/cases/')).data, enabled: open,
+    // Cases and observables are searched server-side (?q=), after a short pause in typing.
+    const [dq, setDq] = useState('');
+    useEffect(() => {
+        const t = setTimeout(() => setDq(q.trim()), 200);
+        return () => clearTimeout(t);
+    }, [q]);
+    const search = { q: dq, limit: MAX_PER_GROUP };
+    const { data: cases = [] } = useQuery({
+        queryKey: ['palette', 'cases', dq],
+        queryFn: async () => (await getPage<{ id: number; title: string; status: string }>('/cases/', search)).items,
+        enabled: open && dq.length >= 1, placeholderData: keepPreviousData,
     });
-    // ponytail: client-side match over the newest 500 rows; add a backend ?q= filter when tenants outgrow it
-    const { data: artifacts = [] } = useQuery<{ id: number; value: string; artifact_type: string }[]>({
-        queryKey: ['palette', 'artifacts'], queryFn: async () => (await api.get('/artifacts/', { params: { limit: 500 } })).data,
-        enabled: open && q.length >= 2, staleTime: 60_000,
+    const { data: artifacts = [] } = useQuery({
+        queryKey: ['palette', 'artifacts', dq],
+        queryFn: async () => (await getPage<{ id: number; value: string; artifact_type: string }>('/artifacts/', search)).items,
+        enabled: open && dq.length >= 2, placeholderData: keepPreviousData, staleTime: 60_000,
     });
-    const { data: iocs = [] } = useQuery<{ id: number; value: string; ioc_type: string }[]>({
-        queryKey: ['palette', 'iocs'], queryFn: async () => (await api.get('/iocs/', { params: { limit: 500 } })).data,
-        enabled: open && q.length >= 2, staleTime: 60_000,
+    const { data: iocs = [] } = useQuery({
+        queryKey: ['palette', 'iocs', dq],
+        queryFn: async () => (await getPage<{ id: number; value: string; ioc_type: string }>('/iocs/', search)).items,
+        enabled: open && dq.length >= 2, placeholderData: keepPreviousData, staleTime: 60_000,
     });
 
     const items = useMemo<Item[]>(() => {
@@ -53,13 +63,13 @@ export default function CommandPalette({ nav }: { nav: PaletteNavItem[] }) {
         if (!s || has('new case')) out.push({ id: 'new', label: 'New case', hint: 'action', icon: Plus, to: '/cases?new=1' });
         out.push(...nav.filter(n => !s || has(n.label)).map(n => ({ id: `nav-${n.path}`, label: n.label, hint: 'page', icon: n.icon, to: n.path })));
         if (s) {
-            out.push(...cases.filter(c => has(c.title) || String(c.id) === caseNo).slice(0, MAX_PER_GROUP)
+            out.push(...cases.slice(0, MAX_PER_GROUP)
                 .map(c => ({ id: `case-${c.id}`, label: `#${c.id} ${c.title}`, hint: c.status.replace('_', ' '), icon: ShieldAlert, to: `/cases/${c.id}` })));
         }
         if (s.length >= 2) {
-            out.push(...iocs.filter(i => has(i.value)).slice(0, MAX_PER_GROUP)
+            out.push(...iocs.slice(0, MAX_PER_GROUP)
                 .map(i => ({ id: `ioc-${i.id}`, label: i.value, hint: `ioc · ${i.ioc_type}`, icon: AlertOctagon, to: `/observables/iocs?q=${encodeURIComponent(i.value)}` })));
-            out.push(...artifacts.filter(a => has(a.value)).slice(0, MAX_PER_GROUP)
+            out.push(...artifacts.slice(0, MAX_PER_GROUP)
                 .map(a => ({ id: `art-${a.id}`, label: a.value, hint: `artifact · ${a.artifact_type}`, icon: Database, to: `/observables?q=${encodeURIComponent(a.value)}` })));
         }
         return out;

@@ -1,7 +1,9 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import Modal, { modalInput, btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { getPage } from '../../api/paging';
+import { apiErrorMessage } from '../../api/errors';
 
 interface Props {
     alert: { id: number; title: string; source: string; payload: unknown };
@@ -9,16 +11,27 @@ interface Props {
     onClose: () => void;
 }
 interface CaseLite { id: number; title: string; }
+const PICKER_LIMIT = 50;
 
 export default function PromoteAlertModal({ alert, ids, onClose }: Props) {
     const qc = useQueryClient();
     const [mode, setMode] = useState<'existing' | 'new'>('existing');
     const [caseId, setCaseId] = useState<string>('');
 
-    const { data: cases } = useQuery<CaseLite[]>({
-        queryKey: ['cases'],
-        queryFn: async () => (await api.get('/cases/')).data,
+    // The server searches all cases (title, description or id); the picker shows the newest matches.
+    const [search, setSearch] = useState('');
+    const [q, setQ] = useState('');
+    useEffect(() => {
+        const t = setTimeout(() => setQ(search.trim()), 300);
+        return () => clearTimeout(t);
+    }, [search]);
+    const { data: found } = useQuery({
+        queryKey: ['cases', 'promote-picker', q],
+        queryFn: () => getPage<CaseLite>('/cases/', { ...(q && { q }), limit: PICKER_LIMIT }),
+        placeholderData: keepPreviousData,
+        enabled: mode === 'existing',
     });
+    const cases = found?.items;
 
     const promote = useMutation({
         mutationFn: async () => {
@@ -67,13 +80,23 @@ export default function PromoteAlertModal({ alert, ids, onClose }: Props) {
             </div>
 
             {mode === 'existing' && (
-                <select value={caseId} onChange={e => setCaseId(e.target.value)} className={modalInput}>
-                    <option value="">Select a case…</option>
-                    {cases?.map(c => <option key={c.id} value={c.id}>#{c.id} — {c.title}</option>)}
-                </select>
+                <div className="space-y-2">
+                    <input type="search" value={search} onChange={e => setSearch(e.target.value)}
+                        placeholder="Search cases by ID or title…" aria-label="Search cases" className={modalInput} />
+                    <select value={caseId} onChange={e => setCaseId(e.target.value)} className={modalInput} aria-label="Case">
+                        <option value="">Select a case…</option>
+                        {cases?.map(c => <option key={c.id} value={c.id}>#{c.id} — {c.title}</option>)}
+                    </select>
+                    {found && found.total > found.items.length && (
+                        <p className="text-xs text-muted">Showing the newest {found.items.length} of {found.total} matching cases. Search to narrow down.</p>
+                    )}
+                </div>
             )}
             {mode === 'new' && (
                 <p className="text-xs text-fg-3">A new case titled "{alert.title}" will be created from this alert and linked.</p>
+            )}
+            {promote.isError && (
+                <p role="alert" className="mt-3 text-sm text-severity-critical">{apiErrorMessage(promote.error, 'Could not promote the alert.')}</p>
             )}
         </Modal>
     );
