@@ -18,6 +18,9 @@ class _DB:
     async def flush(self):
         pass
 
+    async def refresh(self, *a, **k):  # apply_case_update's row lock: nothing to reload on the stub
+        pass
+
     async def execute(self, *a, **k):  # guest digest lookup: no guests on the stub case
         class _R:
             def scalars(self):
