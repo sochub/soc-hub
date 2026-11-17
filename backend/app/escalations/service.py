@@ -173,6 +173,11 @@ def _set_owner(case: Case, owner_id: Optional[int]) -> Optional[dict]:
     return change
 
 
+def _owner_cleared(case: Case) -> Optional[dict]:
+    """The {from, to} owner change _open is about to make (it clears the owner), for the audit row; None if unowned."""
+    return {"from": case.owner_id, "to": None} if case.owner_id is not None else None
+
+
 async def _record(db, case: Case, row: CaseEscalation, actor_id: Optional[int], action: str, text: str,
                   frm: Optional[dict], to: Optional[dict], note: Optional[str], event_type: Optional[str],
                   owner: Optional[dict] = None) -> None:
@@ -274,13 +279,13 @@ async def escalate(db, *, case: Case, actor_id: int, to_tier_id: int, to_group_i
     frm = _hop(tiers, cur, from_group_id)
     live_tiers = await _live(db, EscalationTier, case.tenant_id, [tier["id"], from_tier["id"] if from_tier else None])
 
-    prev_owner = case.owner_id  # _open clears it
+    owner = _owner_cleared(case)  # _open clears it
     row = await _open(db, case, tiers=tiers, to=to, to_tier_id=tier["id"] if tier["id"] in live_tiers else None,
                       frm=frm, from_tier_id=from_tier["id"] if from_tier and from_tier["id"] in live_tiers else None,
                       from_group_id=from_group_id,
                       requested_by=actor_id, reason=reason, summary=summary, requested_help=requested_help)
     await _record(db, case, row, actor_id, "case_escalated", f"Escalated to {_label(to)} — {reason}",
-                  frm, to, None, None, owner={"from": prev_owner, "to": None} if prev_owner is not None else None)
+                  frm, to, None, None, owner=owner)
     await _announce(db, case, row, actor_id, "escalated", f"Case #{case.id} escalated to {_label(to)}")
     return row
 
@@ -377,7 +382,7 @@ async def redirect(db, *, case: Case, actor_id: int, to_group_id: int, note: str
         raise EscalationError(422, "That group no longer exists")
     to = _hop(snap["tiers"], snap["to"]["position"], to_group_id)
     await _close(db, case, row, "redirected", actor_id, note, "case_escalation_redirected",
-                 f"Escalation redirected to {_label(to)} — {note}", to)
+                 f"Escalation redirected to {_label(to)} — {note}", to, owner=_owner_cleared(case))
     new = await _open(db, case, tiers=snap["tiers"], to=to, to_tier_id=row.to_tier_id, frm=snap["from"],
                       from_tier_id=row.from_tier_id, from_group_id=row.from_group_id,
                       requested_by=row.requested_by, reason=row.reason, summary=row.summary,
@@ -414,7 +419,8 @@ async def return_down(db, *, case: Case, actor_id: int, note: str) -> CaseEscala
     row.status, row.closed_by, row.closed_at, row.close_note = "returned", actor_id, _now(), note
     await db.flush()
     await _record(db, case, row, actor_id, "case_escalation_returned",
-                  f"Returned to {_label(frm)} for more investigation — {note}", to, frm, note, None)
+                  f"Returned to {_label(frm)} for more investigation — {note}", to, frm, note, None,
+                  owner=_owner_cleared(case))  # the accepted owner, cleared by _open below
     new = await _open(db, case, tiers=snap["tiers"], to=frm, to_tier_id=row.from_tier_id, frm=to,
                       from_tier_id=row.to_tier_id, from_group_id=row.to_group_id, requested_by=actor_id,
                       reason=note, summary=row.summary, requested_help=row.requested_help)
@@ -543,7 +549,7 @@ async def _sweep_one(db, row_id: int, now: datetime) -> Optional[str]:
     note = f"not accepted within {cur['accept_timeout_minutes']} min" if cur else "not accepted in time"
     to = _hop(snap["tiers"], tier["position"], group_id)
     await _close(db, case, row, "climbed", None, note, "case_escalation_climbed",
-                 f"Escalation to {_label(snap['to'])} {note}; climbed to {_label(to)}", to)
+                 f"Escalation to {_label(snap['to'])} {note}; climbed to {_label(to)}", to, owner=_owner_cleared(case))
     live_tiers = await _live(db, EscalationTier, case.tenant_id, [tier["id"]])
     new = await _open(db, case, tiers=snap["tiers"], to=to, to_tier_id=tier["id"] if tier["id"] in live_tiers else None,
                       frm=snap["to"], from_tier_id=row.to_tier_id, from_group_id=row.to_group_id,
