@@ -1,5 +1,6 @@
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -14,16 +15,19 @@ router = APIRouter()
 
 @router.get("/", response_model=List[ioc_schema.IOC])
 async def read_iocs(
+    response: Response,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
     case_id: Optional[int] = None,
     status: Optional[str] = None,
     ioc_type: Optional[str] = None,
+    q: Optional[str] = Query(None, max_length=500, description="Substring of the IOC value."),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ) -> Any:
-    """List all IOCs scoped to tenant."""
+    """List all IOCs scoped to tenant. The body stays a bare list; the total number of matches (ignoring
+    skip/limit) is in `X-Total-Count`."""
     query = select(IOC).where(IOC.tenant_id == tenant_id)
     if case_id is not None:
         query = query.where(IOC.case_id == case_id)
@@ -31,7 +35,11 @@ async def read_iocs(
         query = query.where(IOC.status == status)
     if ioc_type is not None:
         query = query.where(IOC.ioc_type == ioc_type)
-    query = query.offset(skip).limit(limit).order_by(IOC.created_at.desc())
+    if q and q.strip():
+        query = query.where(IOC.value.icontains(q.strip(), autoescape=True))
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
+    response.headers["X-Total-Count"] = str(total)
+    query = query.offset(skip).limit(limit).order_by(IOC.created_at.desc(), IOC.id.desc())
     result = await db.execute(query)
     iocs = result.scalars().all()
     verdicts = await ioc_service.enrichment_verdicts(db, tenant_id, iocs)
