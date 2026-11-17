@@ -1,0 +1,15 @@
+# http-context access log format (rendered to conf.d/access-log.conf, included inside http {} before default.conf,
+# which uses it: log_format must be defined first).
+# Invitation, verification, guest-link and guest-reset links carry their credential in the URL path, both as the
+# SPA page (/invite/<token>) and as the API call it makes (/api/v1/invitations/validate/<token>), whose Referer
+# is the page URL. Log those path segments as [redacted]. The backend redacts its own access log the same way.
+map $request $sochub_log_request {
+    "~^(?<sochub_rq1>\S+ /(?:invite|verify|guest/link|guest/reset|api/v1/invitations/validate|api/v1/user-verification)/)[^/?\s]+(?<sochub_rq2>.*)$" "${sochub_rq1}[redacted]${sochub_rq2}";
+    default $request;
+}
+map $http_referer $sochub_log_referer {
+    "~^(?<sochub_rf1>https?://[^/]+/(?:invite|verify|guest/link|guest/reset)/)[^/?#]+(?<sochub_rf2>.*)$" "${sochub_rf1}[redacted]${sochub_rf2}";
+    default $http_referer;
+}
+log_format sochub '$remote_addr - $remote_user [$time_local] "$sochub_log_request" $status $body_bytes_sent '
+                  '"$sochub_log_referer" "$http_user_agent" "$http_x_forwarded_for"';

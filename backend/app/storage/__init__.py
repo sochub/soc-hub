@@ -10,6 +10,7 @@ def get_storage():
     if settings.STORAGE_BACKEND == "s3":
         from app.storage.s3 import S3Storage
         return S3Storage(settings.S3_BUCKET, region=settings.S3_REGION,
-                         endpoint_url=settings.S3_ENDPOINT_URL, prefix=settings.S3_PREFIX)
+                         endpoint_url=settings.S3_ENDPOINT_URL, prefix=settings.S3_PREFIX,
+                         sse=settings.s3_sse)
     from app.storage.local import LocalStorage
     return LocalStorage(settings.STORAGE_LOCAL_PATH)

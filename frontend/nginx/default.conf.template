@@ -2,6 +2,8 @@ server {
     listen 8080;
     server_name localhost;
     server_tokens off;
+    # Token-redacting format (access-log.conf). Replaces the image's default access_log for this server.
+    access_log /var/log/nginx/access.log sochub;
 
     root /usr/share/nginx/html;
     index index.html;

@@ -38,8 +38,14 @@ spec:
           command: ["alembic", "upgrade", "head"]
           env:
             {{- include "sochub.secretEnv" . | nindent 12 }}
+            # alembic loads the app Settings, which in production refuse to start without https public URLs.
+            # Inline (not the ConfigMap): a pre-install hook runs before the release's ConfigMap exists.
             - name: ENVIRONMENT
               value: {{ .Values.config.environment | quote }}
+            - name: PUBLIC_BASE_URL
+              value: {{ .Values.config.publicBaseUrl | quote }}
+            - name: FRONTEND_URL
+              value: {{ .Values.config.frontendUrl | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
