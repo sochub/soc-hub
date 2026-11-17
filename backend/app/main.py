@@ -9,6 +9,7 @@ from app.api import deps
 from app.api.api import api_router
 from app.audit.middleware import AuditMiddleware
 from app.core.config import settings
+from app.core.log_redaction import install_access_log_redaction
 from app.mcp.server import mcp_asgi, mcp_exact_path, mcp_server
 from app.oauth.resources import RESOURCES, issuer
 from app.oauth.routes import metadata as oauth_metadata
@@ -22,8 +23,8 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
-    # Browsers ignore HSTS over plain HTTP, so it is safe to always send.
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    # No Strict-Transport-Security here: the frontend nginx owns it (opt-in HSTS_HEADER), because a
+    # max-age sent over a plain-http dev/test hostname would lock browsers out of it.
 }
 
 
@@ -33,6 +34,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         for header, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
         return response
+
+install_access_log_redaction()
 
 
 @asynccontextmanager
