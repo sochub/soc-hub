@@ -19,7 +19,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import sessions
-from app.auth.login_tenant import session_may_enter
+from app.auth.login_tenant import session_may_enter, session_mfa_blocked
 from app.core import security, session_cookie
 from app.core.config import settings
 from app.models.auth_session import AuthSession
@@ -79,35 +79,38 @@ async def switch_session_tenant(db: AsyncSession, request: Request, response: Re
 
 
 async def _may_act_in(db: AsyncSession, user: User, tenant_id: int) -> bool:
-    """Membership in an active tenant (any existing tenant for super admins: break-glass) and the login
-    policy for this session."""
-    row = (await db.execute(select(Tenant.member_login_method, Tenant.is_active)
+    """Membership in an active tenant (any existing tenant for super admins: break-glass), the login
+    policy and the tenant's "require two-factor" for this session."""
+    row = (await db.execute(select(Tenant.member_login_method, Tenant.is_active, Tenant.require_mfa)
                             .where(Tenant.id == tenant_id))).first()
     if row is None or row[0] is None:
         return False
-    method, active = row
+    method, active, require_mfa = row
     if not user.is_super_admin and (active is False or not any(m.tenant_id == tenant_id for m in user.memberships)):
         return False
-    return session_may_enter(user, tenant_id, method)
+    return session_may_enter(user, tenant_id, method) and not session_mfa_blocked(user, require_mfa)
 
 
 async def refresh_tenant(db: AsyncSession, user: User, session: AuthSession) -> tuple[bool, Optional[int]]:
     """The active tenant a refreshed token carries: the session's own if this session may still act there,
     else the lowest-id tenant it may enter. ``user`` must carry ``_amr``/``_sso_tenant_id`` and loaded
     memberships. Returns ``(ok, tenant_id)``; ``(True, None)`` for a user with no tenant at all,
-    ``(False, None)`` when tenants exist but the policy admits none."""
+    ``(False, None)`` when tenants exist but the policy admits none. A tenant whose "require two-factor"
+    refuses this session is skipped; with none left the session ends, and the next password sign-in
+    leads into MFA enrolment (never a dead end)."""
     if session.tenant_id is not None and await _may_act_in(db, user, session.tenant_id):
         return True, session.tenant_id
     if user.is_super_admin:
-        rows = (await db.execute(select(Tenant.id, Tenant.member_login_method, Tenant.is_active)
+        rows = (await db.execute(select(Tenant.id, Tenant.member_login_method, Tenant.is_active, Tenant.require_mfa)
                                  .order_by(Tenant.is_active.is_(False), Tenant.id))).all()
     else:
         rows = (await db.execute(
-            select(Tenant.id, Tenant.member_login_method, Tenant.is_active)
+            select(Tenant.id, Tenant.member_login_method, Tenant.is_active, Tenant.require_mfa)
             .join(TenantMembership, TenantMembership.tenant_id == Tenant.id)
             .where(TenantMembership.user_id == user.id).order_by(Tenant.id))).all()
-    for tid, method, active in rows:
-        if (user.is_super_admin or active is not False) and session_may_enter(user, tid, method):
+    for tid, method, active, require_mfa in rows:
+        if ((user.is_super_admin or active is not False) and session_may_enter(user, tid, method)
+                and not session_mfa_blocked(user, require_mfa)):
             return True, tid
     return (not rows), None
 

@@ -4,7 +4,7 @@ Each tenant has its own IdP settings (TenantSSOConfig); the SP side is derived
 from settings.PUBLIC_BASE_URL and the tenant slug.
 """
 from typing import Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from onelogin.saml2.settings import OneLogin_Saml2_Settings
@@ -15,6 +15,7 @@ from app.models.tenant_sso_config import TenantSSOConfig
 
 def sp_urls(slug: str) -> Dict[str, str]:
     base = settings.PUBLIC_BASE_URL.rstrip("/")
+    slug = quote(slug, safe="")
     return {
         "entity_id": f"{base}/api/v1/auth/saml/{slug}/metadata",
         "acs_url": f"{base}/api/v1/auth/saml/{slug}/acs",
