@@ -6,12 +6,21 @@ pinned Bitnami subcharts (evaluation) or external services (production).
 
 ## Quickstart
 
+Local evaluation over a port-forward (`environment=development` only warns about plain-http URLs):
+
 ```bash
 helm dependency build deploy/helm/sochub
-helm install sochub deploy/helm/sochub   # images: docker.io/sochub/sochub-*:<appVersion>
+helm install sochub deploy/helm/sochub \
+  --set config.environment=development \
+  --set config.frontendUrl=http://localhost:8080 \
+  --set config.publicBaseUrl=http://localhost:8080   # images: docker.io/sochub/sochub-*:<appVersion>
 kubectl port-forward svc/sochub-frontend 8080:8080
 kubectl exec -it deploy/sochub-api -- python -m app.scripts.create_super_admin --email you@example.com
 ```
+
+With the default `config.environment=production` the chart refuses to render until `config.frontendUrl` and
+`config.publicBaseUrl` are the public `https://` URL (the backend would refuse to start otherwise), e.g.
+`--set config.frontendUrl=https://sochub.example.com --set config.publicBaseUrl=https://sochub.example.com`.
 
 > **Key management (read this).** With the default `secrets.generate=true`, SECRET_KEY and ENCRYPTION_KEY are
 > generated on first install and kept across upgrades via a cluster `lookup`. **GitOps/ArgoCD/Flux users MUST set
@@ -31,9 +40,12 @@ Secret (same `lookup` caveat for GitOps: set `postgresql.auth.password` / `redis
 - Create a Secret yourself (`existingSecret`) with strong `SECRET_KEY`, `ENCRYPTION_KEY` (>= 32 chars, different),
   `DATABASE_URL` (`postgresql+asyncpg://...`), `REDIS_URL`. Back the keys up.
 - Set `config.frontendUrl` / `config.publicBaseUrl` to the public HTTPS URL; enable `ingress` with TLS.
+- Raise the ingress controller's body size and timeouts (ingress-nginx: `proxy-body-size` >= `config.maxUploadMb`,
+  `proxy-read-timeout: "3600"` for MCP streams, `proxy-send-timeout: "300"`); see `values-production.yaml`.
 - Storage: multi-node needs ReadWriteMany because api AND worker both write attachments (email intake
   writes from the worker). With the default ReadWriteOnce the chart adds a podAffinity so the worker
-  lands on the api's node. Alternatively use S3 (`config.storageBackend=s3`, `s3.*`).
+  lands on the api's node and rolls api/worker with `strategy: Recreate` (a short outage per upgrade).
+  Alternatively use S3 (`config.storageBackend=s3`, `s3.*`; `s3.sse: none` for stores that reject SSE).
 - On-prem IMAP or MISP servers on private addresses are blocked by the SSRF guard. Allow them with
   `MAILBOX_PRIVATE_HOSTS` / `MISP_PRIVATE_HOSTS` (JSON lists of exact hostnames) via `extraEnv`:
   `extraEnv: [{name: MAILBOX_PRIVATE_HOSTS, value: '["mail.corp.internal"]'}, {name: MISP_PRIVATE_HOSTS, value: '["misp.corp.internal"]'}]`

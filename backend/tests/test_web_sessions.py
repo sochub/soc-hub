@@ -218,6 +218,55 @@ def test_refresh_falls_back_when_tenant_not_enterable():
     _go(body)
 
 
+def test_refresh_honours_require_mfa():
+    """A tenant turning on "require two-factor" is skipped on refresh for a password session without MFA;
+    with no tenant left the session ends and the next sign-in leads into MFA enrolment."""
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            ta, tb = await _tenant(db, ids), await _tenant(db, ids)
+            u = await _user(db, ids, "a", [(ta, "analyst"), (tb, "analyst")])
+        access, refresh = await _api_login(c, u.email)
+        assert _claims(access)["active_tenant_id"] == ta.id
+        async with AsyncSessionLocal() as db:
+            (await db.get(type(ta), ta.id)).require_mfa = True
+            await db.commit()
+        r = await _call(c, "POST", REFRESH, json={"refresh_token": refresh})
+        assert r.status_code == 200, r.text
+        assert _claims(r.json()["access_token"])["active_tenant_id"] == tb.id
+        refresh = r.json()["refresh_token"]
+        async with AsyncSessionLocal() as db:
+            (await db.get(type(tb), tb.id)).require_mfa = True
+            await db.commit()
+        r = await _call(c, "POST", REFRESH, json={"refresh_token": refresh})
+        assert r.status_code == 401, r.text
+        r = await _call(c, "POST", LOGIN, data={"username": u.email, "password": PW})
+        assert r.status_code == 200 and r.json().get("mfa_setup_required") is True, r.text
+    _go(body)
+
+
+def test_refresh_require_mfa_exempts_mfa_users_and_super_admin():
+    async def body(c, ids):
+        async with AsyncSessionLocal() as db:
+            ta = await _tenant(db, ids)
+            ta.require_mfa = True
+            await db.commit()
+            mu = await _user(db, ids, "m", [(ta, "analyst")], mfa_secret=totp.new_secret())
+            sa = await _user(db, ids, "sa", [])
+            sa.is_super_admin = True
+            await db.commit()
+            refreshes = []
+            for who in (mu, sa):
+                _row_, rt = await sessions.create_session(db, who, kind="web", amr="pwd", sso_tenant_id=None,
+                                                          tenant_id=ta.id)
+                refreshes.append(rt)
+            await db.commit()
+        for rt in refreshes:
+            r = await _call(c, "POST", REFRESH, json={"refresh_token": rt})
+            assert r.status_code == 200, r.text
+            assert _claims(r.json()["access_token"])["active_tenant_id"] == ta.id
+    _go(body)
+
+
 def test_refresh_requires_csrf_header_for_cookie():
     async def body(c, ids):
         async with AsyncSessionLocal() as db:

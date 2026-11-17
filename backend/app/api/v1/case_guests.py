@@ -2,6 +2,7 @@
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Literal, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -98,7 +99,7 @@ async def portal_link(db: AsyncSession, grant: CaseGuest, tenant: Tenant) -> str
     """Where an email should send this guest: SSO/account login, or a fresh magic link."""
     base = settings.FRONTEND_URL.rstrip("/")
     if tenant.guest_login_method != "password":  # ?t= offers the SSO button: only where guests sign in that way
-        return f"{base}/guest/login?t={tenant.slug}"
+        return f"{base}/guest/login?t={quote(tenant.slug, safe='')}"
     if grant.guest_account_id is not None:
         return f"{base}/guest/login"
     return f"{base}/guest/link#{tokens.issue_link(grant.id)}"

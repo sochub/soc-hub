@@ -26,8 +26,12 @@ POSTGRES_PASSWORD=$(rnd)
 POSTGRES_DB=demo
 REDIS_PASSWORD=$(rnd)
 SECRET_KEY=$(rnd)$(rnd)
-BACKEND_CORS_ORIGINS=http://localhost
-PUBLIC_BASE_URL=http://localhost
+ENCRYPTION_KEY=$(rnd)$(rnd)
+# docker-compose.prod.yml runs ENVIRONMENT=production, which requires public https URLs. The demo stack is never
+# served, so a placeholder origin is fine.
+BACKEND_CORS_ORIGINS=https://demo.example.com
+PUBLIC_BASE_URL=https://demo.example.com
+FRONTEND_URL=https://demo.example.com
 STORAGE_BACKEND=local
 ENV
 

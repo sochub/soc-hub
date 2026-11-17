@@ -38,7 +38,9 @@ ingress:
   enabled: true
   className: nginx
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m        # >= config.maxUploadMb
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # MCP streams (and ~120s AI calls)
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"    # slow evidence uploads
   hosts:
     - host: sochub.example.com
   tls:

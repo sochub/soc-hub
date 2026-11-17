@@ -52,9 +52,10 @@ def expire_waits_task():
 
 @celery_app.task(acks_late=True)
 def reap_stuck_steps_task():
-    from app.workflows.runtime import reap_stalled_runs, reap_stuck_steps
+    from app.workflows.runtime import reap_stalled_runs, reap_stuck_steps, retick_stalled_loops
     _run_async(reap_stuck_steps())
     _run_async(reap_stalled_runs())
+    _run_async(retick_stalled_loops())
 
 
 @celery_app.task(acks_late=True)

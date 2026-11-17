@@ -8,6 +8,7 @@ metadata:
 spec:
   # Beat runs in its own Deployment (deployment-beat.yaml), so workers scale freely.
   replicas: {{ .Values.worker.replicas }}
+  {{- include "sochub.rwoStrategy" . | trim | nindent 2 }}
   selector:
     matchLabels:
       {{- include "sochub.selectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}

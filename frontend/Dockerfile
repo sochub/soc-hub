@@ -21,6 +21,8 @@ COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 COPY nginx/security-headers.inc.template /etc/nginx/templates/security-headers.inc.template
 # http-context limit_req zones, rendered to conf.d/limits.conf.
 COPY nginx/limits.conf.template /etc/nginx/templates/limits.conf.template
+# http-context access log format that redacts link tokens, rendered to conf.d/access-log.conf (sorts before default.conf, which uses it).
+COPY nginx/access-log.conf.template /etc/nginx/templates/access-log.conf.template
 # REAL_IP_FROM (CIDRs of the proxy in front of nginx) -> conf.d/real-ip.conf. Empty = trust no proxy.
 COPY --chmod=0755 nginx/25-real-ip.sh /docker-entrypoint.d/25-real-ip.sh
 ENV REAL_IP_FROM=""

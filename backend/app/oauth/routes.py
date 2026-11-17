@@ -22,7 +22,7 @@ from app.api import deps
 from app.audit.events import audit_event
 from app.auth import sessions
 from app.auth.login_policy import AMR_PWD
-from app.auth.login_tenant import session_may_enter
+from app.auth.login_tenant import session_may_enter, session_mfa_blocked
 from app.core.config import settings
 from app.core.login_throttle import client_ip, get_login_throttle
 from app.models.membership import TenantMembership
@@ -278,7 +278,8 @@ def _browser_user(request: Request, user: User = Depends(deps.get_current_active
 
 async def _tenant_choices(db: AsyncSession, user: User, resource: Resource) -> tuple[list[dict], list[dict]]:
     """Memberships (super admins included: memberships only) whose tenant passes the resource gate, split
-    into those this session may enter and SSO-method tenants it can't (sign in with their SSO first)."""
+    into those this session may enter and SSO-method tenants it can't (sign in with their SSO first).
+    Tenants whose "require two-factor" refuses this session are left out (enrol MFA first)."""
     rows = (await db.execute(
         select(Tenant, TenantMembership.role)
         .join(TenantMembership, TenantMembership.tenant_id == Tenant.id)
@@ -286,7 +287,7 @@ async def _tenant_choices(db: AsyncSession, user: User, resource: Resource) -> t
         .order_by(Tenant.id))).all()
     tenants, sso_tenants = [], []
     for tenant, role in rows:
-        if not resource.tenant_gate(tenant):
+        if not resource.tenant_gate(tenant) or session_mfa_blocked(user, tenant.require_mfa):
             continue
         if session_may_enter(user, tenant.id, tenant.member_login_method):
             tenants.append({"id": tenant.id, "name": tenant.name, "role": role})

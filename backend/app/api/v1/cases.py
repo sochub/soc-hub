@@ -348,8 +348,8 @@ async def update_case(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update a case (tenant-scoped)."""
-    result = await db.execute(
-        select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
+    result = await db.execute(  # row lock: the guards below and apply_case_update see the committed state
+        select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id).with_for_update()
     )
     case = result.scalars().first()
     if not case:

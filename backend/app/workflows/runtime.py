@@ -16,7 +16,7 @@ from app.secrets.refs import SecretsNamespace
 from app.utils.audit import create_audit_log
 from app.utils.tenant_state import TENANT_DEACTIVATED_ERROR, tenant_deactivated
 from app.workflows.context import build_context
-from app.workflows.cron import cron_matches
+from app.workflows.cron import cron_matches_between
 from app.workflows.dryrun import dry_run_behaviour, simulated_output
 from app.workflows.events import trigger_matches
 from app.workflows.graph import ready_nodes, run_outcome
@@ -141,6 +141,8 @@ async def dispatch_event(tenant_id, event_type, case_id, alert_id, changes, dept
 
 
 MAX_SCHEDULE_LOOKBACK = timedelta(hours=24)
+SCHEDULE_OVERLAP = timedelta(minutes=10)
+SCHEDULE_CATCH_UP = timedelta(minutes=60)
 
 
 async def _schedule_since(db, workflow_id: int, now: datetime) -> datetime:
@@ -154,15 +156,37 @@ async def _schedule_since(db, workflow_id: int, now: datetime) -> datetime:
         since = datetime.fromisoformat((prev or {})["fired_at"]).astimezone(timezone.utc)
     except (KeyError, TypeError, ValueError):
         return now - timedelta(hours=1)
-    return max(since, now - MAX_SCHEDULE_LOOKBACK)
+    # Re-read a safety overlap before the last fire time: events the source indexed late (ingest lag, clock
+    # skew) would otherwise fall between two windows. Re-reads are harmless: alert_create inserts with
+    # ON CONFLICT DO NOTHING on (tenant_id, source, external_id), and external_id is required.
+    return max(since - SCHEDULE_OVERLAP, now - MAX_SCHEDULE_LOOKBACK)
+
+
+def _floor_minute(dt: datetime) -> datetime:
+    return dt.astimezone(timezone.utc).replace(second=0, microsecond=0)
+
+
+def _catch_up_start(wf: Workflow, minute: datetime) -> datetime:
+    """First minute this sweep evaluates for `wf`: the minute after its last fire, but never before the
+    workflow was created/last edited (a new or edited cron doesn't fire for minutes before it existed) and
+    never more than SCHEDULE_CATCH_UP back. Always includes the current minute."""
+    start = minute - SCHEDULE_CATCH_UP + timedelta(minutes=1)
+    if wf.last_fired_at is not None:
+        start = max(start, _floor_minute(wf.last_fired_at) + timedelta(minutes=1))
+    edited = wf.updated_at or wf.created_at
+    if edited is not None:
+        start = max(start, _floor_minute(edited))
+    return min(start, minute)
 
 
 async def run_due_schedules(now: datetime) -> List[int]:
-    """Beat sweep (every 60s): fire each enabled schedule workflow whose cron matches `now` (UTC, minute precision).
-    `last_fired_at` in the same minute means a drifted/duplicate tick already fired it."""
+    """Beat sweep (every minute): fire each enabled schedule workflow whose cron matched any minute (UTC) since
+    it was last evaluated, so a late, skipped or duplicated tick neither loses nor doubles a fire. Catch-up is
+    capped at SCHEDULE_CATCH_UP and a workflow fires at most once per sweep. `last_fired_at` in the current
+    minute means a drifted/duplicate tick already fired it."""
     from app.tasks.workflows import advance_run_task
     now = now.astimezone(timezone.utc)
-    minute = now.replace(second=0, microsecond=0)
+    minute = _floor_minute(now)
     run_ids: List[int] = []
     async with AsyncSessionLocal() as db:
         # ponytail: one global scan, no per-tenant batching; FOR UPDATE SKIP LOCKED guards overlapping sweeps.
@@ -171,10 +195,9 @@ async def run_due_schedules(now: datetime) -> List[int]:
             Workflow.tenant_id.in_(select(Tenant.id).where(Tenant.is_active.isnot(False))),  # not deactivated tenants
         ).with_for_update(skip_locked=True))).scalars().all()
         for wf in workflows:
-            last = wf.last_fired_at
-            if last is not None and last.astimezone(timezone.utc).replace(second=0, microsecond=0) == minute:
+            if wf.last_fired_at is not None and _floor_minute(wf.last_fired_at) >= minute:
                 continue
-            if not cron_matches(wf.trigger_filter or "", minute):
+            if not cron_matches_between(wf.trigger_filter or "", _catch_up_start(wf, minute), minute):
                 continue
             since_dt = await _schedule_since(db, wf.id, now)
             since = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -551,6 +574,46 @@ async def reap_stalled_runs(run_ids: Optional[Iterable[int]] = None) -> List[int
     if reaped:
         logger.warning("reaped %d stalled workflow runs (runs=%s)", len(reaped), reaped)
     return reaped
+
+
+async def retick_stalled_loops(step_ids: Optional[Iterable[int]] = None) -> List[int]:
+    """Beat sweep for for_each: a `waiting` loop step only moves when a loop_tick message arrives (from the step
+    itself or a finishing child). If that message is lost (worker restart), the loop and its run wait forever.
+    Re-queue loop_tick for waiting steps that have child runs, none of them busy, and no child activity (run or
+    step start/finish) since the reap cutoff. loop_tick is idempotent: it starts only queued children within the concurrency budget
+    and finishes the step once every child is terminal. `step_ids` restricts the sweep (tests only)."""
+    from sqlalchemy.orm import aliased
+    from app.tasks.workflows import loop_tick_task
+
+    cutoff = _now() - timedelta(seconds=step_hard_limit_seconds() + REAP_MARGIN_SECONDS)
+    child, child_step = aliased(WorkflowRun), aliased(WorkflowRunStep)
+    of_this_step = child.parent_step_id == WorkflowRunStep.id
+    last_run = select(func.max(func.coalesce(child.finished_at, child.started_at))).where(
+        of_this_step).scalar_subquery()
+    last_step = select(func.max(func.coalesce(child_step.finished_at, child_step.started_at))).join(
+        child, child.id == child_step.run_id).where(of_this_step).scalar_subquery()
+    q = select(WorkflowRunStep.id).where(
+        WorkflowRunStep.status == "waiting", WorkflowRunStep.started_at < cutoff,
+        select(child.id).where(of_this_step).exists(),
+        # a child step still running/waiting (e.g. ask-user) means the loop isn't stalled, just busy
+        ~select(child_step.id).join(child, child.id == child_step.run_id).where(
+            of_this_step, child_step.status.in_(("running", "waiting"))).exists(),
+        func.coalesce(last_run, WorkflowRunStep.started_at) < cutoff,
+        func.coalesce(last_step, WorkflowRunStep.started_at) < cutoff,
+    )
+    if step_ids is not None:
+        q = q.where(WorkflowRunStep.id.in_(list(step_ids)))
+    async with AsyncSessionLocal() as db:
+        ticked = list((await db.execute(q.order_by(WorkflowRunStep.id)
+                                        .limit(_REAP_BATCH * _REAP_MAX_BATCHES))).scalars().all())
+    for sid in ticked:
+        try:
+            loop_tick_task.delay(sid)
+        except Exception as e:  # broker outage: the next sweep tries again
+            logger.warning("could not queue loop tick for step=%s err=%s", sid, type(e).__name__)
+    if ticked:
+        logger.warning("re-queued loop tick for %d stalled for_each steps (steps=%s)", len(ticked), ticked)
+    return ticked
 
 
 async def loop_tick(parent_step_id: int) -> None:

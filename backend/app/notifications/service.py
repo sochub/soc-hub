@@ -158,12 +158,13 @@ async def on_case_created(db, case: Case, actor_id: Optional[int]) -> None:
     await on_case_update(db, case, {"owner_id": {"from": None, "to": case.owner_id}}, actor_id)
 
 
-async def on_sla_breach(db, case: Case, breach_type: str) -> None:
+async def on_sla_breach(db, case: Case, breach_type: str) -> list:
+    """Notify the owner and followers (active members); returns the notifications written ([] if that failed)."""
     async def body():
         users = await _members(db, case.tenant_id, (await _followers(db, case)) | {case.owner_id})
         label = "response" if breach_type == "response" else "resolution"
         return [_add(db, case, u, "sla_breach", f"Case #{case.id} breached its {label} SLA", None) for u in users]
-    await _guarded(db, case, "sla_breach", body)
+    return await _guarded(db, case, "sla_breach", body)
 
 
 async def on_escalation(db, case: Case, row, type_: str, summary: str, actor_id: Optional[int]) -> list:

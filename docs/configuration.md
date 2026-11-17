@@ -19,9 +19,10 @@ backend and worker get `DATABASE_URL` / `REDIS_URL` built from them.
 
 > **Production:** use `ENVIRONMENT=production` and strong, URL-safe
 > `POSTGRES_PASSWORD` and `REDIS_PASSWORD`. In production the backend refuses to
-> boot with a weak `SECRET_KEY`, a `REDIS_URL` without a password or with a known
-> default one (`devredispass`, `changeme`, `redis`), or a `DATABASE_URL` using the
-> password `password`. `development`/`test` only log warnings for these.
+> boot with a weak `SECRET_KEY`, a missing or weak `ENCRYPTION_KEY`, a `REDIS_URL`
+> without a password or with a known default one (`devredispass`, `changeme`, `redis`),
+> a `DATABASE_URL` using the password `password`, or a `PUBLIC_BASE_URL` / `FRONTEND_URL`
+> that is not a public `https://` URL. `development`/`test` only log warnings for these.
 
 ## Core
 
@@ -29,14 +30,16 @@ backend and worker get `DATABASE_URL` / `REDIS_URL` built from them.
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL DSN (asyncpg) | `postgresql+asyncpg://user:password@db:5432/sicms` |
 | `SECRET_KEY` | JWT signing key. **≥32 chars, not a placeholder** — in production the app refuses to boot with a weak key. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"` | _placeholder_ |
-| `ENCRYPTION_KEY` | Optional root key for secrets stored at rest (Slack tokens, workflow secrets, SSO/AI/enrichment credentials, two-factor seeds). When set: ≥32 chars and different from `SECRET_KEY` (production refuses to boot otherwise). When unset, the key is derived from `SECRET_KEY`. See [Encryption at rest and key rotation](#encryption-at-rest-and-key-rotation) | _(unset)_ |
+| `ENCRYPTION_KEY` | Root key for secrets stored at rest (Slack tokens, workflow secrets, SSO/AI/enrichment credentials, two-factor seeds). **Required in production**: ≥32 chars and different from `SECRET_KEY`, or the app refuses to boot. Outside production it may be unset (with a warning); the key is then derived from `SECRET_KEY`. See [Encryption at rest and key rotation](#encryption-at-rest-and-key-rotation) | _(unset)_ |
 | `ENCRYPTION_KEYS_PREVIOUS` | Comma-separated former `ENCRYPTION_KEY` values, still accepted for decryption during a rotation | _(empty)_ |
 | `REDIS_URL` | Redis connection string. In production **must include a strong (non-default) password** | `redis://:<REDIS_PASSWORD>@redis:6379/0` (compose) |
 | `ENVIRONMENT` | Security mode: `production` \| `development` \| `test`. The credential checks above are hard failures **only** in `production`; otherwise they warn | `production` |
 | `DEBUG` | Logging only — no effect on security checks | `false` |
 | `SQL_ECHO` | Log every SQL statement (SQLAlchemy echo) | `false` |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | Database connections each process keeps open / may open on top under load. Every API and worker process has its own pool, so keep (processes) x (`DB_POOL_SIZE` + `DB_MAX_OVERFLOW`) below PostgreSQL `max_connections` (or your pooler's limit). Connections are checked before use (`pool_pre_ping`), so a database restart or idle-timeout drop does not fail requests | `10` / `20` |
 | `BACKEND_CORS_ORIGINS` | Comma-separated allowed origins. Empty = same-origin only | _(empty)_ |
-| `PUBLIC_BASE_URL` | Externally visible origin (behind nginx). Used to build SAML SP URLs and post-SSO redirects | `http://localhost` |
+| `PUBLIC_BASE_URL` | Externally visible origin (behind nginx). Used to build SAML SP URLs and post-SSO redirects. Production requires a public `https://` URL | `http://localhost` |
+| `FRONTEND_URL` | Where the UI is served (links in emails, post-login redirects). Production requires a public `https://` URL | `http://localhost:80` |
 | `OIDC_PRIVATE_HOSTS` | JSON list of hostnames an OIDC IdP may resolve to a private address (self-hosted IdP on an internal network). Exact match; see [sso/oidc.md](sso/oidc.md) | `[]` |
 | `WORKFLOW_ALLOW_PRIVATE_ALLOWLIST` | Platform switch (operator only): may a host on a tenant's **HTTP allowlist** resolve to a private address (RFC 1918, CGNAT `100.64.0.0/10`, ULA `fc00::/7`)? Needed for workflows / tenant AI endpoints that call on-prem tools. **Enabling it lets every tenant admin reach private addresses, including the platform's own internal network** (any multi-label name that resolves there, e.g. via wildcard DNS or container/cluster network names such as `db.svc.cluster.local`). Enable it only on single-tenant or on-prem deployments. Loopback, link-local and cloud metadata addresses stay blocked either way. See [workflows/README.md](workflows/README.md#http-allowlist-and-ssrf) | `false` |
 
@@ -400,6 +403,7 @@ metadata (name, size, SHA-256, flags).
 | `S3_REGION` | Region (optional) | unset |
 | `S3_ENDPOINT_URL` | Custom endpoint for S3-compatible stores (optional) | unset |
 | `S3_PREFIX` | Prefix prepended to every object key | empty |
+| `S3_SSE` | Server-side encryption requested on upload: `AES256`, `aws:kms` (the bucket's default KMS key) or `none` (send no header; many S3-compatible stores reject it). Unset: `AES256` without `S3_ENDPOINT_URL` (AWS), `none` with it | unset |
 | `MAX_UPLOAD_MB` | Maximum size of one upload, 1-5120 | `100` |
 
 **Local storage and backups.** Files are kept in the `attachments_data` Docker volume,
@@ -410,8 +414,8 @@ Files are written with mode 0600 (opened with `O_EXCL|O_NOFOLLOW`) and directori
 The storage root is strict: a key can never resolve outside it.
 
 **S3.** Credentials come from the standard AWS chain (environment, shared config, then
-an IAM role); prefer an IAM role. No keys are configured in sochub. Uploads are sent
-with server-side encryption (`AES256`).
+an IAM role); prefer an IAM role. No keys are configured in sochub. Uploads to AWS are sent
+with server-side encryption (`AES256` by default, see `S3_SSE`).
 
 **Upload size limit.** It is enforced twice: by nginx (`client_max_body_size` follows
 `MAX_UPLOAD_MB`, so set the variable once and recreate the frontend container) and again
@@ -436,7 +440,7 @@ AES-encrypted ZIP with the password `infected`; the download is named `<name>.zi
 hash recorded is that of the original file.
 
 **Plaintext temp files.** Uploads pass through the backend container's temp directory
-(`/tmp`) in plaintext before they are stored:
+(`TMPDIR`, else `/tmp`) in plaintext before they are stored:
 
 - The web framework (Starlette) buffers **any** upload larger than 1 MB in the temp
   directory for the whole request.
@@ -447,7 +451,13 @@ hash recorded is that of the original file.
 Malicious samples are therefore plaintext in temp until they are zipped and stored; the
 files are removed when the request ends. Host antivirus may quarantine them, and an upload
 that fails that way fails cleanly (error, no row, no stored object). Add an antivirus
-exclusion for the backend container's temp directory, or mount a `tmpfs` there.
+exclusion for the backend container's temp directory.
+
+**Temp space must fit `MAX_UPLOAD_MB`.** Each in-flight upload can occupy up to `MAX_UPLOAD_MB` in the temp
+directory. A `tmpfs` there counts against the container's memory limit, so concurrent large uploads would
+get it OOM-killed. `docker-compose.prod.yml` therefore points `TMPDIR` at `/var/tmp` on a disk-backed volume
+(`backend_tmp`) and caps the `/tmp` tmpfs at 64 MB; keep (concurrent uploads) x `MAX_UPLOAD_MB` of free disk
+there. The Helm chart's `/tmp` is a disk-backed `emptyDir`, so it counts against node ephemeral storage.
 
 **Downloads.** Every response is `application/octet-stream` with
 `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`,
@@ -925,7 +935,8 @@ these changes.
   use **Rotate key** (`POST /api/v1/integrations/webhooks/{id}/rotate`) and update the sending tool. The
   key is sent as the `X-API-Key` header. The key alone determines the destination tenant and
   the alert's source name.
-- **Security headers** — CSP, `X-Frame-Options`, HSTS, etc. on every response.
+- **Security headers** — CSP, `X-Frame-Options`, etc. on every response. HSTS comes from the frontend nginx
+  and is opt-in (`HSTS_HEADER`), so plain-http test hosts are not locked out.
 - **Audit log** — every mutation is recorded with tenant, actor, and change set.
 - **Per-tenant SSO** — see [sso/saml-design.md](sso/saml-design.md) and [sso/oidc.md](sso/oidc.md) (login methods, OIDC).
 

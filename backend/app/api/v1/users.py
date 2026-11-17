@@ -420,7 +420,7 @@ async def update_user_role(
     if old_role == UserRole.ADMIN.value and new_role != old_role:
         if user_id == current_user.id and not current_user.is_super_admin:
             raise HTTPException(status_code=400, detail="You cannot demote yourself.")
-        await _refuse_last_admin(db, tenant_id, "Cannot demote the last admin of this tenant.")
+        await _refuse_last_admin(db, tenant_id, user, "Cannot demote the last admin of this tenant.")
     membership.role = new_role
     if new_role != old_role:
         await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="role_changed",
@@ -449,7 +449,7 @@ async def remove_member(
     await assert_can_manage_account(db, current_user, target, tenant_id, action="remove_member", scope=MEMBERSHIP,
                                     request=request)
     if membership.role == UserRole.ADMIN.value:
-        await _refuse_last_admin(db, tenant_id, "Cannot remove the last admin of this tenant.")
+        await _refuse_last_admin(db, tenant_id, target, "Cannot remove the last admin of this tenant.")
     await db.delete(membership)
     # A removed member stops following this tenant's cases (notifications, Slack war rooms) and drops their
     # open task assignments here.
@@ -459,14 +459,23 @@ async def remove_member(
     await db.commit()
 
 
-async def _refuse_last_admin(db: AsyncSession, tenant_id: int, detail: str) -> None:
-    count = (await db.execute(
-        select(func.count()).select_from(TenantMembership).where(
-            TenantMembership.tenant_id == tenant_id,
-            TenantMembership.role == UserRole.ADMIN.value,
-        )
-    )).scalar()
-    if count <= 1:
+async def _refuse_last_admin(db: AsyncSession, tenant_id: int, target: User, detail: str) -> None:
+    """Refuse taking away ``target``'s admin membership when it is the tenant's last ACTIVE admin.
+
+    The tenant row is locked first, so concurrent demotions/removals in one tenant serialize and the
+    second one counts the first one's committed result (no race down to zero admins). A super admin's own
+    membership keeps the previous rule (any other admin membership, active or not): break-glass."""
+    await db.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
+    if not target.is_active:  # a deactivated admin was not keeping the tenant administered
+        return
+    q = (select(func.count()).select_from(TenantMembership)
+         .join(User, User.id == TenantMembership.user_id)
+         .where(TenantMembership.tenant_id == tenant_id, TenantMembership.role == UserRole.ADMIN.value,
+                TenantMembership.user_id != target.id))
+    if not target.is_super_admin:
+        q = q.where(User.is_active.is_(True))
+    others = (await db.execute(q)).scalar()
+    if not others:
         raise HTTPException(status_code=400, detail=detail)
 
 

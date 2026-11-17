@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     # Log every SQL statement (SQLAlchemy echo).
     SQL_ECHO: bool = False
+    # SQLAlchemy connection pool per process (API, each worker process). Size it so that
+    # (api + worker processes) x (DB_POOL_SIZE + DB_MAX_OVERFLOW) stays under PostgreSQL max_connections.
+    DB_POOL_SIZE: int = Field(10, ge=1)
+    DB_MAX_OVERFLOW: int = Field(20, ge=0)
 
     # Login brute-force throttling (see app.core.login_throttle). Counts
     # attempts per fixed window. All must be >= 1 (0 refuses to boot).
@@ -137,6 +141,9 @@ class Settings(BaseSettings):
     S3_REGION: Optional[str] = None
     S3_ENDPOINT_URL: Optional[str] = None
     S3_PREFIX: str = ""
+    # Server-side encryption header sent with uploads. Unset: AES256 on AWS (no S3_ENDPOINT_URL), none on
+    # S3-compatible stores (many reject the header). "none" never sends it.
+    S3_SSE: Optional[Literal["AES256", "aws:kms", "none"]] = None
     MAX_UPLOAD_MB: int = Field(100, ge=1, le=5120)
     REPORT_RENDER_TIMEOUT_SECONDS: int = Field(60, ge=5, le=600)
 
@@ -145,10 +152,16 @@ class Settings(BaseSettings):
     def _blank_provider_is_none(cls, v):
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("S3_BUCKET", "S3_REGION", "S3_ENDPOINT_URL", mode="before")
+    @field_validator("S3_BUCKET", "S3_REGION", "S3_ENDPOINT_URL", "S3_SSE", mode="before")
     @classmethod
     def _blank_s3_is_none(cls, v):
         return None if isinstance(v, str) and not v.strip() else v
+
+    @property
+    def s3_sse(self) -> Optional[str]:
+        """ServerSideEncryption value for S3 uploads, or None to send no SSE header."""
+        sse = self.S3_SSE or ("none" if self.S3_ENDPOINT_URL else "AES256")
+        return None if sse == "none" else sse
 
     # SMTP (optional — invitations work without it)
     SMTP_HOST: str | None = None

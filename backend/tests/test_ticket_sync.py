@@ -369,3 +369,96 @@ def test_service_account_settings_validation():
                 await db.commit()
             await engine.dispose()
     asyncio.run(go())
+
+
+def test_http_call_has_an_overall_deadline(monkeypatch):
+    """httpx's timeout is per phase; a server dripping bytes is cut off by the whole-request deadline."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(ticket_sync, "assert_url_allowed", lambda url, allow: "203.0.113.5")
+    monkeypatch.setattr(ticket_sync, "HTTP_DEADLINE_SECONDS", 0.2)
+
+    async def slow(self, *a, **k):
+        await asyncio.sleep(5)
+    monkeypatch.setattr(httpx.AsyncClient, "request", slow)
+    conn = SimpleNamespace(provider="jira", base_url="https://acme.atlassian.net", tenant_id=1)
+    with pytest.raises(TicketError, match="timed out"):
+        asyncio.run(ticket_sync._call(conn, [], "GET", "rest/api/3/myself", headers={}))
+
+
+def test_sync_runs_oldest_links_first_and_stops_on_soft_time_limit(monkeypatch):
+    """Links are synced least-recently-synced first, and the soft time limit is never swallowed by the per-ticket
+    error handling: it stops the sync, and the task records it on the connection."""
+    from celery.exceptions import SoftTimeLimitExceeded
+    from app.tasks import ticketing
+
+    async def go():
+        await engine.dispose()
+        h = secrets.token_hex(3)
+        ids = {}
+        async with AsyncSessionLocal() as db:
+            t = Tenant(name="ts-tl", slug=f"ts-tl-{h}")
+            db.add(t)
+            await db.flush()
+            conn = TicketConnection(tenant_id=t.id, provider="jira", base_url="https://acme.atlassian.net",
+                                    credentials_enc=ticket_sync.encrypt_credentials({}), settings={})
+            case = Case(title="tl", tenant_id=t.id)
+            db.add_all([conn, case])
+            await db.flush()
+            links = []
+            for synced_at in (datetime.now(timezone.utc) - timedelta(hours=1), None, datetime.now(timezone.utc)):
+                task = CaseTask(case_id=case.id, tenant_id=t.id, title="t")
+                db.add(task)
+                await db.flush()
+                lk = CaseLink(case_id=case.id, tenant_id=t.id, system="jira", external_id=f"SEC-{len(links)}",
+                              task_id=task.id, connection_id=conn.id, last_synced_at=synced_at)
+                db.add(lk)
+                await db.flush()
+                links.append(lk.id)
+            await db.commit()
+            ids = {"t": t.id, "c": conn.id, "case": case.id, "links": links}
+        seen = []
+
+        async def fake_sync_link(db, cl, snap, link, case, task):
+            seen.append(link.id)
+            if len(seen) == 2:
+                raise SoftTimeLimitExceeded()
+        monkeypatch.setattr(ticket_sync, "sync_link", fake_sync_link)
+        monkeypatch.setattr(ticket_sync, "client", lambda snap, allow: object())
+        try:
+            async with AsyncSessionLocal() as db:
+                conn = await db.get(TicketConnection, ids["c"])
+                with pytest.raises(SoftTimeLimitExceeded):
+                    await ticket_sync.sync_tenant(db, conn)
+            older, never, _recent = ids["links"]
+            assert seen == [never, older]
+            await ticketing._record_timeout(ids["c"])
+            async with AsyncSessionLocal() as db:
+                assert (await db.get(TicketConnection, ids["c"])).last_error == ticketing.SYNC_TIMED_OUT
+        finally:
+            async with AsyncSessionLocal() as db:
+                await db.execute(delete(CaseLink).where(CaseLink.id.in_(ids["links"])))
+                await db.execute(delete(CaseTask).where(CaseTask.case_id == ids["case"]))
+                await db.execute(delete(TicketConnection).where(TicketConnection.id == ids["c"]))
+                await db.execute(delete(Case).where(Case.id == ids["case"]))
+                await db.execute(delete(AuditLog).where(AuditLog.tenant_id == ids["t"]))
+                await db.execute(delete(Tenant).where(Tenant.id == ids["t"]))
+                await db.commit()
+            await engine.dispose()
+    asyncio.run(go())
+
+
+def test_ticket_task_reraises_soft_time_limit_and_records_it(monkeypatch):
+    from celery.exceptions import SoftTimeLimitExceeded
+    from app.tasks import ticketing
+    recorded = []
+
+    async def boom(cid):
+        raise SoftTimeLimitExceeded()
+
+    async def record(cid):
+        recorded.append(cid)
+    monkeypatch.setattr(ticketing, "_sync_connection", boom)
+    monkeypatch.setattr(ticketing, "_record_timeout", record)
+    with pytest.raises(SoftTimeLimitExceeded):
+        ticketing.sync_ticket_connection_task.run(5)
+    assert recorded == [5]

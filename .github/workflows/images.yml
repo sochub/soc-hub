@@ -3,7 +3,7 @@ name: Images
 # Build multi-arch images and push them to Docker Hub:
 #   sochub/sochub-backend   (API, Celery worker and migrations: same image, different command)
 #   sochub/sochub-frontend  (nginx serving the SPA and proxying /api/v1 to BACKEND_UPSTREAM)
-# Runs ONLY when a maintainer publishes a GitHub release (tag vX.Y.Z): pushes and pull
+# Runs ONLY when a maintainer publishes a GitHub release (tag vX.Y or vX.Y.Z): pushes and pull
 # requests, including from forks, never publish images. The Docker Hub credentials live in the
 # `dockerhub` environment, so they can also be restricted to release tags and required reviewers.
 on:
@@ -47,12 +47,24 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: docker.io/sochub/sochub-${{ matrix.name }}
-          # release v1.2.3 -> 1.2.3, 1.2, sha-<short>, and latest (not for pre-releases like v1.3.0-rc.1)
+          # release v1.2.3 -> 1.2.3, 1.2, sha-<short>, latest; release v1.2 (two-part, not semver) -> 1.2, sha-<short>,
+          # latest. Pre-releases like v1.3.0-rc.1 get only 1.3.0-rc.1 and sha-<short>.
           flavor: latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=match,pattern=^v(\d+\.\d+)(\.\d+)?$,group=1
             type=sha
+      # Never publish a release that only got sha-<short>/latest (an unrecognised tag name): deployments pin versions.
+      - name: Require a version tag
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          printf '%s\n' "$TAGS"
+          if ! printf '%s\n' "$TAGS" | grep -Eq ':[0-9]+\.[0-9]+'; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} produced no version image tag; use vX.Y or vX.Y.Z."
+            exit 1
+          fi
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:

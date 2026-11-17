@@ -5,6 +5,7 @@ import io
 import json
 from datetime import datetime, timezone
 from typing import Any, List, Literal, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -232,7 +233,7 @@ async def export_audit_logs(
 
     media = "text/csv" if format == "csv" else "application/json"
     return StreamingResponse(body_csv() if format == "csv" else body_json(), media_type=media, headers={
-        "Content-Disposition": f'attachment; filename="audit-{slug}-{stamp}.{format}"'})
+        "Content-Disposition": f'attachment; filename="audit-{quote(slug, safe="")}-{stamp}.{format}"'})
 
 
 @router.get("/{entity_type}/{entity_id}", response_model=List[schema.AuditItem])

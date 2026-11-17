@@ -174,7 +174,7 @@ def _guest_retry(tenant: Optional[Tenant], cfg: Optional[TenantSSOConfig]) -> Op
 
 
 def oidc_redirect_uri(slug: str) -> str:
-    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/v1/auth/oidc/{slug}/callback"
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/v1/auth/oidc/{quote(slug, safe='')}/callback"
 
 
 SSO_NOT_ALLOWED = ("This account can't use single sign-on for this organization — "

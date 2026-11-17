@@ -766,8 +766,9 @@ def test_beat_schedule_and_tasks_registered():
     from app.worker import celery_app
     sched = celery_app.conf.beat_schedule
     assert sched["poll-mailboxes"] == {"task": "app.tasks.email_intake.poll_mailboxes_task", "schedule": 60.0}
+    from celery.schedules import crontab
     assert sched["cleanup-email-artifacts"] == {"task": "app.tasks.email_intake.cleanup_email_artifacts_task",
-                                                "schedule": 86400.0}
+                                                "schedule": crontab(hour=3, minute=0)}
     assert "app.tasks.email_intake.poll_mailboxes_task" in celery_app.tasks
     assert "app.tasks.email_intake.cleanup_email_artifacts_task" in celery_app.tasks
 

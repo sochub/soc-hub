@@ -34,7 +34,9 @@ def executor(type_name: str):
     return deco
 
 
-async def load_target_case(nctx: NodeContext, config: dict):
+async def load_target_case(nctx: NodeContext, config: dict, *, lock: bool = False):
+    """The node's case (config case_id, else the run's). lock=True takes the row lock up front, for nodes that
+    read the case to compute an update (e.g. tag merges)."""
     from app.models.case import Case
     raw = config.get("case_id") or nctx.run.case_id
     if raw in (None, ""):
@@ -43,7 +45,8 @@ async def load_target_case(nctx: NodeContext, config: dict):
         case_id = int(raw)
     except (TypeError, ValueError):
         raise NodeError(f"case_id must be an integer, got {raw!r}")
-    case = (await nctx.db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == nctx.run.tenant_id))).scalars().first()
+    stmt = select(Case).where(Case.id == case_id, Case.tenant_id == nctx.run.tenant_id)
+    case = (await nctx.db.execute(stmt.with_for_update() if lock else stmt)).scalars().first()
     if not case:
         raise NodeError(f"case {case_id} not found")
     return case

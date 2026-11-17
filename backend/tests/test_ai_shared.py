@@ -173,3 +173,52 @@ def test_triage_already_running_is_reused(monkeypatch):
                 await db.commit()
             await engine.dispose()
     run(go())
+
+
+def test_busy_background_slot_raises_instead_of_waiting(provider, monkeypatch):
+    """A worker call that can't get the Ollama slot within SLOT_WAIT_SECONDS gives up with AISlotBusy (which
+    AIService does not swallow), so the triage task can retry later instead of holding a pool process."""
+    from app.ai.errors import AISlotBusy
+    provider["cfg"] = OLLAMA
+    r = llm._redis()
+    r.busy = True
+    assert run(llm.complete(MSG, tenant_id=1)) == "answer"  # interactive call: never takes the slot
+    monkeypatch.setattr(llm, "BACKGROUND", True)
+    with pytest.raises(AISlotBusy):
+        run(llm.complete([{"role": "user", "content": "bg"}], tenant_id=1))
+    with pytest.raises(AISlotBusy):
+        run(AIService(tenant_id=1).generate_triage({"title": "t", "description": "d"}))
+    assert len(provider["calls"]) == 1
+    assert not any(k.startswith("llm:run:") for k in r.keys)  # waiters for the same prompt are released
+
+
+def test_triage_task_retries_when_slot_busy(monkeypatch):
+    from celery.exceptions import Retry
+    from app.ai.errors import AISlotBusy
+    import app.tasks.triage as tt
+
+    async def busy(triage_id):
+        raise AISlotBusy("busy")
+    monkeypatch.setattr(tt, "_run", busy)
+    seen = []
+
+    def fake_retry(**kw):
+        seen.append(kw)
+        return Retry()
+    monkeypatch.setattr(tt.run_case_triage_task, "retry", fake_retry)
+    with pytest.raises(Retry):
+        tt.run_case_triage_task.run(7)
+    assert seen == [{"countdown": 30}]
+    assert [tt.slot_retry_countdown(n) for n in (0, 1, 3, 10)] == [30, 60, 240, 300]
+
+    marked = []
+
+    async def mark(triage_id):
+        marked.append(triage_id)
+    monkeypatch.setattr(tt, "_mark_busy_failed", mark)
+    tt.run_case_triage_task.push_request(retries=tt.SLOT_RETRIES)
+    try:
+        tt.run_case_triage_task.run(7)  # retries exhausted: marks the row failed, no further retry
+    finally:
+        tt.run_case_triage_task.pop_request()
+    assert marked == [7] and len(seen) == 1

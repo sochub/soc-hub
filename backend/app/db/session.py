@@ -2,7 +2,15 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=settings.SQL_ECHO)
+# pool_pre_ping: replace connections the server or a proxy dropped (DB restart, idle timeout) instead of
+# failing the next request. Celery tasks dispose this engine after each run (app/tasks/runner.py).
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=settings.SQL_ECHO,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_pre_ping=True,
+)
 
 AsyncSessionLocal = sessionmaker(
     bind=engine,

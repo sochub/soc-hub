@@ -3,7 +3,7 @@
 # ponytail: no names (JAN/MON), no L/W/#; add croniter if anyone asks.
 Like classic cron, when both dom and dow are restricted a day matches if EITHER does.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Set
 
 _FIELDS = (("minute", 0, 59), ("hour", 0, 23), ("day of month", 1, 31), ("month", 1, 12), ("day of week", 0, 7))
@@ -57,9 +57,28 @@ def cron_errors(expr: Optional[str]) -> List[str]:
 
 def cron_matches(expr: str, at: datetime) -> bool:
     try:
-        minute, hour, dom, month, dow = _parse(expr)
+        sets = _parse(expr)
     except ValueError:
         return False
+    return _matches(sets, at)
+
+
+def cron_matches_between(expr: str, start: datetime, end: datetime) -> bool:
+    """True if any whole minute in [start, end] (both floored to the minute) matches."""
+    try:
+        sets = _parse(expr)
+    except ValueError:
+        return False
+    at, end = start.replace(second=0, microsecond=0), end.replace(second=0, microsecond=0)
+    while at <= end:
+        if _matches(sets, at):
+            return True
+        at += timedelta(minutes=1)
+    return False
+
+
+def _matches(sets: List[Set[int]], at: datetime) -> bool:
+    minute, hour, dom, month, dow = sets
     if at.minute not in minute or at.hour not in hour or at.month not in month:
         return False
     day_ok, wday_ok = at.day in dom, (at.isoweekday() % 7) in dow
