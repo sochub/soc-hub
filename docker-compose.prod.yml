@@ -9,8 +9,10 @@
 # balancer) in front of port 80. See docs/deployment.md for Fargate and Kubernetes.
 #
 # Every SOC Hub container runs with a read-only root filesystem, no capabilities, no privilege
-# escalation and pid/memory caps. Writable paths are tmpfs: /tmp (Celery beat schedule, spooled
-# upload temp files, nginx pid/temp) and the app user's HOME (fontconfig cache for PDF export).
+# escalation and pid/memory caps. Writable paths are tmpfs: /tmp (Celery beat schedule, nginx pid/temp)
+# and the app user's HOME (fontconfig cache for PDF export). Backend temp files (spooled uploads, up to
+# MAX_UPLOAD_MB each) go to TMPDIR=/var/tmp on the disk-backed backend_tmp volume, because tmpfs counts
+# against mem_limit and a few concurrent large uploads would get the container OOM-killed.
 
 x-backend: &backend
   # No floating default: pin a release (e.g. 7.4) in .env so an upgrade is a deliberate change.
@@ -21,7 +23,7 @@ x-backend: &backend
   cap_drop: [ALL]
   read_only: true
   tmpfs:
-    - /tmp
+    - /tmp:size=64m
     - /home/app:uid=10001,gid=10001
   pids_limit: 512
   mem_limit: 1g
@@ -32,8 +34,11 @@ x-backend: &backend
     ENVIRONMENT: production
     STORAGE_LOCAL_PATH: /data/attachments
     LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    TMPDIR: /var/tmp
   volumes:
     - attachments_data:/data/attachments
+    # Needs free disk for (concurrent uploads) x MAX_UPLOAD_MB. A new volume inherits /var/tmp's 1777 mode.
+    - backend_tmp:/var/tmp
 
 services:
   db:
@@ -60,12 +65,13 @@ services:
   redis:
     image: redis:7.4
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    # Queued Celery tasks live here: AOF (fsync every second) on a volume survives restarts and upgrades.
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
     security_opt:
       - no-new-privileges:true
     read_only: true
-    tmpfs:
-      - /data
+    volumes:
+      - redis_data:/data
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD}
     healthcheck:
@@ -163,3 +169,5 @@ services:
 volumes:
   postgres_data:
   attachments_data:
+  redis_data:
+  backend_tmp:
