@@ -29,6 +29,12 @@ class AIUnavailable(AIError):
     """Auth, network, quota, timeout, misconfiguration — AI is unusable right now."""
 
 
+class AISlotBusy(Exception):
+    """A background (worker) call found the shared Ollama slot taken. Deliberately not an AIError, so it
+    passes through AIService's "AI unavailable" handling up to the Celery task, which retries later
+    instead of parking a pool process on the lock."""
+
+
 def scrub(text: str, secrets: Iterable[Optional[str]] = ()) -> str:
     out = str(text)
     for s in sorted((x for x in secrets if x), key=len, reverse=True):
