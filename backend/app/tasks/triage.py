@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.worker import celery_app
+from app.ai.errors import AISlotBusy
 from app.db.session import AsyncSessionLocal, engine
 from app.models.case import Case
 from app.models.case_artifact import CaseArtifact
@@ -124,6 +125,9 @@ async def _run_with_session(triage_id: int) -> None:
 
             triage.status = "completed"
             await db.commit()
+        except AISlotBusy:
+            await db.rollback()  # nothing written yet; the row stays "pending" and the task retries
+            raise
         except Exception as e:
             logger.exception("Case triage failed for case %d: %s", case.id, e)
             await db.rollback()
@@ -132,9 +136,38 @@ async def _run_with_session(triage_id: int) -> None:
             await db.commit()
 
 
+async def _mark_busy_failed(triage_id: int) -> None:
+    try:
+        async with AsyncSessionLocal() as db:
+            triage = (await db.execute(
+                select(CaseTriageResult).where(CaseTriageResult.id == triage_id)
+            )).scalars().first()
+            if triage and triage.status == "pending":
+                triage.status = "failed"
+                triage.error_message = "AI is busy with other background work; run triage again later."
+                await db.commit()
+    finally:
+        await engine.dispose()
+
+
+# The shared background Ollama slot (llm._shared) is taken by another worker call: instead of parking this
+# pool process on the lock, retry with backoff (30 s, 60 s, ... capped at 5 min; ~1 h in total).
+SLOT_RETRIES = 15
+
+
+def slot_retry_countdown(retries: int) -> int:
+    return min(30 * 2 ** retries, 300)
+
+
 # LLM calls may take AI_TIMEOUT_SECONDS (default 120 s) each, plus provider retries.
-@celery_app.task(acks_late=True, max_retries=1, soft_time_limit=600, time_limit=660)
-def run_case_triage_task(triage_id: int) -> None:
+@celery_app.task(bind=True, acks_late=True, max_retries=SLOT_RETRIES, soft_time_limit=600, time_limit=660)
+def run_case_triage_task(self, triage_id: int) -> None:
     """Runs async DB/LLM work from a sync Celery task — the app's ORM layer is
     fully async, so there's no sync session to reuse here."""
-    asyncio.run(_run(triage_id))
+    try:
+        asyncio.run(_run(triage_id))
+    except AISlotBusy:
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_busy_failed(triage_id))
+            return
+        raise self.retry(countdown=slot_retry_countdown(self.request.retries))

@@ -18,7 +18,7 @@ from openai import AsyncOpenAI  # noqa: E402
 
 from app.ai import untrusted
 from app.ai.aws import bedrock_credentials
-from app.ai.errors import AIError, AIUnavailable, scrub
+from app.ai.errors import AIError, AISlotBusy, AIUnavailable, scrub
 from app.ai.providers import PROVIDERS, SSRF_GUARDED, ConfigError, ProviderConfig, build_kwargs, missing_fields
 from app.core.config import settings
 from app.workflows.ssrf import HTTPS_ONLY, SSRFError, assert_url_allowed
@@ -256,6 +256,8 @@ async def complete(messages: List[dict], *, tenant_id: Optional[int], temperatur
 
 # Set by app.worker: every LLM call made in the Celery worker is background work (triage, workflows).
 BACKGROUND = False
+# How long a background call waits for the shared Ollama slot before giving up with AISlotBusy.
+SLOT_WAIT_SECONDS = 5
 CACHE_TTL = 600  # identical prompt within 10 min -> reuse the answer (the key covers the whole prompt)
 
 
@@ -307,9 +309,13 @@ async def _shared(cfg: ProviderConfig, key: str, run) -> str:
             # ponytail: one background call per Ollama endpoint; make it N (a counter) if a GPU box wants more.
             lock = r.lock(f"llm:bg:{cfg.api_base or 'default'}", timeout=hold)
             try:
-                await lock.acquire()
+                acquired = await lock.acquire(blocking_timeout=SLOT_WAIT_SECONDS)
             except (RedisError, OSError):
-                lock = None
+                acquired, lock = True, None
+            if not acquired:
+                # Waiting here would park a worker process for up to `hold` seconds per queued call; the
+                # caller (a Celery task) retries later instead.
+                raise AISlotBusy("background AI slot busy")
         try:
             out = await run()
         finally:

@@ -73,3 +73,46 @@ def test_general_chat_create_case_then_follow_up(monkeypatch):
                 await db.commit()
     run(body)
     asyncio.run(engine.dispose())
+
+
+def test_copilot_llm_calls_hold_no_db_connection(monkeypatch):
+    """Chat, the session briefing and analyze release their DB connection before awaiting the LLM (up to
+    AI_TIMEOUT_SECONDS), so a few slow provider calls can't drain the pool."""
+    from app.services.ai_service import AIService
+    held = []
+
+    def fake(reply):
+        async def call(self, *a, **k):
+            held.append(engine.sync_engine.pool.checkedout())
+            return reply
+        return call
+    monkeypatch.setattr(AIService, "chat", fake("hi there"))
+    monkeypatch.setattr(AIService, "generate_general_welcome", fake("welcome"))
+    monkeypatch.setattr(AIService, "generate_welcome_briefing", fake("briefing"))
+    monkeypatch.setattr(AIService, "analyze_case", fake("analysis"))
+
+    async def body(c, w):
+        h = hdr(w, "analyst")
+        sids = []
+        try:
+            r = await c.get("/api/v1/copilot/sessions/general", headers=h)
+            assert r.status_code == 200, r.text
+            sids.append(r.json()["id"])
+            r = await c.post("/api/v1/copilot/chat", headers=h, json={"session_id": sids[0], "message": "hello"})
+            assert r.status_code == 200 and r.json()["content"] == "hi there", r.text
+            r = await c.post(f"/api/v1/copilot/sessions/{w.case}/restart", headers=h)
+            assert r.status_code == 200 and r.json()["messages"][0]["content"] == "briefing", r.text
+            sids.append(r.json()["id"])
+            r = await c.post("/api/v1/copilot/analyze", headers=h, json={"case_id": w.case})
+            assert r.status_code == 200 and r.json()["analysis"] == "analysis", r.text
+            assert len(held) == 4 and held == [0, 0, 0, 0], held
+            async with AsyncSessionLocal() as db:
+                roles = (await db.execute(select(CopilotMessage.role).where(CopilotMessage.session_id == sids[0])
+                                          .order_by(CopilotMessage.created_at, CopilotMessage.id))).scalars().all()
+                assert roles == ["assistant", "user", "assistant"]
+        finally:
+            async with AsyncSessionLocal() as db:
+                await db.execute(delete(CopilotSession).where(CopilotSession.id.in_(sids)))
+                await db.commit()
+    run(body)
+    asyncio.run(engine.dispose())

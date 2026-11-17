@@ -224,3 +224,47 @@ async def test_stalled_run_failed_recent_and_busy_untouched(ids, monkeypatch):
     assert (await get(WorkflowRun, fresh)).status == "running"
     assert (await get(WorkflowRun, waiting)).status == "running"
     assert await runtime.reap_stalled_runs(made) == []
+
+
+@scenario
+async def test_lost_loop_tick_is_requeued(ids, monkeypatch):
+    """A for_each step left `waiting` because its loop_tick message was lost gets a fresh tick; loops with recent
+    child activity or a child still waiting on someone are left alone."""
+    from app.workflows import runtime
+    sent = capture(monkeypatch)
+    old = _now() - timedelta(seconds=limit() + 60)
+
+    async def loop(db, t, w, child_step_status, child_age):
+        parent = WorkflowRun(tenant_id=t.id, workflow_id=w.id, workflow_version=1, status="waiting",
+                             graph_snapshot=GRAPH, trigger_payload={}, started_at=old)
+        db.add(parent)
+        await db.flush()
+        ids.runs.append(int(parent.id))
+        pstep = WorkflowRunStep(run_id=parent.id, node_id="a", status="waiting", started_at=old,
+                                output={"concurrency": 1, "total": 2})
+        db.add(pstep)
+        await db.flush()
+        done = WorkflowRun(tenant_id=t.id, workflow_id=w.id, workflow_version=1, status="succeeded",
+                           graph_snapshot=GRAPH, trigger_payload={}, parent_step_id=pstep.id, loop_index=0,
+                           started_at=old, finished_at=child_age)
+        queued = WorkflowRun(tenant_id=t.id, workflow_id=w.id, workflow_version=1, status="queued",
+                             graph_snapshot=GRAPH, trigger_payload={}, parent_step_id=pstep.id, loop_index=1,
+                             started_at=old)
+        db.add_all([done, queued])
+        await db.flush()
+        ids.runs += [int(done.id), int(queued.id)]
+        db.add(WorkflowRunStep(run_id=done.id, node_id="a", status=child_step_status, started_at=old,
+                               finished_at=None if child_step_status == "waiting" else child_age))
+        await db.flush()
+        return pstep.id, queued.id
+
+    async with AsyncSessionLocal() as db:
+        t, w = await setup(db, ids)
+        lost, lost_child = await loop(db, t, w, "succeeded", old)
+        recent, _ = await loop(db, t, w, "succeeded", _now())
+        asking, _ = await loop(db, t, w, "waiting", old)
+        await db.commit()
+    assert await runtime.retick_stalled_loops([lost, recent, asking]) == [lost]
+    assert sent["tick"] == [lost]
+    await runtime.loop_tick(lost)  # what the queued tick does: the next child starts
+    assert (await get(WorkflowRun, lost_child)).status == "running"
