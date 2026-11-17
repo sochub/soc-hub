@@ -1,12 +1,13 @@
 import axios from 'axios';
 import { DEMO } from '../demo';
+import { queryClient } from './queryClient';
 
 // The session token lives in an HttpOnly cookie the browser sends on its own; page scripts never see it.
 // X-Requested-With is the CSRF header the API requires on cookie-authenticated writes.
+// No default Content-Type: axios sends JSON for plain objects and multipart (with its boundary) for FormData.
 export const api = axios.create({
     baseURL: '/api/v1',
     headers: {
-        'Content-Type': 'application/json',
         'X-Requested-With': 'XMLHttpRequest',
     },
 });
@@ -15,10 +16,12 @@ export const api = axios.create({
 const FLAG = 'signed_in';
 try { localStorage.removeItem('token'); } catch { /* sessions from before the cookie switch: sign in again */ }
 
+// Starting or ending a session drops every cached query, so one user's (or tenant's) data never
+// shows up under the next sign-in.
 export const session = {
     active: () => { if (DEMO) return true; try { return localStorage.getItem(FLAG) === '1'; } catch { return false; } },
-    mark: () => { try { localStorage.setItem(FLAG, '1'); } catch { /* private mode */ } },
-    clear: () => { try { localStorage.removeItem(FLAG); } catch { /* private mode */ } },
+    mark: () => { queryClient.clear(); try { localStorage.setItem(FLAG, '1'); } catch { /* private mode */ } },
+    clear: () => { queryClient.clear(); try { localStorage.removeItem(FLAG); } catch { /* private mode */ } },
 };
 
 // Event-based auth expiry so React Router can handle navigation
@@ -76,8 +79,10 @@ api.interceptors.response.use(
                     try {
                         await refreshSession();
                     } catch (refreshError) {
-                        // A 401 from /auth/refresh already expired the session via this interceptor.
-                        if ((refreshError as { response?: { status?: number } })?.response?.status !== 401) expireSession();
+                        // A 401 from /auth/refresh already expired the session via this interceptor; a 403 means
+                        // the refresh cookie is refused too. A network error, 5xx or 429 is transient: fail this
+                        // request only and keep the session for the next try.
+                        if ((refreshError as { response?: { status?: number } })?.response?.status === 403) expireSession();
                         return Promise.reject(error);
                     }
                     return api.request(config);
