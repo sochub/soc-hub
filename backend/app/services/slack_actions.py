@@ -11,7 +11,7 @@ from app.models.membership import TenantMembership
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.workflow import WorkflowRun, WorkflowRunStep
-from app.services.case_service import apply_case_update
+from app.services.case_service import CaseClosureIncomplete, apply_case_update
 from app.services.slack_blocks import card_text, case_card
 from app.services.slack_service import SlackError, load_integration, parse_action_value, respond, slack_call
 from app.utils.tenant_state import tenant_active  # noqa: F401  (re-exported: Slack entry points import it from here)
@@ -111,7 +111,12 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
             await _ephemeral(payload, f"War room for case #{case_id}: <#{channel}>")
             return
         label, build = _CASE_UPDATES[action]
-        changes = await apply_case_update(db, case=case, update_data=build(user), user_id=user.id)
+        try:
+            changes = await apply_case_update(db, case=case, update_data=build(user), user_id=user.id)
+        except CaseClosureIncomplete as e:
+            # The Close button can't carry an outcome/closing note: only closes a case that already has both.
+            await _ephemeral(payload, f"Case #{case_id} was not closed: {e.detail}. Record them on the case in SOC Hub.")
+            return
         await db.commit()
         owner = (await db.get(User, case.owner_id)) if case.owner_id else None
         card = case_card(case, (owner.full_name or owner.email) if owner else None,

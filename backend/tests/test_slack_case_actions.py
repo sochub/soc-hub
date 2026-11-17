@@ -70,8 +70,8 @@ async def _scenario(monkeypatch):
             assert await pu(f"sup-{h}@example.test") is None, "super admin without a membership (old L1)"
             assert await pu(None) is None
 
-            async def mkcase(status=CaseStatus.OPEN):
-                c = Case(title="wf-test case", tenant_id=tid, status=status)
+            async def mkcase(status=CaseStatus.OPEN, **kw):
+                c = Case(title="wf-test case", tenant_id=tid, status=status, **kw)
                 db.add(c)
                 await db.commit()
                 ids["c"].append(c.id)
@@ -104,6 +104,13 @@ async def _scenario(monkeypatch):
             await sa._handle_case_action(tid, payload(), tid, cid, "assign")  # already theirs: say so, change nothing
             assert ephem == [f"Case #{cid} is already assigned to you."] and len(events) == 2 and await audits(cid) == 2
 
+            # Close can't carry an outcome/closing note: refused (case unchanged) until both are on the case
+            await sa._handle_case_action(tid, payload(), tid, cid, "close")
+            c = await fresh(cid)
+            assert c.status == CaseStatus.IN_PROGRESS and await audits(cid) == 2 and len(events) == 2, "close refused"
+            assert "not closed" in ephem[-1] and "closing note" in ephem[-1], ephem
+            c.outcome, c.closing_note = "false_positive", "benign scanner"
+            await db.commit()
             await sa._handle_case_action(tid, payload(), tid, cid, "close")
             c = await fresh(cid)
             assert c.status == CaseStatus.CLOSED and await audits(cid) == 3, "close"
@@ -124,7 +131,7 @@ async def _scenario(monkeypatch):
             assert len(events) == 3 and len(resp) == 3, "noop announced"
 
             # unlinked user
-            fresh_id = await mkcase()
+            fresh_id = await mkcase(outcome="unknown", closing_note="closed from Slack")
             email["v"] = "nobody@example.test"
             n = len(ephem)
             await sa._handle_case_action(tid, payload(), tid, fresh_id, "close")

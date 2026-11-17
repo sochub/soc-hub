@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { CaseEditPayload } from '../../types';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { CASE_OUTCOMES } from './outcomes';
 
 interface EditCaseModalProps {
     show: boolean;
@@ -52,8 +53,8 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
 
     const [localError, setLocalError] = useState<string | null>(null);
     const handleSubmit = () => {
-        if (formData.status === 'closed' && !formData.outcome) {
-            setLocalError('Pick an outcome to close the case.');
+        if (formData.status === 'closed' && (!formData.outcome || !formData.closing_note.trim())) {
+            setLocalError('Pick an outcome and write a closing note to close the case.');
             return;
         }
         setLocalError(null);
@@ -185,11 +186,7 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                         className={modalInput}
                     >
                         <option value="">Not set</option>
-                        <option value="unknown">Unknown</option>
-                        <option value="false_positive">False Positive</option>
-                        <option value="true_positive_with_impact">True Positive With Impact</option>
-                        <option value="true_positive_without_impact">True Positive Without Impact</option>
-                        <option value="legitimate">Legitimate</option>
+                        {CASE_OUTCOMES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                 </div>
 

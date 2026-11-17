@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.audit.context import audit_read
 from app.escalations import service as esc
 from app.api import deps
-from app.models.case import Case, CaseStatus, TimelineEvent
+from app.models.case import Case, TimelineEvent
 from app.models.membership import TenantMembership
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
@@ -128,8 +128,7 @@ async def create_case(
     if case_in.owner_id not in (None, current_user.id) and case_in.owner_id not in await task_service.assignable_ids(
             db, tenant_id):
         raise HTTPException(status_code=422, detail="Owner must be an active analyst or admin of this tenant")
-    if case_in.status == CaseStatus.CLOSED:  # same rule as check_case_update: closing needs an outcome
-        raise HTTPException(status_code=422, detail="outcome is required to close a case")
+    # create_case_record refuses status=closed (a new case has no outcome/closing note): 422
     case, triage_id = await create_case_record(
         db, tenant_id=tenant_id, data=case_in.model_dump(), user_id=current_user.id,
     )

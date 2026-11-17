@@ -131,6 +131,9 @@ def test_update_case_close_requires_outcome(_no_side_effects):
         with pytest.raises(ToolError) as e:
             await tools.update_case(db, p, case_id=case_id, status="closed")
         assert "outcome" in str(e.value)
+        with pytest.raises(ToolError) as e:
+            await tools.update_case(db, p, case_id=case_id, status="closed", outcome="false_positive")
+        assert "closing note" in str(e.value)
         r = await tools.update_case(db, p, case_id=case_id, status="closed", outcome="false_positive",
                                     closing_note="benign")
         assert r["status"] == "closed" and r["outcome"] == "false_positive"

@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import { Zap, GitBranch, Globe, PenLine, StickyNote, Database, BookText, Search, ArrowUpCircle, XCircle, Repeat, MessageSquare, MessageCircleQuestion, BellPlus, OctagonX, ShieldCheck, Mail, ListChecks, Workflow } from 'lucide-react';
 import type { TriggerType } from './types';
+import { CASE_OUTCOMES } from '../cases/outcomes';
 
 export type FieldKind = 'text' | 'textarea' | 'select' | 'json' | 'number' | 'expression';
 
@@ -90,6 +91,8 @@ export const NODE_DEFS: NodeDef[] = [
         fields: [
             { key: 'severity', label: 'Severity', kind: 'select', options: SEVERITIES },
             { key: 'status', label: 'Status', kind: 'select', options: STATUSES },
+            { key: 'outcome', label: 'Outcome', kind: 'select', options: ['', ...CASE_OUTCOMES.map(o => o.value)], help: 'Closing needs an outcome and a closing note (here or already on the case)' },
+            { key: 'closing_note', label: 'Closing note', kind: 'textarea' },
             { key: 'owner_email', label: 'Assign to (email)', kind: 'text' },
             { key: 'add_tags', label: 'Add tags', kind: 'text', placeholder: 'escalated, vip' },
             { key: 'remove_tags', label: 'Remove tags', kind: 'text' },

@@ -26,7 +26,37 @@ from app.utils.audit import create_audit_log
 from app.utils.copilot_heuristics import detect_indicators
 
 
+class CaseClosureIncomplete(HTTPException):
+    """Closing without an outcome and a closing note. A 422 HTTPException, so REST/MCP/copilot answer it as-is;
+    Slack and workflow callers catch it and report `detail`."""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=422, detail=detail)
+
+
+def require_closure_fields(data: dict, case: Optional[Case] = None) -> None:
+    """The one closure rule: every write that can make a case closed runs it (create_case_record and
+    apply_case_update, which REST, MCP, copilot, Slack and workflow nodes all go through).
+
+    A closed case needs an outcome AND a non-blank closing note, from `data` or already stored on the case.
+    Checked when the case becomes closed, and when an edit of a closed case touches either field (so they can't
+    be blanked afterwards). Other edits of an already-closed case are left alone."""
+    stored_status = case.status if case is not None else None
+    if data.get("status", stored_status) != CaseStatus.CLOSED:
+        return
+    if stored_status == CaseStatus.CLOSED and "outcome" not in data and "closing_note" not in data:
+        return
+    outcome = data["outcome"] if "outcome" in data else getattr(case, "outcome", None)
+    note = data["closing_note"] if "closing_note" in data else getattr(case, "closing_note", None)
+    missing = [name for name, ok in (("an outcome", bool(outcome)), ("a closing note", bool((note or "").strip())))
+               if not ok]
+    if missing:
+        raise CaseClosureIncomplete(f"{' and '.join(missing).capitalize()} "
+                                    f"{'are' if len(missing) > 1 else 'is'} required to close a case")
+
+
 async def create_case_record(db: AsyncSession, *, tenant_id: int, data: dict, user_id: Optional[int]) -> Tuple[Case, int]:
+    require_closure_fields(data)
     case = Case(**data, tenant_id=tenant_id)
     if not case.owner_id and user_id:
         case.owner_id = user_id
@@ -55,10 +85,9 @@ def _plain(value: Any) -> Any:
 async def check_case_update(db: AsyncSession, *, case: Case, data: dict, tenant_id: int, role: str) -> None:
     """Guards for analyst-driven case edits (REST/MCP/copilot); Slack/workflow paths skip them.
 
-    422 closing without an outcome, 403 guest_summary below analyst, 422 new owner not a tenant member."""
-    # ponytail: analysts must record an outcome to close; Slack/workflow paths can't supply one.
-    if data.get("status") == CaseStatus.CLOSED and data.get("outcome", case.outcome) is None:
-        raise HTTPException(status_code=422, detail="outcome is required to close a case")
+    422 closing without an outcome + closing note, 403 guest_summary below analyst, 422 new owner not a tenant
+    member. The closure rule also runs inside apply_case_update, so Slack/workflow paths get it too."""
+    require_closure_fields(data, case)
     if "guest_summary" in data and role not in ("super_admin", "admin", "analyst"):
         raise HTTPException(status_code=403, detail="Only analysts can edit the guest summary")
     owner_id = data.get("owner_id")
@@ -69,6 +98,7 @@ async def check_case_update(db: AsyncSession, *, case: Case, data: dict, tenant_
 
 async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, user_id: Optional[int],
                             reason: Optional[str] = None) -> dict:
+    require_closure_fields(update_data, case)  # before any field is set: a refusal leaves the case untouched
     old_status = case.status
     changes = {}
     for field, value in update_data.items():

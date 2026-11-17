@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { SLABadge } from './SLABadge';
+import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { CASE_OUTCOMES } from './outcomes';
 import type { SLAStatus } from '../../types';
 
 export interface BoardCase {
@@ -13,7 +15,16 @@ export interface BoardCase {
     status: string;
     tags?: string[];
     sla_overall_status?: SLAStatus | null;
+    outcome?: string | null;
+    closing_note?: string | null;
 }
+
+type Move = { id: number; status: string; outcome?: string; closing_note?: string };
+
+const errorDetail = (e: unknown) => {
+    const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+    return typeof d === 'string' ? d : 'Could not move the case.';
+};
 
 // Mirrors backend CaseStatus enum
 const MAX_TAGS = 3;
@@ -25,17 +36,24 @@ export default function CasesBoard({ cases, severityConfig }: {
 }) {
     const queryClient = useQueryClient();
     const [dragOver, setDragOver] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    // Dropping on Closed asks for the outcome + closing note first; the card stays put until confirmed.
+    const [closing, setClosing] = useState<{ id: number; outcome: string; closing_note: string } | null>(null);
 
     const move = useMutation({
-        mutationFn: ({ id, status }: { id: number; status: string }) => api.put(`/cases/${id}`, { status }),
-        // Optimistic: move the card now, roll back if the API refuses (e.g. viewer role)
+        mutationFn: ({ id, ...body }: Move) => api.put(`/cases/${id}`, body),
+        // Optimistic: move the card now, roll back if the API refuses (e.g. viewer role, closure fields missing)
         onMutate: async ({ id, status }) => {
+            setError(null);
             await queryClient.cancelQueries({ queryKey: ['cases'], exact: true });
             const prev = queryClient.getQueryData<BoardCase[]>(['cases']);
             queryClient.setQueryData<BoardCase[]>(['cases'], old => old?.map(c => c.id === id ? { ...c, status } : c));
             return { prev };
         },
-        onError: (_e, _v, ctx) => queryClient.setQueryData(['cases'], ctx?.prev),
+        onError: (e, _v, ctx) => {
+            queryClient.setQueryData(['cases'], ctx?.prev);
+            setError(errorDetail(e));
+        },
         onSettled: () => queryClient.invalidateQueries({ queryKey: ['cases'], exact: true }),
     });
 
@@ -44,10 +62,26 @@ export default function CasesBoard({ cases, severityConfig }: {
         setDragOver(null);
         const id = Number(e.dataTransfer.getData('text/plain'));
         const c = cases.find(x => x.id === id);
-        if (c && c.status !== status) move.mutate({ id, status });
+        if (!c || c.status === status) return;
+        if (status === 'closed') setClosing({ id, outcome: c.outcome ?? '', closing_note: c.closing_note ?? '' });
+        else move.mutate({ id, status });
+    };
+
+    const canClose = !!closing?.outcome && !!closing.closing_note.trim();
+    const confirmClose = () => {
+        if (!closing || !canClose) return;
+        move.mutate({ id: closing.id, status: 'closed', outcome: closing.outcome, closing_note: closing.closing_note });
+        setClosing(null);
     };
 
     return (
+        <>
+        {error && (
+            <div role="alert" className="mb-3 px-3 py-2 rounded-md border border-severity-critical/40 bg-severity-critical/10 text-sm text-severity-critical flex items-center justify-between gap-3">
+                <span>{error}</span>
+                <button onClick={() => setError(null)} className="text-xs text-fg-2 hover:text-fg">Dismiss</button>
+            </div>
+        )}
         <div className="flex gap-3 overflow-x-auto pb-2">
             {COLUMNS.map(status => {
                 const col = cases.filter(c => c.status === status);
@@ -103,5 +137,43 @@ export default function CasesBoard({ cases, severityConfig }: {
                 );
             })}
         </div>
+        <Modal
+            open={!!closing}
+            onClose={() => setClosing(null)}
+            title={`Close case #${closing?.id ?? ''}`}
+            size="md"
+            footer={<>
+                <button onClick={() => setClosing(null)} className={btnSecondary}>Cancel</button>
+                <button onClick={confirmClose} disabled={!canClose} className={btnPrimary}>Close case</button>
+            </>}
+        >
+            {closing && (
+                <div className="space-y-4">
+                    <div>
+                        <label htmlFor="close-outcome" className={modalLabel}>Outcome <span className="text-muted font-normal">(required)</span></label>
+                        <select
+                            id="close-outcome"
+                            value={closing.outcome}
+                            onChange={e => setClosing({ ...closing, outcome: e.target.value })}
+                            className={modalInput}
+                        >
+                            <option value="">Select an outcome</option>
+                            {CASE_OUTCOMES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="close-note" className={modalLabel}>Closing note <span className="text-muted font-normal">(required: the findings behind this decision)</span></label>
+                        <textarea
+                            id="close-note"
+                            value={closing.closing_note}
+                            onChange={e => setClosing({ ...closing, closing_note: e.target.value })}
+                            className={`${modalInput} min-h-[100px]`}
+                            maxLength={8000}
+                        />
+                    </div>
+                </div>
+            )}
+        </Modal>
+        </>
     );
 }
