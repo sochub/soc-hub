@@ -125,8 +125,9 @@ async def suggest_events(
     parsed = timeline_suggest.from_alerts(alerts) + timeline_suggest.from_log_text(body.text or "", ZoneInfo(body.naive_tz))
     ai, ai_state = None, "off"
     if body.use_ai:
-        ai = await timeline_suggest.from_ai(
-            timeline_suggest.build_material(case, alerts, comments, body.text), tenant_id)
+        material = timeline_suggest.build_material(case, alerts, comments, body.text)
+        await db.commit()  # read-only so far: release the DB connection before the slow LLM call
+        ai = await timeline_suggest.from_ai(material, tenant_id)
         ai_state = "used" if ai is not None else "unavailable"
     events = timeline_suggest.merge(ai, parsed, existing)
     for ev in events:  # link artifacts already on the case whose value the event mentions
