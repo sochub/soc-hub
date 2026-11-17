@@ -88,6 +88,7 @@ async def read_artifacts_all(
     result = await db.execute(
         select(Artifact)
         .where(Artifact.tenant_id == tenant_id, not_private())
+        .order_by(Artifact.id.desc())  # newest first, and a stable order for skip/limit
         .offset(skip).limit(limit)
     )
     artifacts = result.scalars().all()

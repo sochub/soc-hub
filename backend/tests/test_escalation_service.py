@@ -191,7 +191,11 @@ async def _scenario(emitted):
             assert r6.status == "returned" and r6.closed_by == U["l3"] and r6.close_note == "Need host timeline"
             assert back.status == "pending" and back.to_tier_id == t1.id and back.to_group_id == G["G1"]
             assert c2.owner_id is None and await esc.current_position(db, c2) == 1
-            ret = (await db.execute(select(Notification).where(Notification.escalation_id == back.id))).scalars().all()
+            returned = (await db.execute(select(AuditLog).where(
+                AuditLog.entity_id == c2.id, AuditLog.action == "case_escalation_returned"))).scalars().one()
+            assert returned.changes["owner_id"] == returned.changes["assignee"] == {"from": U["l3"], "to": None}, \
+                "clearing the accepted owner is in the owner history"
+            ret =(await db.execute(select(Notification).where(Notification.escalation_id == back.id))).scalars().all()
             assert [(n.user_id, n.type) for n in ret] == [(U["l1"], "escalation_returned")]
             assert [(e[1], e[3]["escalation"]["tier"]["position"]) for e in emitted] == [("case.escalated", 1)]
             await _raises(409, esc.return_down(db, case=c2, actor_id=U["l3"], note="again"))
