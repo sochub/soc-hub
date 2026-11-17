@@ -370,14 +370,23 @@ _WorkloadMetric = Literal["current", "new", "open", "in_progress", "pending", "h
                           "sla_breached"]
 
 
+MAX_PERIOD_DAYS = 366  # a leap year, inclusive
+
+
 def _period(start: Optional[date], end: Optional[date]) -> tuple:
-    """[lo, hi) in UTC for inclusive dates; defaults to this week (Monday through today)."""
+    """[lo, hi) in UTC for inclusive dates; defaults to this week (Monday through today). At most MAX_PERIOD_DAYS."""
     start = start or _this_monday().date()
     end = end or datetime.now(timezone.utc).date()
     if start > end:
         raise HTTPException(status_code=422, detail="start must be on or before end")
+    if (end - start).days + 1 > MAX_PERIOD_DAYS:
+        raise HTTPException(status_code=422, detail=f"The period can span at most {MAX_PERIOD_DAYS} days")
     lo = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
-    hi = datetime(end.year, end.month, end.day, tzinfo=timezone.utc) + timedelta(days=1)
+    try:  # end = 9999-12-31 has no next day; team insights also need the previous period of the same length
+        hi = datetime(end.year, end.month, end.day, tzinfo=timezone.utc) + timedelta(days=1)
+        _ = lo - (hi - lo)
+    except OverflowError:
+        raise HTTPException(status_code=422, detail="The period is out of range") from None
     return start, end, lo, hi
 
 
