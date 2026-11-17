@@ -6,6 +6,7 @@ from app.core.totp import (
     matching_step,
     provisioning_uri,
     consume_step,
+    set_once,
 )
 
 
@@ -204,3 +205,27 @@ class TestConsumeStep:
         result2 = await consume_step(redis, subject=42, step=1001)
         assert result1 is True
         assert result2 is True
+
+
+class BrokenRedis:
+    async def set(self, *a, **kw):
+        raise ConnectionError("redis down")
+
+
+class TestSetOnceFallback:
+    @pytest.mark.asyncio
+    async def test_falls_back_to_process_memory(self):
+        key = "test:set-once:fallback"
+        assert await set_once(BrokenRedis(), key, 60) is True
+        assert await set_once(BrokenRedis(), key, 60) is False
+
+    @pytest.mark.asyncio
+    async def test_marker_set_during_outage_survives_recovery(self):
+        key = "test:set-once:recovery"
+        assert await set_once(BrokenRedis(), key, 60) is True
+        assert await set_once(FakeRedis(), key, 60) is False  # Redis back: still a replay
+
+    @pytest.mark.asyncio
+    async def test_consume_step_with_redis_down(self):
+        assert await consume_step(BrokenRedis(), subject="down", step=7) is True
+        assert await consume_step(BrokenRedis(), subject="down", step=7) is False
