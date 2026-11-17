@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import httpx
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,7 @@ SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 MAX_TEXT = 30_000
 MAX_NEW_COMMENTS = 50  # per link per sync
 MAX_AUTO_CREATE = 20  # per tenant per sync
+HTTP_DEADLINE_SECONDS = 30  # whole request, on top of httpx's per-phase timeout
 _MENTION = re.compile(r"@\[([^\]]+)\]\(user:\d+\)")
 
 
@@ -67,9 +69,15 @@ async def _call(conn: TicketConnection, allowlist: list, method: str, path: str,
         raise TicketError(HOST_REFUSED) from None
     headers = {**headers, "Host": parsed.netloc.decode("ascii"), "Accept": "application/json"}
     try:
+        # httpx's timeout bounds each connect/read/write separately; a server dripping bytes could hold the call
+        # (and the shared worker) for much longer, so the whole request also gets an overall deadline.
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
-            r = await client.request(method, parsed.copy_with(host=ip), headers=headers, json=json_body, data=form,
-                                     extensions={"sni_hostname": parsed.host})
+            r = await asyncio.wait_for(
+                client.request(method, parsed.copy_with(host=ip), headers=headers, json=json_body, data=form,
+                               extensions={"sni_hostname": parsed.host}),
+                timeout=HTTP_DEADLINE_SECONDS)
+    except asyncio.TimeoutError:
+        raise TicketError(f"{conn.provider} request timed out for {method} {parsed.path}") from None
     except httpx.HTTPError as e:
         raise TicketError(f"{conn.provider} request failed: {type(e).__name__}") from None
     if r.status_code >= 400:
@@ -415,11 +423,15 @@ async def sync_tenant(db: AsyncSession, conn: TicketConnection) -> dict:
                                     user_id=None, cl=cl)
                 await db.commit()
                 created += 1
+            except SoftTimeLimitExceeded:
+                raise  # out of time: stop now (the task records it); never swallowed as "one bad task"
             except Exception as e:  # one bad task must not stop the rest
                 await db.rollback()
                 errors.append(f"task {task_id}: {_reason(e)}")
+    # Least recently synced first: if a run is cut short by the time limit, the next one starts where it stopped.
     rows = (await db.execute(select(CaseLink.id, CaseLink.case_id, CaseLink.task_id).where(
-        CaseLink.tenant_id == snap.tenant_id, CaseLink.connection_id == snap.id, CaseLink.task_id.isnot(None)))).all()
+        CaseLink.tenant_id == snap.tenant_id, CaseLink.connection_id == snap.id, CaseLink.task_id.isnot(None))
+        .order_by(CaseLink.last_synced_at.asc().nullsfirst(), CaseLink.id))).all()
     for link_id, case_id, task_id in rows:
         link, case, task = await db.get(CaseLink, link_id), await db.get(Case, case_id), await db.get(CaseTask, task_id)
         ext = link.external_id  # read now: a rollback expires `link`
@@ -429,6 +441,8 @@ async def sync_tenant(db: AsyncSession, conn: TicketConnection) -> dict:
             await sync_link(db, cl, snap, link, case, task)
             await db.commit()
             synced += 1
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as e:
             await db.rollback()
             errors.append(f"ticket {ext}: {_reason(e)}")
