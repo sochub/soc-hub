@@ -369,6 +369,9 @@ async def _scenario(enqueued, pd_calls, fake_redis):
 
 
 def test_escalation_inbound(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://soc.example.com")  # don't rely on another test's leak
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://soc.example.com")
     enqueued, pd_calls, fake_redis = [], {}, FakeRedis()
     monkeypatch.setattr(wf_events, "emit_event", lambda *a, **k: None)
     monkeypatch.setattr(delivery, "_enqueue", lambda ids: None)
