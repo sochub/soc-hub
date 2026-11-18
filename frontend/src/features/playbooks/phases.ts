@@ -8,13 +8,13 @@ export const PHASE_LABEL: Record<string, string> = {
     lessons_learned: 'Lessons Learned',
 };
 
-// Accent hue per phase for the light console look.
+// Marker colour per phase (a small square next to the phase heading). Theme tokens, so both themes read.
 export const PHASE_COLOR: Record<string, string> = {
-    identification: '#8fc3ff', // blue
-    containment: '#fbbf24',    // amber
-    eradication: '#dc2626',    // red
-    recovery: '#d6e37f',       // green
-    lessons_learned: '#e08cff', // violet
+    identification: 'var(--color-severity-low)',     // blue
+    containment: 'var(--color-severity-medium)',     // amber
+    eradication: 'var(--color-severity-critical)',   // red
+    recovery: 'var(--color-lime)',                   // green
+    lessons_learned: 'var(--color-magenta)',         // violet
 };
 
 export const PHASES = [...IR_PHASES];

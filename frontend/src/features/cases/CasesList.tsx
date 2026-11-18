@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { Link, useSearchParams } from 'react-router-dom';
-import { Clock, AlertCircle, CheckCircle, XCircle, Plus, Search, ChevronDown, LayoutList, Columns3 } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, Search, LayoutList, Columns3, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useState } from 'react';
 import NewCaseModal from './NewCaseModal';
@@ -9,6 +9,9 @@ import CasesBoard from './CasesBoard';
 import { SLABadge } from './SLABadge';
 import type { SLAStatus } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
+import { Button, EmptyState, ErrorState, Input, PageHeader, Select, SeverityStamp, Skeleton, StatusStamp, SEVERITY_ORDER } from '../../components/ui';
+import { CASE_STATUSES } from './statuses';
+import { outcomeLabel } from './outcomes';
 
 interface Case {
     id: number;
@@ -21,31 +24,38 @@ interface Case {
     created_at: string;
     updated_at: string;
     sla_overall_status?: SLAStatus | null;
+    owner_id?: number | null;
+    outcome?: string | null;
 }
 
-const severityConfig = {
-    critical: { color: 'text-red-300', bg: 'bg-red-500/10', border: 'border-red-400/20' },
-    high: { color: 'text-orange-300', bg: 'bg-orange-500/10', border: 'border-orange-400/20' },
-    medium: { color: 'text-yellow-300', bg: 'bg-yellow-500/10', border: 'border-yellow-400/20' },
-    low: { color: 'text-accent', bg: 'bg-accent/10', border: 'border-accent/20' },
-    info: { color: 'text-fg-3', bg: 'bg-raised', border: 'border-line' },
-};
-
-const statusConfig: Record<string, { icon: any; color: string }> = {
-    open: { icon: AlertCircle, color: 'text-red-300' },
-    investigating: { icon: Clock, color: 'text-orange-300' },
-    resolved: { icon: CheckCircle, color: 'text-emerald-300' },
-    closed: { icon: XCircle, color: 'text-muted' },
-};
+const CLOSED = ['resolved', 'closed'];
+// Filters live in the URL so they survive back navigation and can be linked to (Dashboard tiles do).
+const FILTER_KEYS = ['q', 'status', 'severity', 'tag', 'sla', 'owner', 'age', 'outcome', 'from', 'to'] as const;
+// Age buckets match the dashboards' "open case aging" (backend stats._AGING): label -> [min, max) days.
+const AGE_BUCKETS: Record<string, [number, number]> = { '<1d': [0, 1], '1-3d': [1, 3], '3-7d': [3, 7], '7-30d': [7, 30], '>30d': [30, Infinity] };
+type FilterKey = typeof FILTER_KEYS[number];
 
 export default function CasesList() {
+    const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const [modalOpen, setShowNewCaseModal] = useState(false);
-    const showNewCaseModal = modalOpen || searchParams.get('new') === '1'; // ⌘K "New case" deep link
-    const [searchQuery, setSearchQuery] = useState('');
-    const [severityFilter, setSeverityFilter] = useState<string>(searchParams.get('severity') || 'all');
-    const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
-    const [tagFilter, setTagFilter] = useState<string>('all');
+    const showNewCaseModal = modalOpen || searchParams.get('new') === '1'; // top bar / ⌘K "New case" deep link
+    const searchQuery = searchParams.get('q') ?? '';
+    const severityFilter = searchParams.get('severity') || 'all';
+    const statusFilter = searchParams.get('status') || 'all';
+    const tagFilter = searchParams.get('tag') || 'all';
+    const slaFilter = searchParams.get('sla') || 'all';
+    // Drill-down filters set by dashboard widgets; shown as removable chips, not dropdowns.
+    const [now] = useState(Date.now); // age filter reference time, fixed per visit
+    const ownerFilter = searchParams.get('owner');
+    const ageFilter = searchParams.get('age');
+    const outcomeFilter = searchParams.get('outcome');
+    const fromFilter = searchParams.get('from');
+    const toFilter = searchParams.get('to');
+    const setFilter = (key: FilterKey, value: string) =>
+        setSearchParams(p => { if (!value || value === 'all') p.delete(key); else p.set(key, value); return p; }, { replace: true });
+    const hasFilters = FILTER_KEYS.some(k => searchParams.has(k));
+    const clearFilters = () => setSearchParams(p => { FILTER_KEYS.forEach(k => p.delete(k)); return p; }, { replace: true });
     // URL wins (shareable links), else the last view this browser used
     const storedView = (() => { try { return localStorage.getItem('cases:view'); } catch { return null; } })();
     const view: 'table' | 'board' = (searchParams.get('view') ?? storedView) === 'board' ? 'board' : 'table';
@@ -55,10 +65,10 @@ export default function CasesList() {
     };
     const queryClient = useQueryClient();
 
-    const { data: cases, isLoading } = useQuery<Case[]>({
+    const { data: cases, isLoading, isError, refetch } = useQuery<Case[]>({
         queryKey: ['cases'],
         queryFn: async () => {
-            const response = await api.get('/cases/');
+            const response = await api.get('/cases/', { params: { limit: 500 } });
             return response.data;
         }
     });
@@ -113,217 +123,182 @@ export default function CasesList() {
         if (searchParams.has('new')) setSearchParams(p => { p.delete('new'); return p; }, { replace: true });
     };
 
+    const { data: people } = useQuery<{ id: number; name: string; email: string }[]>({
+        queryKey: ['assignable'],
+        queryFn: async () => (await api.get('/users/assignable')).data,
+        enabled: !!ownerFilter && ownerFilter !== 'none',
+    });
+    const ownerName = (id: string) => { const u = people?.find(p => String(p.id) === id); return u ? (u.name || u.email) : `#${id}`; };
+    const drillChips = ([
+        ['owner', ownerFilter && (ownerFilter === 'none' ? 'Unassigned' : `Owner: ${ownerName(ownerFilter)}`)],
+        ['age', ageFilter && `Open for ${ageFilter}`],
+        ['outcome', outcomeFilter && `Outcome: ${outcomeFilter === 'not_set' ? 'Not set' : outcomeLabel(outcomeFilter)}`],
+        ['from', (fromFilter || toFilter) && `Created ${fromFilter ?? '…'} – ${toFilter ?? '…'}`],
+    ] as const).filter((c): c is readonly [typeof c[0], string] => !!c[1]);
+
+    const q = searchQuery.trim().toLowerCase().replace(/^#/, '');
+    const slaValues = slaFilter.split(',');
     const filteredCases = cases?.filter(c => {
-        const matchesSearch = !searchQuery || (
-            c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            c.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            String(c.id).includes(searchQuery)
+        const matchesSearch = !q || (
+            c.title.toLowerCase().includes(q) ||
+            (c.description ?? '').toLowerCase().includes(q) ||
+            String(c.id).includes(q)
         );
         const matchesSeverity = severityFilter === 'all' || c.severity === severityFilter;
-        const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+        const matchesStatus = statusFilter === 'all'
+            || (statusFilter === 'active' ? !CLOSED.includes(c.status) : c.status === statusFilter);
         const matchesTag = tagFilter === 'all' || (c.tags && c.tags.includes(tagFilter));
+        const matchesSla = slaFilter === 'all' || slaValues.includes(c.sla_overall_status ?? '');
+        const matchesOwner = !ownerFilter || (ownerFilter === 'none' ? c.owner_id == null : String(c.owner_id) === ownerFilter);
+        const ageDays = (now - +new Date(c.created_at)) / 86_400_000;
+        const bucket = ageFilter ? AGE_BUCKETS[ageFilter] : undefined;
+        const matchesAge = !bucket || (ageDays >= bucket[0] && ageDays < bucket[1]);
+        const matchesOutcome = !outcomeFilter || (c.outcome ?? 'not_set') === outcomeFilter;
+        const day = c.created_at.slice(0, 10); // UTC day, same as the dashboards
+        const matchesRange = (!fromFilter || day >= fromFilter) && (!toFilter || day <= toFilter);
 
-        return matchesSearch && matchesSeverity && matchesStatus && matchesTag;
+        return matchesSearch && matchesSeverity && matchesStatus && matchesTag && matchesSla
+            && matchesOwner && matchesAge && matchesOutcome && matchesRange;
     }) || [];
 
-    if (isLoading) {
-        return (
-            <PageContainer>
-                <div className="flex items-center justify-center h-[50vh]">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-line-strong"></div>
-                </div>
-            </PageContainer>
-        );
-    }
+    const fmtDate = (d: string) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
     return (
-        <PageContainer className="space-y-4">
-            {/* Improved Header with Filters */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-fg tracking-tight">Cases</h1>
-                    <p className="text-fg-3 text-sm mt-0.5">
-                        {filteredCases.length} records found
-                    </p>
+        <PageContainer>
+            <PageHeader
+                title="Cases"
+                count={cases ? filteredCases.length : undefined}
+                className="mb-0"
+            />
+
+            <div className="flex flex-wrap items-center gap-2" role="search">
+                <div className="relative">
+                    <Search size={14} aria-hidden className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-3 pointer-events-none" />
+                    <Input
+                        type="search"
+                        inputSize="sm"
+                        aria-label="Search cases"
+                        value={searchQuery}
+                        onChange={(e) => setFilter('q', e.target.value)}
+                        placeholder="Search by #ID or title"
+                        className="pl-8 w-52 lg:w-64"
+                    />
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                    {/* Search */}
-                    <div className="relative group">
-                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted group-focus-within:text-fg-2 transition-colors" />
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Search (ID, Title)..."
-                            className="bg-panel border border-line rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all w-48 lg:w-64 placeholder:text-muted"
-                        />
-                    </div>
-
-                    {/* Filters */}
-                    <div className="relative">
-                        <select
-                            value={severityFilter}
-                            onChange={(e) => setSeverityFilter(e.target.value)}
-                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
-                        >
-                            <option value="all">All Severities</option>
-                            <option value="critical">Critical</option>
-                            <option value="high">High</option>
-                            <option value="medium">Medium</option>
-                            <option value="low">Low</option>
-                            <option value="info">Info</option>
-                        </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                    </div>
-
-                    <div className="relative">
-                        <select
-                            value={tagFilter}
-                            onChange={(e) => setTagFilter(e.target.value)}
-                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
-                        >
-                            <option value="all">All Tags</option>
-                            {availableTags?.map(tag => (
-                                <option key={tag} value={tag}>{tag}</option>
-                            ))}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                    </div>
-
-                    <div className="relative">
-                        <select
-                            value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
-                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
-                        >
-                            <option value="all">All Statuses</option>
-                            <option value="new">New</option>
-                            <option value="open">Open</option>
-                            <option value="in_progress">In Progress</option>
-                            <option value="pending">Pending</option>
-                            <option value="resolved">Resolved</option>
-                            <option value="closed">Closed</option>
-                        </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                    </div>
-
-                    <div className="flex border border-line rounded-lg overflow-hidden">
-                        {([['table', LayoutList], ['board', Columns3]] as const).map(([v, Icon]) => (
-                            <button
-                                key={v}
-                                onClick={() => changeView(v)}
-                                title={v === 'table' ? 'Table view' : 'Board view'}
-                                aria-pressed={view === v}
-                                className={cn("px-2 py-1.5", view === v ? "bg-fg text-on-accent" : "bg-panel text-fg-3 hover:text-fg")}
-                            >
-                                <Icon size={14} />
-                            </button>
-                        ))}
-                    </div>
-
-                    <button
-                        onClick={() => setShowNewCaseModal(true)}
-                        className="px-3.5 py-1.5 bg-brand-gradient hover:opacity-90 rounded-full text-sm font-semibold transition-opacity flex items-center gap-1.5 ml-2"
-                    >
-                        <Plus size={16} />
-                        New Case
+                <Select inputSize="sm" aria-label="Severity" value={severityFilter} onChange={(e) => setFilter('severity', e.target.value)} className="w-auto">
+                    <option value="all">All severities</option>
+                    {SEVERITY_ORDER.map(s => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
+                </Select>
+                <Select inputSize="sm" aria-label="Status" value={statusFilter} onChange={(e) => setFilter('status', e.target.value)} className="w-auto">
+                    <option value="all">All statuses</option>
+                    <option value="active">Active (not resolved or closed)</option>
+                    {CASE_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </Select>
+                <Select inputSize="sm" aria-label="SLA" value={slaFilter} onChange={(e) => setFilter('sla', e.target.value)} className="w-auto">
+                    <option value="all">Any SLA</option>
+                    <option value="at_risk,breached">At risk or breached</option>
+                    <option value="breached">Breached</option>
+                    <option value="at_risk">At risk</option>
+                </Select>
+                <Select inputSize="sm" aria-label="Tag" value={tagFilter} onChange={(e) => setFilter('tag', e.target.value)} className="w-auto">
+                    <option value="all">All tags</option>
+                    {availableTags?.map(tag => (
+                        <option key={tag} value={tag}>{tag}</option>
+                    ))}
+                </Select>
+                {hasFilters && <Button size="sm" variant="ghost" onClick={clearFilters}>Clear filters</Button>}
+                {drillChips.map(([key, label]) => (
+                    <button key={key} type="button" onClick={() => setSearchParams(p => { p.delete(key); if (key === 'from') p.delete('to'); return p; }, { replace: true })}
+                        className="inline-flex items-center gap-1 h-7 px-2 rounded-sm border border-accent/40 bg-accent/10 text-xs text-fg hover:border-accent"
+                        aria-label={`Remove filter: ${label}`}>
+                        {label}<X size={12} aria-hidden />
                     </button>
+                ))}
+
+                <div className="ml-auto flex rounded-md border border-line-strong overflow-hidden" role="group" aria-label="View">
+                    {([['table', LayoutList, 'Table view'], ['board', Columns3, 'Board view']] as const).map(([v, Icon, label]) => (
+                        <button
+                            key={v}
+                            type="button"
+                            onClick={() => changeView(v)}
+                            title={label}
+                            aria-label={label}
+                            aria-pressed={view === v}
+                            className={cn('h-8 px-2.5', view === v ? 'bg-raised text-fg' : 'bg-panel text-fg-3 hover:text-fg hover:bg-raised')}
+                        >
+                            <Icon size={14} aria-hidden />
+                        </button>
+                    ))}
                 </div>
             </div>
 
-            {view === 'board' ? (
-                <CasesBoard cases={filteredCases} severityConfig={severityConfig} />
+            {isLoading ? (
+                <Skeleton rows={8} />
+            ) : isError ? (
+                <ErrorState message="Could not load cases." onRetry={() => refetch()} />
+            ) : filteredCases.length === 0 ? (
+                <div className="rounded-md border border-line bg-panel">
+                    {hasFilters ? (
+                        <EmptyState title="No cases match these filters" body="Try a different search or clear the filters."
+                            action={<Button variant="secondary" onClick={clearFilters}>Clear filters</Button>} />
+                    ) : (
+                        <EmptyState title="No cases yet" body="Open a case when something needs investigating."
+                            action={<Button onClick={() => setShowNewCaseModal(true)}><Plus size={16} aria-hidden /> New case</Button>} />
+                    )}
+                </div>
+            ) : view === 'board' ? (
+                <CasesBoard cases={filteredCases} />
             ) : (
-            <div className="glass-panel rounded-lg border border-line overflow-hidden">
-                <div className="overflow-x-auto">
+                <div className="rounded-md border border-line bg-panel overflow-x-auto">
                     <table className="w-full text-sm text-left">
-                        <thead className="bg-panel border-b border-line text-xs uppercase text-fg-3 font-semibold tracking-wider">
-                            <tr>
-                                <th className="px-4 py-3 w-20">ID</th>
-                                <th className="px-4 py-3">Case Title</th>
-                                <th className="px-4 py-3 w-32">Severity</th>
-                                <th className="px-4 py-3 w-36">Status</th>
-                                <th className="px-4 py-3 w-28">SLA</th>
-                                <th className="px-4 py-3 w-40">Created</th>
-                                <th className="px-4 py-3 w-40">Updated</th>
+                        <thead className="border-b border-line bg-surface">
+                            <tr className="label-caps">
+                                <th scope="col" className="px-3 py-2">Case</th>
+                                <th scope="col" className="px-3 py-2 w-28">Severity</th>
+                                <th scope="col" className="px-3 py-2 w-32">Status</th>
+                                <th scope="col" className="px-3 py-2 w-28">SLA</th>
+                                <th scope="col" className="px-3 py-2 w-36">Created</th>
+                                <th scope="col" className="px-3 py-2 w-32">Updated</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-line">
-                            {filteredCases.length === 0 ? (
-                                <tr>
-                                    <td colSpan={7} className="px-6 py-12 text-center">
-                                        <div className="flex flex-col items-center justify-center text-muted">
-                                            <Search size={32} className="mb-2 opacity-50" />
-                                            <p>No matching cases found</p>
-                                        </div>
+                            {filteredCases.map((c) => (
+                                <tr
+                                    key={c.id}
+                                    onClick={(e) => {
+                                        // The title cell holds the real link (keyboard, middle-click); the rest of the row is a mouse shortcut.
+                                        if ((e.target as HTMLElement).closest('a,button')) return;
+                                        navigate(`/cases/${c.id}`);
+                                    }}
+                                    className="group cursor-pointer hover:bg-raised transition-colors"
+                                >
+                                    <td className="px-3 py-2.5">
+                                        <Link to={`/cases/${c.id}`} className="flex items-baseline gap-2 min-w-0">
+                                            <span className="num text-xs text-fg-3 shrink-0">#{c.id}</span>
+                                            <span className="font-medium text-fg group-hover:text-accent transition-colors truncate max-w-md">{c.title}</span>
+                                        </Link>
+                                        {c.description && (
+                                            <div className="text-xs text-fg-3 mt-0.5 truncate max-w-md hidden md:block">
+                                                {c.description}
+                                            </div>
+                                        )}
                                     </td>
+                                    <td className="px-3 py-2.5"><SeverityStamp severity={c.severity} /></td>
+                                    <td className="px-3 py-2.5"><StatusStamp status={c.status} /></td>
+                                    <td className="px-3 py-2.5"><SLABadge status={c.sla_overall_status} /></td>
+                                    <td className="px-3 py-2.5 text-fg-3 text-xs whitespace-nowrap num">
+                                        {fmtDate(c.created_at)}
+                                        <span className="ml-1">
+                                            {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                    </td>
+                                    <td className="px-3 py-2.5 text-fg-3 text-xs whitespace-nowrap num">{fmtDate(c.updated_at)}</td>
                                 </tr>
-                            ) : (
-                                filteredCases.map((c) => {
-                                    const config = severityConfig[c.severity] || severityConfig.info;
-                                    const StatusIcon = statusConfig[c.status]?.icon || AlertCircle;
-                                    const statusColor = statusConfig[c.status]?.color || 'text-fg-3';
-
-                                    return (
-                                        <tr
-                                            key={c.id}
-                                            className="group hover:bg-raised transition-colors"
-                                        >
-                                            <td className="px-4 py-2.5 font-mono text-muted group-hover:text-fg-3">
-                                                #{c.id}
-                                            </td>
-                                            <td className="px-4 py-2.5">
-                                                <Link to={`/cases/${c.id}`} className="block">
-                                                    <div className="font-medium text-fg group-hover:text-accent transition-colors truncate max-w-md">
-                                                        {c.title}
-                                                    </div>
-                                                    {c.description && (
-                                                        <div className="text-xs text-muted mt-0.5 truncate max-w-md hidden md:block">
-                                                            {c.description}
-                                                        </div>
-                                                    )}
-                                                </Link>
-                                            </td>
-                                            <td className="px-4 py-2.5">
-                                                <span className={cn(
-                                                    "inline-flex items-center px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border",
-                                                    config.color, config.bg, config.border
-                                                )}>
-                                                    {c.severity}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-2.5">
-                                                <div className="flex items-center gap-1.5">
-                                                    <StatusIcon size={14} className={statusColor} />
-                                                    <span className={cn("text-xs font-medium capitalize", statusColor)}>
-                                                        {c.status}
-                                                    </span>
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-2.5">
-                                                <SLABadge status={c.sla_overall_status} />
-                                            </td>
-                                            <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">
-                                                {new Date(c.created_at).toLocaleDateString()}
-                                                <span className="text-muted ml-1">
-                                                    {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">
-                                                {new Date(c.updated_at).toLocaleDateString()}
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
+                            ))}
                         </tbody>
                     </table>
                 </div>
-            </div>
             )}
 
-            {/* New Case Modal */}
             <NewCaseModal
                 show={showNewCaseModal}
                 onClose={closeModal}

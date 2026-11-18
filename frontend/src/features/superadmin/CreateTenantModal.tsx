@@ -24,7 +24,7 @@ export default function CreateTenantModal({ isOpen, onClose }: CreateTenantModal
             handleClose();
         },
         onError: (err: any) => {
-            setError(err.response?.data?.detail || 'Failed to create tenant.');
+            setError(err.response?.data?.detail || 'Could not create the organization.');
         },
     });
 
@@ -49,7 +49,7 @@ export default function CreateTenantModal({ isOpen, onClose }: CreateTenantModal
         <Modal
             open={isOpen}
             onClose={handleClose}
-            title="Create Tenant"
+            title="Create organization"
             size="lg"
             footer={<>
                 <button type="button" onClick={handleClose} className={btnSecondary}>Cancel</button>
@@ -59,7 +59,7 @@ export default function CreateTenantModal({ isOpen, onClose }: CreateTenantModal
                     disabled={createMutation.isPending}
                     className={btnPrimary}
                 >
-                    {createMutation.isPending ? 'Creating...' : 'Create Tenant'}
+                    {createMutation.isPending ? 'Creating…' : 'Create organization'}
                 </button>
             </>}
         >
@@ -90,7 +90,7 @@ export default function CreateTenantModal({ isOpen, onClose }: CreateTenantModal
                     <p className="text-xs text-muted mt-1">URL-friendly identifier. Lowercase, numbers, hyphens only.</p>
                 </div>
 
-                {error && <p className="text-red-300 text-sm">{error}</p>}
+                {error && <p role="alert" className="text-severity-critical text-sm">{error}</p>}
             </form>
         </Modal>
     );

@@ -4,18 +4,21 @@ import { UserPlus, Shield, ShieldCheck, Eye, ChevronDown } from 'lucide-react';
 import { api } from '../../api/client';
 import type { User } from '../../types';
 import InviteUserModal from './InviteUserModal';
-import PageContainer from '../../components/layout/PageContainer';
-import Modal, { btnDanger, btnSecondary } from '../../components/layout/Modal';
+import Modal from '../../components/layout/Modal';
+import { Badge, Button, ErrorState, FolderTabs, Select, Skeleton, Stamp } from '../../components/ui';
+import SettingsPageHeader from '../settings/SettingsPageHeader';
 import Avatar from '../../components/Avatar';
 import GroupsSection from '../escalation/GroupsSection';
 import { mfaErrorMessage } from '../profile/mfaErrors';
 
 const roleBadgeColors: Record<string, string> = {
-    admin: 'bg-purple-500/10 text-purple-300 border-purple-500/30',
-    analyst: 'bg-accent/20 text-accent border-accent/40',
-    viewer: 'bg-raised-2 text-fg-3 border-line-strong',
-    super_admin: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
+    admin: 'bg-accent/10 text-accent border-accent/30',
+    analyst: 'bg-raised text-fg-2 border-line-strong',
+    viewer: 'bg-raised text-fg-3 border-line',
+    super_admin: 'bg-severity-medium/10 text-severity-medium border-severity-medium/30',
 };
+
+const ROLE_LABEL: Record<string, string> = { admin: 'Admin', analyst: 'Analyst', viewer: 'Viewer', super_admin: 'Super admin' };
 
 const roleIcons: Record<string, typeof Shield> = {
     admin: ShieldCheck,
@@ -38,7 +41,7 @@ export default function UserManagement() {
         staleTime: 5 * 60 * 1000,
     });
 
-    const { data: users = [], isLoading } = useQuery({
+    const { data: users = [], isLoading, isError, refetch } = useQuery({
         queryKey: ['users'],
         queryFn: async () => {
             const response = await api.get('/users/');
@@ -79,66 +82,50 @@ export default function UserManagement() {
     });
 
     const toggle = (
-        <div role="tablist" aria-label="Users view" className="inline-flex border border-line rounded-lg overflow-hidden text-sm">
-            {(['members', 'groups'] as const).map((t) => (
-                <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-                    className={`px-4 py-1.5 capitalize ${tab === t ? 'bg-raised text-fg font-medium' : 'text-fg-3 hover:text-fg'}`}>{t}</button>
-            ))}
-        </div>
+        <FolderTabs label="Users view" idPrefix="users-view" value={tab} onChange={setTab}
+            items={[{ value: 'members', label: 'Members', count: users.length || undefined }, { value: 'groups', label: 'Groups' }]} />
     );
 
     if (tab === 'groups') {
         return (
-            <PageContainer>
+            <div className="space-y-6">
+                <SettingsPageHeader title="Users" description="Manage users in your organization." />
                 {toggle}
-                <GroupsSection />
-            </PageContainer>
+                <div id="users-view-panel" role="tabpanel" aria-labelledby="users-view-groups"><GroupsSection /></div>
+            </div>
         );
     }
 
     return (
-        <PageContainer>
+        <div className="space-y-6">
+            <SettingsPageHeader title="Users" description="Manage users in your organization."
+                actions={<Button onClick={() => setShowInviteModal(true)}><UserPlus size={16} />Invite user</Button>} />
             {toggle}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-fg">Users</h1>
-                    <p className="text-sm text-fg-3 mt-1">Manage users in your organization</p>
-                </div>
-                <button
-                    onClick={() => setShowInviteModal(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-on-accent rounded-lg text-sm font-medium transition-colors"
-                >
-                    <UserPlus size={16} />
-                    Invite User
-                </button>
-            </div>
 
+            <div id="users-view-panel" role="tabpanel" aria-labelledby="users-view-members" className="space-y-4">
             {notice && (
                 <div role={notice.ok ? 'status' : 'alert'}
-                    className={`flex items-center justify-between gap-3 px-4 py-2.5 text-sm border ${notice.ok ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                    className={`flex items-center justify-between gap-3 rounded-md px-4 py-2.5 text-sm border ${notice.ok ? 'bg-raised border-line text-fg-2' : 'bg-severity-critical/5 border-severity-critical/30 text-severity-critical'}`}>
                     <span>{notice.text}</span>
-                    <button onClick={() => setNotice(null)} className="text-xs underline">Dismiss</button>
+                    <Button variant="ghost" size="sm" onClick={() => setNotice(null)}>Dismiss</Button>
                 </div>
             )}
 
-            <div className="bg-panel border border-line rounded-xl overflow-hidden">
-                <table className="w-full">
+            {isError ? <ErrorState message="Could not load users." onRetry={() => refetch()} /> : (
+            <div className="bg-panel border border-line rounded-md overflow-x-auto">
+                <table className="w-full text-sm">
                     <thead>
-                        <tr className="border-b border-line">
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">User</th>
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Role</th>
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Status</th>
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">MFA</th>
-                            <th className="text-right px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Actions</th>
+                        <tr className="border-b border-line label-caps text-left">
+                            <th className="px-3 py-2">User</th>
+                            <th className="px-3 py-2">Role</th>
+                            <th className="px-3 py-2">Status</th>
+                            <th className="px-3 py-2">MFA</th>
+                            <th className="px-3 py-2 text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
                         {isLoading ? (
-                            <tr>
-                                <td colSpan={5} className="px-6 py-8 text-center text-muted">
-                                    <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-accent mx-auto" />
-                                </td>
-                            </tr>
+                            <tr><td colSpan={5} className="p-3"><Skeleton rows={4} /></td></tr>
                         ) : users.map(user => {
                             const role = user.role ?? 'viewer';
                             const RoleIcon = roleIcons[role] || Shield;
@@ -148,19 +135,18 @@ export default function UserManagement() {
                             const roleEditable = !user.is_super_admin || !!me?.is_super_admin;
                             return (
                                 <tr key={user.id} className="hover:bg-raised transition-colors">
-                                    <td className="px-6 py-4">
+                                    <td className="px-3 py-2.5">
                                         <div className="flex items-center gap-3">
-                                            <Avatar userId={user.id} name={user.full_name || user.email} hasAvatar={user.has_avatar} version={user.avatar_version} size={32} />
-                                            <div>
-                                                <p className="text-sm font-medium text-fg">{user.full_name || 'Unnamed'}</p>
-                                                <p className="text-xs text-muted">{user.email}</p>
+                                            <Avatar userId={user.id} name={user.full_name || user.email} hasAvatar={user.has_avatar} version={user.avatar_version} size={28} />
+                                            <div className="min-w-0">
+                                                <p className="font-medium text-fg truncate">{user.full_name || 'Unnamed'}</p>
+                                                <p className="text-xs text-fg-3 truncate">{user.email}</p>
                                             </div>
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4">
+                                    <td className="px-3 py-2.5">
                                         {editingRoleUser === user.id && roleEditable ? (
-                                            <select
-                                                className="bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg"
+                                            <Select inputSize="sm" className="w-28" aria-label={`Role for ${user.email}`}
                                                 defaultValue={role}
                                                 onChange={e => roleMutation.mutate({ userId: user.id, role: e.target.value })}
                                                 onBlur={() => setEditingRoleUser(null)}
@@ -169,65 +155,52 @@ export default function UserManagement() {
                                                 <option value="analyst">Analyst</option>
                                                 <option value="admin">Admin</option>
                                                 <option value="viewer">Viewer</option>
-                                            </select>
+                                            </Select>
                                         ) : (
                                             <button
                                                 onClick={() => roleEditable && setEditingRoleUser(user.id)}
                                                 disabled={!roleEditable}
-                                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${roleBadgeColors[role] || roleBadgeColors.viewer}`}
+                                                aria-label={roleEditable ? `Role: ${ROLE_LABEL[role] ?? role}. Change role` : undefined}
+                                                className={`inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 text-xs font-medium ${roleBadgeColors[role] || roleBadgeColors.viewer} ${roleEditable ? 'hover:bg-raised-2' : ''}`}
                                             >
-                                                <RoleIcon size={12} />
-                                                {role}
-                                                {roleEditable && <ChevronDown size={10} className="opacity-50" />}
+                                                <RoleIcon size={12} aria-hidden />
+                                                {ROLE_LABEL[role] ?? role}
+                                                {roleEditable && <ChevronDown size={10} className="opacity-50" aria-hidden />}
                                             </button>
                                         )}
                                     </td>
-                                    <td className="px-6 py-4">
-                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                                            user.is_active
-                                                ? 'bg-green-500/10 text-green-300 border border-green-500/30'
-                                                : 'bg-red-500/10 text-red-300 border border-red-500/30'
-                                        }`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${user.is_active ? 'bg-green-400' : 'bg-red-400'}`} />
-                                            {user.is_active ? 'Active' : 'Inactive'}
-                                        </span>
+                                    <td className="px-3 py-2.5">
+                                        <Stamp tone={user.is_active ? 'ok' : 'critical'}>{user.is_active ? 'Active' : 'Inactive'}</Stamp>
                                     </td>
-                                    <td className="px-6 py-4">
-                                        <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium border ${
-                                            user.mfa_enabled
-                                                ? 'bg-green-500/10 text-green-300 border-green-500/30'
-                                                : 'bg-raised text-fg-3 border-line'
-                                        }`}>
-                                            MFA {user.mfa_enabled ? 'on' : 'off'}
-                                        </span>
+                                    <td className="px-3 py-2.5">
+                                        <Badge variant={user.mfa_enabled ? 'low' : 'default'}>MFA {user.mfa_enabled ? 'on' : 'off'}</Badge>
                                     </td>
-                                    <td className="px-6 py-4 text-right space-x-4">
+                                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                                        <span className="inline-flex items-center gap-1">
                                         {me && manageable && user.mfa_enabled && user.id !== me.id && (!user.is_super_admin || me.is_super_admin) && (
-                                            <button
-                                                onClick={() => setResetTarget(user)}
-                                                className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                                            >
+                                            <Button variant="ghost" size="sm" className="text-severity-critical" onClick={() => setResetTarget(user)}>
                                                 Reset MFA
-                                            </button>
+                                            </Button>
                                         )}
                                         {manageable ? (
-                                            <button
-                                                onClick={() => toggleActiveMutation.mutate({ userId: user.id, activate: !user.is_active })}
-                                                className="text-xs text-fg-3 hover:text-fg transition-colors"
-                                            >
+                                            <Button variant="ghost" size="sm"
+                                                onClick={() => toggleActiveMutation.mutate({ userId: user.id, activate: !user.is_active })}>
                                                 {user.is_active ? 'Deactivate' : 'Activate'}
-                                            </button>
+                                            </Button>
                                         ) : (
-                                            <span className="text-xs text-muted" title="This account belongs to other tenants or is a platform admin; ask a platform admin.">
+                                            <span className="text-xs text-fg-3" title="This account belongs to other organizations or is a platform admin; ask a platform admin.">
                                                 Managed by platform admin
                                             </span>
                                         )}
+                                        </span>
                                     </td>
                                 </tr>
                             );
                         })}
                     </tbody>
                 </table>
+            </div>
+            )}
             </div>
 
             <Modal
@@ -236,10 +209,10 @@ export default function UserManagement() {
                 title="Reset two-factor authentication"
                 size="md"
                 footer={<>
-                    <button className={btnSecondary} onClick={() => setResetTarget(null)} disabled={resetMfa.isPending}>Cancel</button>
-                    <button className={btnDanger} onClick={() => resetTarget && resetMfa.mutate(resetTarget)} disabled={resetMfa.isPending}>
+                    <Button variant="secondary" onClick={() => setResetTarget(null)} disabled={resetMfa.isPending}>Cancel</Button>
+                    <Button variant="danger" onClick={() => resetTarget && resetMfa.mutate(resetTarget)} disabled={resetMfa.isPending}>
                         {resetMfa.isPending ? 'Resetting…' : 'Reset MFA'}
-                    </button>
+                    </Button>
                 </>}
             >
                 <p className="text-sm text-fg-2">
@@ -250,6 +223,6 @@ export default function UserManagement() {
             </Modal>
 
             <InviteUserModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} />
-        </PageContainer>
+        </div>
     );
 }

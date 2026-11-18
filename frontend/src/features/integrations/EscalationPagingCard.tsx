@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Copy, Check, BellRing } from 'lucide-react';
-import { Button, Input } from '../../components/ui';
+import { Button, Input, Card } from '../../components/ui';
 import { errMsg, useEscalationIntegrations, useOpsgenieToken, useSaveEscalationIntegrations } from '../escalation/api';
 
 function CopyField({ label, value }: { label: string; value: string }) {
@@ -12,7 +12,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
         <div className="space-y-1">
             <div className="text-xs text-fg-2">{label}</div>
             <div className="flex items-center gap-2">
-                <code className="flex-1 min-w-0 truncate bg-canvas border border-line rounded-lg px-3 py-2 text-xs font-mono text-fg">{value}</code>
+                <code className="flex-1 min-w-0 truncate bg-canvas border border-line rounded-md px-3 py-2 text-xs font-mono text-fg">{value}</code>
                 <Button variant="secondary" size="sm" aria-label={`Copy ${label}`} onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</Button>
             </div>
         </div>
@@ -53,10 +53,10 @@ export default function EscalationPagingCard() {
     };
 
     return (
-        <div className="bg-panel border border-line p-5 space-y-4">
+        <Card className="p-4 space-y-4">
             <div className="flex items-center gap-2">
                 <BellRing size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">Escalation paging</h2>
+                <h3 className="text-sm font-semibold text-fg">Escalation paging</h3>
             </div>
             <p className="text-xs text-fg-3">Point PagerDuty or Opsgenie at these URLs so acknowledging a page accepts the escalated case.</p>
             {data && (<>
@@ -66,7 +66,7 @@ export default function EscalationPagingCard() {
 
             <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1">
-                    <label htmlFor="pd-secret" className="text-xs text-fg-2">PagerDuty signing secret {data?.has_pagerduty_webhook_secret && <span className="text-emerald-300">(set)</span>}</label>
+                    <label htmlFor="pd-secret" className="text-xs text-fg-2">PagerDuty signing secret {data?.has_pagerduty_webhook_secret && <span className="text-lime">(set)</span>}</label>
                     <div className="flex gap-2">
                         <Input id="pd-secret" type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)}
                             placeholder={data?.has_pagerduty_webhook_secret ? 'Enter a new value to replace' : ''} />
@@ -74,7 +74,7 @@ export default function EscalationPagingCard() {
                     </div>
                 </div>
                 <div className="space-y-1">
-                    <label htmlFor="pd-key" className="text-xs text-fg-2">PagerDuty API key {data?.has_pagerduty_api_key && <span className="text-emerald-300">(set)</span>}</label>
+                    <label htmlFor="pd-key" className="text-xs text-fg-2">PagerDuty API key {data?.has_pagerduty_api_key && <span className="text-lime">(set)</span>}</label>
                     <div className="flex gap-2">
                         <Input id="pd-key" type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
                             placeholder={data?.has_pagerduty_api_key ? 'Enter a new value to replace' : ''} />
@@ -85,12 +85,12 @@ export default function EscalationPagingCard() {
             <Button variant="secondary" size="sm" disabled={(!secret && !apiKey) || save.isPending} onClick={submit}>Save</Button>
 
             <div className="space-y-2 border-t border-line pt-4">
-                <div className="text-xs text-fg-2">Opsgenie token {data?.has_opsgenie_token && <span className="text-emerald-300">(set)</span>}</div>
+                <div className="text-xs text-fg-2">Opsgenie token {data?.has_opsgenie_token && <span className="text-lime">(set)</span>}</div>
                 <Button variant="secondary" size="sm" disabled={gen.isPending} onClick={generate}>
                     {data?.has_opsgenie_token ? 'Regenerate token' : 'Generate token'}
                 </Button>
                 {token && (
-                    <div className="p-3 rounded-lg border border-accent/40 bg-surface space-y-2">
+                    <div className="p-3 rounded-md border border-accent/40 bg-surface space-y-2">
                         <p className="text-xs text-fg-2">Copy it now: it won't be shown again. Any previous token stops working.</p>
                         <div className="flex items-center gap-2">
                             <code className="flex-1 min-w-0 truncate font-mono text-xs text-fg">{token}</code>
@@ -100,7 +100,7 @@ export default function EscalationPagingCard() {
                     </div>
                 )}
             </div>
-            {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-xs ${msg.ok ? 'text-emerald-300' : 'text-severity-critical'}`}>{msg.text}</p>}
-        </div>
+            {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-xs ${msg.ok ? 'text-lime' : 'text-severity-critical'}`}>{msg.text}</p>}
+        </Card>
     );
 }

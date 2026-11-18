@@ -44,7 +44,7 @@ export default function DeleteCaseModal({ caseId, title, open, onClose }: {
 
     return (
         <Modal open={open} onClose={close} size="md"
-            title={<span className="text-red-300 flex items-center gap-2"><AlertTriangle size={16} />Delete case #{number}</span>}
+            title={<span className="text-severity-critical flex items-center gap-2"><AlertTriangle size={16} aria-hidden />Delete case #{number}</span>}
             footer={<>
                 <button onClick={close} className={btnSecondary}>Cancel</button>
                 <button onClick={() => del.mutate()} disabled={!ok || !pv || del.isPending} className={btnDanger}>
@@ -56,25 +56,25 @@ export default function DeleteCaseModal({ caseId, title, open, onClose }: {
                     This permanently deletes <span className="font-medium text-fg">{title}</span> and everything that
                     belongs only to it. It cannot be undone; the audit log keeps a record of the deletion.
                 </p>
-                {isLoading && <p className="text-muted">Checking what goes with it…</p>}
+                {isLoading && <p className="text-fg-3">Checking what goes with it…</p>}
                 {isError && <p role="alert" className="text-severity-critical">Could not load what the deletion affects.</p>}
                 {pv && (
                     <>
                         {pv.warnings.length > 0 && (
-                            <ul role="alert" className="space-y-1.5 border border-red-500/40 bg-red-500/10 p-3 text-red-200">
-                                {pv.warnings.map((w) => <li key={w} className="flex gap-2"><AlertTriangle size={14} className="shrink-0 mt-0.5" />{w}</li>)}
+                            <ul role="alert" className="space-y-1.5 rounded-md border border-severity-critical/30 bg-severity-critical/5 p-3 text-fg">
+                                {pv.warnings.map((w) => <li key={w} className="flex gap-2"><AlertTriangle size={14} className="shrink-0 mt-0.5 text-severity-critical" aria-hidden />{w}</li>)}
                             </ul>
                         )}
                         {removed.length > 0 && (
                             <p className="text-fg-2">Deleted with it: {removed.map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(', ')}.</p>
                         )}
-                        <p className="text-muted">Kept: artifacts and IOCs stay in the organization{pv.alerts ? '; its alerts return to the Alerts queue' : ''}.</p>
+                        <p className="text-fg-3">Kept: artifacts and IOCs stay in the organization{pv.alerts ? '; its alerts return to the Alerts queue' : ''}.</p>
                     </>
                 )}
                 <div>
-                    <label className={modalLabel}>Type the case number <span className="font-mono text-red-300">{number}</span> to confirm</label>
-                    <input type="text" autoComplete="off" value={confirmText} onChange={(e) => setConfirmText(e.target.value)}
-                        className={`${modalInput} font-mono focus:border-red-500 focus:ring-red-500`} />
+                    <label htmlFor="delete-case-confirm" className={modalLabel}>Type the case number <span className="font-mono text-severity-critical">{number}</span> to confirm</label>
+                    <input id="delete-case-confirm" type="text" autoComplete="off" value={confirmText} onChange={(e) => setConfirmText(e.target.value)}
+                        className={`${modalInput} font-mono`} />
                 </div>
                 {del.isError && <p role="alert" className="text-severity-critical">{typeof err === 'string' ? err : 'Could not delete the case.'}</p>}
             </div>

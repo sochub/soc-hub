@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import { switchTenant } from '../../api/auth';
 import { cn } from '../../lib/utils';
 import PageContainer from '../../components/layout/PageContainer';
+import { Button, Card, ErrorState, Input, Label, PageHeader, Select, SeverityStamp, Skeleton, StatusStamp } from '../../components/ui';
 import type { User } from '../../types';
 
 type TenantRow = {
@@ -19,12 +20,6 @@ type QueueRow = {
 type Overview = { tenants: TenantRow[]; queue: QueueRow[]; queue_total: number; hidden_tenants: number };
 type Digest = { text: string; recipients: string[]; last_sent_at: string | null; can_edit_recipients: boolean };
 
-const SEV = 'text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-sm border';
-const SEV_COLOR: Record<string, string> = {
-    critical: 'text-severity-critical border-red-500/30 bg-red-500/10', high: 'text-severity-high border-orange-500/30 bg-orange-500/10',
-    medium: 'text-severity-medium border-amber-500/30 bg-amber-500/10', low: 'text-severity-low border-accent/40 bg-accent/10',
-    info: 'text-fg-2 border-line bg-raised',
-};
 const SLA_COLOR: Record<string, string> = { breached: 'text-severity-critical', at_risk: 'text-severity-high' };
 const hours = (h: number | null) => (h == null ? '—' : h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`);
 const apiError = (err: unknown, fallback: string) => {
@@ -50,38 +45,37 @@ function DigestPanel({ tenant, onClose }: { tenant: TenantRow; onClose: () => vo
         try { await navigator.clipboard.writeText(data.text); setCopied(true); } catch { /* clipboard unavailable */ }
     };
     return (
-        <div className="glass-panel rounded-xl border border-line bg-panel p-4 space-y-3">
-            <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-fg">{tenant.name}: summary</h3>
-                <select value={days} onChange={(e) => { setDays(Number(e.target.value)); setCopied(false); }} aria-label="Period"
-                    className="ml-2 bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg-2">
-                    <option value={7}>last 7 days</option><option value={30}>last 30 days</option><option value={90}>last 90 days</option>
-                </select>
-                <button onClick={copy} disabled={!data} className="ml-auto text-xs bg-raised hover:bg-raised-2 text-fg-2 px-2.5 py-1 rounded-sm flex items-center gap-1.5">
-                    <Copy size={12} /> {copied ? 'Copied' : 'Copy'}
-                </button>
-                <button onClick={onClose} className="text-muted hover:text-fg" aria-label="Close"><X size={16} /></button>
+        <Card className="p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold text-fg">{tenant.name}: summary</h2>
+                <Select inputSize="sm" value={days} onChange={(e) => { setDays(Number(e.target.value)); setCopied(false); }} aria-label="Period" className="ml-2 w-auto">
+                    <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
+                </Select>
+                <Button size="sm" variant="secondary" onClick={copy} disabled={!data} className="ml-auto">
+                    <Copy size={12} aria-hidden /> {copied ? 'Copied' : 'Copy'}
+                </Button>
+                <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close summary"><X size={16} /></Button>
             </div>
-            <pre className="text-xs text-fg-2 bg-surface rounded-lg p-3 whitespace-pre-wrap">{data?.text ?? 'Loading…'}</pre>
+            {data ? <pre className="text-xs text-fg-2 bg-surface border border-line rounded-md p-3 whitespace-pre-wrap">{data.text}</pre> : <Skeleton rows={3} />}
             {data && (
                 <div className="text-xs text-fg-2 space-y-1.5">
                     <p>Weekly email: {data.recipients.length ? data.recipients.join(', ') : 'off'}
                         {data.last_sent_at && <span className="text-muted"> · last sent {new Date(data.last_sent_at).toLocaleString()}</span>}</p>
                     {data.can_edit_recipients && (recipients === null ? (
-                        <button onClick={() => setRecipients(data.recipients.join(', '))} className="text-accent hover:underline">Change recipients</button>
+                        <button type="button" onClick={() => setRecipients(data.recipients.join(', '))} className="text-accent hover:underline">Change recipients</button>
                     ) : (
-                        <div className="flex gap-2">
-                            <input value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ciso@example.com, it@example.com (empty = off)"
-                                aria-label="Recipients" className="flex-1 bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg" />
-                            <button onClick={() => save.mutate()} disabled={save.isPending} className="px-2.5 py-1 bg-accent text-on-accent rounded-sm">Save</button>
-                            <button onClick={() => setRecipients(null)} className="px-2 py-1 text-fg-3">Cancel</button>
+                        <div className="flex flex-wrap gap-2">
+                            <Input inputSize="sm" value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ciso@example.com, it@example.com (empty = off)"
+                                aria-label="Recipients" className="flex-1 min-w-48" />
+                            <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Save</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setRecipients(null)}>Cancel</Button>
                         </div>
                     ))}
                     {save.isError && <p role="alert" className="text-severity-critical">{apiError(save.error, 'Could not save the recipients.')}</p>}
-                    <p className="text-muted">Sent once a week to these addresses (the first one within the hour). Only this organization's admins can change them.</p>
+                    <p className="text-fg-3">Sent once a week to these addresses (the first one within the hour). Only this organization's admins can change them.</p>
                 </div>
             )}
-        </div>
+        </Card>
     );
 }
 
@@ -92,7 +86,7 @@ export default function Portfolio() {
     const [tenantFilter, setTenantFilter] = useState<number | 'all'>('all');
     const [switchError, setSwitchError] = useState<string | null>(null);
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
-    const { data, isLoading, dataUpdatedAt } = useQuery({ queryKey: ['portfolio'], queryFn: async () => (await api.get('/portfolio/')).data as Overview, refetchInterval: 60_000 });
+    const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({ queryKey: ['portfolio'], queryFn: async () => (await api.get('/portfolio/')).data as Overview, refetchInterval: 60_000 });
 
     // Opening a case of another organization switches the active tenant first (same checks as the tenant switcher).
     const open = async (tenantId: number, path: string) => {
@@ -108,73 +102,75 @@ export default function Portfolio() {
         }
     };
 
-    if (isLoading || !data) return <PageContainer><p className="font-mono text-xs text-muted">$ loading organizations…</p></PageContainer>;
+    if (isLoading) return <PageContainer><PageHeader title="Organizations" className="mb-0" /><Skeleton rows={8} /></PageContainer>;
+    if (isError || !data) return <PageContainer><PageHeader title="Organizations" className="mb-0" /><ErrorState message="Could not load your organizations." onRetry={() => refetch()} /></PageContainer>;
     const queue = tenantFilter === 'all' ? data.queue : data.queue.filter((q) => q.tenant_id === tenantFilter);
     return (
-        <PageContainer className="space-y-5">
-            <div>
-                <h1 className="text-2xl font-bold text-fg tracking-tight">Organizations</h1>
-                <p className="text-fg-3 text-sm mt-0.5">
-                    Every organization you work in, and one queue of their open cases: SLA breaches first, then severity, then age.
-                    {data.hidden_tenants > 0 && ` ${data.hidden_tenants} organization${data.hidden_tenants > 1 ? 's' : ''} need a different sign-in (SSO or two-factor) and are not shown.`}
-                </p>
-            </div>
+        <PageContainer>
+            <PageHeader title="Organizations" count={data.tenants.length} className="mb-0" description={<>
+                Every organization you work in, and one queue of their open cases: SLA breaches first, then severity, then age.
+                {data.hidden_tenants > 0 && ` ${data.hidden_tenants} organization${data.hidden_tenants > 1 ? 's' : ''} need a different sign-in (SSO or two-factor) and are not shown.`}
+            </>} />
             {switchError && <p role="alert" className="text-sm text-severity-critical">{switchError}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                 {data.tenants.map((t) => (
-                    <article key={t.id} className={cn('rounded-lg border bg-panel p-3 space-y-2', t.sla_breached ? 'border-red-500/40' : 'border-line')}>
+                    <article key={t.id} className={cn('rounded-md border bg-panel p-4 space-y-3', t.sla_breached ? 'border-severity-critical/50' : 'border-line')}>
                         <div className="flex items-center gap-2">
-                            <button onClick={() => open(t.id, '/')} className="text-sm font-semibold text-fg hover:underline truncate">{t.name}</button>
-                            <span className="text-[10px] font-mono text-muted">{t.role}</span>
-                            <button onClick={() => setDigestFor(t)} title="Summary" className="ml-auto text-muted hover:text-fg"><FileText size={14} /></button>
+                            <button type="button" onClick={() => open(t.id, '/')} className="text-sm font-semibold text-fg hover:underline truncate">{t.name}</button>
+                            <span className="text-xs text-fg-3 capitalize">{t.role}</span>
+                            <Button size="icon" variant="ghost" onClick={() => setDigestFor(t)} title="Summary" aria-label={`Summary for ${t.name}`} className="ml-auto h-8 w-8"><FileText size={14} /></Button>
                         </div>
                         <dl className="grid grid-cols-3 gap-2 text-xs">
-                            <div><dt className="text-muted">Open</dt><dd className="text-fg font-mono">{t.open_cases}</dd></div>
-                            <div><dt className="text-muted">SLA breached</dt><dd className={cn('font-mono', t.sla_breached ? 'text-severity-critical' : 'text-fg')}>{t.sla_breached}</dd></div>
-                            <div><dt className="text-muted">At risk</dt><dd className={cn('font-mono', t.sla_at_risk ? 'text-severity-high' : 'text-fg')}>{t.sla_at_risk}</dd></div>
-                            <div><dt className="text-muted">Unassigned</dt><dd className="text-fg font-mono">{t.unassigned}</dd></div>
-                            <div><dt className="text-muted">Pending alerts</dt><dd className="text-fg font-mono">{t.pending_alerts}</dd></div>
-                            <div><dt className="text-muted">MTTR 30d</dt><dd className="text-fg font-mono">{hours(t.mttr_hours_30d)}</dd></div>
+                            <div><dt className="text-fg-3">Open</dt><dd className="num text-sm text-fg">{t.open_cases}</dd></div>
+                            <div><dt className="text-fg-3">SLA breached</dt><dd className={cn('num text-sm', t.sla_breached ? 'text-severity-critical font-semibold' : 'text-fg')}>{t.sla_breached}</dd></div>
+                            <div><dt className="text-fg-3">At risk</dt><dd className={cn('num text-sm', t.sla_at_risk ? 'text-severity-high font-semibold' : 'text-fg')}>{t.sla_at_risk}</dd></div>
+                            <div><dt className="text-fg-3">Unassigned</dt><dd className="num text-sm text-fg">{t.unassigned}</dd></div>
+                            <div><dt className="text-fg-3">Pending alerts</dt><dd className="num text-sm text-fg">{t.pending_alerts}</dd></div>
+                            <div><dt className="text-fg-3">MTTR 30d</dt><dd className="num text-sm text-fg">{hours(t.mttr_hours_30d)}</dd></div>
                         </dl>
-                        <p className="text-[11px] text-muted">
-                            {(['critical', 'high', 'medium', 'low'] as const).filter((s) => t.by_severity[s]).map((s) => `${t.by_severity[s]} ${s}`).join(' · ') || 'no open cases'}
-                            {t.oldest_open_hours != null && ` · oldest ${hours(t.oldest_open_hours)}`}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-fg-3">
+                            {(['critical', 'high', 'medium', 'low'] as const).filter((s) => t.by_severity[s]).map((s) => (
+                                <span key={s} className="inline-flex items-center gap-1"><span className="num text-fg-2">{t.by_severity[s]}</span><SeverityStamp severity={s} /></span>
+                            ))}
+                            {!(['critical', 'high', 'medium', 'low'] as const).some((s) => t.by_severity[s]) && <span>No open cases</span>}
+                            {t.oldest_open_hours != null && <span className="num">· oldest {hours(t.oldest_open_hours)}</span>}
+                        </div>
                     </article>
                 ))}
             </div>
             {digestFor && <DigestPanel key={digestFor.id} tenant={digestFor} onClose={() => setDigestFor(null)} />}
-            <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold text-fg-2">Open cases <span className="font-mono text-xs text-muted">{queue.length}{data.queue_total > data.queue.length && ` of ${data.queue_total}`}</span></h2>
-                    <select value={tenantFilter} onChange={(e) => setTenantFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))} aria-label="Organization"
-                        className="ml-auto bg-panel border border-line rounded-sm px-2 py-1 text-xs text-fg-2">
+            <section className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-fg">Open cases <span className="num ml-1 font-normal text-fg-3">{queue.length}{data.queue_total > data.queue.length && ` of ${data.queue_total}`}</span></h2>
+                    <Label htmlFor="portfolio-org-filter" className="sr-only">Organization</Label>
+                    <Select id="portfolio-org-filter" inputSize="sm" value={tenantFilter} onChange={(e) => setTenantFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                        className="ml-auto w-auto">
                         <option value="all">All organizations</option>
                         {data.tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
+                    </Select>
                 </div>
-                <div className="overflow-x-auto rounded-lg border border-line">
+                <div className="overflow-x-auto rounded-md border border-line bg-panel">
                     <table className="w-full text-sm">
-                        <thead className="text-[11px] uppercase text-muted bg-surface">
-                            <tr><th className="px-3 py-2 text-left">SLA</th><th className="px-3 py-2 text-left">Severity</th><th className="px-3 py-2 text-left">Organization</th>
-                                <th className="px-3 py-2 text-left">Case</th><th className="px-3 py-2 text-left">Status</th><th className="px-3 py-2 text-left">Owner</th><th className="px-3 py-2 text-left">Age</th></tr>
+                        <thead className="bg-surface border-b border-line">
+                            <tr className="label-caps text-left"><th className="px-3 py-2">SLA</th><th className="px-3 py-2">Severity</th><th className="px-3 py-2">Organization</th>
+                                <th className="px-3 py-2">Case</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Owner</th><th className="px-3 py-2">Age</th></tr>
                         </thead>
                         <tbody className="divide-y divide-line">
-                            {queue.length === 0 ? <tr><td colSpan={7} className="px-3 py-8 text-center text-muted">No open cases.</td></tr> : queue.map((q) => (
-                                <tr key={`${q.tenant_id}-${q.case_id}`} className="hover:bg-raised">
-                                    <td className={cn('px-3 py-2 text-xs whitespace-nowrap', SLA_COLOR[q.sla_status] ?? 'text-fg-3')}>{q.sla_status.replace('_', ' ')}</td>
-                                    <td className="px-3 py-2"><span className={cn(SEV, SEV_COLOR[q.severity] ?? SEV_COLOR.info)}>{q.severity}</span></td>
-                                    <td className="px-3 py-2 text-xs text-fg-2 whitespace-nowrap">{q.tenant_name}</td>
-                                    <td className="px-3 py-2"><button onClick={() => open(q.tenant_id, `/cases/${q.case_id}`)} className="text-fg hover:underline text-left">#{q.case_id} {q.title}</button></td>
-                                    <td className="px-3 py-2 text-xs text-fg-3">{q.status.replace('_', ' ')}</td>
-                                    <td className="px-3 py-2 text-xs text-fg-3">{q.owner ?? <span className="text-severity-high">unassigned</span>}</td>
-                                    <td className="px-3 py-2 text-xs font-mono text-fg-3">{hours((dataUpdatedAt - new Date(q.created_at).getTime()) / 3_600_000)}</td>
+                            {queue.length === 0 ? <tr><td colSpan={7} className="px-3 py-8 text-center text-fg-3">No open cases.</td></tr> : queue.map((q) => (
+                                <tr key={`${q.tenant_id}-${q.case_id}`} className="hover:bg-raised cursor-pointer" onClick={() => open(q.tenant_id, `/cases/${q.case_id}`)}>
+                                    <td className={cn('px-3 py-2.5 text-xs whitespace-nowrap', SLA_COLOR[q.sla_status] ?? 'text-fg-3')}>{q.sla_status.replace('_', ' ')}</td>
+                                    <td className="px-3 py-2.5"><SeverityStamp severity={q.severity} /></td>
+                                    <td className="px-3 py-2.5 text-xs text-fg-2 whitespace-nowrap">{q.tenant_name}</td>
+                                    <td className="px-3 py-2.5"><button type="button" onClick={(e) => { e.stopPropagation(); open(q.tenant_id, `/cases/${q.case_id}`); }} className="text-fg hover:underline text-left"><span className="num text-fg-3">#{q.case_id}</span> {q.title}</button></td>
+                                    <td className="px-3 py-2.5"><StatusStamp status={q.status} /></td>
+                                    <td className="px-3 py-2.5 text-xs text-fg-3">{q.owner ?? <span className="text-severity-high">Unassigned</span>}</td>
+                                    <td className="px-3 py-2.5 text-xs num text-fg-3">{hours((dataUpdatedAt - new Date(q.created_at).getTime()) / 3_600_000)}</td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
-            </div>
+            </section>
         </PageContainer>
     );
 }

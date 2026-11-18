@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { Button, Skeleton } from '../../components/ui';
+import AuthLayout from '../auth/AuthLayout';
 
 type Question = { state: 'open'; organization: string; message: string; buttons: string[]; expires_at: string | null } | { state: 'closed' };
 
@@ -17,36 +19,31 @@ export default function VerifyPage() {
         mutationFn: async (index: number) => (await api.post(`/user-verification/${encodeURIComponent(token)}`, { index })).data as { response: string },
         onSuccess: (r) => setAnswered(r.response),
     });
-    const box = 'w-full max-w-md bg-panel border border-line rounded-xl p-6 space-y-4';
+    if (isLoading) return <AuthLayout title="Security check" wide><Skeleton rows={3} /></AuthLayout>;
+    if (answered) {
+        return (
+            <AuthLayout title="Thanks, your answer was sent" wide>
+                <p role="status" className="text-sm text-fg-2">You answered “{answered}”. You can close this page. If something looks wrong, contact your security team.</p>
+            </AuthLayout>
+        );
+    }
+    if (isError || !data || data.state === 'closed') {
+        return (
+            <AuthLayout title="This link has expired" wide
+                description="The question was already answered or is no longer open. If you still have concerns, contact your security team." />
+        );
+    }
     return (
-        <div className="min-h-screen bg-canvas text-fg flex items-center justify-center p-4">
-            {isLoading ? <p className="text-sm text-muted">Loading…</p>
-                : answered ? (
-                    <div className={box} role="status">
-                        <h1 className="text-lg font-semibold">Thanks, your answer was sent</h1>
-                        <p className="text-sm text-fg-2">You answered “{answered}”. You can close this page. If something looks wrong, contact your security team.</p>
-                    </div>
-                ) : isError || !data || data.state === 'closed' ? (
-                    <div className={box}>
-                        <h1 className="text-lg font-semibold">This link has expired</h1>
-                        <p className="text-sm text-fg-2">The question was already answered or is no longer open. If you still have concerns, contact your security team.</p>
-                    </div>
-                ) : (
-                    <div className={box}>
-                        <p className="label-mono">{data.organization} · security check</p>
-                        <h1 className="text-lg font-semibold">Please confirm this activity</h1>
-                        <p className="text-sm text-fg-2 whitespace-pre-wrap border-l-2 border-line pl-3">{data.message}</p>
-                        <div className="flex flex-col gap-2">
-                            {data.buttons.map((b, i) => (
-                                <button key={b} onClick={() => answer.mutate(i)} disabled={answer.isPending}
-                                    className={i === 0 ? 'px-4 py-2 rounded-lg bg-accent text-on-accent font-medium hover:bg-accent-hover disabled:opacity-50'
-                                        : 'px-4 py-2 rounded-lg border border-line-strong text-fg hover:bg-raised disabled:opacity-50'}>{b}</button>
-                            ))}
-                        </div>
-                        {answer.isError && <p role="alert" className="text-sm text-severity-critical">This question was already answered or has expired.</p>}
-                        <p className="text-xs text-muted">Never share passwords or codes. This page only records your answer.</p>
-                    </div>
-                )}
-        </div>
+        <AuthLayout title="Please confirm this activity" description={`${data.organization} · security check`} wide
+            footer="Never share passwords or codes. This page only records your answer.">
+            <p className="text-sm text-fg-2 whitespace-pre-wrap border-l-2 border-line pl-3">{data.message}</p>
+            <div className="flex flex-col gap-2">
+                {data.buttons.map((b, i) => (
+                    <Button key={b} size="lg" className="w-full" variant={i === 0 ? 'primary' : 'secondary'}
+                        onClick={() => answer.mutate(i)} disabled={answer.isPending}>{b}</Button>
+                ))}
+            </div>
+            {answer.isError && <p role="alert" className="text-sm text-severity-critical">This question was already answered or has expired.</p>}
+        </AuthLayout>
     );
 }

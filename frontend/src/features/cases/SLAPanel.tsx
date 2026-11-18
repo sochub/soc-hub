@@ -16,11 +16,11 @@ function Clock({ label, status, dueAt }: {
     const countdown = formatSlaCountdown(dueAt, status);
 
     return (
-        <div className="flex items-center gap-2">
-            <span className="label-mono text-muted">{label}</span>
+        <span className="flex items-center gap-1.5 whitespace-nowrap">
+            <span>{label}</span>
             <SLABadge status={status} />
-            {countdown && <span className="num text-xs text-fg-3">{countdown}</span>}
-        </div>
+            {countdown && <span className="num">{countdown}</span>}
+        </span>
     );
 }
 
@@ -33,12 +33,11 @@ export default function SLAPanel({ caseData }: { caseData: Case }) {
     }
 
     return (
-        <div className="border border-line bg-panel mb-6 px-4 h-11 flex items-center gap-6">
-            <span className="label-mono flex items-center gap-2 text-fg-3 shrink-0">
-                <Timer size={13} className="text-accent" /> SLA
-            </span>
-            <Clock label="response" status={caseData.sla_response_status} dueAt={caseData.sla_response_due_at} />
+        // Inline in the case meta line; the badges carry the alarm, the line stays one row.
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Timer size={12} aria-hidden />
+            <Clock label="SLA response" status={caseData.sla_response_status} dueAt={caseData.sla_response_due_at} />
             <Clock label="resolution" status={caseData.sla_resolution_status} dueAt={caseData.sla_resolution_due_at} />
-        </div>
+        </span>
     );
 }

@@ -26,8 +26,11 @@ POSTGRES_PASSWORD=$(rnd)
 POSTGRES_DB=demo
 REDIS_PASSWORD=$(rnd)
 SECRET_KEY=$(rnd)$(rnd)
-BACKEND_CORS_ORIGINS=http://localhost
-PUBLIC_BASE_URL=http://localhost
+ENCRYPTION_KEY=$(rnd)$(rnd)
+# The stack runs with production settings checks; these URLs only appear inside recorded fixtures.
+BACKEND_CORS_ORIGINS=https://sochub.io
+PUBLIC_BASE_URL=https://sochub.io/demo
+FRONTEND_URL=https://sochub.io/demo
 STORAGE_BACKEND=local
 ENV
 

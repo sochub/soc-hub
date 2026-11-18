@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { ArrowUpCircle } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { buttonClass } from '../../components/ui';
 import type { Case, User } from '../../types';
 import { errMsg, useEscalationAction, useGroups, usePolicy } from './api';
 import EscalateModal from './EscalateModal';
 
-const btn = 'inline-flex items-center gap-1.5 h-8 rounded-sm border border-line-strong px-2.5 text-xs text-fg-2 hover:bg-raised whitespace-nowrap disabled:opacity-50';
+const btn = `${buttonClass('secondary', 'sm')} disabled:opacity-50`;
 
 /** Prompt for a note (redirect target and/or note, return, withdraw). */
 function NoteModal({ caseId, kind, groupOptions, onClose }: {
@@ -85,17 +85,14 @@ export default function EscalationActions({ caseData, me }: { caseData: Case; me
                     <ArrowUpCircle size={12} /> {esc ? 'Re-escalate' : 'Escalate'}
                 </button>
             )}
-            {!!policy && !canEscalate && !closed && !pending && (
+            {/* Teams without escalation tiers (e.g. a solo responder) never see escalation controls. */}
+            {!!policy && tiers.length >= 2 && !canEscalate && !closed && !pending && (
                 <>
                     <button type="button" className={btn} disabled aria-describedby="escalate-hint">
                         <ArrowUpCircle size={12} /> {esc ? 'Re-escalate' : 'Escalate'}
                     </button>
                     <span id="escalate-hint" className="text-xs text-fg-3">
-                        {tiers.length >= 2
-                            ? 'Already at the highest tier'
-                            : isAdmin
-                            ? <Link to="/settings/escalation" className="text-accent hover:underline">Set up escalation tiers</Link>
-                            : 'Ask an admin to set up escalation tiers (Settings → Escalation)'}
+                        Already at the highest tier
                     </span>
                 </>
             )}

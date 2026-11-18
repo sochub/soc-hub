@@ -55,13 +55,13 @@ export default function GuestSecurityPanel() {
     );
 
     return (
-        <section className="mb-6 border border-line bg-panel rounded-lg p-3 text-sm space-y-3">
+        <section className="text-sm space-y-3">
             <div className="flex items-center justify-between gap-2">
-                <span><span className="font-medium">Security</span>
-                    <span className="text-fg-3"> · two-factor authentication {me.mfa_enabled ? 'on' : 'off'}</span></span>
-                <button type="button" className="text-accent text-xs" onClick={() => { setOpen(!open); reset(); setNotice(null); }}>
+                <span><span className="font-medium">Two-factor authentication</span>
+                    <span className="text-fg-3"> · {me.mfa_enabled ? 'on' : 'off'}</span></span>
+                <Button variant="ghost" size="sm" aria-expanded={open} onClick={() => { setOpen(!open); reset(); setNotice(null); }}>
                     {open ? 'Close' : 'Manage'}
-                </button>
+                </Button>
             </div>
             {notice && <p role="status" className="text-fg-2">{notice}</p>}
             {open && (me.mfa_enabled ? (
@@ -78,7 +78,7 @@ export default function GuestSecurityPanel() {
             ) : (
                 <form onSubmit={enable} className="space-y-2">
                     <p className="text-fg-3">Scan this in your authenticator app, or enter the key by hand.</p>
-                    {setup.qr && <img src={setup.qr} alt="Two-factor QR code" width={176} height={176} className="bg-white p-1 rounded" />}
+                    {setup.qr && <img src={setup.qr} alt="Two-factor QR code" width={176} height={176} className="bg-white p-1 rounded-sm" />}
                     <p className="font-mono text-xs break-all select-all">{setup.secret}</p>
                     <details className="text-xs text-fg-3"><summary>Setup URI</summary>
                         <p className="font-mono break-all select-all">{setup.otpauth_uri}</p></details>

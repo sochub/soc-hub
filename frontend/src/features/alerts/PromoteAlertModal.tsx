@@ -17,7 +17,7 @@ export default function PromoteAlertModal({ alert, ids, onClose }: Props) {
 
     const { data: cases } = useQuery<CaseLite[]>({
         queryKey: ['cases'],
-        queryFn: async () => (await api.get('/cases/')).data,
+        queryFn: async () => (await api.get('/cases/', { params: { limit: 500 } })).data,
     });
 
     const promote = useMutation({
@@ -62,12 +62,12 @@ export default function PromoteAlertModal({ alert, ids, onClose }: Props) {
             <p className="text-sm text-fg-3 mb-4 truncate">{alert.title}</p>
 
             <div className="flex gap-2 mb-4">
-                <button onClick={() => setMode('existing')} className={`flex-1 py-1.5 text-sm border ${mode === 'existing' ? 'bg-accent text-on-accent border-accent' : 'bg-panel text-fg-2 border-line-strong'}`}>Existing case</button>
-                <button onClick={() => setMode('new')} className={`flex-1 py-1.5 text-sm border ${mode === 'new' ? 'bg-accent text-on-accent border-accent' : 'bg-panel text-fg-2 border-line-strong'}`}>New case</button>
+                <button type="button" aria-pressed={mode === 'existing'} onClick={() => setMode('existing')} className={`flex-1 rounded-md py-1.5 text-sm border ${mode === 'existing' ? 'bg-accent text-on-accent border-accent' : 'bg-panel text-fg-2 border-line-strong'}`}>Existing case</button>
+                <button type="button" aria-pressed={mode === 'new'} onClick={() => setMode('new')} className={`flex-1 rounded-md py-1.5 text-sm border ${mode === 'new' ? 'bg-accent text-on-accent border-accent' : 'bg-panel text-fg-2 border-line-strong'}`}>New case</button>
             </div>
 
             {mode === 'existing' && (
-                <select value={caseId} onChange={e => setCaseId(e.target.value)} className={modalInput}>
+                <select aria-label="Case" value={caseId} onChange={e => setCaseId(e.target.value)} className={modalInput}>
                     <option value="">Select a case…</option>
                     {cases?.map(c => <option key={c.id} value={c.id}>#{c.id} — {c.title}</option>)}
                 </select>

@@ -59,7 +59,7 @@ export default function InviteUserModal({ isOpen, onClose, tenantId }: InviteUse
         <Modal
             open={isOpen}
             onClose={handleClose}
-            title="Invite User"
+            title="Invite user"
             size="lg"
             footer={inviteLink ? (
                 <button onClick={handleClose} className={btnSecondary}>
@@ -105,7 +105,7 @@ export default function InviteUserModal({ isOpen, onClose, tenantId }: InviteUse
                     </select>
                 </div>
 
-                {error && <p className="text-red-300 text-sm">{error}</p>}
+                {error && <p role="alert" className="text-severity-critical text-sm">{error}</p>}
 
                 {inviteLink && (
                     <div className="space-y-2">

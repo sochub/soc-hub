@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { Button } from '../../components/ui';
+import { Button, Input } from '../../components/ui';
 import type { MilestoneKey, ReportMilestones } from '../../types';
 import { DATE_INPUT_BOUNDS, MILESTONES, apiDetail, fmtLocal, isoToLocal, localToIso, useSaveMilestones } from './milestones';
 
@@ -31,15 +31,15 @@ export default function MilestonesEditor({ caseId, milestones, canEdit, onDone }
                     return (
                         <div key={key}>
                             <label htmlFor={`ms-${key}`} className="block text-xs font-medium text-fg-2 mb-1.5">{label}</label>
-                            <input id={`ms-${key}`} type="datetime-local" disabled={!canEdit} value={form[key]} {...DATE_INPUT_BOUNDS}
+                            <Input id={`ms-${key}`} type="datetime-local" disabled={!canEdit} value={form[key]} {...DATE_INPUT_BOUNDS}
                                 onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                                className="w-full text-sm num border border-line rounded-sm px-2 py-1.5 bg-panel text-fg focus:outline-hidden focus:border-accent disabled:bg-surface" />
-                            <div className="mt-1 text-[11px] text-muted flex items-center gap-2 min-h-[16px]">
+                                className="num px-2 disabled:bg-surface disabled:opacity-100" />
+                            <div className="mt-1 text-xs text-fg-3 flex items-center gap-2 min-h-[16px]">
                                 {form[key] ? (
                                     <>
                                         <span>Declared</span>
                                         {canEdit && <button type="button" onClick={() => setForm({ ...form, [key]: '' })}
-                                            className="text-accent hover:underline">clear</button>}
+                                            className="text-accent hover:underline rounded-sm">Clear</button>}
                                     </>
                                 ) : (
                                     <span title="Computed from case data">
@@ -54,7 +54,7 @@ export default function MilestonesEditor({ caseId, milestones, canEdit, onDone }
             {canEdit && (
                 <div className="flex items-center justify-end gap-3">
                     {(invalid || save.isError) && <span role="alert" className="text-xs text-severity-critical">{invalid ?? apiDetail(save.error)}</span>}
-                    <span className="text-[11px] text-muted">Local time · shared with the report</span>
+                    <span className="text-xs text-fg-3">Local time · shared with the report</span>
                     <Button size="sm" disabled={!changed.length || save.isPending} onClick={submit}>
                         {save.isPending ? 'Saving…' : 'Save milestones'}
                     </Button>

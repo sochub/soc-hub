@@ -1,0 +1,433 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-18T11:53:34+00:00",
+  "title": "Design System: sochub",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Signal Violet",
+        "canonical": "oklch(50.1% 0.211 280)",
+        "tonalRamp": [
+          "oklch(15% 0.074 280)",
+          "oklch(27% 0.112 280)",
+          "oklch(39% 0.154 280)",
+          "oklch(51% 0.197 280)",
+          "oklch(63% 0.183 280)",
+          "oklch(75% 0.140 280)",
+          "oklch(86% 0.102 280)",
+          "oklch(95% 0.074 280)"
+        ]
+      },
+      "lavender": {
+        "role": "primary",
+        "displayName": "Lavender (fill / dark accent)",
+        "canonical": "oklch(76.3% 0.124 281)",
+        "tonalRamp": [
+          "oklch(15% 0.043 281)",
+          "oklch(27% 0.066 281)",
+          "oklch(39% 0.091 281)",
+          "oklch(51% 0.116 281)",
+          "oklch(63% 0.108 281)",
+          "oklch(75% 0.083 281)",
+          "oklch(86% 0.060 281)",
+          "oklch(95% 0.043 281)"
+        ]
+      },
+      "lime": {
+        "role": "secondary",
+        "displayName": "Lime Signal (text)",
+        "canonical": "oklch(52.1% 0.116 122)",
+        "tonalRamp": [
+          "oklch(15% 0.040 122)",
+          "oklch(27% 0.062 122)",
+          "oklch(39% 0.085 122)",
+          "oklch(51% 0.108 122)",
+          "oklch(63% 0.100 122)",
+          "oklch(75% 0.077 122)",
+          "oklch(86% 0.056 122)",
+          "oklch(95% 0.040 122)"
+        ]
+      },
+      "signal": {
+        "role": "secondary",
+        "displayName": "Signal Lime (fill)",
+        "canonical": "oklch(88.5% 0.125 115)",
+        "tonalRamp": [
+          "oklch(15% 0.044 115)",
+          "oklch(27% 0.067 115)",
+          "oklch(39% 0.092 115)",
+          "oklch(51% 0.117 115)",
+          "oklch(63% 0.109 115)",
+          "oklch(75% 0.084 115)",
+          "oklch(86% 0.061 115)",
+          "oklch(95% 0.044 115)"
+        ]
+      },
+      "severity-critical": {
+        "role": "tertiary",
+        "displayName": "Critical Red",
+        "canonical": "oklch(50.0% 0.182 30)",
+        "tonalRamp": [
+          "oklch(15% 0.064 30)",
+          "oklch(27% 0.097 30)",
+          "oklch(39% 0.134 30)",
+          "oklch(51% 0.170 30)",
+          "oklch(63% 0.158 30)",
+          "oklch(75% 0.121 30)",
+          "oklch(86% 0.088 30)",
+          "oklch(95% 0.064 30)"
+        ]
+      },
+      "severity-high": {
+        "role": "tertiary",
+        "displayName": "High Rust",
+        "canonical": "oklch(53.9% 0.156 43)",
+        "tonalRamp": [
+          "oklch(15% 0.055 43)",
+          "oklch(27% 0.083 43)",
+          "oklch(39% 0.115 43)",
+          "oklch(51% 0.146 43)",
+          "oklch(63% 0.135 43)",
+          "oklch(75% 0.104 43)",
+          "oklch(86% 0.075 43)",
+          "oklch(95% 0.055 43)"
+        ]
+      },
+      "severity-medium": {
+        "role": "tertiary",
+        "displayName": "Medium Ochre",
+        "canonical": "oklch(52.2% 0.108 80)",
+        "tonalRamp": [
+          "oklch(15% 0.038 80)",
+          "oklch(27% 0.058 80)",
+          "oklch(39% 0.079 80)",
+          "oklch(51% 0.101 80)",
+          "oklch(63% 0.094 80)",
+          "oklch(75% 0.072 80)",
+          "oklch(86% 0.052 80)",
+          "oklch(95% 0.038 80)"
+        ]
+      },
+      "severity-low": {
+        "role": "tertiary",
+        "displayName": "Low Blue",
+        "canonical": "oklch(49.1% 0.123 250)",
+        "tonalRamp": [
+          "oklch(15% 0.043 250)",
+          "oklch(27% 0.065 250)",
+          "oklch(39% 0.090 250)",
+          "oklch(51% 0.115 250)",
+          "oklch(63% 0.106 250)",
+          "oklch(75% 0.082 250)",
+          "oklch(86% 0.059 250)",
+          "oklch(95% 0.043 250)"
+        ]
+      },
+      "magenta": {
+        "role": "tertiary",
+        "displayName": "Code Magenta",
+        "canonical": "oklch(53.4% 0.250 301)",
+        "tonalRamp": [
+          "oklch(15% 0.088 301)",
+          "oklch(27% 0.133 301)",
+          "oklch(39% 0.184 301)",
+          "oklch(51% 0.234 301)",
+          "oklch(63% 0.217 301)",
+          "oklch(75% 0.167 301)",
+          "oklch(86% 0.121 301)",
+          "oklch(95% 0.088 301)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Stone Paper",
+        "canonical": "oklch(95.6% 0.007 81)",
+        "tonalRamp": [
+          "oklch(15% 0.003 81)",
+          "oklch(27% 0.004 81)",
+          "oklch(39% 0.005 81)",
+          "oklch(51% 0.007 81)",
+          "oklch(63% 0.006 81)",
+          "oklch(75% 0.005 81)",
+          "oklch(86% 0.004 81)",
+          "oklch(95% 0.003 81)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Sheet White",
+        "canonical": "oklch(100.0% 0.000 90)",
+        "tonalRamp": [
+          "oklch(15% 0.000 90)",
+          "oklch(27% 0.000 90)",
+          "oklch(39% 0.000 90)",
+          "oklch(51% 0.000 90)",
+          "oklch(63% 0.000 90)",
+          "oklch(75% 0.000 90)",
+          "oklch(86% 0.000 90)",
+          "oklch(95% 0.000 90)"
+        ]
+      },
+      "fg": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(22.2% 0.000 90)",
+        "tonalRamp": [
+          "oklch(15% 0.000 90)",
+          "oklch(27% 0.000 90)",
+          "oklch(39% 0.000 90)",
+          "oklch(51% 0.000 90)",
+          "oklch(63% 0.000 90)",
+          "oklch(75% 0.000 90)",
+          "oklch(86% 0.000 90)",
+          "oklch(95% 0.000 90)"
+        ]
+      },
+      "rail": {
+        "role": "neutral",
+        "displayName": "Rail Ink",
+        "canonical": "oklch(17.9% 0.004 286)",
+        "tonalRamp": [
+          "oklch(15% 0.001 286)",
+          "oklch(27% 0.002 286)",
+          "oklch(39% 0.003 286)",
+          "oklch(51% 0.004 286)",
+          "oklch(63% 0.004 286)",
+          "oklch(75% 0.003 286)",
+          "oklch(86% 0.002 286)",
+          "oklch(95% 0.001 286)"
+        ]
+      },
+      "canvas-dark": {
+        "role": "neutral",
+        "displayName": "Night Ground",
+        "canonical": "oklch(14.5% 0.000 90)",
+        "tonalRamp": [
+          "oklch(15% 0.000 90)",
+          "oklch(27% 0.000 90)",
+          "oklch(39% 0.000 90)",
+          "oklch(51% 0.000 90)",
+          "oklch(63% 0.000 90)",
+          "oklch(75% 0.000 90)",
+          "oklch(86% 0.000 90)",
+          "oklch(95% 0.000 90)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Page Title",
+        "purpose": "One per view; no kicker above it."
+      },
+      "title": {
+        "displayName": "Card Title",
+        "purpose": "Panel and card headers, sentence case."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Rows, forms, descriptions."
+      },
+      "numeral": {
+        "displayName": "Figure",
+        "purpose": "Dashboard numbers, tabular; tinted only when a non-zero risk."
+      },
+      "label": {
+        "displayName": "Mono Label",
+        "purpose": "Column headers, rail groups, field groups. Never a heading kicker."
+      },
+      "tag": {
+        "displayName": "Mono Tag",
+        "purpose": "Severity, status, verdict, TLP tags."
+      }
+    },
+    "shadows": [
+      {
+        "name": "sheet",
+        "value": "0 1px 2px 0 rgb(27 27 27 / 0.06)",
+        "purpose": "Resting sheet (dark: rgb(0 0 0 / 0.5))."
+      },
+      {
+        "name": "console",
+        "value": "0 1px 2px 0 rgb(27 27 27 / 0.05)",
+        "purpose": "Resting interactive console card."
+      },
+      {
+        "name": "console-hover",
+        "value": "0 12px 32px -18px rgb(85 70 214 / 0.35)",
+        "purpose": "Violet-tinted lift on hover (dark: 0 18px 50px -24px rgb(138 43 226 / 0.45))."
+      },
+      {
+        "name": "night-glow",
+        "value": "radial-gradient(48rem 36rem at 100% -5%, rgb(138 43 226 / 0.14), transparent 60%), radial-gradient(40rem 34rem at 95% 105%, rgb(150 190 70 / 0.07), transparent 60%)",
+        "purpose": "Dark-mode working ground only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "fade-in",
+        "value": "0.18s cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Enter: 3px rise and fade for panels and popovers."
+      },
+      {
+        "name": "state",
+        "value": "150ms colors",
+        "purpose": "Hover and focus colour transitions on buttons, rows, tabs."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "purpose": "Rail docks; below it the rail is an off-canvas drawer."
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Solid accent; one per view (New case, Save).",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M12 5v14M5 12h14\"/></svg>New case</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 14px;border-radius:4px;font-size:14px;font-weight:500;font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;transition:background-color .15s,color .15s;cursor:pointer;border:none;background:var(--color-accent);color:var(--color-on-accent);font-weight:600}.ds-btn-primary:hover{background:var(--color-accent-hover)}.ds-btn-primary:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "White sheet with a strong hairline; raised on hover.",
+      "html": "<button class=\"ds-btn-secondary\">Export</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 14px;border-radius:4px;font-size:14px;font-weight:500;font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;transition:background-color .15s,color .15s;cursor:pointer;background:var(--color-panel);color:var(--color-fg);border:1px solid var(--color-line-strong)}.ds-btn-secondary:hover{background:var(--color-raised)}.ds-btn-secondary:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Outlined in critical; fills only on hover or keyboard focus. Kept apart from the primary action.",
+      "html": "<button class=\"ds-btn-danger\">Delete case</button>",
+      "css": ".ds-btn-danger{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 14px;border-radius:4px;font-size:14px;font-weight:500;font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;transition:background-color .15s,color .15s;cursor:pointer;background:transparent;color:var(--color-severity-critical);border:1px solid color-mix(in srgb,var(--color-severity-critical) 50%,transparent)}.ds-btn-danger:hover,.ds-btn-danger:focus-visible{background:var(--color-severity-critical);color:#fff}.ds-btn-danger:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Panel fill, strong hairline, inner accent focus outline.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search cases…\" />",
+      "css": ".ds-input{height:36px;padding:0 12px;width:240px;background:var(--color-panel);color:var(--color-fg);border:1px solid var(--color-line-strong);border-radius:4px;font-size:14px;font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;}.ds-input::placeholder{color:var(--color-muted)}.ds-input:focus{outline:2px solid var(--color-accent);outline-offset:-1px}"
+    },
+    {
+      "name": "Severity and Status Tags",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "Tinted mono tags: tone text, 40% hairline, 9% fill. Status never borrows severity hues.",
+      "html": "<span class=\"ds-tag\" style=\"color:var(--color-severity-critical)\">critical</span> <span class=\"ds-tag\" style=\"color:var(--color-severity-high)\">high</span> <span class=\"ds-tag\" style=\"color:var(--color-accent)\">new</span> <span class=\"ds-tag\" style=\"color:var(--color-fg)\">in progress</span> <span class=\"ds-tag\" style=\"color:var(--color-lime)\">resolved</span>",
+      "css": ".ds-tag{display:inline-flex;align-items:center;padding:1px 6px;border-radius:3px;font-family:'JetBrains Mono Variable',ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:600;line-height:16px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;border:1px solid color-mix(in srgb,currentColor 40%,transparent);background:color-mix(in srgb,currentColor 9%,transparent)}"
+    },
+    {
+      "name": "Drill-down Filter Chip",
+      "kind": "chip",
+      "refersTo": "filter-chip",
+      "description": "A filter that arrived from a dashboard; activating it removes the URL parameter.",
+      "html": "<button class=\"ds-chip\" aria-label=\"Remove filter: SLA at risk\">SLA at risk<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M18 6 6 18M6 6l12 12\"/></svg></button>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px;border-radius:3px;border:1px solid color-mix(in srgb,var(--color-accent) 40%,transparent);background:color-mix(in srgb,var(--color-accent) 10%,transparent);color:var(--color-fg);font-size:12px;font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;cursor:pointer}.ds-chip:hover{border-color:var(--color-accent)}.ds-chip:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;}"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "rail",
+      "description": "Ink rail in both themes; active item lifted with a lavender icon and a lime signal bar.",
+      "html": "<nav class=\"ds-rail\"><p class=\"ds-rail-group\">Operate</p><a class=\"ds-rail-item is-active\" aria-current=\"page\" href=\"#\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\"/></svg>Overview</a><a class=\"ds-rail-item\" href=\"#\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5z\"/></svg>Cases</a></nav>",
+      "css": ".ds-rail{width:240px;padding:8px;background:var(--color-rail);color:var(--color-rail-ink);font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;}.ds-rail-group{margin:8px 8px 6px;font-family:'JetBrains Mono Variable',ui-monospace,Menlo,monospace;font-size:11px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-rail-ink) 50%,transparent)}.ds-rail-item{position:relative;display:flex;align-items:center;gap:10px;height:32px;padding:0 12px;border-radius:3px;font-size:14px;text-decoration:none;color:color-mix(in srgb,var(--color-rail-ink) 70%,transparent)}.ds-rail-item:hover{background:var(--color-rail-2);color:var(--color-rail-ink)}.ds-rail-item.is-active{background:var(--color-rail-2);color:var(--color-rail-ink);font-weight:500}.ds-rail-item.is-active svg{color:var(--color-lavender)}.ds-rail-item.is-active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:2px;border-radius:9px;background:var(--color-signal)}.ds-rail-item:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;}"
+    },
+    {
+      "name": "Section Tabs",
+      "kind": "nav",
+      "description": "Plain labels on a hairline; active = ink with a 2px accent underline.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button class=\"ds-tab\" role=\"tab\" aria-selected=\"true\">Activity</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\">Tasks <span>4</span></button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\">Evidence</button></div>",
+      "css": ".ds-tabs{display:flex;gap:2px;border-bottom:1px solid var(--color-line)}.ds-tab{margin-bottom:-1px;padding:8px 12px;background:none;border:none;border-bottom:2px solid transparent;font-size:13px;font-weight:500;font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;color:var(--color-fg-3);cursor:pointer}.ds-tab:hover{color:var(--color-fg)}.ds-tab[aria-selected=true]{color:var(--color-fg);border-bottom-color:var(--color-accent)}.ds-tab span{font-size:12px;font-weight:400;color:var(--color-fg-3);font-variant-numeric:tabular-nums}.ds-tab:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;}"
+    },
+    {
+      "name": "Stat Tile Ledger",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Ledger cells (1px gaps over a line ground); each figure links to its filtered list.",
+      "html": "<div class=\"ds-ledger\"><a class=\"ds-stat\" href=\"#\"><span class=\"ds-stat-l\">SLA at risk or breached</span><span class=\"ds-stat-v\" style=\"color:var(--color-severity-critical)\">23</span></a><a class=\"ds-stat\" href=\"#\"><span class=\"ds-stat-l\">Active cases</span><span class=\"ds-stat-v\">24</span><span class=\"ds-stat-s\">Oldest open 29d</span></a></div>",
+      "css": ".ds-ledger{display:grid;grid-template-columns:repeat(2,180px);gap:1px;background:var(--color-line);border:1px solid var(--color-line);border-radius:4px;overflow:hidden;font-family:'Inter Variable',ui-sans-serif,system-ui,sans-serif;}.ds-stat{display:flex;flex-direction:column;gap:6px;padding:12px 16px;background:var(--color-panel);text-decoration:none;transition:background-color .15s}.ds-stat:hover{background:var(--color-raised)}.ds-stat:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;;outline-offset:-2px}.ds-stat-l{font-size:12px;font-weight:500;color:var(--color-fg-3)}.ds-stat-v{font-size:24px;font-weight:600;line-height:1;color:var(--color-fg);font-variant-numeric:tabular-nums}.ds-stat-s{font-size:12px;color:var(--color-fg-3)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Signal Desk",
+    "overview": "**Creative North Star: \"The Signal Desk\"**\n\nThe app is the same product as sochub.io. An ink-black rail carries the white hex mark in both themes, lavender-violet is the one accent, and lime is the signal: the bar beside the active page, and the colour of every good outcome. Since 2026-11-18 this world replaces the earlier case-file one entirely. None of its material survives (no manila, no rubber stamps, no folder tabs, no Archivo).\n\nLight mode is editorial and technical: warm stone paper, white sheets with hairline edges, ink text, sharp 4px corners, mono caps for labels and tags, tabular figures for every number. Dark mode is the website's near-black with a faint violet and lime glow on the working ground only. Density is high but quiet: a responder under time pressure scans rows, not decoration.",
+    "keyCharacteristics": [
+      "Ink rail (240px, 64px collapsed) in both themes; active item = lifted row, lavender icon, 2px lime signal bar.",
+      "Stone paper ground, white sheets, hairline lines; flat, no glow in light mode.",
+      "One accent (lavender-violet), one signal (lime), one fixed five-step severity ramp.",
+      "Inter for UI, JetBrains Mono for labels, tags, timestamps and code; tabular figures everywhere.",
+      "Status and severity are tinted mono tags: tone-coloured text, 40% hairline, 9% fill.",
+      "Every dashboard figure, bar, slice and cell drills into its filtered list."
+    ],
+    "rules": [
+      {
+        "name": "The One Ramp Rule",
+        "body": "Severity owns red, rust, ochre and blue, in one fixed order (critical, high, medium, low, info), resolved through `tones.ts`. Nothing else borrows those hues.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status Is Not Rank Rule",
+        "body": "Case status never uses the severity ramp: new is accent, open and in progress are ink, pending and closed are neutral, resolved is lime.",
+        "section": "colors"
+      },
+      {
+        "name": "The Fills-Only Rule",
+        "body": "Lavender and the pale signal lime are fills on paper, never text; text uses accent and lime, which hold AA on stone and white.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Every number (counts, IDs, durations, percentages) is set with tabular figures so columns align.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Eyebrow Rule",
+        "body": "Mono caps label data (columns, rail groups, field groups). They never sit above a page or section heading as a kicker, and sections are never numbered.",
+        "section": "typography"
+      },
+      {
+        "name": "The Paper Not Glass Rule",
+        "body": "No blur, no glow on components, no gradient fills. A sheet is white (or night) with a hairline.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use the semantic tokens (canvas, panel, line, fg, accent, lime, severity-*, rail-*); never raw hex in components.",
+      "Do make every dashboard number, bar, slice and matrix cell a link to its filtered list, with a keyboard path (a link, or a table/legend of links beside a mouse-only chart).",
+      "Do show a drill-down filter as a removable chip and keep it in the URL.",
+      "Do let hub tables bleed to the sheet edges with top and bottom hairlines only.",
+      "Do keep destructive actions outlined in critical, isolated from the primary action, and confirmed in-app.",
+      "Do resolve every severity, status, verdict and TLP colour through `tones.ts`.",
+      "Do set numbers in tabular figures and machine values (IDs, hashes, timestamps) in mono."
+    ],
+    "donts": [
+      "Don't put a card inside a card; a table in a hub sheet is the sheet.",
+      "Don't colour a status with the severity ramp, or invent a second severity scale for one view.",
+      "Don't put eyebrows or kickers above headings, and don't number sections.",
+      "Don't use lavender or the pale signal lime as text on paper.",
+      "Don't add glow, blur, gradients or hard offset shadows; light mode is flat.",
+      "Don't bring back anything from the retired case-file world: manila, rubber-stamp rotation or ink texture, folder-tab silhouettes, Archivo.",
+      "Don't use glyph icons or emoji as icons; icons are Lucide line icons at 14-16px, `aria-hidden` beside a text label or with an `aria-label`."
+    ]
+  }
+}

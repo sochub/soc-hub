@@ -3,7 +3,6 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { FlaskConical } from 'lucide-react';
 import { api } from '../../api/client';
-import { cn } from '../../lib/utils';
 import Modal, { modalInput, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import { NODE_DEF } from './nodeCatalog';
 import type { Workflow } from './types';
@@ -56,7 +55,7 @@ export default function DryRunDialog({ workflow, onClose }: { workflow: Workflow
             footer={<>
                 <button onClick={onClose} className={btnSecondary}>Cancel</button>
                 <button disabled={!ready || run.isPending} onClick={() => { setError(null); run.mutate(); }}
-                    className={cn(btnPrimary, 'bg-violet-600 hover:bg-violet-700')}>Start dry run</button>
+                    className={btnPrimary}>Start dry run</button>
             </>}
         >
             <div className="space-y-4 text-sm">

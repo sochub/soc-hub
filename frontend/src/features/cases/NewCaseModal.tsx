@@ -7,6 +7,7 @@ import { localToIso } from './milestones';
 import { api } from '../../api/client';
 import type { PlaybookSummary } from '../../types';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { CASE_STATUSES } from './statuses';
 
 interface NewCaseModalProps {
     show: boolean;
@@ -72,7 +73,7 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
     };
 
     const steps = [
-        { id: 'basic', label: 'Basic Info' },
+        { id: 'basic', label: 'Basic info' },
         { id: 'artifacts', label: 'Artifacts' },
         { id: 'review', label: 'Review' },
     ];
@@ -105,14 +106,14 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                 </button>
             ) : (
                 <button onClick={handleSubmit} disabled={isSubmitting} className={btnPrimary}>
-                    {isSubmitting ? 'Creating...' : 'Create Case'}
+                    {isSubmitting ? 'Creating…' : 'Create case'}
                 </button>
             )}
         </>
     );
 
     return (
-        <Modal open={show} onClose={handleClose} title="Create New Case" size="lg" footer={footer}>
+        <Modal open={show} onClose={handleClose} title="New case" size="lg" footer={footer}>
             {/* Step Indicator */}
             <div className="flex items-center justify-between mb-8">
                 {steps.map((s, index) => (
@@ -147,8 +148,9 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                             className="space-y-4"
                         >
                             <div>
-                                <label className={modalLabel}>Title</label>
+                                <label htmlFor="new-case-title" className={modalLabel}>Title</label>
                                 <input
+                                    id="new-case-title"
                                     type="text"
                                     value={caseData.title}
                                     onChange={(e) => setCaseData({ ...caseData, title: e.target.value })}
@@ -159,19 +161,21 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                             </div>
 
                             <div>
-                                <label className={modalLabel}>Description</label>
+                                <label htmlFor="new-case-description" className={modalLabel}>Description</label>
                                 <textarea
+                                    id="new-case-description"
                                     value={caseData.description}
                                     onChange={(e) => setCaseData({ ...caseData, description: e.target.value })}
                                     className={`${modalInput} min-h-[120px]`}
-                                    placeholder="Describe the security incident..."
+                                    placeholder="Describe the security incident…"
                                     required
                                 />
                             </div>
 
                             <div>
-                                <label className={modalLabel}>Severity</label>
+                                <label htmlFor="new-case-severity" className={modalLabel}>Severity</label>
                                 <select
+                                    id="new-case-severity"
                                     value={caseData.severity}
                                     onChange={(e) => setCaseData({ ...caseData, severity: e.target.value })}
                                     className={modalInput}
@@ -195,13 +199,14 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className={modalLabel}>Source</label>
+                                    <label htmlFor="new-case-source" className={modalLabel}>Source</label>
                                     <select
+                                        id="new-case-source"
                                         value={caseData.source}
                                         onChange={(e) => setCaseData({ ...caseData, source: e.target.value })}
                                         className={modalInput}
                                     >
-                                        <option value="user-reported">User Reported</option>
+                                        <option value="user-reported">User reported</option>
                                         <option value="siem">SIEM</option>
                                         <option value="email">Email</option>
                                         <option value="phone">Phone</option>
@@ -209,25 +214,22 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                                     </select>
                                 </div>
                                 <div>
-                                    <label className={modalLabel}>Status</label>
+                                    <label htmlFor="new-case-status" className={modalLabel}>Status</label>
                                     <select
+                                        id="new-case-status"
                                         value={caseData.status}
                                         onChange={(e) => setCaseData({ ...caseData, status: e.target.value })}
                                         className={modalInput}
                                     >
-                                        <option value="new">New</option>
-                                        <option value="open">Open</option>
-                                        <option value="in_progress">In Progress</option>
-                                        <option value="pending">Pending</option>
-                                        <option value="resolved">Resolved</option>
-                                        <option value="closed">Closed</option>
+                                        {CASE_STATUSES.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
                                     </select>
                                 </div>
                             </div>
 
                             <div>
-                                <label className={modalLabel}>Tags</label>
+                                <label htmlFor="new-case-tags" className={modalLabel}>Tags</label>
                                 <input
+                                    id="new-case-tags"
                                     type="text"
                                     value={caseData.tags}
                                     onChange={(e) => setCaseData({ ...caseData, tags: e.target.value })}
@@ -237,8 +239,9 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                             </div>
 
                             <div>
-                                <label className={modalLabel}>Start from playbook <span className="text-muted font-normal">(optional)</span></label>
+                                <label htmlFor="new-case-playbook" className={modalLabel}>Start from playbook <span className="text-muted font-normal">(optional)</span></label>
                                 <select
+                                    id="new-case-playbook"
                                     value={caseData.playbook_template_id}
                                     onChange={(e) => setCaseData({ ...caseData, playbook_template_id: e.target.value })}
                                     className={modalInput}
@@ -272,8 +275,8 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                             exit={{ opacity: 0, x: -20 }}
                             className="space-y-4"
                         >
-                            <div className="p-4 border border-line bg-surface">
-                                <h3 className="text-sm font-semibold text-fg-3 uppercase mb-3">Case Details</h3>
+                            <div className="p-4 border border-line rounded-md bg-surface">
+                                <h3 className="text-sm font-semibold text-fg mb-3">Case details</h3>
                                 <div className="space-y-2">
                                     <div>
                                         <p className="text-xs text-muted">Title</p>
@@ -291,15 +294,15 @@ export default function NewCaseModal({ show, onClose, onSubmit, isSubmitting }: 
                             </div>
 
                             {artifacts.length > 0 && (
-                                <div className="p-4 border border-line bg-surface">
-                                    <h3 className="text-sm font-semibold text-fg-3 uppercase mb-3">
-                                        Artifacts ({artifacts.length})
+                                <div className="p-4 border border-line rounded-md bg-surface">
+                                    <h3 className="text-sm font-semibold text-fg mb-3">
+                                        Artifacts <span className="num font-normal text-fg-3">{artifacts.length}</span>
                                     </h3>
                                     <div className="space-y-2">
                                         {artifacts.map((artifact, index) => (
                                             <div key={index} className="flex items-center gap-3 p-2 bg-raised rounded-sm">
-                                                <span className="text-xs text-muted uppercase font-semibold">{artifact.type}</span>
-                                                <span className="text-sm text-fg font-mono">{artifact.value}</span>
+                                                <span className="text-xs text-fg-3 font-medium">{artifact.type}</span>
+                                                <span className="text-sm text-fg font-mono break-all">{artifact.value}</span>
                                             </div>
                                         ))}
                                     </div>

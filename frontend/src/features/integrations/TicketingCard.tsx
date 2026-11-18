@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ticket } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
+import { Button, Card, useConfirm } from '../../components/ui';
 
 type Provider = 'jira' | 'halopsa' | 'connectwise';
 interface Connection {
@@ -49,6 +50,7 @@ const input = 'w-full border border-line-strong px-2 py-1.5 text-sm';
 export default function TicketingCard({ tenantId }: { tenantId: number | null }) {
     const key = ['ticketing', tenantId];
     const qc = useQueryClient();
+    const { confirm, dialog } = useConfirm();
     const { data, isLoading } = useQuery({ queryKey: key, queryFn: async () => (await api.get('/ticketing/connection')).data as Connection | null });
     const [draft, setDraft] = useState<{ provider: Provider; base_url: string; settings: Record<string, string>; creds: Record<string, string>;
         auto: string; push_notes: boolean; enabled: boolean; deployment: string } | null>(null);
@@ -95,10 +97,11 @@ export default function TicketingCard({ tenantId }: { tenantId: number | null })
 
     if (isLoading) return null;
     return (
-        <div className="bg-panel border border-line p-5 space-y-3">
+        <Card className="p-4 space-y-3">
+            {dialog}
             <div className="flex items-center gap-2">
                 <Ticket size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">Ticketing / PSA</h2>
+                <h3 className="text-sm font-semibold text-fg">Ticketing / PSA</h3>
                 <span className="ml-auto label-mono">{data ? `${LABEL[data.provider]}${data.enabled ? '' : ' · disabled'}` : 'not connected'}</span>
             </div>
             <p className="text-xs text-fg-3">
@@ -153,14 +156,13 @@ export default function TicketingCard({ tenantId }: { tenantId: number | null })
             </div>
             {data?.last_error && <p className="text-xs text-severity-high">Last sync: {data.last_error}</p>}
             {data?.last_synced_at && !data.last_error && <p className="text-xs text-muted">Last synced {new Date(data.last_synced_at).toLocaleString()}</p>}
-            {msg && <p role={msg.ok ? 'status' : 'alert'} className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</p>}
+            {msg && <p role={msg.ok ? 'status' : 'alert'} className={msg.ok ? 'text-xs text-lime' : 'text-xs text-severity-critical'}>{msg.text}</p>}
             <div className="flex gap-2">
-                <button onClick={() => save.mutate()} disabled={save.isPending || !form.base_url} className="px-3 py-1.5 text-sm bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-50">Save</button>
-                <button onClick={() => test.mutate()} disabled={!data || !!draft || test.isPending} title={draft ? 'Save first' : undefined}
-                    className="px-3 py-1.5 text-sm border border-line-strong text-fg-2 hover:bg-raised disabled:opacity-50">Test</button>
-                {data && <button onClick={() => { if (confirm('Remove the ticketing connection?')) remove.mutate(); }}
-                    className="ml-auto px-3 py-1.5 text-sm text-severity-critical hover:bg-raised">Remove</button>}
+                <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || !form.base_url}>Save</Button>
+                <Button size="sm" variant="secondary" onClick={() => test.mutate()} disabled={!data || !!draft || test.isPending} title={draft ? 'Save first' : undefined}>Test</Button>
+                {data && <Button size="sm" variant="danger" className="ml-auto"
+                    onClick={async () => { if (await confirm({ title: 'Remove the ticketing connection?', danger: true, confirmLabel: 'Remove' })) remove.mutate(); }}>Remove</Button>}
             </div>
-        </div>
+        </Card>
     );
 }

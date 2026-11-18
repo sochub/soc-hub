@@ -27,7 +27,7 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
             navigate('/settings/tenants');
         },
         onError: (err: any) => {
-            setError(err.response?.data?.detail || 'Failed to delete tenant.');
+            setError(err.response?.data?.detail || 'Could not delete the organization.');
         },
     });
 
@@ -44,7 +44,7 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
             open={isOpen}
             onClose={handleClose}
             size="md"
-            title={<span className="text-red-300 flex items-center gap-2"><AlertTriangle size={16} />Delete Tenant Permanently</span>}
+            title={<span className="text-severity-critical flex items-center gap-2"><AlertTriangle size={16} />Delete organization permanently</span>}
             footer={<>
                 <button onClick={handleClose} className={btnSecondary}>Cancel</button>
                 <button
@@ -52,7 +52,7 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
                     disabled={!canDelete || deleteMutation.isPending}
                     className={btnDanger}
                 >
-                    {deleteMutation.isPending ? 'Deleting...' : 'Delete Permanently'}
+                    {deleteMutation.isPending ? 'Deleting…' : 'Delete permanently'}
                 </button>
             </>}
         >
@@ -64,18 +64,19 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
                 </p>
 
                 <div>
-                    <label className={modalLabel}>
-                        Type <span className="font-mono text-red-300">{tenant.slug}</span> to confirm
+                    <label htmlFor="delete-tenant-confirm" className={modalLabel}>
+                        Type <span className="font-mono text-severity-critical">{tenant.slug}</span> to confirm
                     </label>
                     <input
+                        id="delete-tenant-confirm"
                         type="text"
-                        className={`${modalInput} font-mono focus:border-red-500 focus:ring-red-500`}
+                        className={`${modalInput} font-mono`}
                         value={confirmText}
                         onChange={e => setConfirmText(e.target.value)}
                     />
                 </div>
 
-                {error && <p className="text-red-300 text-sm">{error}</p>}
+                {error && <p role="alert" className="text-severity-critical text-sm">{error}</p>}
             </div>
         </Modal>
     );

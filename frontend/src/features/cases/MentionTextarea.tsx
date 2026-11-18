@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import Avatar from '../../components/Avatar';
+import { cn } from '../../lib/utils';
+import { fieldClass } from '../../components/ui';
 import { useTenantId } from '../notifications/api';
 import { useCanRun } from '../enrichment/useCanRun';
 import { applyEdit, parse, serialize, type Chip } from './mentionChips';
@@ -118,14 +120,14 @@ export default function MentionTextarea({ value, onChange, disabled, placeholder
                 onKeyUp={(e) => { if (!['Enter', 'Tab', 'Escape'].includes(e.key)) { setDismissed(false); syncCaret(e.currentTarget); } }}
                 onClick={(e) => syncCaret(e.currentTarget)}
                 onBlur={() => setDismissed(true)}
-                className={className ?? 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-accent resize-none disabled:opacity-60'}
+                className={className ?? cn(fieldClass(), 'h-auto py-2 resize-none')}
             />
             {open && (
                 <ul
                     id={listId}
                     role="listbox"
                     aria-label="Mention a teammate"
-                    className="absolute left-0 right-0 z-30 mt-1 max-h-48 overflow-auto bg-panel border border-line shadow-lg text-sm"
+                    className="absolute left-0 right-0 z-30 mt-1 max-h-48 overflow-auto rounded-md bg-panel border border-line-strong shadow-md text-sm"
                 >
                     {options.map((u, i) => (
                         <li

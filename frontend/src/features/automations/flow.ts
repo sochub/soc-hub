@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import { NODE_DEF } from './nodeCatalog';
 import type { WfGraph, WfNode } from './types';
@@ -52,3 +53,29 @@ export function nextNodeId(type: string, taken: Set<string>): string {
     while (taken.has(`${base}_${i}`)) i++;
     return `${base}_${i}`;
 }
+
+/** React Flow theming from the app tokens (both themes), set as CSS variables on the <ReactFlow> element. */
+export const FLOW_THEME = {
+    '--xy-background-color': 'var(--color-canvas)',
+    '--xy-edge-stroke': 'var(--color-fg-3)',
+    '--xy-edge-stroke-selected': 'var(--color-accent)',
+    '--xy-connectionline-stroke': 'var(--color-accent)',
+    '--xy-edge-label-background-color': 'var(--color-panel)',
+    '--xy-edge-label-color': 'var(--color-fg-2)',
+    '--xy-controls-button-background-color': 'var(--color-panel)',
+    '--xy-controls-button-background-color-hover': 'var(--color-raised)',
+    '--xy-controls-button-color': 'var(--color-fg-2)',
+    '--xy-controls-button-color-hover': 'var(--color-fg)',
+    '--xy-controls-button-border-color': 'var(--color-line)',
+    '--xy-controls-box-shadow': 'none',
+    '--xy-minimap-background-color': 'var(--color-panel)',
+    '--xy-minimap-mask-background-color': 'color-mix(in srgb, var(--color-canvas) 70%, transparent)',
+    '--xy-minimap-mask-stroke-color': 'var(--color-line-strong)',
+    '--xy-minimap-node-background-color': 'var(--color-raised-2)',
+    '--xy-minimap-node-stroke-color': 'var(--color-line-strong)',
+    '--xy-attribution-background-color': 'transparent',
+} as CSSProperties;
+
+/** Grid dots, MiniMap and Controls frame, shared by the editor and run detail. */
+export const FLOW_DOT_COLOR = 'var(--color-line-strong)';
+export const FLOW_PANEL_CLASS = 'rounded-md border border-line overflow-hidden';

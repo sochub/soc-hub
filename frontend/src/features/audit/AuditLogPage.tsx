@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { api } from '../../api/client';
-import PageContainer from '../../components/layout/PageContainer';
-import { Badge, Button, Input, Label } from '../../components/ui';
+import { Badge, Button, ErrorState, Input, Label, Select, Skeleton } from '../../components/ui';
+import SettingsPageHeader from '../settings/SettingsPageHeader';
 import type { AuditFacets, AuditItem, AuditPage, User } from '../../types';
 
 const CATEGORIES = [
@@ -16,8 +16,7 @@ const PRESETS = [{ key: '1', label: '24h' }, { key: '7', label: '7d' }, { key: '
 const SEARCH_DEBOUNCE_MS = 300;
 // Filter bar: every field is label-above-control and every control is h-8, so the row shares one baseline.
 const fieldWrap = 'flex flex-col gap-1';
-const fieldLabel = 'text-xs font-medium text-fg-3';
-const control = 'h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg';
+const fieldLabel = 'mb-0';
 
 function sinceDays(days: string): string | undefined {
     if (!days || days === 'custom') return undefined;
@@ -109,7 +108,8 @@ export default function AuditLogPage() {
     };
 
     return (
-        <PageContainer width="wide" className="space-y-4">
+        <div className="space-y-4">
+            <SettingsPageHeader title="Audit log" description="Who did what in this organization, and when." />
             <div className="flex flex-wrap items-end gap-3">
                 <div className="flex gap-1" role="group" aria-label="Category">
                     {CATEGORIES.map((c) => (
@@ -121,25 +121,23 @@ export default function AuditLogPage() {
                 </div>
                 <div className={fieldWrap}>
                     <Label htmlFor="audit-user" className={fieldLabel}>User</Label>
-                    <select id="audit-user" value={userId} onChange={(e) => setUserId(e.target.value)}
-                        className={control}>
+                    <Select inputSize="sm" id="audit-user" value={userId} onChange={(e) => setUserId(e.target.value)}>
                         <option value="">Anyone</option>
                         {facets.data?.users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
-                    </select>
+                    </Select>
                 </div>
                 <div className={`${fieldWrap} min-w-[14rem] flex-1`}>
                     <Label htmlFor="audit-action" className={fieldLabel}>Action</Label>
-                    <Input className="h-8 py-0 px-2 text-xs rounded-md bg-raised" id="audit-action" list="audit-actions" value={actionInput} onChange={(e) => onActionChange(e.target.value)}
+                    <Input inputSize="sm" id="audit-action" list="audit-actions" value={actionInput} onChange={(e) => onActionChange(e.target.value)}
                         placeholder="e.g. login., PUT /api/v1/cases" />
                     <datalist id="audit-actions">{facets.data?.actions.map((a) => <option key={a} value={a} />)}</datalist>
                 </div>
                 <div className={fieldWrap}>
                     <Label htmlFor="audit-outcome" className={fieldLabel}>Outcome</Label>
-                    <select id="audit-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}
-                        className={control}>
+                    <Select inputSize="sm" id="audit-outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
                         <option value="">Any</option><option value="success">Success</option>
                         <option value="denied">Denied</option><option value="error">Error</option>
-                    </select>
+                    </Select>
                 </div>
                 <div className="flex gap-1" role="group" aria-label="Time range">
                     {PRESETS.map((p) => (
@@ -157,15 +155,13 @@ export default function AuditLogPage() {
                     <div className="flex items-end gap-2">
                         <div className={fieldWrap}>
                             <Label htmlFor="audit-from" className={fieldLabel}>From</Label>
-                            <input id="audit-from" type="date" value={customFrom} max={customTo || undefined}
-                                onChange={(e) => setCustomFrom(e.target.value)}
-                                className={control} />
+                            <Input inputSize="sm" id="audit-from" type="date" value={customFrom} max={customTo || undefined}
+                                onChange={(e) => setCustomFrom(e.target.value)} />
                         </div>
                         <div className={fieldWrap}>
                             <Label htmlFor="audit-to" className={fieldLabel}>To</Label>
-                            <input id="audit-to" type="date" value={customTo} min={customFrom || undefined}
-                                onChange={(e) => setCustomTo(e.target.value)}
-                                className={control} />
+                            <Input inputSize="sm" id="audit-to" type="date" value={customTo} min={customFrom || undefined}
+                                onChange={(e) => setCustomTo(e.target.value)} />
                         </div>
                     </div>
                 )}
@@ -177,13 +173,13 @@ export default function AuditLogPage() {
                 <Button size="sm" variant="secondary" className="ml-auto" onClick={exportCsv} disabled={exporting}><Download size={13} /> Export CSV</Button>
             </div>
             {exportError && <p role="alert" className="text-sm text-severity-critical">{exportError}</p>}
-            {log.isError && <p role="alert" className="text-sm text-severity-critical">Could not load the audit log.</p>}
+            {log.isError && <ErrorState message="Could not load the audit log." onRetry={() => log.refetch()} />}
 
-            <div className="border border-line rounded-lg overflow-x-auto">
+            <div className="border border-line rounded-md overflow-x-auto">
                 <table className="w-full text-xs">
-                    <thead className="text-fg-3 text-left">
-                        <tr className="border-b border-line">
-                            <th className="w-6" /><th className="px-3 py-2">Time</th><th className="px-3 py-2">Actor</th>
+                    <thead className="text-left">
+                        <tr className="border-b border-line label-caps">
+                            <th className="w-6"><span className="sr-only">Details</span></th><th className="px-3 py-2">Time</th><th className="px-3 py-2">Actor</th>
                             <th className="px-3 py-2">Category</th><th className="px-3 py-2">Action</th>
                             <th className="px-3 py-2">Entity</th><th className="px-3 py-2">Outcome</th><th className="px-3 py-2">IP</th>
                         </tr>
@@ -194,12 +190,13 @@ export default function AuditLogPage() {
                         ))}
                     </tbody>
                 </table>
-                {!log.isLoading && items.length === 0 && <p className="p-4 text-sm text-fg-3">No activity matches these filters.</p>}
+                {log.isLoading && <Skeleton rows={6} className="p-3" />}
+                {!log.isLoading && !log.isError && items.length === 0 && <p className="p-4 text-sm text-fg-3">No activity matches these filters.</p>}
             </div>
             {log.hasNextPage && (
                 <Button size="sm" variant="ghost" onClick={() => log.fetchNextPage()} disabled={log.isFetchingNextPage}>Load more</Button>
             )}
-        </PageContainer>
+        </div>
     );
 }
 
@@ -221,10 +218,10 @@ function AuditRow({ item: i, open, platform, onToggle }: { item: AuditItem; open
                         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     </button>
                 </td>
-                <td className="px-3 py-2 whitespace-nowrap" title={i.created_at}>{new Date(i.created_at).toLocaleString()}</td>
+                <td className="px-3 py-2.5 whitespace-nowrap num" title={i.created_at}>{new Date(i.created_at).toLocaleString()}</td>
                 <td className="px-3 py-2">
                     {i.user || i.user_email ? actorLabel(i)
-                        : <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">{actorLabel(i)}</span>}
+                        : <span className="px-1.5 py-0.5 rounded-sm bg-severity-medium/10 text-severity-medium">{actorLabel(i)}</span>}
                 </td>
                 <td className="px-3 py-2"><Badge>{i.category}</Badge></td>
                 <td className="px-3 py-2 font-mono">{i.action}</td>
@@ -247,7 +244,7 @@ function AuditRow({ item: i, open, platform, onToggle }: { item: AuditItem; open
                             {i.request_id && <span className="font-mono">request {i.request_id}</span>}
                         </div>
                         {i.user_agent && <div className="text-fg-3 break-all">{i.user_agent}</div>}
-                        {i.changes && <pre className="bg-raised border border-line rounded p-2 overflow-x-auto text-fg-2">{JSON.stringify(i.changes, null, 2)}</pre>}
+                        {i.changes && <pre className="bg-raised border border-line rounded-md p-2 overflow-x-auto text-fg-2">{JSON.stringify(i.changes, null, 2)}</pre>}
                         {others.length > 0 && (
                             <div>
                                 <div className="text-fg-3 mb-1">Related in the same request</div>

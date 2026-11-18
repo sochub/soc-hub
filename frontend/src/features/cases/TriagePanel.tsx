@@ -3,16 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Sparkles, Check, X, Loader2, RefreshCw, ArrowUpRight, AlertTriangle } from 'lucide-react';
 import { api } from '../../api/client';
-import { cn } from '../../lib/utils';
+import { Button, Badge, SeverityStamp } from '../../components/ui';
 import type { CaseTriage, PlaybookSummary, TriageItemStatus, User } from '../../types';
-
-const SEVERITY_STYLE: Record<string, string> = {
-    critical: 'text-severity-critical bg-red-500/10 border-red-500/30',
-    high: 'text-severity-high bg-orange-500/10 border-orange-500/30',
-    medium: 'text-severity-medium bg-amber-500/10 border-amber-500/30',
-    low: 'text-severity-low bg-accent/10 border-accent/40',
-    info: 'text-fg-2 bg-raised border-line',
-};
 
 function ItemFrame({ status, children }: { status: TriageItemStatus; children: ReactNode }) {
     if (status === 'dismissed') return null;
@@ -23,19 +15,17 @@ function TriageActions({ status, pending, canEdit, onConfirm, onDismiss }: {
     status: TriageItemStatus; pending: boolean; canEdit?: boolean; onConfirm: () => void; onDismiss: () => void;
 }) {
     if (status === 'confirmed') {
-        return <span className="shrink-0 text-xs text-emerald-400 flex items-center gap-1"><Check size={13} /> Confirmed</span>;
+        return <span className="shrink-0 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-1"><Check size={13} aria-hidden /> Confirmed</span>;
     }
     if (!canEdit) return null;
     return (
         <div className="shrink-0 flex items-center gap-1.5">
-            <button onClick={onConfirm} disabled={pending}
-                className="inline-flex items-center gap-1 px-2 py-1 bg-accent text-on-accent text-xs font-medium hover:bg-accent-hover disabled:opacity-50">
-                {pending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Confirm
-            </button>
-            <button onClick={onDismiss} disabled={pending}
-                className="p-1 text-muted hover:text-fg-2 disabled:opacity-50" aria-label="Dismiss">
+            <Button size="sm" variant="secondary" className="h-7 px-2" onClick={onConfirm} disabled={pending}>
+                {pending ? <Loader2 size={12} className="animate-spin" aria-hidden /> : <Check size={12} aria-hidden />} Confirm
+            </Button>
+            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onDismiss} disabled={pending} aria-label="Dismiss">
                 <X size={13} />
-            </button>
+            </Button>
         </div>
     );
 }
@@ -127,38 +117,36 @@ export default function TriagePanel({ caseId }: { caseId: number }) {
     if (!triage) {
         if (!canEdit) return null;
         return (
-            <div className="border border-line bg-panel p-4 mb-6 flex items-center justify-between">
-                <p className="text-sm text-fg-3 flex items-center gap-2">
-                    <Sparkles size={15} className="text-accent" /> No AI triage has run for this case yet.
-                </p>
+            <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-3">
+                <span>No AI triage yet.</span>
                 <button onClick={() => runTriage.mutate()} disabled={runTriage.isPending}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover disabled:opacity-50">
-                    {runTriage.isPending ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                    Run AI Triage
+                    className="inline-flex items-center gap-1.5 text-accent hover:underline disabled:opacity-50 rounded-sm">
+                    {runTriage.isPending ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                    Suggest severity, tags and playbook
                 </button>
+                {runTriage.isError && <span role="alert" className="text-severity-critical">Could not start triage. Is the AI provider reachable?</span>}
             </div>
         );
     }
 
     if (triage.status === 'pending') {
         return (
-            <div className="border border-line bg-panel p-4 mb-6 flex items-center gap-2.5 text-sm text-fg-3">
-                <Loader2 size={15} className="animate-spin text-accent" /> AI triage running…
+            <div role="status" className="border-y border-line py-3 mb-6 flex items-center gap-2.5 text-sm text-fg-3">
+                <Loader2 size={15} className="animate-spin text-accent" aria-hidden /> AI triage running…
             </div>
         );
     }
 
     if (triage.status === 'failed') {
         return (
-            <div className="border border-line bg-panel p-4 mb-6 flex items-center justify-between gap-4">
+            <div className="border-y border-line py-3 mb-6 flex items-center justify-between gap-4">
                 <p className="text-sm text-severity-critical flex items-center gap-2">
-                    <AlertTriangle size={15} className="shrink-0" /> {triage.error_message || 'AI triage failed.'}
+                    <AlertTriangle size={15} className="shrink-0" aria-hidden /> {triage.error_message || 'AI triage failed.'}
                 </p>
                 {canEdit && (
-                    <button onClick={() => runTriage.mutate()} disabled={runTriage.isPending}
-                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 border border-line-strong text-fg-2 text-sm hover:bg-surface disabled:opacity-50">
-                        <RefreshCw size={13} /> Retry
-                    </button>
+                    <Button size="sm" variant="secondary" className="shrink-0" onClick={() => runTriage.mutate()} disabled={runTriage.isPending}>
+                        <RefreshCw size={13} aria-hidden /> Retry
+                    </Button>
                 )}
             </div>
         );
@@ -172,33 +160,30 @@ export default function TriagePanel({ caseId }: { caseId: number }) {
     const nothing = !hasSeverityTags && !hasPlaybook && !hasRelated && !hasNextSteps;
 
     return (
-        <div className="border border-line bg-panel mb-6">
+        <div className="border-y border-line mb-6">
             <div className="flex items-center justify-between px-4 h-10 border-b border-line">
-                <span className="label-mono flex items-center gap-2 text-fg-3">
-                    <Sparkles size={13} className="text-accent" /> AI Triage
+                <span className="label-caps flex items-center gap-2">
+                    <Sparkles size={13} className="text-accent" aria-hidden /> AI triage
                 </span>
                 {canEdit && (
-                    <button onClick={() => runTriage.mutate()} disabled={runTriage.isPending}
-                        className="inline-flex items-center gap-1.5 text-xs text-accent font-medium hover:text-accent disabled:opacity-50">
-                        {runTriage.isPending ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    <Button size="sm" variant="ghost" className="h-7" onClick={() => runTriage.mutate()} disabled={runTriage.isPending}>
+                        {runTriage.isPending ? <Loader2 size={12} className="animate-spin" aria-hidden /> : <RefreshCw size={12} aria-hidden />}
                         Re-triage
-                    </button>
+                    </Button>
                 )}
             </div>
 
             <div className="px-4">
-                {nothing && <p className="py-3 text-sm text-muted">No suggestions from this run.</p>}
+                {nothing && <p className="py-3 text-sm text-fg-3">No suggestions from this run.</p>}
 
                 {hasSeverityTags && (
                     <ItemFrame status={triage.severity_tags_status}>
                         <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
                             {triage.proposed_severity && (
-                                <span className={cn("px-2 py-0.5 text-[10px] uppercase font-bold border tracking-wider", SEVERITY_STYLE[triage.proposed_severity])}>
-                                    {triage.proposed_severity}
-                                </span>
+                                <SeverityStamp severity={triage.proposed_severity} />
                             )}
                             {triage.proposed_tags?.map((t) => (
-                                <span key={t} className="px-2 py-0.5 text-xs bg-raised text-fg-2">{t}</span>
+                                <Badge key={t}>{t}</Badge>
                             ))}
                         </div>
                         <TriageActions status={triage.severity_tags_status} pending={confirmSeverityTags.isPending}
@@ -225,8 +210,8 @@ export default function TriagePanel({ caseId }: { caseId: number }) {
                             {triage.related_case_ids!.map((id, i) => (
                                 <span key={id}>
                                     {i > 0 && ', '}
-                                    <Link to={`/cases/${id}`} className="text-accent hover:text-accent inline-flex items-center gap-0.5">
-                                        #{id} <ArrowUpRight size={11} />
+                                    <Link to={`/cases/${id}`} className="text-accent hover:underline inline-flex items-center gap-0.5 num">
+                                        #{id} <ArrowUpRight size={11} aria-hidden />
                                     </Link>
                                 </span>
                             ))}

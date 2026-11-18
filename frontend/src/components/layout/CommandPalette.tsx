@@ -32,7 +32,7 @@ export default function CommandPalette({ nav }: { nav: PaletteNavItem[] }) {
     }, []);
 
     const { data: cases = [] } = useQuery<{ id: number; title: string; status: string }[]>({
-        queryKey: ['cases'], queryFn: async () => (await api.get('/cases/')).data, enabled: open,
+        queryKey: ['cases'], queryFn: async () => (await api.get('/cases/', { params: { limit: 500 } })).data, enabled: open,
     });
     // ponytail: client-side match over the newest 500 rows; add a backend ?q= filter when tenants outgrow it
     const { data: artifacts = [] } = useQuery<{ id: number; value: string; artifact_type: string }[]>({
@@ -76,19 +76,19 @@ export default function CommandPalette({ nav }: { nav: PaletteNavItem[] }) {
     };
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[12vh] px-4 bg-black/60 backdrop-blur-sm"
+        <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[12vh] px-4 bg-fg/40"
             onMouseDown={() => setOpen(false)}>
             <div role="dialog" aria-modal="true" aria-label="Command palette"
-                className="w-full max-w-xl bg-panel border border-line-strong rounded-xl shadow-2xl overflow-hidden animate-fade-in"
+                className="w-full max-w-xl bg-panel border border-line-strong rounded-md shadow-[0_12px_40px_-12px_rgb(0_0_0/0.35)] overflow-hidden animate-fade-in"
                 onMouseDown={e => e.stopPropagation()}>
-                <div className="flex items-center gap-3 px-4 border-b border-line">
+                <div className="flex items-center gap-3 px-4 border-b border-line focus-within:shadow-[inset_0_-2px_0_var(--color-accent)]">
                     <Search size={16} className="text-fg-3 shrink-0" />
                     <input autoFocus value={q} onChange={e => { setQ(e.target.value); setActive(0); }} onKeyDown={onKeyDown}
                         placeholder="Search cases, IOCs, pages… or #123"
-                        role="combobox" aria-expanded="true" aria-controls="palette-list"
+                        aria-label="Search" role="combobox" aria-expanded="true" aria-controls="palette-list"
                         aria-activedescendant={items[active] ? `palette-${items[active].id}` : undefined}
-                        className="flex-1 h-12 bg-transparent text-sm text-fg placeholder:text-muted focus:outline-hidden" />
-                    <kbd className="font-mono text-[10px] text-muted border border-line rounded px-1.5 py-0.5">esc</kbd>
+                        className="flex-1 h-12 bg-transparent text-sm text-fg placeholder:text-muted outline-none" />
+                    <kbd className="text-xs text-fg-3 border border-line rounded-sm px-1.5 py-0.5">Esc</kbd>
                 </div>
                 <ul id="palette-list" role="listbox" className="max-h-[50vh] overflow-y-auto py-1.5">
                     {items.length === 0 && <li className="px-4 py-6 text-center text-sm text-muted">No matches</li>}
@@ -98,11 +98,11 @@ export default function CommandPalette({ nav }: { nav: PaletteNavItem[] }) {
                             <li key={it.id} id={`palette-${it.id}`} role="option" aria-selected={i === active}
                                 onMouseMove={() => setActive(i)} onClick={() => go(it)}
                                 className={cn('mx-1.5 px-3 h-9 flex items-center gap-3 rounded-md cursor-pointer text-sm',
-                                    i === active ? 'bg-accent/15 text-fg' : 'text-fg-2')}>
-                                <Icon size={15} className={i === active ? 'text-accent' : 'text-fg-3'} />
+                                    i === active ? 'bg-raised text-fg' : 'text-fg-2')}>
+                                <Icon size={15} aria-hidden className={i === active ? 'text-accent' : 'text-fg-3'} />
                                 <span className="truncate flex-1">{it.label}</span>
-                                <span className="font-mono text-[10px] uppercase tracking-wider text-muted">{it.hint}</span>
-                                {i === active && <CornerDownLeft size={12} className="text-muted" />}
+                                <span className="text-xs text-fg-3">{it.hint}</span>
+                                {i === active && <CornerDownLeft size={12} aria-hidden className="text-fg-3" />}
                             </li>
                         );
                     })}

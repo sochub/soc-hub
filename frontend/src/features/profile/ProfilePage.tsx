@@ -3,15 +3,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
 import { api, session } from '../../api/client';
 import { refreshSession } from '../../api/queryClient';
-import PageContainer from '../../components/layout/PageContainer';
-import Modal, { btnDanger, btnPrimary, btnSecondary, modalInput, modalLabel } from '../../components/layout/Modal';
+import Modal from '../../components/layout/Modal';
+import { Button, Input, Label, Select, Skeleton } from '../../components/ui';
+import SettingsPageHeader from '../settings/SettingsPageHeader';
 import Avatar from '../../components/Avatar';
 import type { AuthSessionInfo, User } from '../../types';
 import MfaSetupDialog from './MfaSetupDialog';
 import { mfaErrorMessage } from './mfaErrors';
 import { formatDateTime } from '../../utils/datetime';
 
-const card = 'bg-panel border border-line';
+const card = 'rounded-md bg-panel border border-line';
 const cardHead = 'px-4 h-11 flex items-center border-b border-line text-sm font-semibold text-fg';
 const MAX_AVATAR = 2 * 1024 * 1024;
 const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
@@ -76,7 +77,7 @@ function ProfileCard({ me }: { me: User }) {
 
     return (
         <section className={card}>
-            <h2 className={cardHead}>Profile</h2>
+            <h3 className={cardHead}>Profile</h3>
             <div className="p-4 space-y-5">
                 <div className="flex items-center gap-4">
                     <div className="relative">
@@ -90,43 +91,43 @@ function ProfileCard({ me }: { me: User }) {
                     <div className="flex flex-wrap gap-2">
                         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
                             aria-label="Choose avatar image" onChange={(e) => onFile(e.target.files?.[0])} />
-                        <button type="button" className={btnSecondary} disabled={upload.isPending} onClick={() => fileRef.current?.click()}>
+                        <Button variant="secondary" disabled={upload.isPending} onClick={() => fileRef.current?.click()}>
                             {upload.isPending && <Loader2 size={14} className="animate-spin" />} Upload photo
-                        </button>
+                        </Button>
                         {me.has_avatar && (
-                            <button type="button" className={btnSecondary} disabled={remove.isPending} onClick={() => remove.mutate()}>Remove</button>
+                            <Button variant="secondary" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove</Button>
                         )}
                     </div>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-4">
                     <div>
-                        <label htmlFor="pf-name" className={modalLabel}>Name</label>
-                        <input id="pf-name" className={modalInput} value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
+                        <Label htmlFor="pf-name">Name</Label>
+                        <Input id="pf-name"  value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
                     </div>
                     <div>
-                        <label htmlFor="pf-title" className={modalLabel}>Job title</label>
-                        <input id="pf-title" className={modalInput} value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} />
+                        <Label htmlFor="pf-title">Job title</Label>
+                        <Input id="pf-title"  value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} />
                     </div>
                     <div>
-                        <label htmlFor="pf-email" className={modalLabel}>Email</label>
-                        <input id="pf-email" className={`${modalInput} bg-surface text-fg-3`} value={me.email} readOnly />
+                        <Label htmlFor="pf-email">Email</Label>
+                        <Input id="pf-email" className="bg-surface text-fg-3" value={me.email} readOnly />
                     </div>
                     <div>
-                        <label htmlFor="pf-tzf" className={modalLabel}>Timezone</label>
-                        <input id="pf-tzf" aria-label="Filter timezones" className={`${modalInput} mb-1.5`} placeholder="Filter timezones…" value={tzFilter}
+                        <Label htmlFor="pf-tzf">Timezone</Label>
+                        <Input id="pf-tzf" aria-label="Filter timezones" className="mb-1.5" placeholder="Filter timezones…" value={tzFilter}
                             onChange={(e) => setTzFilter(e.target.value)} />
-                        <select aria-label="Timezone" className={modalInput} value={tz} onChange={(e) => setTz(e.target.value)}>
+                        <Select aria-label="Timezone" value={tz} onChange={(e) => setTz(e.target.value)}>
                             <option value="">Browser default</option>
                             {shown.map((z) => <option key={z} value={z}>{z}</option>)}
-                        </select>
+                        </Select>
                         <p className="text-xs text-fg-3 mt-1">Times will show as <span className="num">{formatDateTime(now, tz || null)}</span></p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    <button type="button" className={btnPrimary} disabled={save.isPending || !name.trim()} onClick={() => { setMsg(null); save.mutate(); }}>
+                    <Button disabled={save.isPending || !name.trim()} onClick={() => { setMsg(null); save.mutate(); }}>
                         {save.isPending && <Loader2 size={14} className="animate-spin" />} Save changes
-                    </button>
-                    {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-emerald-300' : 'text-red-400'}`}>{msg.text}</p>}
+                    </Button>
+                    {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-lime' : 'text-severity-critical'}`}>{msg.text}</p>}
                 </div>
             </div>
         </section>
@@ -152,31 +153,31 @@ function PasswordCard({ me }: { me: User }) {
     const mismatch = again.length > 0 && next !== again;
     return (
         <section className={card}>
-            <h2 className={cardHead}>Password</h2>
+            <h3 className={cardHead}>Password</h3>
             <div className="p-4">
                 {me.has_password === false ? (
                     <p className="text-sm text-fg-2">This account signs in through single sign-on and has no password.</p>
                 ) : (
                     <form className="space-y-4 max-w-md" onSubmit={(e) => { e.preventDefault(); setMsg(null); change.mutate(); }}>
                         <div>
-                            <label htmlFor="pw-cur" className={modalLabel}>Current password</label>
-                            <input id="pw-cur" type="password" autoComplete="current-password" className={modalInput} value={cur} onChange={(e) => setCur(e.target.value)} />
+                            <Label htmlFor="pw-cur">Current password</Label>
+                            <Input id="pw-cur" type="password" autoComplete="current-password"  value={cur} onChange={(e) => setCur(e.target.value)} />
                         </div>
                         <div>
-                            <label htmlFor="pw-new" className={modalLabel}>New password</label>
-                            <input id="pw-new" type="password" autoComplete="new-password" className={modalInput} value={next} onChange={(e) => setNext(e.target.value)} />
-                            <p className="text-xs text-muted mt-1">At least 12 characters; avoid common or reused passwords.</p>
+                            <Label htmlFor="pw-new">New password</Label>
+                            <Input id="pw-new" type="password" autoComplete="new-password"  value={next} onChange={(e) => setNext(e.target.value)} />
+                            <p className="text-xs text-fg-3 mt-1">At least 12 characters; avoid common or reused passwords.</p>
                         </div>
                         <div>
-                            <label htmlFor="pw-again" className={modalLabel}>Confirm new password</label>
-                            <input id="pw-again" type="password" autoComplete="new-password" className={modalInput} value={again} onChange={(e) => setAgain(e.target.value)} />
-                            {mismatch && <p className="text-xs text-red-400 mt-1">Passwords do not match.</p>}
+                            <Label htmlFor="pw-again">Confirm new password</Label>
+                            <Input id="pw-again" type="password" autoComplete="new-password"  value={again} onChange={(e) => setAgain(e.target.value)} />
+                            {mismatch && <p className="text-xs text-severity-critical mt-1">Passwords do not match.</p>}
                         </div>
                         <div className="flex items-center gap-3">
-                            <button type="submit" className={btnPrimary} disabled={change.isPending || !cur || !next || next !== again}>
+                            <Button type="submit" disabled={change.isPending || !cur || !next || next !== again}>
                                 {change.isPending && <Loader2 size={14} className="animate-spin" />} Change password
-                            </button>
-                            {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-emerald-300' : 'text-red-400'}`}>{msg.text}</p>}
+                            </Button>
+                            {msg && <p role={msg.ok ? 'status' : 'alert'} className={`text-sm ${msg.ok ? 'text-lime' : 'text-severity-critical'}`}>{msg.text}</p>}
                         </div>
                     </form>
                 )}
@@ -200,22 +201,22 @@ function DisableMfaModal({ open, onClose }: { open: boolean; onClose: () => void
     return (
         <Modal open={open} onClose={onClose} title="Turn off two-factor authentication" size="md"
             footer={<>
-                <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
-                <button type="submit" form="mfa-off-form" className={btnDanger} disabled={disable.isPending || !pw || code.length !== 6}>
+                <Button variant="secondary" onClick={onClose}>Cancel</Button>
+                <Button type="submit" form="mfa-off-form" variant="danger" disabled={disable.isPending || !pw || code.length !== 6}>
                     {disable.isPending && <Loader2 size={14} className="animate-spin" />} Turn off
-                </button>
+                </Button>
             </>}>
             <form id="mfa-off-form" className="space-y-4" onSubmit={(e) => { e.preventDefault(); setError(null); disable.mutate(); }}>
                 <div>
-                    <label htmlFor="off-pw" className={modalLabel}>Current password</label>
-                    <input id="off-pw" type="password" autoComplete="current-password" className={modalInput} value={pw} onChange={(e) => setPw(e.target.value)} />
+                    <Label htmlFor="off-pw">Current password</Label>
+                    <Input id="off-pw" type="password" autoComplete="current-password"  value={pw} onChange={(e) => setPw(e.target.value)} />
                 </div>
                 <div>
-                    <label htmlFor="off-code" className={modalLabel}>6-digit code</label>
-                    <input id="off-code" className={`${modalInput} font-mono tracking-widest`} inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+                    <Label htmlFor="off-code">6-digit code</Label>
+                    <Input id="off-code" className="font-mono tracking-widest" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
                         value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
                 </div>
-                {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+                {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
             </form>
         </Modal>
     );
@@ -230,18 +231,18 @@ function MfaCard({ me }: { me: User }) {
 
     return (
         <section className={card}>
-            <h2 className={cardHead}>Two-factor authentication</h2>
+            <h3 className={cardHead}>Two-factor authentication</h3>
             <div className="p-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm">
-                    {enabled || viaSso ? <ShieldCheck size={16} className="text-emerald-400" /> : <ShieldOff size={16} className="text-muted" />}
+                    {enabled || viaSso ? <ShieldCheck size={16} className="text-lime" /> : <ShieldOff size={16} className="text-muted" />}
                     <span className="text-fg-2">{enabled ? 'Two-factor authentication is on.' : viaSso ? 'Two-factor authentication is handled by single sign-on.' : 'Two-factor authentication is off.'}</span>
                 </div>
-                {!enabled && !viaSso && <button type="button" className={btnPrimary} onClick={() => setSetupOpen(true)}>Turn on</button>}
+                {!enabled && !viaSso && <Button onClick={() => setSetupOpen(true)}>Turn on</Button>}
                 {viaSso && (
                     <p className="text-xs text-fg-3 w-full">This account signs in through single sign-on; your identity provider handles two-factor.</p>
                 )}
                 {enabled && !me.mfa_required_by_tenant && me.has_password !== false && (
-                    <button type="button" className={btnSecondary} onClick={() => setOffOpen(true)}>Turn off</button>
+                    <Button variant="secondary" onClick={() => setOffOpen(true)}>Turn off</Button>
                 )}
                 {enabled && me.mfa_required_by_tenant && (
                     <p className="text-xs text-fg-3 w-full">Your organization requires two-factor authentication, so it cannot be turned off.</p>
@@ -282,9 +283,9 @@ function SessionsCard() {
     const rows = data ?? [];
     return (
         <section className={card}>
-            <h2 className={cardHead}>Sessions &amp; connected apps</h2>
+            <h3 className={cardHead}>Sessions &amp; connected apps</h3>
             <div className="p-4 space-y-3">
-                {isLoading ? <p className="font-mono text-xs text-muted">$ loading…</p>
+                {isLoading ? <Skeleton rows={2} />
                     : rows.length === 0 ? <p className="text-sm text-fg-3">No active sessions.</p>
                     : <ul className="divide-y divide-line">
                         {rows.map((s) => (
@@ -300,14 +301,14 @@ function SessionsCard() {
                                         {s.kind === 'web' && s.ip ? `${s.ip} · ` : ''}Last used {formatDateTime(s.last_used_at)}
                                     </p>
                                 </div>
-                                <button type="button" className={btnSecondary} disabled={revoke.isPending}
+                                <Button variant="secondary" disabled={revoke.isPending}
                                     onClick={() => revoke.mutate(s)}>
                                     {s.current ? 'Sign out' : 'Revoke'}
-                                </button>
+                                </Button>
                             </li>
                         ))}
                     </ul>}
-                {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+                {error && <p role="alert" className="text-xs text-severity-critical">{error}</p>}
             </div>
         </section>
     );
@@ -319,16 +320,16 @@ export default function ProfilePage() {
         queryFn: async () => (await api.get('/users/me')).data as User,
     });
     return (
-        <PageContainer width="narrow">
-            <h1 className="text-lg font-semibold text-fg">Your profile</h1>
+        <div className="space-y-6">
+            <SettingsPageHeader title="Profile" description="Your name, photo, password and sign-in security." />
             {isLoading || !me
-                ? <p className="font-mono text-xs text-muted">$ loading…</p>
+                ? <Skeleton rows={6} />
                 : <>
                     <ProfileCard key={me.id} me={me} />
                     <PasswordCard me={me} />
                     <MfaCard me={me} />
                     <SessionsCard />
                 </>}
-        </PageContainer>
+        </div>
     );
 }

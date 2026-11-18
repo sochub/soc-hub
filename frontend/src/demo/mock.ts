@@ -55,6 +55,23 @@ export async function installDemo(api: AxiosInstance): Promise<void> {
             return reply(config, 200, new Blob([typeof data === 'string' ? data : JSON.stringify(data)],
                 { type: svg ? 'image/svg+xml' : 'application/json' }));
         }
+        if (path === '/alerts/' && Array.isArray(data)) return alertsPage(config, data);
         return reply(config, 200, data);
     };
+}
+
+// The Alerts list pages on the server; mirror its filters, sort and X-Total-Count so the demo behaves the same.
+const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+function alertsPage(config: InternalAxiosRequestConfig, all: Record<string, unknown>[]): AxiosResponse {
+    const p = (config.params ?? {}) as Record<string, string | number | undefined>;
+    const rows = all.filter((a) => ['status', 'severity', 'source'].every((k) => p[k] == null || a[k] === p[k]));
+    const sort = String(p.sort ?? '-created_at');
+    const key = (a: Record<string, unknown>) => sort.endsWith('severity') ? SEV_RANK[String(a.severity)] ?? 9 : Date.parse(String(a.created_at));
+    // 'severity' = most severe first (rank ascending), 'created_at' = oldest first; a leading '-' reverses.
+    const dir = sort.startsWith('-') ? -1 : 1;
+    rows.sort((x, y) => dir * (key(x) - key(y)));
+    const skip = Number(p.skip ?? 0), limit = Number(p.limit ?? 100);
+    const res = reply(config, 200, rows.slice(skip, skip + limit));
+    res.headers = { 'x-total-count': String(rows.length) };
+    return res;
 }

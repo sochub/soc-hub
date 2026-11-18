@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
-import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import Modal from '../../components/layout/Modal';
+import { Button, Input, Label } from '../../components/ui';
 import { previewName } from '../integrations/warRoomName';
 
 interface Props { open: boolean; onClose: () => void; caseId: number; title: string; template: string | null }
@@ -25,15 +26,15 @@ export default function OpenWarRoomModal({ open, onClose, caseId, title, templat
     return (
         <Modal open={open} onClose={close} title="Open war room" size="md"
             footer={<>
-                <button type="button" className={btnSecondary} onClick={close}>Cancel</button>
-                <button type="button" className={btnPrimary} disabled={create.isPending} onClick={() => create.mutate()}>
+                <Button variant="secondary" onClick={close}>Cancel</Button>
+                <Button disabled={create.isPending} onClick={() => create.mutate()}>
                     {create.isPending ? 'Creating…' : 'Create channel'}
-                </button>
+                </Button>
             </>}>
             <div className="space-y-4">
                 <div>
-                    <label className={modalLabel} htmlFor="war-room-name">Channel name</label>
-                    <input id="war-room-name" className={modalInput} value={value} onChange={(e) => setName(e.target.value)} />
+                    <Label htmlFor="war-room-name">Channel name</Label>
+                    <Input id="war-room-name" value={value} onChange={(e) => setName(e.target.value)} />
                 </div>
                 <label className="flex items-start gap-2 text-sm text-fg">
                     <input type="checkbox" className="mt-1" checked={listen} onChange={(e) => setListen(e.target.checked)} />

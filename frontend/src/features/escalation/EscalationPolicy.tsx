@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
-import PageContainer from '../../components/layout/PageContainer';
-import { Button, Input, Label } from '../../components/ui';
+import SettingsPageHeader from '../settings/SettingsPageHeader';
+import { Button, Card, Input, Label, Skeleton, EmptyState, TONE_TEXT, useConfirm } from '../../components/ui';
 import type { EscalationTier, User } from '../../types';
 import CheckList from './CheckList';
 import { errMsg, useGroups, usePolicy, useSavePolicy } from './api';
@@ -22,6 +22,7 @@ function PolicyForm() {
     const setTiers = (fn: (ts: EscalationTier[]) => EscalationTier[]) => setTiers0(fn(tiers));
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
+    const { confirm, dialog } = useConfirm();
 
     const edit = (i: number, patch: Partial<EscalationTier>) => {
         setSaved(false);
@@ -32,6 +33,15 @@ function PolicyForm() {
         setTiers((ts) => {
             const n = [...ts]; [n[i], n[i + d]] = [n[i + d], n[i]]; return n;
         });
+    };
+
+    const removeTier = async (i: number) => {
+        const t = tiers[i];
+        const label = t.name.trim() ? `"${t.name.trim()}"` : `tier ${i + 1}`;
+        if (!(await confirm({ title: `Remove ${label}?`, danger: true, confirmLabel: 'Remove tier',
+            body: 'The tier is removed from the policy when you save.' }))) return;
+        setSaved(false);
+        setTiers((ts) => ts.filter((_, j) => j !== i));
     };
 
     const submit = () => {
@@ -48,35 +58,31 @@ function PolicyForm() {
     };
 
     return (
-        <PageContainer>
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-fg">Escalation policy</h1>
-                    <p className="text-sm text-fg-3 mt-1">Tiers are tried in order. In-app notifications are always sent.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Button variant="secondary" onClick={() => { setSaved(false); setTiers((t) => [...t, blank()]); }}><Plus size={16} />Add tier</Button>
+        <div className="space-y-6">
+            <SettingsPageHeader title="Escalation policy"
+                description="Tiers are tried in order. In-app notifications are always sent."
+                actions={<>
+                    <Button variant="secondary" onClick={() => { setSaved(false); setTiers((t) => [...t, blank()]); }}><Plus size={16} aria-hidden />Add tier</Button>
                     <Button onClick={submit} disabled={save.isPending || isLoading}>{save.isPending ? 'Saving…' : 'Save policy'}</Button>
-                </div>
-            </div>
+                </>} />
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
-            {saved && <p role="status" className="text-sm text-emerald-300">Policy saved.</p>}
+            {saved && <p role="status" className={`text-sm ${TONE_TEXT.ok}`}>Policy saved.</p>}
             {!isLoading && tiers.length < 2 && (
                 <p className="text-sm text-fg-3">Tier 1 is where cases start. Add at least a second tier so cases can be escalated.</p>
             )}
-            {isLoading ? <p className="text-sm text-muted">Loading…</p> : tiers.length === 0 ? (
-                <p className="text-sm text-fg-3">No tiers yet. Add a tier to enable escalation.</p>
+            {isLoading ? <Skeleton rows={3} /> : tiers.length === 0 ? (
+                <Card><EmptyState title="No tiers yet" body="Add a tier to enable escalation." /></Card>
             ) : (
                 <ol className="space-y-3">
                     {tiers.map((t, i) => (
-                        <li key={t.id ?? `new-${i}`} className="bg-panel border border-line rounded-xl p-4 space-y-3">
+                        <li key={t.id ?? `new-${i}`}><Card className="p-4 space-y-3">
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-semibold text-fg-3 w-14 shrink-0">Tier {i + 1}</span>
                                 <Input aria-label={`Tier ${i + 1} name`} placeholder="Name (e.g. Tier 2 responders)" value={t.name} maxLength={100}
                                     onChange={(e) => edit(i, { name: e.target.value })} />
-                                <Button variant="ghost" size="sm" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={14} /></Button>
-                                <Button variant="ghost" size="sm" aria-label="Move down" disabled={i === tiers.length - 1} onClick={() => move(i, 1)}><ArrowDown size={14} /></Button>
-                                <Button variant="ghost" size="sm" aria-label="Remove tier" onClick={() => { setSaved(false); setTiers((ts) => ts.filter((_, j) => j !== i)); }}><Trash2 size={14} /></Button>
+                                <Button variant="ghost" size="sm" aria-label={`Move tier ${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={14} aria-hidden /></Button>
+                                <Button variant="ghost" size="sm" aria-label={`Move tier ${i + 1} down`} disabled={i === tiers.length - 1} onClick={() => move(i, 1)}><ArrowDown size={14} aria-hidden /></Button>
+                                <Button variant="ghost" size="sm" aria-label={`Remove tier ${i + 1}`} onClick={() => removeTier(i)}><Trash2 size={14} aria-hidden /></Button>
                             </div>
                             <div className="grid gap-4 md:grid-cols-2">
                                 <div className="space-y-1.5">
@@ -105,11 +111,12 @@ function PolicyForm() {
                                     </div>
                                 </div>
                             </div>
-                        </li>
+                        </Card></li>
                     ))}
                 </ol>
             )}
-        </PageContainer>
+            {dialog}
+        </div>
     );
 }
 

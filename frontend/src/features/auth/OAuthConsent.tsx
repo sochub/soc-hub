@@ -3,7 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { KeyRound, ShieldAlert } from 'lucide-react';
 import { api, ssoLoginUrl } from '../../api/client';
-import { Badge, Button, Label } from '../../components/ui';
+import { Badge, Button, Label, Select, Skeleton } from '../../components/ui';
+import AuthLayout from './AuthLayout';
 import { saveReturnTo } from './returnTo';
 
 const PARAMS = ['response_type', 'client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method',
@@ -23,20 +24,6 @@ function errorText(err: unknown): string {
     if (typeof d === 'string') return d;
     if (d && typeof d === 'object' && 'error_description' in d) return String((d as { error_description: unknown }).error_description);
     return 'Something went wrong. Please try again.';
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-    return (
-        <div className="min-h-screen flex items-center justify-center bg-canvas text-fg font-sans p-4">
-            <div className="w-full max-w-md rounded-2xl border border-line bg-panel p-6 sm:p-8 space-y-6 shadow-lg">
-                <div className="flex items-center gap-2.5">
-                    <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="w-8 h-8" />
-                    <span className="font-display text-lg font-semibold tracking-tight">sochub</span>
-                </div>
-                {children}
-            </div>
-        </div>
-    );
 }
 
 export default function OAuthConsent() {
@@ -64,17 +51,16 @@ export default function OAuthConsent() {
 
     // Consent must never be clickable through someone else's page.
     if (framed) {
-        return <Shell><p role="alert" className="text-sm text-severity-critical">This page can't be shown inside another site.</p></Shell>;
+        return <AuthLayout title="Authorize app" wide><p role="alert" className="text-sm text-severity-critical">This page can't be shown inside another site.</p></AuthLayout>;
     }
     if (info.isPending) {
-        return <Shell><p className="text-sm text-fg-2">Loading…</p></Shell>;
+        return <AuthLayout title="Authorize app" wide><Skeleton rows={3} /></AuthLayout>;
     }
     if (info.isError) {
         return (
-            <Shell>
-                <h1 className="text-xl font-semibold">This authorization request can't be completed</h1>
+            <AuthLayout title="This authorization request can't be completed" wide>
                 <p role="alert" className="text-sm text-severity-critical">{errorText(info.error)}</p>
-            </Shell>
+            </AuthLayout>
         );
     }
 
@@ -107,26 +93,21 @@ export default function OAuthConsent() {
     };
 
     return (
-        <Shell>
-            <div className="space-y-3">
-                {d.unverified && (
-                    <Badge variant="high"><ShieldAlert size={12} /> Unverified app</Badge>
-                )}
-                <h1 className="text-xl font-semibold leading-snug">
-                    <strong className="font-bold">{d.client_name}</strong> wants to access SOC Hub as you.
-                </h1>
-                <p className="text-sm text-fg-2">Redirects to <span className="font-mono text-fg">{d.redirect_host}</span></p>
-            </div>
+        <AuthLayout wide
+            title={<><strong className="font-bold">{d.client_name}</strong> wants to access SOC Hub as you.</>}
+            description={<p>Redirects to <span className="font-mono text-fg">{d.redirect_host}</span></p>}>
+            {d.unverified && (
+                <Badge variant="high"><ShieldAlert size={12} /> Unverified app</Badge>
+            )}
 
             {d.tenants.length > 0 ? (
                 <div className="space-y-2">
                     <Label htmlFor="oauth-tenant">Organization</Label>
-                    <select id="oauth-tenant" value={tenantId ?? ''} disabled={busy}
-                        onChange={e => setPicked(Number(e.target.value))}
-                        className="w-full rounded-md border border-line-strong bg-panel px-2 py-2 text-sm text-fg">
+                    <Select id="oauth-tenant" value={tenantId ?? ''} disabled={busy}
+                        onChange={e => setPicked(Number(e.target.value))}>
                         {tenantId === null && <option value="" disabled>Choose an organization…</option>}
                         {d.tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
+                    </Select>
                     {tenant && (
                         <p className="text-sm text-fg-2">
                             It will be able to do what your <strong className="text-fg">{tenant.role}</strong> role
@@ -156,13 +137,13 @@ export default function OAuthConsent() {
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
 
             <div className="flex gap-3">
-                <Button type="button" variant="outline" className="flex-1" disabled={busy} onClick={() => decide(false)}>
+                <Button type="button" variant="outline" size="lg" className="flex-1" disabled={busy} onClick={() => decide(false)}>
                     Deny
                 </Button>
-                <Button type="button" className="flex-1" disabled={busy || tenantId === null} onClick={() => decide(true)}>
+                <Button type="button" size="lg" className="flex-1" disabled={busy || tenantId === null} onClick={() => decide(true)}>
                     Approve
                 </Button>
             </div>
-        </Shell>
+        </AuthLayout>
     );
 }

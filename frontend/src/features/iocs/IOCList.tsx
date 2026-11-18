@@ -2,50 +2,24 @@ import { Fragment, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { AlertOctagon, ChevronDown, ChevronRight, Plus, Send, Trash2 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { ChevronDown, ChevronRight, Plus, Send, Trash2, X } from 'lucide-react';
 import type { IOC } from '../../types';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
 import { useCanRun } from '../enrichment/useCanRun';
-import PageContainer from '../../components/layout/PageContainer';
+import { Button, Input, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, useConfirm, verdictTone, tlpTone, TONE_VAR, type Tone } from '../../components/ui';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
-
-const VERDICT_DOT: Record<string, string> = { malicious: 'bg-red-600', suspicious: 'bg-amber-500', harmless: 'bg-green-600' };
 
 const IOC_TYPES = ['ip_address', 'domain', 'url', 'file_hash', 'email', 'registry_key', 'mutex', 'user_agent', 'other'];
 const THREAT_LEVELS = ['critical', 'high', 'medium', 'low', 'info'];
 const STATUSES = ['active', 'expired', 'whitelisted', 'false_positive'];
 const TLP_LEVELS = ['white', 'green', 'amber', 'red'];
 
-const threatLevelBadge = (level: string) => {
-    const map: Record<string, string> = {
-        critical: 'bg-red-500/10 text-red-300 border-red-500/30',
-        high: 'bg-orange-500/10 text-orange-300 border-orange-500/30',
-        medium: 'bg-yellow-500/10 text-yellow-300 border-yellow-500/30',
-        low: 'bg-accent/10 text-accent border-accent/40',
-        info: 'bg-raised text-fg-3 border-line',
-    };
-    return map[level] ?? map.info;
-};
-
-const statusBadge = (status: string) => {
-    const map: Record<string, string> = {
-        active: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
-        expired: 'bg-raised text-fg-3 border-line',
-        whitelisted: 'bg-accent/10 text-accent border-accent/40',
-        false_positive: 'bg-yellow-500/10 text-yellow-300 border-yellow-500/30',
-    };
-    return map[status] ?? map.expired;
-};
-
-const tlpBadge = (tlp: string) => {
-    const map: Record<string, string> = {
-        white: 'bg-raised text-fg-2 border-line-strong',
-        green: 'bg-green-500/10 text-green-300 border-green-500/30',
-        amber: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
-        red: 'bg-red-500/10 text-red-300 border-red-500/30',
-    };
-    return map[tlp] ?? map.amber;
+const iocStatusTone = (status: string): Tone => {
+    switch (status) {
+        case 'active': return 'accent';
+        case 'whitelisted': return 'ok';
+        default: return 'neutral';
+    }
 };
 
 const SKIP_LABEL: Record<string, string> = {
@@ -78,7 +52,9 @@ export default function IOCList() {
     const [mispResult, setMispResult] = useState<MispPushResult | null>(null);
     const [mispError, setMispError] = useState<string | null>(null);
 
-    const { data: iocs, isLoading } = useQuery<IOC[]>({
+    const { confirm, dialog } = useConfirm();
+    const q = searchParams.get('q') ?? '';
+    const { data: iocs, isLoading, isError, refetch } = useQuery<IOC[]>({
         queryKey: ['iocs'],
         queryFn: async () => {
             const res = await api.get('/iocs/');
@@ -109,7 +85,8 @@ export default function IOCList() {
         },
     });
 
-    const visible = (iocs ?? []).filter(i => i.value.toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase()));
+    const typeFilter = searchParams.get('type'); // set by the Overview "Indicators" chart
+    const visible = (iocs ?? []).filter(i => i.value.toLowerCase().includes(q.toLowerCase()) && (!typeFilter || i.ioc_type === typeFilter));
     const selectedIocs = (iocs ?? []).filter(i => selected.has(i.id));
     const selectedCaseIds = new Set(selectedIocs.map(i => i.case_id));
     const singleCaseId = selectedIocs.length > 0 && selectedCaseIds.size === 1 ? selectedIocs[0].case_id : null;
@@ -141,56 +118,54 @@ export default function IOCList() {
     });
 
     return (
-        <PageContainer>
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-fg tracking-tight flex items-center gap-3">
-                        <AlertOctagon size={24} className="text-magenta" />
-                        Indicators of Compromise
-                    </h1>
-                    <p className="text-fg-3 text-sm mt-1">Track and manage threat indicators across all cases.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                <input type="search" value={searchParams.get('q') ?? ''} placeholder="Filter by value…"
-                    onChange={e => setSearchParams(e.target.value ? { q: e.target.value } : {}, { replace: true })}
-                    className="w-56 bg-surface border border-line rounded-full px-3 py-1.5 text-sm text-fg placeholder:text-muted focus:outline-hidden focus:ring-1 focus:ring-accent" />
-                <button
-                    onClick={() => setShowModal(true)}
-                    className="flex items-center gap-2 bg-brand-gradient hover:opacity-90 px-4 py-2 rounded-full text-sm font-semibold transition-all"
-                >
-                    <Plus size={16} />
+        <div className="p-4 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+                <p className="mr-auto text-sm text-fg-3">
+                    {isLoading ? '\u00a0' : <><span className="num">{q || typeFilter ? `${visible.length} of ${iocs?.length ?? 0}` : iocs?.length ?? 0}</span> indicators tracked across all cases.</>}
+                </p>
+                {typeFilter && (
+                    <button type="button" onClick={() => setSearchParams(p => { p.delete('type'); return p; }, { replace: true })}
+                        className="inline-flex items-center gap-1 h-7 px-2 rounded-sm border border-accent/40 bg-accent/10 text-xs text-fg hover:border-accent"
+                        aria-label={`Remove filter: type ${typeFilter}`}>
+                        Type: {typeFilter.replace(/_/g, ' ')}<X size={12} aria-hidden />
+                    </button>
+                )}
+                <Input type="search" inputSize="sm" className="w-56" aria-label="Filter by value" value={q} placeholder="Filter by value…"
+                    onChange={e => setSearchParams(p => { if (e.target.value) p.set('q', e.target.value); else p.delete('q'); return p; }, { replace: true })} />
+                <Button size="sm" onClick={() => setShowModal(true)}>
+                    <Plus size={14} aria-hidden />
                     Add IOC
-                </button>
-                </div>
+                </Button>
             </div>
 
             {canRun && selected.size > 0 && (
-                <div className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2 text-sm">
-                    <span className="text-fg-2">{selected.size} selected</span>
-                    <button
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-raised px-3 py-2 text-sm">
+                    <span className="text-fg-2 num">{selected.size} selected</span>
+                    <Button
+                        size="sm" variant="secondary"
                         onClick={() => singleCaseId != null && mispPush.mutate({ caseId: singleCaseId, ids: selectedIocs.map(i => i.id) })}
                         disabled={singleCaseId == null || mispPush.isPending}
-                        title={singleCaseId == null ? 'select IOCs from a single case' : 'Send selected IOCs to MISP'}
-                        className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs font-semibold text-fg hover:bg-raised disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={singleCaseId == null ? 'Select IOCs from a single case' : 'Send selected IOCs to MISP'}
                     >
-                        <Send size={12} />
-                        {mispPush.isPending ? 'Sending...' : 'Send to MISP'}
-                    </button>
-                    <button onClick={() => setSelected(new Set())} className="text-xs text-muted hover:text-fg-2">Clear</button>
+                        <Send size={12} aria-hidden />
+                        {mispPush.isPending ? 'Sending…' : 'Send to MISP'}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(new Set())}>Clear</Button>
                 </div>
             )}
-            {mispError && (
-                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300">{mispError}</div>
-            )}
+            {mispError && <ErrorState message={mispError} />}
             {mispResult && (
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300 space-y-1">
-                    <p>
-                        {mispResult.pushed.length} IOC{mispResult.pushed.length === 1 ? '' : 's'} pushed to MISP.{' '}
-                        <a href={mispResult.event_url} target="_blank" rel="noopener noreferrer" className="underline">Open event</a>
-                    </p>
+                <div role="status" className="rounded-md border border-line bg-panel px-4 py-3 text-sm text-fg-2 space-y-1">
+                    <div className="flex items-start gap-2">
+                        <Stamp tone="ok">Sent</Stamp>
+                        <p className="mr-auto">
+                            <span className="num">{mispResult.pushed.length}</span> IOC{mispResult.pushed.length === 1 ? '' : 's'} pushed to MISP.{' '}
+                            <a href={mispResult.event_url} target="_blank" rel="noopener noreferrer" className="text-accent underline">Open event</a>
+                        </p>
+                        <button type="button" onClick={() => setMispResult(null)} aria-label="Dismiss" className="text-fg-3 hover:text-fg"><X size={14} /></button>
+                    </div>
                     {mispResult.skipped.length > 0 && (
-                        <ul className="text-xs text-amber-300 list-disc pl-5">
+                        <ul className="text-xs text-severity-medium list-disc pl-5">
                             {mispResult.skipped.map(s => (
                                 <li key={s.id}>
                                     {iocs?.find(i => i.id === s.id)?.value ?? `IOC #${s.id}`} — {SKIP_LABEL[s.reason] ?? s.reason}
@@ -201,106 +176,100 @@ export default function IOCList() {
                 </div>
             )}
 
-            {/* Table */}
-            <div className="glass-panel rounded-xl border border-line overflow-hidden">
-                {isLoading ? (
-                    <div className="flex items-center justify-center py-20">
-                        <div className="w-8 h-8 rounded-full border-4 border-line border-t-accent animate-spin" />
-                    </div>
-                ) : !iocs || iocs.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-muted">
-                        <AlertOctagon size={40} className="mb-3 opacity-30" />
-                        <p className="text-sm">No IOCs recorded yet. Add one to get started.</p>
-                    </div>
-                ) : (
-                    <div className="overflow-x-auto">
+            {isError ? <ErrorState message="Could not load IOCs." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={8} /> : !iocs || iocs.length === 0 ? (
+                <EmptyState title="No IOCs recorded yet" body="Add one to get started, or promote an artifact from a case."
+                    action={<Button size="sm" onClick={() => setShowModal(true)}><Plus size={14} aria-hidden />Add IOC</Button>} />
+            ) : visible.length === 0 ? (
+                <EmptyState title="No IOCs match this filter"
+                    action={<Button size="sm" variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>Clear filter</Button>} />
+            ) : (
+                    <div className="-mx-4 overflow-x-auto border-y border-line">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="border-b border-line text-xs font-semibold text-muted uppercase tracking-wider">
+                                <tr className="border-b border-line bg-surface label-caps">
                                     {canRun && (
-                                        <th className="px-2 py-3 w-8">
+                                        <th className="px-3 py-2 w-8">
                                             <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all IOCs" />
                                         </th>
                                     )}
-                                    <th className="px-2 py-3 w-8"></th>
-                                    <th className="px-4 py-3 text-left">Type</th>
-                                    <th className="px-4 py-3 text-left">Value</th>
-                                    <th className="px-4 py-3 text-left">Threat Level</th>
-                                    <th className="px-4 py-3 text-left">Confidence</th>
-                                    <th className="px-4 py-3 text-left">Status</th>
-                                    <th className="px-4 py-3 text-left">TLP</th>
-                                    <th className="px-4 py-3 text-left">Source</th>
-                                    <th className="px-4 py-3 text-left">Created</th>
-                                    <th className="px-4 py-3 text-right">Actions</th>
+                                    <th className="px-3 py-2 w-8"><span className="sr-only">Threat intel</span></th>
+                                    <th className="px-3 py-2 text-left">Type</th>
+                                    <th className="px-3 py-2 text-left">Value</th>
+                                    <th className="px-3 py-2 text-left">Threat level</th>
+                                    <th className="px-3 py-2 text-left">Confidence</th>
+                                    <th className="px-3 py-2 text-left">Status</th>
+                                    <th className="px-3 py-2 text-left">TLP</th>
+                                    <th className="px-3 py-2 text-left">Source</th>
+                                    <th className="px-3 py-2 text-left">Created</th>
+                                    <th className="px-3 py-2 text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
                                 {visible.map((ioc) => (
                                     <Fragment key={ioc.id}>
-                                    <tr className="hover:bg-panel transition-colors group">
+                                    <tr className="hover:bg-raised transition-colors group">
                                         {canRun && (
-                                            <td className="px-2 py-3">
+                                            <td className="px-3 py-2.5">
                                                 <input type="checkbox" checked={selected.has(ioc.id)} onChange={() => toggle(ioc.id)} aria-label={`Select ${ioc.value}`} />
                                             </td>
                                         )}
-                                        <td className="px-2 py-3">
-                                            <button onClick={() => setOpenId(openId === ioc.id ? null : ioc.id)} className="text-muted hover:text-fg-2" title="Threat intel" aria-expanded={openId === ioc.id}>
+                                        <td className="px-3 py-2.5">
+                                            <button onClick={() => setOpenId(openId === ioc.id ? null : ioc.id)} className="text-muted hover:text-fg-2" title="Threat intel" aria-expanded={openId === ioc.id}
+                                                aria-label={`${openId === ioc.id ? 'Hide' : 'Show'} threat intel for ${ioc.value}`}>
                                                 {openId === ioc.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                             </button>
                                         </td>
-                                        <td className="px-4 py-3">
+                                        <td className="px-3 py-2.5">
                                             <span className="font-mono text-xs text-fg-3 bg-raised px-2 py-0.5 rounded-sm">
                                                 {ioc.ioc_type.replace('_', ' ')}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 font-mono text-fg max-w-[200px] truncate" title={ioc.value}>
-                                            {ioc.enrichment_verdict && VERDICT_DOT[ioc.enrichment_verdict] && (
-                                                <span title={ioc.enrichment_verdict} className={cn('inline-block w-2 h-2 rounded-full mr-2 align-middle', VERDICT_DOT[ioc.enrichment_verdict])} />
+                                        <td className="px-3 py-2.5 font-mono text-fg max-w-[200px] truncate" title={ioc.value}>
+                                            {ioc.enrichment_verdict && verdictTone(ioc.enrichment_verdict) !== 'neutral' && (
+                                                <span title={ioc.enrichment_verdict} className="inline-block w-2 h-2 rounded-full mr-2 align-middle"
+                                                    style={{ background: TONE_VAR[verdictTone(ioc.enrichment_verdict)] }}>
+                                                    <span className="sr-only">{ioc.enrichment_verdict}</span>
+                                                </span>
                                             )}
                                             {ioc.value}
                                         </td>
-                                        <td className="px-4 py-3">
-                                            <span className={cn('px-2 py-0.5 rounded-sm text-[11px] font-bold border uppercase', threatLevelBadge(ioc.threat_level))}>
-                                                {ioc.threat_level}
-                                            </span>
+                                        <td className="px-3 py-2.5">
+                                            <SeverityStamp severity={ioc.threat_level} />
                                         </td>
-                                        <td className="px-4 py-3">
+                                        <td className="px-3 py-2.5">
                                             <div className="flex items-center gap-2">
                                                 <div className="w-16 h-1.5 bg-raised rounded-full overflow-hidden">
                                                     <div
-                                                        className="h-full bg-purple-500 rounded-full"
+                                                        className="h-full bg-accent rounded-full"
                                                         style={{ width: `${ioc.confidence}%` }}
                                                     />
                                                 </div>
-                                                <span className="text-xs text-muted">{ioc.confidence}%</span>
+                                                <span className="text-xs text-fg-3 num">{ioc.confidence}%</span>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3">
-                                            <span className={cn('px-2 py-0.5 rounded-sm text-[11px] font-bold border', statusBadge(ioc.status))}>
-                                                {ioc.status.replace('_', ' ')}
-                                            </span>
+                                        <td className="px-3 py-2.5">
+                                            <Stamp tone={iocStatusTone(ioc.status)}>{ioc.status.replace('_', ' ')}</Stamp>
                                         </td>
-                                        <td className="px-4 py-3">
-                                            <span className={cn('px-2 py-0.5 rounded-sm text-[11px] font-bold border uppercase', tlpBadge(ioc.tlp))}>
-                                                TLP:{ioc.tlp}
-                                            </span>
+                                        <td className="px-3 py-2.5">
+                                            <Stamp tone={tlpTone(ioc.tlp)}>TLP:{ioc.tlp}</Stamp>
                                         </td>
-                                        <td className="px-4 py-3 text-fg-3 text-xs">{ioc.source || '—'}</td>
-                                        <td className="px-4 py-3 text-muted text-xs">
+                                        <td className="px-3 py-2.5 text-fg-3 text-xs">{ioc.source || '—'}</td>
+                                        <td className="px-3 py-2.5 text-fg-3 text-xs num">
                                             {new Date(ioc.created_at).toLocaleDateString()}
                                         </td>
-                                        <td className="px-4 py-3 text-right">
-                                            <button
-                                                onClick={() => {
-                                                    if (confirm('Delete this IOC?')) {
+                                        <td className="px-3 py-2.5 text-right">
+                                            <Button
+                                                variant="ghost" size="icon"
+                                                onClick={async () => {
+                                                    if (await confirm({ title: 'Delete this IOC?', body: <>“<span className="font-mono">{ioc.value}</span>” will be deleted. This can't be undone.</>, danger: true, confirmLabel: 'Delete IOC' })) {
                                                         deleteMutation.mutate(ioc.id);
                                                     }
                                                 }}
-                                                className="p-1.5 text-muted hover:text-red-300 hover:bg-raised rounded-sm transition-colors opacity-0 group-hover:opacity-100"
-                                                title="Delete IOC"
+                                                className="hover:text-severity-critical opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                                                aria-label={`Delete IOC ${ioc.value}`} title="Delete IOC"
                                             >
                                                 <Trash2 size={14} />
-                                            </button>
+                                            </Button>
                                         </td>
                                     </tr>
                                     {openId === ioc.id && (
@@ -314,14 +283,13 @@ export default function IOCList() {
                             </tbody>
                         </table>
                     </div>
-                )}
-            </div>
+            )}
 
             {/* Add IOC Modal */}
             <Modal
                 open={showModal}
                 onClose={() => setShowModal(false)}
-                title="Add Indicator of Compromise"
+                title="Add indicator of compromise"
                 size="lg"
                 footer={<>
                     <button onClick={() => setShowModal(false)} className={btnSecondary}>
@@ -339,8 +307,9 @@ export default function IOCList() {
                 <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className={modalLabel}>Type</label>
+                            <label htmlFor="ioc-type" className={modalLabel}>Type</label>
                             <select
+                            id="ioc-type"
                                 value={form.ioc_type}
                                 onChange={(e) => setForm({ ...form, ioc_type: e.target.value })}
                                 className={modalInput}
@@ -349,8 +318,9 @@ export default function IOCList() {
                             </select>
                         </div>
                         <div>
-                            <label className={modalLabel}>Threat Level</label>
+                            <label htmlFor="ioc-threat" className={modalLabel}>Threat level</label>
                             <select
+                            id="ioc-threat"
                                 value={form.threat_level}
                                 onChange={(e) => setForm({ ...form, threat_level: e.target.value })}
                                 className={modalInput}
@@ -361,8 +331,9 @@ export default function IOCList() {
                     </div>
 
                     <div>
-                        <label className={modalLabel}>Value</label>
+                        <label htmlFor="ioc-value" className={modalLabel}>Value</label>
                         <input
+                            id="ioc-value"
                             type="text"
                             value={form.value}
                             onChange={(e) => setForm({ ...form, value: e.target.value })}
@@ -373,8 +344,9 @@ export default function IOCList() {
 
                     <div className="grid grid-cols-3 gap-3">
                         <div>
-                            <label className={modalLabel}>Confidence ({form.confidence}%)</label>
+                            <label htmlFor="ioc-confidence" className={modalLabel}>Confidence ({form.confidence}%)</label>
                             <input
+                            id="ioc-confidence"
                                 type="number"
                                 min={0}
                                 max={100}
@@ -384,8 +356,9 @@ export default function IOCList() {
                             />
                         </div>
                         <div>
-                            <label className={modalLabel}>Status</label>
+                            <label htmlFor="ioc-status" className={modalLabel}>Status</label>
                             <select
+                            id="ioc-status"
                                 value={form.status}
                                 onChange={(e) => setForm({ ...form, status: e.target.value })}
                                 className={modalInput}
@@ -394,8 +367,9 @@ export default function IOCList() {
                             </select>
                         </div>
                         <div>
-                            <label className={modalLabel}>TLP</label>
+                            <label htmlFor="ioc-tlp" className={modalLabel}>TLP</label>
                             <select
+                            id="ioc-tlp"
                                 value={form.tlp}
                                 onChange={(e) => setForm({ ...form, tlp: e.target.value })}
                                 className={modalInput}
@@ -406,8 +380,9 @@ export default function IOCList() {
                     </div>
 
                     <div>
-                        <label className={modalLabel}>Source</label>
+                        <label htmlFor="ioc-source" className={modalLabel}>Source</label>
                         <input
+                            id="ioc-source"
                             type="text"
                             value={form.source}
                             onChange={(e) => setForm({ ...form, source: e.target.value })}
@@ -417,8 +392,9 @@ export default function IOCList() {
                     </div>
 
                     <div>
-                        <label className={modalLabel}>Description</label>
+                        <label htmlFor="ioc-desc" className={modalLabel}>Description</label>
                         <textarea
+                            id="ioc-desc"
                             value={form.description}
                             onChange={(e) => setForm({ ...form, description: e.target.value })}
                             placeholder="Additional context..."
@@ -428,6 +404,7 @@ export default function IOCList() {
                     </div>
                 </div>
             </Modal>
-        </PageContainer>
+            {dialog}
+        </div>
     );
 }

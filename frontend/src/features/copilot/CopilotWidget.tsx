@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bot } from 'lucide-react';
 import CopilotChat from './CopilotChat';
 
 /** Extract a case id from the current path, or null when not on a case detail view. */
@@ -10,62 +9,60 @@ function caseIdFromPath(pathname: string): number | null {
     return match ? parseInt(match[1], 10) : null;
 }
 
+/**
+ * Copilot docked as a right-side panel under the top bar. No launcher of its own: the top bar's Copilot button
+ * dispatches window event 'copilot:toggle', and ⌘J / Ctrl+J toggles it from anywhere.
+ */
 export default function CopilotWidget() {
     const location = useLocation();
     const [open, setOpen] = useState(false);
     const caseId = caseIdFromPath(location.pathname);
+    const panelRef = useRef<HTMLElement>(null);
+    const returnFocus = useRef<HTMLElement | null>(null);
 
-    // Close on Escape.
     useEffect(() => {
-        if (!open) return;
+        const toggle = () => setOpen(o => {
+            if (!o) returnFocus.current = document.activeElement as HTMLElement | null;
+            return !o;
+        });
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setOpen(false);
+            if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'j') {
+                e.preventDefault();
+                toggle();
+            }
         };
+        window.addEventListener('copilot:toggle', toggle);
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        return () => { window.removeEventListener('copilot:toggle', toggle); window.removeEventListener('keydown', onKey); };
+    }, []);
+
+    // Escape closes while focus is inside the panel; focus moves into the panel on open and back on close.
+    useEffect(() => {
+        if (open) {
+            panelRef.current?.querySelector<HTMLElement>('textarea, button')?.focus();
+            return;
+        }
+        returnFocus.current?.focus?.();
+        returnFocus.current = null;
     }, [open]);
 
     return (
-        <>
-            {/* Launcher */}
-            <motion.button
-                onClick={() => setOpen(true)}
-                initial={false}
-                animate={{ scale: open ? 0 : 1, opacity: open ? 0 : 1 }}
-                transition={{ duration: 0.15 }}
-                aria-label="Open SOC-bot"
-                className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-2xl bg-brand-gradient shadow-xl shadow-accent/30 flex items-center justify-center hover:shadow-glow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-            >
-                <Bot size={24} />
-            </motion.button>
-
-            {/* Slide-over panel */}
-            <AnimatePresence>
-                {open && (
-                    <>
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            onClick={() => setOpen(false)}
-                            className="fixed inset-0 z-40 bg-canvas/50 backdrop-blur-xs"
-                            aria-hidden="true"
-                        />
-                        <motion.aside
-                            initial={{ x: '100%' }}
-                            animate={{ x: 0 }}
-                            exit={{ x: '100%' }}
-                            transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-                            role="dialog"
-                            aria-label="SOC-bot"
-                            className="fixed top-0 right-0 z-50 h-full w-full max-w-md border-l border-line bg-canvas shadow-2xl"
-                        >
-                            {/* key forces a fresh chat (and session fetch) when switching between case/general context */}
-                            <CopilotChat key={caseId ?? 'general'} caseId={caseId} onClose={() => setOpen(false)} />
-                        </motion.aside>
-                    </>
-                )}
-            </AnimatePresence>
-        </>
+        <AnimatePresence>
+            {open && (
+                <motion.aside
+                    ref={panelRef}
+                    initial={{ x: '100%' }}
+                    animate={{ x: 0 }}
+                    exit={{ x: '100%' }}
+                    transition={{ type: 'tween', duration: 0.18, ease: 'easeOut' }}
+                    aria-label="Copilot"
+                    onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } }}
+                    className="fixed top-14 bottom-0 right-0 z-40 w-full sm:w-[400px] border-l border-line bg-surface shadow-lg"
+                >
+                    {/* key forces a fresh chat (and session fetch) when switching between case/general context */}
+                    <CopilotChat key={caseId ?? 'general'} caseId={caseId} onClose={() => setOpen(false)} />
+                </motion.aside>
+            )}
+        </AnimatePresence>
     );
 }

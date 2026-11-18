@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserPlus, Send, Ban, ShieldOff } from 'lucide-react';
 import { api } from '../../api/client';
-import { Badge, Button, Input, Label } from '../../components/ui';
+import { Badge, Button, Input, Label, Select, Skeleton, Textarea, fieldClass, useConfirm } from '../../components/ui';
 import type { CaseGuest } from '../../types';
 
 function errText(err: unknown, fallback: string): string {
@@ -20,6 +20,7 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
     caseId: number; guestSummary: string | null | undefined; isAdmin?: boolean;
 }) {
     const qc = useQueryClient();
+    const { confirm, dialog } = useConfirm();
     const key = ['case-guests', caseId];
     const [email, setEmail] = useState('');
     const [permission, setPermission] = useState<'viewer' | 'contributor'>('viewer');
@@ -80,15 +81,15 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
 
     return (
         <div className="space-y-6">
+            {dialog}
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
             {notice && !error && <p role="status" className="text-sm text-fg-2">{notice}</p>}
 
-            <section className="bg-panel border border-line p-4 space-y-3">
+            <section className="rounded-md bg-panel border border-line p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-fg">Summary shown to guests</h3>
                 <p className="text-xs text-fg-3">Guests never see the internal description. Write what they should know.</p>
-                <textarea value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={4000} rows={4}
-                    aria-label="Guest summary"
-                    className="w-full bg-raised border border-line rounded-md p-2 text-sm text-fg" />
+                <Textarea value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={4000} rows={4}
+                    aria-label="Guest summary" />
                 <div className="flex items-center gap-3">
                     <Button size="sm" variant="secondary" onClick={() => saveSummary.mutate(summary)} disabled={saveSummary.isPending}>
                         Save summary
@@ -97,19 +98,18 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
                 </div>
             </section>
 
-            <section className="bg-panel border border-line p-4">
+            <section className="rounded-md bg-panel border border-line p-4">
                 <form className="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto] items-end"
                     onSubmit={(e) => { e.preventDefault(); invite.mutate(); }}>
                     <div><Label htmlFor="guest-email">Email</Label>
                         <Input id="guest-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                             placeholder="name@department.example" /></div>
                     <div><Label htmlFor="guest-perm">Access</Label>
-                        <select id="guest-perm" value={permission}
-                            onChange={(e) => setPermission(e.target.value as 'viewer' | 'contributor')}
-                            className="h-10 bg-raised border border-line rounded-lg px-2 text-sm text-fg">
+                        <Select id="guest-perm" value={permission}
+                            onChange={(e) => setPermission(e.target.value as 'viewer' | 'contributor')}>
                             <option value="viewer">Viewer</option>
                             <option value="contributor">Contributor</option>
-                        </select></div>
+                        </Select></div>
                     <div><Label htmlFor="guest-exp">Expires</Label>
                         <Input id="guest-exp" type="date" value={expires} min={plusDays(1)} max={plusDays(364)}
                             onChange={(e) => setExpires(e.target.value)} /></div>
@@ -117,8 +117,8 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
                 </form>
             </section>
 
-            <section className="bg-panel border border-line">
-                {isLoading ? <p className="p-4 font-mono text-xs text-muted">$ loading…</p> : guests.length === 0 ? (
+            <section className="rounded-md bg-panel border border-line">
+                {isLoading ? <Skeleton rows={3} className="p-4" /> : guests.length === 0 ? (
                     <p className="p-4 text-sm text-fg-3">No guests yet. Invited guests see only this case's shared updates.</p>
                 ) : (
                     <ul className="divide-y divide-line">
@@ -135,21 +135,23 @@ export default function GuestsPanel({ caseId, guestSummary, isAdmin = false }: {
                                     <span className="ml-auto flex items-center gap-2">
                                         {isAdmin && g.has_account && (
                                             <Button size="sm" variant="ghost" disabled={resetMfa.isPending}
-                                                onClick={() => { if (window.confirm(`Reset two-factor authentication for ${g.email}? They will be signed out everywhere.`)) resetMfa.mutate(g.id); }}>
+                                                onClick={async () => {
+                                                    if (await confirm({ title: `Reset two-factor authentication for ${g.email}?`, body: 'They will be signed out everywhere.', danger: true, confirmLabel: 'Reset 2FA' })) resetMfa.mutate(g.id);
+                                                }}>
                                                 <ShieldOff size={13} /> Reset 2FA
                                             </Button>
                                         )}
                                         {g.active && <>
                                         <select aria-label={`Access for ${g.email}`} value={g.permission}
                                             onChange={(e) => patch.mutate({ id: g.id, body: { permission: e.target.value as CaseGuest['permission'] } })}
-                                            className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg">
+                                            className={fieldClass(false, 'sm') + ' w-auto'}>
                                             <option value="viewer">Viewer</option>
                                             <option value="contributor">Contributor</option>
                                         </select>
                                         <input type="date" key={g.expires_at} aria-label={`Expiry for ${g.email}`} defaultValue={dateOnly(g.expires_at)}
                                             min={plusDays(1)} max={plusDays(364)}
                                             onChange={(e) => e.target.value && patch.mutate({ id: g.id, body: { expires_at: `${e.target.value}T23:59:59Z` } })}
-                                            className="h-8 bg-raised border border-line rounded-md px-2 text-xs text-fg" />
+                                            className={fieldClass(false, 'sm') + ' w-auto'} />
                                         <Button size="sm" variant="ghost" onClick={() => resend.mutate(g.id)}><Send size={13} /> Resend</Button>
                                         <Button size="sm" variant="danger" onClick={() => revoke.mutate(g.id)}><Ban size={13} /> Revoke</Button>
                                         </>}

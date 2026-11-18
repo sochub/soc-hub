@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import PageContainer from '../../components/layout/PageContainer';
-import { Badge, Input, severityVariant } from '../../components/ui';
+import SettingsPageHeader from './SettingsPageHeader';
+import { Badge, ErrorState, Input, severityVariant } from '../../components/ui';
 import { fmtDuration } from '../../lib/utils';
 import TeamDashboard from './TeamDashboard';
 
@@ -34,7 +34,7 @@ export default function AnalystWorkload() {
     const [drill, setDrill] = useState<{ row: Row; metric: Metric; label: string } | null>(null);
     const valid = !!start && !!end && start <= end;
 
-    const { data, isLoading, isError } = useQuery({
+    const { data, isLoading, isError, refetch } = useQuery({
         queryKey: ['analyst-workload', start, end],
         queryFn: async () => (await api.get('/stats/analyst-workload', { params: { start, end } })).data as { analysts: Row[] },
         enabled: valid,
@@ -53,9 +53,14 @@ export default function AnalystWorkload() {
     const cell = (r: Row, m: Metric, label: string) => {
         const n = value(r, m);
         const active = drill?.row.user_id === r.user_id && drill.metric === m;
+        const snapshot = m === 'current' || m in r.current;
         return (
             <td key={m} className="py-2 pr-4 text-right tabular-nums">
-                {n === 0 ? <span className="text-muted">0</span> : (
+                {n === 0 ? <span className="text-muted">0</span> : snapshot ? (
+                    <Link to={`/cases?owner=${r.user_id}&status=${m === 'current' ? 'active' : m}`}
+                        className="text-fg underline-offset-2 hover:underline hover:text-accent"
+                        aria-label={`${label} cases for ${r.full_name || r.email}`}>{n}</Link>
+                ) : (
                     <button type="button" onClick={() => setDrill(active ? null : { row: r, metric: m, label })}
                         className={`underline-offset-2 hover:underline ${active ? 'text-accent font-semibold' : 'text-fg'}`}
                         aria-label={`${label} cases for ${r.full_name || r.email}`}>
@@ -68,30 +73,26 @@ export default function AnalystWorkload() {
     const range = start === end ? start : `${start} – ${end}`;
 
     return (
-        <PageContainer>
             <div className="space-y-6">
-            <div>
-                <h1 className="text-3xl font-bold text-fg tracking-tight">Team workload</h1>
-                <p className="text-sm text-muted mt-1">
-                    SOC manager view of the active organization. Dates and times are UTC; period figures cover whole UTC
-                    days and compare against the previous period of equal length.
-                </p>
-            </div>
+            <SettingsPageHeader title="Team workload" description={<>
+                SOC manager view of the active organization. Dates and times are UTC; period figures cover whole UTC
+                days and compare against the previous period of equal length.
+            </>} />
             <div className="flex flex-wrap items-end gap-3">
-                <label className="text-xs text-muted">From
+                <label className="text-xs font-medium text-fg-2">From
                     <Input type="date" value={start} onChange={(e) => { setStart(e.target.value); setDrill(null); }} className="mt-1" />
                 </label>
-                <label className="text-xs text-muted">To
+                <label className="text-xs font-medium text-fg-2">To
                     <Input type="date" value={end} onChange={(e) => { setEnd(e.target.value); setDrill(null); }} className="mt-1" />
                 </label>
             </div>
             {!valid && <p role="alert" className="text-sm text-severity-critical">Pick a valid date range.</p>}
-            {isError && <p role="alert" className="text-sm text-severity-critical">Could not load analyst workload.</p>}
+            {isError && <ErrorState message="Could not load per-analyst workload. Check that the API is reachable, then retry." onRetry={() => refetch()} />}
             {valid && <TeamDashboard start={start} end={end} />}
             {valid && (
                 <div>
                     <h2 className="text-lg font-semibold text-fg">Per analyst</h2>
-                    <p className="text-sm text-muted mt-1">
+                    <p className="text-sm text-muted mt-1 max-w-[70ch]">
                         Current workload is a live snapshot of cases each analyst owns. Period columns count distinct
                         cases for the selected dates: handled = owned at any time in the period; resolved and closed are
                         credited to whoever made the status change; median TTR is created → resolved over those cases;
@@ -99,7 +100,7 @@ export default function AnalystWorkload() {
                     </p>
                 </div>
             )}
-            {isLoading ? <p className="text-sm text-muted">Loading…</p> : valid && (
+            {isLoading ? <p className="text-sm text-muted">Loading…</p> : valid && !isError && (
                 <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead>
@@ -159,6 +160,5 @@ export default function AnalystWorkload() {
                 </section>
             )}
             </div>
-        </PageContainer>
     );
 }

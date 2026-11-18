@@ -1,64 +1,189 @@
 @import 'tailwindcss';
 
+/* dark: follows the system unless the viewer picked a theme (html[data-theme]). */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) { &:where(:root:not([data-theme=light]) *) { @slot; } }
+  &:where(:root[data-theme=dark] *) { @slot; }
+}
+
 @theme {
-  /* sochub.io palette — dark canvas, lavender/lime accents */
-  --color-canvas: #0a0a0a;
-  --color-surface: #0f0f10;
-  --color-panel: #111113;
-  --color-raised: #18181b;
-  --color-raised-2: #212125;
-  --color-line: rgb(255 255 255 / 0.08);
-  --color-line-strong: rgb(255 255 255 / 0.16);
-  --color-fg: #f2f2f0;
-  --color-fg-2: #c1c1c6;
-  --color-fg-3: #8e8e95;
-  --color-muted: #6b6b72;
+  /* Signal world (see .impeccable/surfaces/frontend-src-components-layout-layout-tsx.md and DESIGN.md).
+     Matches sochub.io: an ink-black rail that carries the white logo in both themes, lavender accent, lime signal.
+     Light: warm stone paper, white sheets, ink text, sharp 4px corners, mono caps for data labels.
+     Dark: the website's near-black with a faint violet glow. Use these tokens, never raw hex. */
+  --color-canvas: #f3f0eb;
+  --color-surface: #faf7f4;
+  --color-panel: #ffffff;
+  --color-raised: #f5f2ee;
+  --color-raised-2: #ece8e6;
+  --color-line: rgb(27 27 27 / 0.1);
+  --color-line-strong: rgb(27 27 27 / 0.22);
+  --color-fg: #1b1b1b;
+  --color-fg-2: #3a3836;
+  --color-fg-3: #5c5955;
+  --color-muted: #68655e;
 
-  --color-accent: #a4a8ff;
-  --color-accent-hover: #c4c7ff;
-  --color-on-accent: #0a0a0a;
-  --color-lime: #d6e37f;
-  --color-magenta: #e08cff;
+  --color-accent: #5546d6;
+  --color-accent-hover: #4335b8;
+  --color-on-accent: #ffffff;
+  --color-lime: #5f7317;
+  --color-magenta: #8a2be2;
+  /* Brand signal colours from sochub.io, used as fills only (dots, highlights), never as text on paper. */
+  --color-lavender: #a4a8ff;
+  --color-signal: #d6e37f;
 
-  --color-severity-critical: #f87171;
-  --color-severity-high: #fb923c;
-  --color-severity-medium: #fbbf24;
-  --color-severity-low: #8fc3ff;
-  --color-severity-info: #8e8e95;
+  --color-severity-critical: #b42318;
+  --color-severity-high: #b54708;
+  --color-severity-medium: #8a6100;
+  --color-severity-low: #1d63a3;
+  --color-severity-info: #5c5955;
 
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
-  --font-display: "Inter Tight", Inter, ui-sans-serif, sans-serif;
-  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* The rail: ink in both themes, so the white logo always sits on black, as on sochub.io. */
+  --color-rail: #111113;
+  --color-rail-2: #1f1f23;
+  --color-rail-ink: #f2f2f0;
+  --color-rail-line: rgb(255 255 255 / 0.09);
 
-  --shadow-glow: 0 0 24px -4px rgb(164 168 255 / 0.45);
-  --shadow-console: 0 1px 2px 0 rgb(0 0 0 / 0.4);
-  --shadow-console-hover: 0 4px 20px -6px rgb(164 168 255 / 0.25);
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
 
-  --animate-fade-in: fade-in 0.2s ease-out;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --shadow-glow: 0 1px 2px 0 rgb(27 27 27 / 0.06);
+  --shadow-console: 0 1px 2px 0 rgb(27 27 27 / 0.05);
+  --shadow-console-hover: 0 12px 32px -18px rgb(85 70 214 / 0.35);
+
+  --animate-fade-in: fade-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-stamp: stamp 0.32s cubic-bezier(0.23, 1, 0.32, 1);
 
   @keyframes fade-in {
-    0% {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-    100% {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    0% { opacity: 0; transform: translateY(3px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes stamp {
+    0% { opacity: 0; transform: scale(1.2); }
+    100% { opacity: 1; transform: scale(1); }
   }
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+}
+
+/* Tinted chips (bg-X-500/10 text-X-300) were written for a dark ground. On paper the light 200-400 text
+   shades would vanish, so in light mode they resolve to the 700/800 ink shades. One switch, every chip. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --color-red-200: var(--color-red-800); --color-red-300: var(--color-red-700); --color-red-400: var(--color-red-700);
+    --color-orange-200: var(--color-orange-800); --color-orange-300: var(--color-orange-700); --color-orange-400: var(--color-orange-700);
+    --color-amber-200: var(--color-amber-800); --color-amber-300: var(--color-amber-700); --color-amber-400: var(--color-amber-700);
+    --color-yellow-200: var(--color-yellow-800); --color-yellow-300: var(--color-yellow-700); --color-yellow-400: var(--color-yellow-700);
+    --color-green-200: var(--color-green-800); --color-green-300: var(--color-green-700); --color-green-400: var(--color-green-700);
+    --color-emerald-200: var(--color-emerald-800); --color-emerald-300: var(--color-emerald-700); --color-emerald-400: var(--color-emerald-700);
+    --color-teal-200: var(--color-teal-800); --color-teal-300: var(--color-teal-700); --color-teal-400: var(--color-teal-700);
+    --color-cyan-200: var(--color-cyan-800); --color-cyan-300: var(--color-cyan-700); --color-cyan-400: var(--color-cyan-700);
+    --color-sky-200: var(--color-sky-800); --color-sky-300: var(--color-sky-700); --color-sky-400: var(--color-sky-700);
+    --color-blue-200: var(--color-blue-800); --color-blue-300: var(--color-blue-700); --color-blue-400: var(--color-blue-700);
+    --color-indigo-200: var(--color-indigo-800); --color-indigo-300: var(--color-indigo-700); --color-indigo-400: var(--color-indigo-700);
+    --color-violet-200: var(--color-violet-800); --color-violet-300: var(--color-violet-700); --color-violet-400: var(--color-violet-700);
+    --color-purple-200: var(--color-purple-800); --color-purple-300: var(--color-purple-700); --color-purple-400: var(--color-purple-700);
+    --color-fuchsia-200: var(--color-fuchsia-800); --color-fuchsia-300: var(--color-fuchsia-700); --color-fuchsia-400: var(--color-fuchsia-700);
+    --color-pink-200: var(--color-pink-800); --color-pink-300: var(--color-pink-700); --color-pink-400: var(--color-pink-700);
+    --color-rose-200: var(--color-rose-800); --color-rose-300: var(--color-rose-700); --color-rose-400: var(--color-rose-700);
+    --color-lime-200: var(--color-lime-800); --color-lime-300: var(--color-lime-700); --color-lime-400: var(--color-lime-700);
+  }
+}
+:root[data-theme="light"] {
+    --color-red-200: var(--color-red-800); --color-red-300: var(--color-red-700); --color-red-400: var(--color-red-700);
+    --color-orange-200: var(--color-orange-800); --color-orange-300: var(--color-orange-700); --color-orange-400: var(--color-orange-700);
+    --color-amber-200: var(--color-amber-800); --color-amber-300: var(--color-amber-700); --color-amber-400: var(--color-amber-700);
+    --color-yellow-200: var(--color-yellow-800); --color-yellow-300: var(--color-yellow-700); --color-yellow-400: var(--color-yellow-700);
+    --color-green-200: var(--color-green-800); --color-green-300: var(--color-green-700); --color-green-400: var(--color-green-700);
+    --color-emerald-200: var(--color-emerald-800); --color-emerald-300: var(--color-emerald-700); --color-emerald-400: var(--color-emerald-700);
+    --color-teal-200: var(--color-teal-800); --color-teal-300: var(--color-teal-700); --color-teal-400: var(--color-teal-700);
+    --color-cyan-200: var(--color-cyan-800); --color-cyan-300: var(--color-cyan-700); --color-cyan-400: var(--color-cyan-700);
+    --color-sky-200: var(--color-sky-800); --color-sky-300: var(--color-sky-700); --color-sky-400: var(--color-sky-700);
+    --color-blue-200: var(--color-blue-800); --color-blue-300: var(--color-blue-700); --color-blue-400: var(--color-blue-700);
+    --color-indigo-200: var(--color-indigo-800); --color-indigo-300: var(--color-indigo-700); --color-indigo-400: var(--color-indigo-700);
+    --color-violet-200: var(--color-violet-800); --color-violet-300: var(--color-violet-700); --color-violet-400: var(--color-violet-700);
+    --color-purple-200: var(--color-purple-800); --color-purple-300: var(--color-purple-700); --color-purple-400: var(--color-purple-700);
+    --color-fuchsia-200: var(--color-fuchsia-800); --color-fuchsia-300: var(--color-fuchsia-700); --color-fuchsia-400: var(--color-fuchsia-700);
+    --color-pink-200: var(--color-pink-800); --color-pink-300: var(--color-pink-700); --color-pink-400: var(--color-pink-700);
+    --color-rose-200: var(--color-rose-800); --color-rose-300: var(--color-rose-700); --color-rose-400: var(--color-rose-700);
+    --color-lime-200: var(--color-lime-800); --color-lime-300: var(--color-lime-700); --color-lime-400: var(--color-lime-700);
+}
+
+/* Dark: the website's near-black, lavender and lime. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-canvas: #0a0a0a;
+    --color-surface: #0f0f10;
+    --color-panel: #111113;
+    --color-raised: #18181b;
+    --color-raised-2: #202024;
+    --color-line: rgb(255 255 255 / 0.09);
+    --color-line-strong: rgb(255 255 255 / 0.18);
+    --color-fg: #f2f2f0;
+    --color-fg-2: #cfcfd2;
+    --color-fg-3: #a3a3a8;
+    --color-muted: #8e8e95;
+    --color-accent: #a4a8ff;
+    --color-accent-hover: #c4c7ff;
+    --color-on-accent: #0a0a0a;
+    --color-lime: #d6e37f;
+    --color-magenta: #e08cff;
+    /* Rail goes true black so it still reads as its own field against the #111113 sheets. */
+    --color-rail: #000000;
+    --color-rail-2: #17171a;
+    --color-severity-critical: #ff5d6c;
+    --color-severity-high: #ffad4d;
+    --color-severity-medium: #ffd866;
+    --color-severity-low: #6cb8ff;
+    --color-severity-info: #a3a3a8;
+    --shadow-glow: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+    --shadow-console: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+    --shadow-console-hover: 0 18px 50px -24px rgb(138 43 226 / 0.45);
+  }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --color-canvas: #0a0a0a;
+    --color-surface: #0f0f10;
+    --color-panel: #111113;
+    --color-raised: #18181b;
+    --color-raised-2: #202024;
+    --color-line: rgb(255 255 255 / 0.09);
+    --color-line-strong: rgb(255 255 255 / 0.18);
+    --color-fg: #f2f2f0;
+    --color-fg-2: #cfcfd2;
+    --color-fg-3: #a3a3a8;
+    --color-muted: #8e8e95;
+    --color-accent: #a4a8ff;
+    --color-accent-hover: #c4c7ff;
+    --color-on-accent: #0a0a0a;
+    --color-lime: #d6e37f;
+    --color-magenta: #e08cff;
+    /* Rail goes true black so it still reads as its own field against the #111113 sheets. */
+    --color-rail: #000000;
+    --color-rail-2: #17171a;
+    --color-severity-critical: #ff5d6c;
+    --color-severity-high: #ffad4d;
+    --color-severity-medium: #ffd866;
+    --color-severity-low: #6cb8ff;
+    --color-severity-info: #a3a3a8;
+    --shadow-glow: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+    --shadow-console: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+    --shadow-console-hover: 0 18px 50px -24px rgb(138 43 226 / 0.45);
 }
 
 /*
-  The default border color has changed to `currentcolor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
-
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
+  Tailwind v4 defaults the border color to currentcolor; keep the v3 behaviour (a hairline).
 */
 @layer base {
   *,
@@ -71,50 +196,70 @@
 }
 
 @utility num {
-  /* Tabular monospace for numerals / telemetry. */
-  @apply font-mono tabular-nums tracking-tight;
+  /* Tabular figures for every number; same face as the text. */
+  @apply tabular-nums;
 }
 
 @utility label-mono {
-  /* Uppercase mono micro-label, e.g. // CASES BY SEVERITY */
-  @apply font-mono text-[10px] uppercase tracking-[0.14em] text-fg-3;
+  /* Data label (table headers, rail groups, field groups): mono caps, as on sochub.io. Never a kicker above a heading. */
+  @apply font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-fg-3;
+}
+
+@utility label-caps {
+  @apply font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-fg-3;
+}
+
+@utility stamp {
+  /* Status and severity marks: a tinted mono tag in its tone colour (hairline edge, 8% fill). (Name kept for call sites.) */
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  background-color: color-mix(in srgb, currentColor 9%, transparent);
+  @apply inline-flex items-center gap-1 rounded-sm px-1.5 py-px font-mono text-[10.5px] font-semibold uppercase leading-4 tracking-[0.06em] whitespace-nowrap;
+}
+
+@utility folder-tab {
+  /* Section tab: plain label on the row's rule; the active one is underlined in the accent. (Name kept for call sites.)
+     (Active state lives here, not in @layer base: base loses to this utility.) */
+  @apply relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 pt-2 pb-2 text-[13px] font-medium text-fg-3 transition-colors hover:text-fg;
+  &[aria-selected="true"],
+  &[aria-current="page"] {
+    z-index: 1;
+    color: var(--color-fg);
+    border-bottom-color: var(--color-accent);
+  }
 }
 
 @utility console-grid {
-  /* Faint engineering dot-grid backdrop for the console canvas. */
-  /* sochub.io: faint dot grid + violet glow in the top-right corner */
-  background-image:
-    radial-gradient(ellipse 60% 40% at 100% 0%, rgb(138 43 226 / 0.12), transparent 70%),
-    radial-gradient(circle, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 100% 100%, 22px 22px;
-  background-attachment: local, local;
+  /* The working ground. Light: plain stone paper. Dark: the website's faint violet and lime glow. */
+  background-color: var(--color-canvas);
+  @variant dark {
+    background-image:
+      radial-gradient(48rem 36rem at 100% -5%, rgb(138 43 226 / 0.14), transparent 60%),
+      radial-gradient(40rem 34rem at 95% 105%, rgb(150 190 70 / 0.07), transparent 60%);
+    background-attachment: fixed;
+  }
 }
 
-/* Custom Utilities for Glow Effects */
-
 @utility glass-panel {
-  @apply bg-panel border border-line shadow-xl;
+  /* A sheet: white, hairline edge, no glow. (Name kept for existing call sites.) */
+  @apply bg-panel border border-line;
 }
 
 @utility neon-border {
-  @apply relative after:absolute after:-inset-px after:rounded-lg after:bg-linear-to-r after:from-accent/50 after:to-purple-500/50 after:blur-xs after:-z-10;
+  @apply border border-line;
 }
 
 @utility bg-brand-gradient {
-  /* Primary CTA fill, as on sochub.io */
-  background-image: linear-gradient(90deg, var(--color-accent), var(--color-lime));
+  /* Kept for existing call sites; the primary action is solid accent. */
+  background-color: var(--color-accent);
   color: var(--color-on-accent);
 }
 
 @utility text-brand-gradient {
-  background-image: linear-gradient(90deg, var(--color-accent), var(--color-lime));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--color-accent);
 }
 
 @utility text-glow {
-  text-shadow: 0 0 10px rgba(100, 200, 255, 0.5);
+  text-shadow: none;
 }
 
 @utility animate-pulse-slow {
@@ -125,11 +270,25 @@
   h1,
   h2 {
     font-family: var(--font-display);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.022em;
+  }
+  html {
+    /* Overscroll and any area outside the app shows the ground, never the browser's default. */
+    background-color: var(--color-canvas);
   }
   body {
     @apply bg-canvas text-fg font-sans antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "rlig" 1, "calt" 1, "cv11" 1, "ss01" 1;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  * {
+    scrollbar-color: var(--color-line-strong) transparent;
   }
 }
 
@@ -197,7 +356,7 @@
 select:not(.appearance-none):not([multiple]):not([size]) {
   appearance: none;
   padding-right: 2.25rem;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e95' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23707780' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.75rem center;
   background-size: 1rem;

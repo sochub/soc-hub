@@ -27,9 +27,9 @@ export default function EscalationHistory({ caseId }: { caseId: number }) {
     const { data: rows = [] } = useEscalationHistory(caseId);
     if (rows.length === 0) return null;
     return (
-        <section className="bg-panel border border-line rounded-lg mb-6">
+        <section className="border-y border-line mb-6">
             <header className="px-4 py-2.5 border-b border-line">
-                <span className="label-mono">// escalation history</span>
+                <span className="label-caps">Escalation history</span>
             </header>
             <ul className="divide-y divide-line">
                 {rows.map((r) => {

@@ -34,11 +34,11 @@ export default function ArtifactTypesSection() {
     const edit = (d: ArtifactTypeDef) => { setError(null); setDraft({ ...d, payload_key: d.payload_key ?? '' }); };
 
     return (
-        <section className="bg-panel border border-line">
+        <section className="rounded-md bg-panel border border-line">
             <div className="flex items-center justify-between px-4 h-11 border-b border-line">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
                     <Tags size={15} className="text-accent" /> Artifact types
-                </h2>
+                </h3>
                 {!draft && (
                     <button type="button" className={btnSecondary} onClick={() => { setError(null); setDraft(EMPTY); }}>
                         <Plus size={14} /> Add type
@@ -54,7 +54,7 @@ export default function ArtifactTypesSection() {
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="label-mono text-left text-muted">
+                                <tr className="label-caps text-left">
                                     <th className="py-1 pr-3 font-normal">key</th><th className="pr-3 font-normal">label</th>
                                     <th className="pr-3 font-normal">payload key</th><th className="pr-3 font-normal">mindmap</th>
                                     <th className="pr-3 font-normal">private</th><th />
@@ -73,7 +73,7 @@ export default function ArtifactTypesSection() {
                                                 className="p-1 text-fg-3 hover:text-fg"><Pencil size={14} /></button>
                                             <button type="button" aria-label={`Delete ${d.key}`} disabled={remove.isPending}
                                                 onClick={() => remove.mutate(d.id)}
-                                                className="p-1 text-fg-3 hover:text-red-300"><Trash2 size={14} /></button>
+                                                className="p-1 text-fg-3 hover:text-severity-critical"><Trash2 size={14} /></button>
                                         </td>
                                     </tr>
                                 ))}
@@ -118,7 +118,7 @@ export default function ArtifactTypesSection() {
                         </div>
                     </form>
                 )}
-                {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+                {error && <p role="alert" className="text-xs text-severity-critical">{error}</p>}
             </div>
         </section>
     );
