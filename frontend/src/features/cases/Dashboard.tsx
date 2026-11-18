@@ -10,6 +10,7 @@ import {
     PieChart, Pie, Cell, BarChart, Bar,
 } from 'recharts';
 import PageContainer from '../../components/layout/PageContainer';
+import { getPage, OPEN_CASE_STATUSES } from '../../api/paging';
 
 interface CaseItem {
     id: number;
@@ -112,10 +113,16 @@ export default function Dashboard() {
     const [showNewCaseModal, setShowNewCaseModal] = useState(false);
     const queryClient = useQueryClient();
 
-    const { data: cases, isLoading: casesLoading } = useQuery<CaseItem[]>({
-        queryKey: ['cases'],
-        queryFn: async () => (await api.get('/cases/')).data,
+    // Both panels ask the server for exactly their rows (not a slice of the first page of cases).
+    const { data: priority, isLoading: priorityLoading } = useQuery({
+        queryKey: ['cases', 'dashboard', 'priority'],
+        queryFn: () => getPage<CaseItem>('/cases/', { status: OPEN_CASE_STATUSES, severity: ['critical', 'high'], sort: 'severity', limit: 6 }),
     });
+    const { data: recent, isLoading: recentLoading } = useQuery({
+        queryKey: ['cases', 'dashboard', 'recent'],
+        queryFn: () => getPage<CaseItem>('/cases/', { sort: '-created_at', limit: 7 }),
+    });
+    const casesLoading = priorityLoading || recentLoading;
     const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
         queryKey: ['stats'],
         queryFn: async () => (await api.get('/stats/')).data,
@@ -141,13 +148,8 @@ export default function Dashboard() {
         },
     });
 
-    const priorityCases = useMemo(() =>
-        (cases ?? []).filter(c => (c.severity === 'critical' || c.severity === 'high') && c.status !== 'resolved' && c.status !== 'closed').slice(0, 6),
-        [cases]);
-
-    const recentCases = useMemo(() =>
-        [...(cases ?? [])].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, 7),
-        [cases]);
+    const priorityCases = priority?.items ?? [];
+    const recentCases = recent?.items ?? [];
 
     // merge opened + resolved trends by date
     const trend = useMemo(() => {
@@ -394,7 +396,7 @@ export default function Dashboard() {
                 </Panel>
 
                 <Panel title="priority queue" className=""
-                    action={<span className="num text-[11px] text-severity-critical">{priorityCases.length} active</span>}>
+                    action={<span className="num text-[11px] text-severity-critical">{priority?.total ?? 0} active</span>}>
                     {priorityCases.length === 0 ? (
                         <p className="font-mono text-xs text-muted">queue clear — no critical/high open</p>
                     ) : (

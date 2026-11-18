@@ -9,7 +9,7 @@ interface EditCaseModalProps {
     caseData: {
         id: number;
         title: string;
-        description: string;
+        description: string | null;
         severity: string;
         status: string;
         source: string;
@@ -39,7 +39,7 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
         if (caseData) {
             setFormData({
                 title: caseData.title,
-                description: caseData.description,
+                description: caseData.description ?? '',
                 severity: caseData.severity,
                 status: caseData.status,
                 source: caseData.source || 'user-reported',

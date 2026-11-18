@@ -1,25 +1,27 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Clock, AlertCircle, CheckCircle, XCircle, Plus, Search, ChevronDown, LayoutList, Columns3 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import NewCaseModal from './NewCaseModal';
 import CasesBoard from './CasesBoard';
 import { SLABadge } from './SLABadge';
 import type { SLAStatus } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
+import { Pager } from '../../components/ui';
+import { getPage, showingText } from '../../api/paging';
 
 interface Case {
     id: number;
     title: string;
-    description: string;
+    description: string | null;
     severity: 'info' | 'low' | 'medium' | 'high' | 'critical';
     status: string;
     tags: string[];
     source: string;
     created_at: string;
-    updated_at: string;
+    updated_at: string | null;
     sla_overall_status?: SLAStatus | null;
 }
 
@@ -38,6 +40,8 @@ const statusConfig: Record<string, { icon: any; color: string }> = {
     closed: { icon: XCircle, color: 'text-muted' },
 };
 
+const PAGE_SIZE = 100;
+
 export default function CasesList() {
     const [searchParams, setSearchParams] = useSearchParams();
     const [modalOpen, setShowNewCaseModal] = useState(false);
@@ -46,6 +50,13 @@ export default function CasesList() {
     const [severityFilter, setSeverityFilter] = useState<string>(searchParams.get('severity') || 'all');
     const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
     const [tagFilter, setTagFilter] = useState<string>('all');
+    const [page, setPage] = useState(0);
+    // Search runs server-side; wait for a pause in typing before asking.
+    const [debouncedQuery, setDebouncedQuery] = useState('');
+    useEffect(() => {
+        const t = setTimeout(() => { setDebouncedQuery(searchQuery.trim()); setPage(0); }, 300);
+        return () => clearTimeout(t);
+    }, [searchQuery]);
     // URL wins (shareable links), else the last view this browser used
     const storedView = (() => { try { return localStorage.getItem('cases:view'); } catch { return null; } })();
     const view: 'table' | 'board' = (searchParams.get('view') ?? storedView) === 'board' ? 'board' : 'table';
@@ -55,13 +66,25 @@ export default function CasesList() {
     };
     const queryClient = useQueryClient();
 
-    const { data: cases, isLoading } = useQuery<Case[]>({
-        queryKey: ['cases'],
-        queryFn: async () => {
-            const response = await api.get('/cases/');
-            return response.data;
-        }
+    // Filters shared by the table and the board; the server filters, the page only renders.
+    const filters = {
+        ...(debouncedQuery && { q: debouncedQuery }),
+        ...(severityFilter !== 'all' && { severity: severityFilter }),
+        ...(tagFilter !== 'all' && { tag: tagFilter }),
+    };
+    const params = { ...filters, ...(statusFilter !== 'all' && { status: statusFilter }), skip: page * PAGE_SIZE, limit: PAGE_SIZE };
+    const { data: result, isLoading } = useQuery({
+        queryKey: ['cases', 'list', params],
+        queryFn: () => getPage<Case>('/cases/', params),
+        placeholderData: keepPreviousData,
+        enabled: view === 'table',
     });
+    const filteredCases = result?.items ?? [];
+    const total = result?.total ?? 0;
+    // If the current page emptied (e.g. cases closed elsewhere), step back to the last page with rows.
+    if (result && result.items.length === 0 && result.total > 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
+    }
 
     const { data: availableTags } = useQuery<string[]>({
         queryKey: ['cases', 'tags'],
@@ -113,19 +136,6 @@ export default function CasesList() {
         if (searchParams.has('new')) setSearchParams(p => { p.delete('new'); return p; }, { replace: true });
     };
 
-    const filteredCases = cases?.filter(c => {
-        const matchesSearch = !searchQuery || (
-            c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            c.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            String(c.id).includes(searchQuery)
-        );
-        const matchesSeverity = severityFilter === 'all' || c.severity === severityFilter;
-        const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
-        const matchesTag = tagFilter === 'all' || (c.tags && c.tags.includes(tagFilter));
-
-        return matchesSearch && matchesSeverity && matchesStatus && matchesTag;
-    }) || [];
-
     if (isLoading) {
         return (
             <PageContainer>
@@ -142,9 +152,9 @@ export default function CasesList() {
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-fg tracking-tight">Cases</h1>
-                    <p className="text-fg-3 text-sm mt-0.5">
-                        {filteredCases.length} records found
-                    </p>
+                    {view === 'table' && (
+                        <p className="text-fg-3 text-sm mt-0.5">{showingText(page, PAGE_SIZE, filteredCases.length, total, 'cases')}</p>
+                    )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -155,7 +165,7 @@ export default function CasesList() {
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Search (ID, Title)..."
+                            placeholder="Search (ID, title, description)..."
                             className="bg-panel border border-line rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all w-48 lg:w-64 placeholder:text-muted"
                         />
                     </div>
@@ -164,7 +174,7 @@ export default function CasesList() {
                     <div className="relative">
                         <select
                             value={severityFilter}
-                            onChange={(e) => setSeverityFilter(e.target.value)}
+                            onChange={(e) => { setSeverityFilter(e.target.value); setPage(0); }}
                             className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
                         >
                             <option value="all">All Severities</option>
@@ -180,7 +190,7 @@ export default function CasesList() {
                     <div className="relative">
                         <select
                             value={tagFilter}
-                            onChange={(e) => setTagFilter(e.target.value)}
+                            onChange={(e) => { setTagFilter(e.target.value); setPage(0); }}
                             className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
                         >
                             <option value="all">All Tags</option>
@@ -194,7 +204,7 @@ export default function CasesList() {
                     <div className="relative">
                         <select
                             value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
+                            onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}
                             className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent transition-all text-fg-2 cursor-pointer"
                         >
                             <option value="all">All Statuses</option>
@@ -233,7 +243,7 @@ export default function CasesList() {
             </div>
 
             {view === 'board' ? (
-                <CasesBoard cases={filteredCases} severityConfig={severityConfig} />
+                <CasesBoard filters={filters} status={statusFilter} severityConfig={severityConfig} />
             ) : (
             <div className="glass-panel rounded-lg border border-line overflow-hidden">
                 <div className="overflow-x-auto">
@@ -311,7 +321,7 @@ export default function CasesList() {
                                                 </span>
                                             </td>
                                             <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">
-                                                {new Date(c.updated_at).toLocaleDateString()}
+                                                {c.updated_at ? new Date(c.updated_at).toLocaleDateString() : '—'}
                                             </td>
                                         </tr>
                                     );
@@ -322,6 +332,7 @@ export default function CasesList() {
                 </div>
             </div>
             )}
+            {view === 'table' && <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />}
 
             {/* New Case Modal */}
             <NewCaseModal

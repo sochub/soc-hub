@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api } from '../../api/client';
+import { getPage } from '../../api/paging';
 import {
     ShieldAlert, Database, Crosshair, X, ArrowUpRight, Search,
     SlidersHorizontal, ChevronLeft, Maximize2,
@@ -31,24 +31,33 @@ interface GNode {
 }
 interface GLink { source: string; target: string; match?: boolean }
 
+const GRAPH_CAP = 500;
+
 /** Without `caseId`: the whole tenant. With it: that case, its artifacts and IOCs, and whatever they link to (2 hops). */
 export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const [dims, setDims] = useState({ width: 900, height: 600 });
 
     // ---- data ----
-    const { data: cases = [] } = useQuery({
-        queryKey: ['cases', 'all'],
-        queryFn: async () => (await api.get('/cases/')).data,
+    // The newest GRAPH_CAP of each kind; when a tenant has more, the header says so.
+    const { data: casePage } = useQuery({
+        queryKey: ['cases', 'all', 'graph'],
+        queryFn: () => getPage<Record<string, unknown>>('/cases/', { limit: GRAPH_CAP }),
     });
-    const { data: artifacts = [] } = useQuery({
-        queryKey: ['artifacts', 'all'],
-        queryFn: async () => (await api.get('/artifacts/')).data,
+    const { data: artifactPage } = useQuery({
+        queryKey: ['artifacts', 'all', 'graph'],
+        queryFn: () => getPage<Record<string, unknown>>('/artifacts/', { limit: GRAPH_CAP }),
     });
-    const { data: iocs = [] } = useQuery({
-        queryKey: ['iocs', 'all'],
-        queryFn: async () => (await api.get('/iocs/')).data,
+    const { data: iocPage } = useQuery({
+        queryKey: ['iocs', 'all', 'graph'],
+        queryFn: () => getPage<Record<string, unknown>>('/iocs/', { limit: GRAPH_CAP }),
     });
+    const cases = useMemo(() => casePage?.items ?? [], [casePage]);
+    const artifacts = useMemo(() => artifactPage?.items ?? [], [artifactPage]);
+    const iocs = useMemo(() => iocPage?.items ?? [], [iocPage]);
+    const truncated = ([['cases', casePage], ['artifacts', artifactPage], ['IOCs', iocPage]] as const)
+        .filter(([, p]) => p && p.total > p.items.length)
+        .map(([label, p]) => `${p!.items.length} of ${p!.total} ${label}`);
 
     // ---- filters ----
     const [railOpen, setRailOpen] = useState(true);
@@ -290,6 +299,7 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                 <div className={caseId === undefined ? undefined : 'hidden'}>
                     <h1 className="text-xl font-semibold text-fg tracking-tight">Investigation Graph</h1>
                     <p className="label-mono mt-1">cases ◉ · artifacts ▢ · iocs ◇ — drag, zoom, click for details</p>
+
                 </div>
                 <div className="flex items-center gap-4 text-xs text-fg-3">
                     <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-accent" /> case</span>
@@ -298,6 +308,9 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                     <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-amber-500" /> value match</span>
                 </div>
             </div>
+            {truncated.length > 0 && (
+                <p className="text-xs text-muted -mt-2 mb-3 shrink-0">Graph built from the newest {truncated.join(', ')}.</p>
+            )}
 
             <div className="flex-1 min-h-0 flex border border-line bg-panel relative overflow-hidden">
                 {/* Filter rail */}

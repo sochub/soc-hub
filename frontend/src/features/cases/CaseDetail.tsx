@@ -107,7 +107,7 @@ export default function CaseDetail() {
         return typeof d === 'string' ? d : 'Could not save the case.';
     })();
 
-    const { data: caseData, isLoading } = useQuery({
+    const { data: caseData, isLoading, isError, error: caseError } = useQuery({
         queryKey: ['case', id],
         queryFn: async () => {
             const response = await api.get(`/cases/${id}`);
@@ -218,7 +218,12 @@ export default function CaseDetail() {
         );
     }
 
-    if (!caseData) return <PageContainer><div className="text-red-300 font-mono">ERROR: CASE_NOT_FOUND</div></PageContainer>;
+    // An error wins over cached data: a case from another organization (or a deleted one) must not linger.
+    if (isError || !caseData) {
+        const status = (caseError as { response?: { status?: number } } | null)?.response?.status;
+        const msg = !isError || status === 404 || status === 403 ? 'ERROR: CASE_NOT_FOUND' : 'ERROR: COULD_NOT_LOAD_CASE';
+        return <PageContainer><div className="text-red-300 font-mono">{msg}</div></PageContainer>;
+    }
 
     const severityColor = caseData.severity === 'critical' ? 'text-severity-critical bg-red-500/10 border-red-500/30' :
         caseData.severity === 'high' ? 'text-severity-high bg-orange-500/10 border-orange-500/30' :

@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { api } from '../../api/client';
@@ -7,6 +7,7 @@ import { SLABadge } from './SLABadge';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 import { CASE_OUTCOMES } from './outcomes';
 import type { SLAStatus } from '../../types';
+import { getPage, type Page } from '../../api/paging';
 
 export interface BoardCase {
     id: number;
@@ -29,12 +30,25 @@ const errorDetail = (e: unknown) => {
 // Mirrors backend CaseStatus enum
 const MAX_TAGS = 3;
 const COLUMNS = ['new', 'open', 'in_progress', 'pending', 'resolved', 'closed'];
+// Cards loaded per column; a column with more says so instead of silently dropping the rest.
+const COLUMN_CAP = 100;
 
-export default function CasesBoard({ cases, severityConfig }: {
-    cases: BoardCase[];
+export default function CasesBoard({ filters, status: statusFilter, severityConfig }: {
+    filters: Record<string, string>;
+    status: string; // 'all' or one status: then only that column loads
     severityConfig: Record<string, { color: string; bg: string; border: string }>;
 }) {
     const queryClient = useQueryClient();
+    const columnKey = (status: string) => ['cases', 'board', status, filters];
+    const columns = useQueries({
+        queries: COLUMNS.map(status => ({
+            queryKey: columnKey(status),
+            queryFn: () => getPage<BoardCase>('/cases/', { ...filters, status, limit: COLUMN_CAP }),
+            enabled: statusFilter === 'all' || statusFilter === status,
+        })),
+    });
+    const columnOf = (status: string) => columns[COLUMNS.indexOf(status)]?.data ?? { items: [], total: 0 };
+    const cases = COLUMNS.flatMap(s => columnOf(s).items);
     const [dragOver, setDragOver] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     // Dropping on Closed asks for the outcome + closing note first; the card stays put until confirmed.
@@ -45,16 +59,21 @@ export default function CasesBoard({ cases, severityConfig }: {
         // Optimistic: move the card now, roll back if the API refuses (e.g. viewer role, closure fields missing)
         onMutate: async ({ id, status }) => {
             setError(null);
-            await queryClient.cancelQueries({ queryKey: ['cases'], exact: true });
-            const prev = queryClient.getQueryData<BoardCase[]>(['cases']);
-            queryClient.setQueryData<BoardCase[]>(['cases'], old => old?.map(c => c.id === id ? { ...c, status } : c));
+            await queryClient.cancelQueries({ queryKey: ['cases', 'board'] });
+            const prev = queryClient.getQueriesData<Page<BoardCase>>({ queryKey: ['cases', 'board'] });
+            const card = cases.find(c => c.id === id);
+            if (card) {
+                const from = card.status;
+                queryClient.setQueryData<Page<BoardCase>>(columnKey(from), old => old && ({ items: old.items.filter(c => c.id !== id), total: old.total - 1 }));
+                queryClient.setQueryData<Page<BoardCase>>(columnKey(status), old => old && ({ items: [{ ...card, status }, ...old.items], total: old.total + 1 }));
+            }
             return { prev };
         },
         onError: (e, _v, ctx) => {
-            queryClient.setQueryData(['cases'], ctx?.prev);
+            for (const [key, data] of ctx?.prev ?? []) queryClient.setQueryData(key, data);
             setError(errorDetail(e));
         },
-        onSettled: () => queryClient.invalidateQueries({ queryKey: ['cases'], exact: true }),
+        onSettled: () => queryClient.invalidateQueries({ queryKey: ['cases'] }),
     });
 
     const onDrop = (e: React.DragEvent, status: string) => {
@@ -84,7 +103,7 @@ export default function CasesBoard({ cases, severityConfig }: {
         )}
         <div className="flex gap-3 overflow-x-auto pb-2">
             {COLUMNS.map(status => {
-                const col = cases.filter(c => c.status === status);
+                const { items: col, total } = columnOf(status);
                 return (
                     <div
                         key={status}
@@ -98,7 +117,7 @@ export default function CasesBoard({ cases, severityConfig }: {
                     >
                         <div className="px-3 py-2 border-b border-line flex items-center justify-between">
                             <span className="label-mono text-xs uppercase tracking-wider text-fg-2">{status.replace('_', ' ')}</span>
-                            <span className="num text-xs text-muted">{col.length}</span>
+                            <span className="num text-xs text-muted">{total}</span>
                         </div>
                         <div className="p-2 space-y-2 overflow-y-auto">
                             {col.map(c => {
@@ -132,6 +151,11 @@ export default function CasesBoard({ cases, severityConfig }: {
                                     </Link>
                                 );
                             })}
+                            {total > col.length && (
+                                <p className="px-1 py-1 text-[11px] text-muted">
+                                    Showing {col.length} of {total}. Narrow the filters or use the table view for the rest.
+                                </p>
+                            )}
                         </div>
                     </div>
                 );

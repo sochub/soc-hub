@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link } from 'react-router-dom';
 import { FileText, Globe, Mail, Server, Monitor, User, Database, ArrowRight, Calendar, Hash, Link2, Pencil, Trash2, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageContainer from '../../components/layout/PageContainer';
+import { Pager } from '../../components/ui';
+import { getPage, showingText } from '../../api/paging';
 import { useArtifactTypes } from './useArtifactTypes';
 
 const ARTIFACT_ICONS: Record<string, any> = {
@@ -19,6 +21,8 @@ const ARTIFACT_ICONS: Record<string, any> = {
     username: User,
 };
 
+const PAGE_SIZE = 100;
+
 export default function ArtifactsList() {
     const queryClient = useQueryClient();
     const { options: ARTIFACT_TYPE_OPTIONS } = useArtifactTypes();
@@ -26,13 +30,25 @@ export default function ArtifactsList() {
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editData, setEditData] = useState({ artifact_type: '', value: '', description: '' });
 
-    const { data: artifacts, isLoading } = useQuery({
-        queryKey: ['artifacts', 'all'],
-        queryFn: async () => {
-            const response = await api.get('/artifacts/');
-            return response.data;
-        }
+    // Value search runs server-side (?q=) after a pause in typing; the URL keeps the raw text.
+    const [page, setPage] = useState(0);
+    const rawQ = searchParams.get('q') ?? '';
+    const [q, setQ] = useState(rawQ.trim());
+    useEffect(() => {
+        const t = setTimeout(() => { setQ(rawQ.trim()); setPage(0); }, 300);
+        return () => clearTimeout(t);
+    }, [rawQ]);
+    const params = { ...(q && { q }), skip: page * PAGE_SIZE, limit: PAGE_SIZE };
+    const { data: result, isLoading } = useQuery({
+        queryKey: ['artifacts', 'all', 'list', params],
+        queryFn: () => getPage<Record<string, unknown>>('/artifacts/', params),
+        placeholderData: keepPreviousData,
     });
+    const artifacts = result?.items;
+    const total = result?.total ?? 0;
+    if (result && result.items.length === 0 && result.total > 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
+    }
 
     const updateMutation = useMutation({
         mutationFn: async ({ id, data }: { id: number; data: { artifact_type?: string; value?: string; description?: string } }) => {
@@ -88,7 +104,10 @@ export default function ArtifactsList() {
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-fg tracking-tight mb-1">Artifacts</h1>
-                    <p className="text-fg-3 text-sm">Every value observed across cases. Confirmed-malicious ones live under IOCs.</p>
+                    <p className="text-fg-3 text-sm">
+                        Every value observed across cases. Confirmed-malicious ones live under IOCs.
+                        {result && <span className="ml-1">{showingText(page, PAGE_SIZE, result.items.length, total, 'artifacts')}</span>}
+                    </p>
                 </div>
                 <input type="search" value={searchParams.get('q') ?? ''} placeholder="Filter by value…"
                     onChange={e => setSearchParams(e.target.value ? { q: e.target.value } : {}, { replace: true })}
@@ -109,7 +128,7 @@ export default function ArtifactsList() {
                         </thead>
                         <tbody className="divide-y divide-line">
                             <AnimatePresence>
-                                {artifacts.filter((a: { value: string }) => String(a.value).toLowerCase().includes((searchParams.get('q') ?? '').toLowerCase())).map((artifact: any) => {
+                                {artifacts.map((artifact: any) => {
                                     const isEditing = editingId === artifact.id;
                                     const Icon = ARTIFACT_ICONS[artifact.artifact_type] || FileText;
                                     const caseIds: number[] = artifact.case_ids || [];
@@ -273,9 +292,10 @@ export default function ArtifactsList() {
                 <div className="glass-panel p-12 rounded-xl border-dashed border-2 border-line flex flex-col items-center justify-center text-muted">
                     <Database size={48} className="mb-4 opacity-20" />
                     <h3 className="text-lg font-medium text-fg-3 mb-2">No Artifacts Found</h3>
-                    <p className="text-sm">Artifacts added to cases will appear here automatically.</p>
+                    <p className="text-sm">{q ? 'No artifacts match this filter.' : 'Artifacts added to cases will appear here automatically.'}</p>
                 </div>
             )}
+            <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
         </PageContainer>
     );
 }
