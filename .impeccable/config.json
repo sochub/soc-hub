@@ -8,7 +8,9 @@
   },
   "detector": {
     "ignoreRules": [],
-    "ignoreFiles": [],
+    "ignoreFiles": [
+      "frontend/dist-demo/**"
+    ],
     "ignoreValues": [
       {
         "rule": "overused-font",
