@@ -100,6 +100,56 @@ def test_role_change_guards_and_audit():
     run(body)
 
 
+def test_last_admin_guard_counts_active_admins_only():
+    """Deactivated admins do not keep a tenant administered; a deactivated admin may itself be demoted."""
+    import pytest
+    from fastapi import HTTPException
+    from app.api.v1.users import _refuse_last_admin
+
+    async def body(c, w):
+        adm, an = w.users["admin"], w.users["analyst"]
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(TenantMembership).where(TenantMembership.user_id == an)
+                             .values(role="admin"))
+            await db.execute(update(User).where(User.id == an).values(is_active=False))
+            await db.commit()
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(HTTPException) as e:
+                await _refuse_last_admin(db, w.ta, await db.get(User, adm), "last")
+            assert e.value.status_code == 400
+            await db.rollback()
+            await _refuse_last_admin(db, w.ta, await db.get(User, an), "last")  # inactive target: allowed
+            await db.rollback()
+    run(body)
+
+
+def test_last_admin_guard_serializes_per_tenant():
+    """Two concurrent demotions of the tenant's two admins: the second waits for the first and is refused."""
+    import asyncio
+    import pytest
+    from fastapi import HTTPException
+    from app.api.v1.users import _refuse_last_admin
+
+    async def body(c, w):
+        adm, an = w.users["admin"], w.users["analyst"]
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(TenantMembership).where(TenantMembership.user_id == an).values(role="admin"))
+            await db.commit()
+        async with AsyncSessionLocal() as s1, AsyncSessionLocal() as s2:
+            await _refuse_last_admin(s1, w.ta, await s1.get(User, an), "last")
+            await s1.execute(update(TenantMembership).where(TenantMembership.user_id == an).values(role="viewer"))
+            target2 = await s2.get(User, adm)
+            second = asyncio.create_task(_refuse_last_admin(s2, w.ta, target2, "last"))
+            await asyncio.sleep(0.5)
+            assert not second.done()  # blocked on the tenant row lock
+            await s1.commit()
+            with pytest.raises(HTTPException) as e:
+                await second
+            assert e.value.status_code == 400
+            await s2.rollback()
+    run(body)
+
+
 class _CountingThrottle:
     def __init__(self):
         self.reserved = 0

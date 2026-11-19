@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, session } from '../../api/client';
+import { apiErrorMessage, PASSWORD_HINT, passwordProblem } from '../../api/errors';
 import type { InvitationValidation } from '../../types';
 import { saveReturnTo } from './returnTo';
 import AuthLayout from './AuthLayout';
@@ -56,8 +57,7 @@ export default function AcceptInvitation() {
             await queryClient.invalidateQueries();
             navigate('/');
         } catch (err) {
-            const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
-            setError(typeof detail === 'string' ? detail : 'Failed to accept invitation.');
+            setError(apiErrorMessage(err, 'Failed to accept invitation.'));
         } finally {
             setSubmitting(false);
         }
@@ -71,8 +71,9 @@ export default function AcceptInvitation() {
             setError('Passwords do not match.');
             return;
         }
-        if (password.length < 8) {
-            setError('Password must be at least 8 characters.');
+        const problem = passwordProblem(password);
+        if (problem) {
+            setError(problem);
             return;
         }
 
@@ -85,8 +86,8 @@ export default function AcceptInvitation() {
             });
             setSuccess(true);
             setTimeout(() => navigate('/login'), 2000);
-        } catch (err: any) {
-            setError(err.response?.data?.detail || 'Failed to accept invitation.');
+        } catch (err) {
+            setError(apiErrorMessage(err, 'Failed to accept invitation.'));
         } finally {
             setSubmitting(false);
         }
@@ -156,7 +157,9 @@ export default function AcceptInvitation() {
                 <div>
                     <Label htmlFor="invite-password">Password</Label>
                     <Input id="invite-password" type="password" required autoComplete="new-password"
-                        value={password} onChange={e => setPassword(e.target.value)} disabled={submitting} />
+                        value={password} onChange={e => setPassword(e.target.value)} disabled={submitting}
+                        aria-describedby="invite-password-hint" />
+                    <p id="invite-password-hint" className="mt-1 text-xs text-fg-3">{PASSWORD_HINT}</p>
                 </div>
                 <div>
                     <Label htmlFor="invite-password-again">Confirm password</Label>

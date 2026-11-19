@@ -18,10 +18,10 @@ from app.models.artifact_type_definition import ArtifactTypeDefinition
 from app.models.case import Case, CaseStatus, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.case_triage import CaseTriageResult
-from app.models.membership import TenantMembership
 from app.notifications import service as notify
 from app.notifications.mentions import canonicalize_mentions
 from app.services.artifact_types import payload_values, resolve_type
+from app.services.task_service import assignable_ids
 from app.utils.audit import create_audit_log
 from app.utils.copilot_heuristics import detect_indicators
 
@@ -55,11 +55,30 @@ def require_closure_fields(data: dict, case: Optional[Case] = None) -> None:
                                     f"{'are' if len(missing) > 1 else 'is'} required to close a case")
 
 
+# Case fields a PUT may omit but never set to null.
+NOT_NULL = ("title", "status", "severity", "source")
+
+
+def reject_null_fields(data: dict) -> None:
+    """422 when an update explicitly nulls a field that must always have a value (CaseUpdate fields are Optional so a
+    partial update can leave them out, not so a client can blank them)."""
+    bad = sorted(k for k in NOT_NULL if k in data and data[k] is None)
+    if bad:
+        raise HTTPException(status_code=422, detail=f"{', '.join(bad)} cannot be null")
+
+
 async def create_case_record(db: AsyncSession, *, tenant_id: int, data: dict, user_id: Optional[int]) -> Tuple[Case, int]:
     require_closure_fields(data)
     case = Case(**data, tenant_id=tenant_id)
     if not case.owner_id and user_id:
         case.owner_id = user_id
+    # A case born past NEW has been acknowledged (response SLA met); born resolved/closed, also resolved.
+    status = case.status or CaseStatus.NEW
+    if status != CaseStatus.NEW:
+        now = datetime.now(timezone.utc)
+        case.acknowledged_at = case.acknowledged_at or now
+        if status in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
+            case.resolved_at = case.resolved_at or now
     db.add(case)
     await db.flush()
     await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="create",
@@ -85,21 +104,29 @@ def _plain(value: Any) -> Any:
 async def check_case_update(db: AsyncSession, *, case: Case, data: dict, tenant_id: int, role: str) -> None:
     """Guards for analyst-driven case edits (REST/MCP/copilot); Slack/workflow paths skip them.
 
-    422 closing without an outcome + closing note, 403 guest_summary below analyst, 422 new owner not a tenant
-    member. The closure rule also runs inside apply_case_update, so Slack/workflow paths get it too."""
+    422 explicit null for a required field, 422 closing without an outcome + closing note, 403 guest_summary below
+    analyst, 422 new owner not an active analyst/admin of the tenant. The null and closure rules also run inside
+    apply_case_update, so Slack/workflow paths get them too."""
+    reject_null_fields(data)
     require_closure_fields(data, case)
     if "guest_summary" in data and role not in ("super_admin", "admin", "analyst"):
         raise HTTPException(status_code=403, detail="Only analysts can edit the guest summary")
-    owner_id = data.get("owner_id")
-    if owner_id is not None and owner_id != case.owner_id and not (await db.execute(select(TenantMembership.id).where(
-            TenantMembership.user_id == owner_id, TenantMembership.tenant_id == tenant_id))).first():
-        raise HTTPException(status_code=422, detail="Owner is not a member of this tenant")
+    owner_id = data.get("owner_id")  # None unassigns
+    if owner_id is not None and owner_id != case.owner_id and owner_id not in await assignable_ids(db, tenant_id):
+        raise HTTPException(status_code=422,
+                            detail="A case can only be assigned to an active analyst or admin of this organization")
 
 
 async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, user_id: Optional[int],
                             reason: Optional[str] = None) -> dict:
+    # Explicit nulls are refused before anything is touched. Then a row lock for the rest of the transaction, and fresh
+    # values to diff against: concurrent edits serialize instead of the later one writing over the earlier from a
+    # stale read. Every update path (REST, MCP, copilot, Slack,
+    # workflow nodes) comes through here. Flush first so a caller's pending edits aren't overwritten by the reload.
+    reject_null_fields(update_data)
+    await db.flush()
+    await db.refresh(case, with_for_update=True)
     require_closure_fields(update_data, case)  # before any field is set: a refusal leaves the case untouched
-    old_status = case.status
     changes = {}
     for field, value in update_data.items():
         old_value = getattr(case, field)
@@ -135,8 +162,9 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
                 case.resolved_at = datetime.now(timezone.utc)
         else:
             case.resolved_at = None
-        # First move off NEW stops the response SLA clock.
-        if old_status == CaseStatus.NEW and case.acknowledged_at is None:
+        # First move to any status other than NEW stops the response SLA clock (also for cases that were
+        # created past NEW before acknowledged_at was stamped on create).
+        if new_status != CaseStatus.NEW and case.acknowledged_at is None:
             case.acknowledged_at = datetime.now(timezone.utc)
 
     if "severity" in changes:

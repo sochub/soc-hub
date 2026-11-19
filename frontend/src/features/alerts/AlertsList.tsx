@@ -8,6 +8,9 @@ import { AlertRuns } from '../automations/CaseAutomation';
 import { Button, Select, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, buttonClass, type Tone } from '../../components/ui';
 import { FIXED_COLUMN_COUNT, useAlertColumns } from './alertColumns';
 import ColumnsMenu from './ColumnsMenu';
+import Modal from '../../components/layout/Modal';
+import { useCanRun } from '../enrichment/useCanRun';
+import { apiErrorMessage } from '../../api/errors';
 
 interface Alert {
     id: number;
@@ -50,6 +53,37 @@ function SimilarAlerts({ alertId, onOpen }: { alertId: number; onOpen: (id: numb
     );
 }
 
+/** One alert by id (GET /alerts/{id}), wherever it sits in the list: similar-alert links open here. */
+function AlertDetailModal({ alertId, onOpen, onClose }: { alertId: number; onOpen: (id: number) => void; onClose: () => void }) {
+    const { data: a, isLoading, isError, error } = useQuery<Alert>({
+        queryKey: ['alerts', alertId, 'detail'],
+        queryFn: async () => (await api.get(`/alerts/${alertId}`)).data,
+    });
+    return (
+        <Modal open onClose={onClose} size="xl" title={a ? `Alert #${a.id}` : `Alert #${alertId}`}>
+            {isLoading ? (
+                <Skeleton rows={4} />
+            ) : isError || !a ? (
+                <p className="text-sm text-severity-critical">{apiErrorMessage(error, 'Could not load this alert.')}</p>
+            ) : (
+                <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <SeverityStamp severity={a.severity} />
+                        <Stamp tone={alertStatusTone(a.status)}>{a.status}</Stamp>
+                        <span className="font-mono text-xs text-fg-2">{a.source}</span>
+                        <span className="text-xs text-fg-3">{new Date(a.created_at).toLocaleString()}</span>
+                        {a.case_id && <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>}
+                    </div>
+                    <p className="font-medium text-fg">{a.title}</p>
+                    <SimilarAlerts alertId={a.id} onOpen={onOpen} />
+                    <AlertRuns alertId={a.id} />
+                    <pre className="text-xs text-fg-2 overflow-x-auto bg-surface p-3 rounded-sm">{JSON.stringify(a.payload, null, 2)}</pre>
+                </div>
+            )}
+        </Modal>
+    );
+}
+
 export default function AlertsList() {
     const qc = useQueryClient();
     // Filters, page and page size live in the URL so dashboard widgets can deep-link a pre-filtered view.
@@ -76,6 +110,9 @@ export default function AlertsList() {
     const [bulkPromote, setBulkPromote] = useState(false);
     const [expanded, setExpanded] = useState<number | null>(null);
     const [promoting, setPromoting] = useState<Alert | null>(null);
+    const [viewing, setViewing] = useState<number | null>(null);
+    const [actionError, setActionError] = useState<string | null>(null);
+    const canAct = useCanRun();  // promote/dismiss/suppress need analyst or admin
     const cols = useAlertColumns();
     const colSpan = FIXED_COLUMN_COUNT + cols.visibleCount;
 
@@ -108,19 +145,18 @@ export default function AlertsList() {
     const overshot = !!result && result.items.length === 0 && result.total > 0 && page > lastPage;
     useEffect(() => { if (overshot) setPage(lastPage); });
 
-    const [actionError, setActionError] = useState<string | null>(null);
     const dismiss = useMutation({
         mutationFn: async (id: number) => (await api.post(`/alerts/${id}/dismiss`)).data,
         onMutate: () => setActionError(null),
         onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
-        onError: () => setActionError('Could not dismiss the alert. Try again.'),
+        onError: (e) => setActionError(apiErrorMessage(e, 'Could not dismiss the alert.')),
     });
 
     const bulkDismiss = useMutation({
         mutationFn: async (ids: number[]) => (await api.post('/alerts/bulk', { ids, action: 'dismiss' })).data,
         onMutate: () => setActionError(null),
         onSuccess: () => { setSelected(new Set()); qc.invalidateQueries({ queryKey: ['alerts'] }); },
-        onError: () => setActionError('Could not dismiss the selected alerts. Try again.'),
+        onError: (e) => setActionError(apiErrorMessage(e, 'Could not dismiss the selected alerts.')),
     });
 
     const selectedIds = filtered.filter(a => selected.has(a.id)).map(a => a.id);
@@ -137,7 +173,7 @@ export default function AlertsList() {
             {label}{sort.key === key && (sort.dir === -1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />)}
         </button>
     );
-    const openAlert = (id: number) => { setParams({ status: 'all', severity: null, source: null }); resetView(); setExpanded(id); };
+    const openAlert = (id: number) => setViewing(id);
 
     const filtersActive = statusFilter !== 'pending' || severityFilter !== 'all' || sourceFilter !== 'all';
     const clearFilters = () => { setParams({ status: null, severity: null, source: null }); resetView(); };
@@ -146,7 +182,11 @@ export default function AlertsList() {
             className={buttonClass('ghost', 'sm')}><BellOff size={12} aria-hidden />Suppress similar</Link>
     );
 
-    const rowActions = (a: Alert) => a.status === 'pending' ? (
+    // Viewers see the linked case only; promote, dismiss and suppress need analyst or admin.
+    const rowActions = (a: Alert) => !canAct ? (
+        a.case_id ? <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
+            : <span className="text-xs text-fg-3">—</span>
+    ) : a.status === 'pending' ? (
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-1">
             <Button size="sm" onClick={() => setPromoting(a)}><CheckCircle size={12} aria-hidden />Promote</Button>
             <Button size="sm" variant="ghost" disabled={dismiss.isPending && dismiss.variables === a.id} onClick={() => dismiss.mutate(a.id)}><X size={12} aria-hidden />Dismiss</Button>
@@ -177,7 +217,7 @@ export default function AlertsList() {
                 <ColumnsMenu cols={cols} />
             </div>
 
-            {selectedIds.length > 0 && (
+            {canAct && selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-line bg-raised text-sm">
                     <span className="text-fg-2 num">{selectedIds.length} selected</span>
                     <Button size="sm" onClick={() => setBulkPromote(true)}><CheckCircle size={12} aria-hidden />Promote selected…</Button>
@@ -199,8 +239,8 @@ export default function AlertsList() {
                     <thead className="border-b border-line bg-surface">
                         <tr className="label-caps">
                             <th className="px-3 py-2 w-8">
-                                <input type="checkbox" aria-label="Select all" checked={allSelected}
-                                    onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map(a => a.id)))} />
+                                {canAct && <input type="checkbox" aria-label="Select all" checked={allSelected}
+                                    onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map(a => a.id)))} />}
                             </th>
                             <th className="px-3 py-2 w-8"><span className="sr-only">Details</span></th>
                             {cols.isVisible('severity') && <th className="hidden sm:table-cell px-3 py-2 w-28">{sortHeader('severity', 'Severity')}</th>}
@@ -223,7 +263,7 @@ export default function AlertsList() {
                             <Fragment key={a.id}>
                                 <tr className="group hover:bg-raised">
                                     <td className="px-3 py-2.5">
-                                        <input type="checkbox" aria-label={`Select alert ${a.id}`} checked={selected.has(a.id)} onChange={() => toggle(a.id)} />
+                                        {canAct && <input type="checkbox" aria-label={`Select alert ${a.id}`} checked={selected.has(a.id)} onChange={() => toggle(a.id)} />}
                                     </td>
                                     <td className="px-3 py-2.5">
                                         <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="text-muted hover:text-fg-2"
@@ -276,6 +316,7 @@ export default function AlertsList() {
                 </nav>
             )}
 
+            {viewing !== null && <AlertDetailModal alertId={viewing} onOpen={setViewing} onClose={() => setViewing(null)} />}
             {promoting && <PromoteAlertModal alert={promoting} onClose={() => setPromoting(null)} />}
             {bulkPromote && selectedIds.length > 0 && (
                 <PromoteAlertModal alert={filtered.find(a => a.id === selectedIds[0])!} ids={selectedIds}

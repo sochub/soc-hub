@@ -24,7 +24,8 @@ target_metadata = Base.metadata
 
 from app.core.config import settings
 # Override sqlalchemy.url with the one from settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# configparser interpolates "%": a password containing it (e.g. URL-encoded) must be escaped as "%%".
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.

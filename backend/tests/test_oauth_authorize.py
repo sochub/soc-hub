@@ -143,6 +143,40 @@ def test_info_lists_enterable_tenants():
     _wrap(body)
 
 
+def test_info_hides_tenants_requiring_mfa_without_mfa():
+    async def body(c, ids):
+        cid = await _client(ids)
+        u, t_ok, _, _ = await _setup(ids)
+        async with AsyncSessionLocal() as db:
+            (await db.get(type(t_ok), t_ok.id)).require_mfa = True
+            await db.commit()
+        h = await _session(u, t_ok.id)
+        r = await c.get(INFO, params=_params(cid), headers=h)
+        assert r.status_code == 200, r.text
+        assert r.json()["tenants"] == []
+        r = await c.post(DECIDE, json={**_params(cid), "tenant_id": t_ok.id, "approve": True}, headers={**h, **XRW})
+        assert r.status_code == 403, r.text
+    _wrap(body)
+
+
+def test_tenant_role_honours_require_mfa():
+    from app.models.user import User
+    from app.oauth.tokens import tenant_role
+
+    async def body(c, ids):
+        u, t_ok, _, _ = await _setup(ids)
+        async with AsyncSessionLocal() as db:
+            (await db.get(type(t_ok), t_ok.id)).require_mfa = True
+            await db.commit()
+            user = await db.get(User, u.id)
+            kw = dict(tenant_id=t_ok.id, resource_url=RESOURCES["mcp"].url, sso_tenant_id=None)
+            assert await tenant_role(db, user, amr="pwd", **kw) is None
+            user.is_super_admin = True  # break-glass: exempt
+            assert await tenant_role(db, user, amr="pwd", **kw) == "analyst"
+            await db.rollback()
+    _wrap(body)
+
+
 def test_decision_approve_issues_code():
     async def body(c, ids):
         cid = await _client(ids)

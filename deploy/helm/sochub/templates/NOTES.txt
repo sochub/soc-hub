@@ -18,11 +18,10 @@ SECRET_KEY / ENCRYPTION_KEY were generated if left empty and are kept across upg
 
 Bundled PostgreSQL/Redis passwords are in Secret {{ include "sochub.datastoreSecretName" . }} (generated once, kept).
 {{- end }}
-{{- if and (eq .Values.config.environment "production") (not (hasPrefix "https://" .Values.config.publicBaseUrl)) }}
+{{- if ne .Values.config.environment "production" }}
 
-WARNING: config.publicBaseUrl is {{ .Values.config.publicBaseUrl | quote }}, not https://. Session cookies are sent
-without the Secure flag and SSO callbacks / emailed links use plain HTTP. Set config.publicBaseUrl and
-config.frontendUrl to the public https:// URL before real use.
+WARNING: config.environment is {{ .Values.config.environment | quote }}: weak secrets and plain-http URLs are only
+warned about. Use it for evaluation only; real deployments need environment=production and https:// URLs.
 {{- end }}
 {{- if and .Values.ingress.enabled (not .Values.frontend.realIpFrom) }}
 

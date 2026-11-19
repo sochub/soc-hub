@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link } from 'react-router-dom';
 import { FileText, Globe, Mail, Server, Monitor, User, ArrowRight, Calendar, Hash, Link2, Pencil, Trash2, Check, X } from 'lucide-react';
-import { Badge, Button, Input, Select, Skeleton, ErrorState, EmptyState, useConfirm } from '../../components/ui';
+import { Badge, Button, Input, Pager, Select, Skeleton, ErrorState, EmptyState, useConfirm } from '../../components/ui';
+import { getPage, showingText } from '../../api/paging';
 import { useArtifactTypes } from './useArtifactTypes';
 
 const ARTIFACT_ICONS: Record<string, any> = {
@@ -18,6 +19,8 @@ const ARTIFACT_ICONS: Record<string, any> = {
     username: User,
 };
 
+const PAGE_SIZE = 100;
+
 export default function ArtifactsList() {
     const queryClient = useQueryClient();
     const { options: ARTIFACT_TYPE_OPTIONS } = useArtifactTypes();
@@ -26,20 +29,32 @@ export default function ArtifactsList() {
     const [editData, setEditData] = useState({ artifact_type: '', value: '', description: '' });
 
     const { confirm, dialog } = useConfirm();
-    const q = searchParams.get('q') ?? '';
+    // Filters live in the URL; value search runs server-side after a pause in typing.
+    const [page, setPage] = useState(0);
+    const rawQ = searchParams.get('q') ?? '';
     const typeFilter = searchParams.get('type') ?? '';
     const setParam = (key: 'q' | 'type', value: string) => {
         const next = new URLSearchParams(searchParams);
         if (value) next.set(key, value); else next.delete(key);
         setSearchParams(next, { replace: true });
+        setPage(0);
     };
-    const { data: artifacts, isLoading, isError, refetch } = useQuery({
-        queryKey: ['artifacts', 'all'],
-        queryFn: async () => {
-            const response = await api.get('/artifacts/');
-            return response.data;
-        }
+    const [q, setQ] = useState(rawQ.trim());
+    useEffect(() => {
+        const t = setTimeout(() => setQ(rawQ.trim()), 300);
+        return () => clearTimeout(t);
+    }, [rawQ]);
+    const params = { ...(q && { q }), ...(typeFilter && { artifact_type: typeFilter }), skip: page * PAGE_SIZE, limit: PAGE_SIZE };
+    const { data: result, isLoading, isError, refetch } = useQuery({
+        queryKey: ['artifacts', 'all', 'list', params],
+        queryFn: () => getPage<Record<string, unknown>>('/artifacts/', params),
+        placeholderData: keepPreviousData,
     });
+    const artifacts = result?.items;
+    const total = result?.total ?? 0;
+    useEffect(() => {
+        if (result && result.items.length === 0 && result.total > 0 && page > 0) setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
+    }, [result, page]);
 
     const updateMutation = useMutation({
         mutationFn: async ({ id, data }: { id: number; data: { artifact_type?: string; value?: string; description?: string } }) => {
@@ -78,27 +93,28 @@ export default function ArtifactsList() {
         updateMutation.mutate({ id, data: editData });
     };
 
-    const all: { artifact_type: string; value: string }[] = artifacts ?? [];
+    const all = (artifacts ?? []) as { artifact_type: string; value: string }[];
     const typeLabel = (t: string) => ARTIFACT_TYPE_OPTIONS.find(o => o.value === t)?.label ?? t;
-    const presentTypes = [...new Set([...all.map(a => a.artifact_type as string), ...(typeFilter ? [typeFilter] : [])])].sort();
-    const visible = all.filter(a => (!typeFilter || a.artifact_type === typeFilter) && String(a.value).toLowerCase().includes(q.toLowerCase()));
-    const filtering = !!q || !!typeFilter;
+    // The server filters by type, so offer every known type (plus a custom one already in the URL).
+    const presentTypes = [...new Set([...ARTIFACT_TYPE_OPTIONS.map(o => o.value as string), ...(typeFilter ? [typeFilter] : [])])];
+    const visible = all;
+    const filtering = !!rawQ || !!typeFilter;
 
     return (
         <div className="p-4 space-y-4">
             <div className="flex flex-wrap items-center gap-2">
                 <p className="mr-auto text-sm text-fg-3">
-                    {isLoading ? '\u00a0' : <><span className="num">{filtering ? `${visible.length} of ${all.length}` : all.length}</span> observed across cases. Confirmed-malicious ones live under IOCs.</>}
+                    {isLoading ? '\u00a0' : <>{showingText(page, PAGE_SIZE, all.length, total, 'artifacts')}. Confirmed-malicious ones live under IOCs.</>}
                 </p>
                 <Select inputSize="sm" className="w-auto" aria-label="Type" value={typeFilter} onChange={e => setParam('type', e.target.value)}>
                     <option value="">All types</option>
                     {presentTypes.map(t => <option key={t} value={t}>{typeLabel(t)}</option>)}
                 </Select>
-                <Input type="search" inputSize="sm" className="w-56" aria-label="Filter by value" value={q} placeholder="Filter by value…"
+                <Input type="search" inputSize="sm" className="w-56" aria-label="Filter by value" value={rawQ} placeholder="Filter by value…"
                     onChange={e => setParam('q', e.target.value)} />
             </div>
 
-            {isError ? <ErrorState message="Could not load artifacts." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={8} /> : all.length === 0 ? (
+            {isError ? <ErrorState message="Could not load artifacts." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={8} /> : all.length === 0 && !filtering ? (
                 <EmptyState title="No artifacts yet" body="Artifacts added to cases will appear here automatically." />
             ) : visible.length === 0 ? (
                 <EmptyState title="No artifacts match these filters"
@@ -272,6 +288,7 @@ export default function ArtifactsList() {
                     </table>
                 </div>
             )}
+            <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
             {dialog}
         </div>
     );

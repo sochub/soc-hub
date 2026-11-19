@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { api } from '../../api/client';
@@ -9,6 +9,7 @@ import { Button, ErrorState, Label, Select, SeverityStamp, Textarea } from '../.
 import { CASE_STATUSES, statusLabel } from './statuses';
 import { CASE_OUTCOMES } from './outcomes';
 import type { SLAStatus } from '../../types';
+import { getPage, OPEN_CASE_STATUSES, type Page } from '../../api/paging';
 
 export interface BoardCase {
     id: number;
@@ -30,9 +31,24 @@ const errorDetail = (e: unknown) => {
 
 const MAX_TAGS = 3;
 const COLUMNS = CASE_STATUSES.map(s => s.value as string);
+// Cards loaded per column; a column with more says so instead of silently dropping the rest.
+const COLUMN_CAP = 100;
 
-export default function CasesBoard({ cases }: { cases: BoardCase[] }) {
+export default function CasesBoard({ filters, status: statusFilter }: {
+    filters: Record<string, string>;
+    status: string; // 'all', 'active' (open statuses) or one status: only those columns load
+}) {
     const queryClient = useQueryClient();
+    const columnKey = (status: string) => ['cases', 'board', status, filters];
+    const columns = useQueries({
+        queries: COLUMNS.map(status => ({
+            queryKey: columnKey(status),
+            queryFn: () => getPage<BoardCase>('/cases/', { ...filters, status, limit: COLUMN_CAP }),
+            enabled: statusFilter === 'all' || statusFilter === status || (statusFilter === 'active' && OPEN_CASE_STATUSES.includes(status)),
+        })),
+    });
+    const columnOf = (status: string) => columns[COLUMNS.indexOf(status)]?.data ?? { items: [], total: 0 };
+    const cases = COLUMNS.flatMap(s => columnOf(s).items);
     const [dragOver, setDragOver] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     // Dropping on Closed asks for the outcome + closing note first; the card stays put until confirmed.
@@ -43,16 +59,21 @@ export default function CasesBoard({ cases }: { cases: BoardCase[] }) {
         // Optimistic: move the card now, roll back if the API refuses (e.g. viewer role, closure fields missing)
         onMutate: async ({ id, status }) => {
             setError(null);
-            await queryClient.cancelQueries({ queryKey: ['cases'], exact: true });
-            const prev = queryClient.getQueryData<BoardCase[]>(['cases']);
-            queryClient.setQueryData<BoardCase[]>(['cases'], old => old?.map(c => c.id === id ? { ...c, status } : c));
+            await queryClient.cancelQueries({ queryKey: ['cases', 'board'] });
+            const prev = queryClient.getQueriesData<Page<BoardCase>>({ queryKey: ['cases', 'board'] });
+            const card = cases.find(c => c.id === id);
+            if (card) {
+                const from = card.status;
+                queryClient.setQueryData<Page<BoardCase>>(columnKey(from), old => old && ({ items: old.items.filter(c => c.id !== id), total: old.total - 1 }));
+                queryClient.setQueryData<Page<BoardCase>>(columnKey(status), old => old && ({ items: [{ ...card, status }, ...old.items], total: old.total + 1 }));
+            }
             return { prev };
         },
         onError: (e, _v, ctx) => {
-            queryClient.setQueryData(['cases'], ctx?.prev);
+            for (const [key, data] of ctx?.prev ?? []) queryClient.setQueryData(key, data);
             setError(errorDetail(e));
         },
-        onSettled: () => queryClient.invalidateQueries({ queryKey: ['cases'], exact: true }),
+        onSettled: () => queryClient.invalidateQueries({ queryKey: ['cases'] }),
     });
 
     // Shared by drag and drop and the per-card "Move to…" select (the keyboard path).
@@ -85,7 +106,7 @@ export default function CasesBoard({ cases }: { cases: BoardCase[] }) {
         )}
         <div className="flex gap-3 overflow-x-auto pb-2">
             {COLUMNS.map(status => {
-                const col = cases.filter(c => c.status === status);
+                const { items: col, total } = columnOf(status);
                 return (
                     <div
                         key={status}
@@ -99,7 +120,7 @@ export default function CasesBoard({ cases }: { cases: BoardCase[] }) {
                     >
                         <div className="px-3 py-2 border-b border-line flex items-center justify-between">
                             <h3 className="label-caps">{statusLabel(status)}</h3>
-                            <span className="num text-xs text-fg-3">{col.length}</span>
+                            <span className="num text-xs text-fg-3">{total}</span>
                         </div>
                         <div className="p-2 space-y-2 overflow-y-auto">
                             {col.map(c => (
@@ -107,7 +128,7 @@ export default function CasesBoard({ cases }: { cases: BoardCase[] }) {
                                     key={c.id}
                                     draggable
                                     onDragStart={e => e.dataTransfer.setData('text/plain', String(c.id))}
-                                    className="relative bg-panel border border-line rounded-md p-2.5 hover:border-line-strong focus-within:border-accent cursor-grab active:cursor-grabbing"
+                                    className="group/card relative bg-panel border border-line rounded-md p-2.5 hover:border-line-strong focus-within:border-accent cursor-grab active:cursor-grabbing"
                                 >
                                     <div className="flex items-center justify-between gap-2 mb-1">
                                         <span className="num text-xs text-fg-3">#{c.id}</span>
@@ -137,6 +158,11 @@ export default function CasesBoard({ cases }: { cases: BoardCase[] }) {
                                     </Select>
                                 </article>
                             ))}
+                            {total > col.length && (
+                                <p className="px-1 py-1 text-xs text-fg-3">
+                                    Showing {col.length} of {total}. Narrow the filters or use the table view for the rest.
+                                </p>
+                            )}
                         </div>
                     </div>
                 );

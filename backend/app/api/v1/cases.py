@@ -3,14 +3,17 @@ from typing import Any, List, Optional
 from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
+from sqlalchemy import case as sql_case, cast, func, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.audit.context import audit_read
 from app.escalations import service as esc
 from app.api import deps
-from app.models.case import Case, TimelineEvent
+from app.models.case import Case, CaseSeverity, CaseStatus, TimelineEvent
 from app.models.membership import TenantMembership
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
@@ -80,23 +83,91 @@ async def _attach_war_room(db: AsyncSession, tenant_id: int, cases: List[Case]) 
         c.war_room_silent = bool(c.slack_listen and made and now - made > SILENT_AFTER and (last is None or last < made))
 
 
+# Explicit comparisons, so each literal goes through the column's Enum type (stored as the member name).
+_CASE_SEVERITY_RANK = sql_case(
+    *[(Case.severity == sev, rank) for sev, rank in (
+        (CaseSeverity.CRITICAL, 5), (CaseSeverity.HIGH, 4), (CaseSeverity.MEDIUM, 3),
+        (CaseSeverity.LOW, 2), (CaseSeverity.INFO, 1))],
+    else_=0)
+# Case list orderings for GET /cases/ (``severity`` = most severe first).
+CASE_SORTS = {
+    "-created_at": Case.created_at.desc(), "created_at": Case.created_at.asc(),
+    "-updated_at": Case.updated_at.desc().nulls_last(), "updated_at": Case.updated_at.asc().nulls_first(),
+    "severity": _CASE_SEVERITY_RANK.desc(), "-severity": _CASE_SEVERITY_RANK.asc(),
+    "-id": Case.id.desc(), "id": Case.id.asc(),
+}
+SLA_FILTERS = {"breached": {"breached"}, "at_risk": {"at_risk"}, "pressure": {"breached", "at_risk"}}
+
+
 @router.get("/", response_model=List[case_schema.Case])
 async def read_cases(
+    response: Response,
     db: AsyncSession = Depends(deps.get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    status: Optional[List[CaseStatus]] = Query(None, description="Repeat for several statuses."),
+    severity: Optional[List[CaseSeverity]] = Query(None, description="Repeat for several severities."),
+    owner: Optional[str] = Query(None, pattern=r"^(me|unassigned|\d{1,9})$", description="me, unassigned or a user id."),
+    tag: Optional[str] = Query(None, max_length=200),
+    q: Optional[str] = Query(None, max_length=200, description="Matches title, description, or the case id."),
+    sla: Optional[str] = Query(None, pattern="^(breached|at_risk|pressure)$",
+                               description="Overall SLA state; pressure = at risk or breached."),
+    outcome: Optional[str] = Query(None, pattern=r"^[a-z_]{1,40}$", description="A closure outcome, or not_set."),
+    created_from: Optional[datetime] = Query(None, description="Created at or after this instant."),
+    created_before: Optional[datetime] = Query(None, description="Created before this instant."),
+    sort: str = Query("-created_at", pattern="^-?(created_at|updated_at|severity|id)$"),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
-    """Retrieve cases scoped to tenant."""
+    """Retrieve cases scoped to tenant, optionally filtered and sorted.
+
+    The body stays a bare list; the total number of matches (ignoring skip/limit) is in `X-Total-Count`.
+    The list leaves `timeline_events` empty: the activity is on GET /cases/{id}.
+    """
+    conds = [Case.tenant_id == tenant_id]
+    if status:
+        conds.append(Case.status.in_(status))
+    if severity:
+        conds.append(Case.severity.in_(severity))
+    if owner == "me":
+        conds.append(Case.owner_id == current_user.id)
+    elif owner == "unassigned":
+        conds.append(Case.owner_id.is_(None))
+    elif owner:
+        conds.append(Case.owner_id == int(owner))
+    if tag:
+        conds.append(cast(Case.tags, JSONB).contains([tag]))
+    if outcome:
+        conds.append(Case.outcome.is_(None) if outcome == "not_set" else Case.outcome == outcome)
+    if created_from:
+        conds.append(Case.created_at >= created_from)
+    if created_before:
+        conds.append(Case.created_at < created_before)
+    term = (q or "").strip()
+    if term:
+        text_match = or_(Case.title.icontains(term, autoescape=True), Case.description.icontains(term, autoescape=True))
+        digits = term.lstrip("#")
+        conds.append(or_(text_match, Case.id == int(digits)) if digits.isdigit() and len(digits) < 10 else text_match)
+    if sla:
+        # SLA state is computed, not stored: evaluate it over the matching rows' clock columns only.
+        policy_overrides = await load_policy_overrides(db, tenant_id)
+        rows = (await db.execute(select(Case.id, Case.severity, Case.created_at, Case.acknowledged_at,
+                                        Case.resolved_at).where(*conds))).all()
+        wanted = SLA_FILTERS[sla]
+        conds.append(Case.id.in_([r.id for r in rows
+                                  if compute_sla_state(r, policy_overrides)["overall_status"] in wanted]))
+
+    total = (await db.execute(select(func.count(Case.id)).where(*conds))).scalar_one()
+    response.headers["X-Total-Count"] = str(total)
     result = await db.execute(
         select(Case)
-        .options(selectinload(Case.timeline_events).selectinload(TimelineEvent.user))
-        .where(Case.tenant_id == tenant_id)
+        .where(*conds)
+        .order_by(CASE_SORTS[sort], Case.id.desc())
         .offset(skip).limit(limit)
-        .order_by(Case.created_at.desc())
     )
     cases = result.scalars().all()
+    for case in cases:  # not loaded for the list: an empty list keeps the response shape
+        set_committed_value(case, "timeline_events", [])
     await _attach_sla(db, tenant_id, cases)
     return cases
 
@@ -286,8 +357,8 @@ async def update_case(
     tenant_id: int = Depends(deps.get_effective_tenant_id),
 ) -> Any:
     """Update a case (tenant-scoped)."""
-    result = await db.execute(
-        select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id)
+    result = await db.execute(  # row lock: the guards below and apply_case_update see the committed state
+        select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id).with_for_update()
     )
     case = result.scalars().first()
     if not case:

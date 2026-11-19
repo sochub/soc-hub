@@ -95,6 +95,29 @@ app.kubernetes.io/component: {{ .component }}
 {{- end }}
 {{- end }}
 
+{{/* Render-time checks for settings the backend would otherwise crash-loop on. Included from configmap.yaml. */}}
+{{- define "sochub.validate" -}}
+{{- if eq .Values.config.environment "production" }}
+{{- range $key := list "frontendUrl" "publicBaseUrl" }}
+{{- $raw := index $.Values.config $key | default "" }}
+{{- $url := urlParse $raw }}
+{{- $host := regexReplaceAll ":[0-9]+$" $url.host "" }}
+{{- if or (ne $url.scheme "https") (has $host (list "" "localhost" "127.0.0.1" "[::1]" "0.0.0.0")) }}
+{{- fail (printf "config.%s must be the public https:// URL of this deployment when config.environment=production (got %q): the backend refuses to start otherwise. Set config.frontendUrl and config.publicBaseUrl, or set config.environment=development for a local evaluation." $key $raw) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* RWO attachments volume: a rolling update would start the new pod while the old one still holds the volume
+     (stuck on another node), so replace pods instead. */}}
+{{- define "sochub.rwoStrategy" -}}
+{{- if and .Values.persistence.attachments.enabled (eq .Values.persistence.attachments.accessMode "ReadWriteOnce") }}
+strategy:
+  type: Recreate
+{{- end }}
+{{- end }}
+
 {{- define "sochub.backendEnvFrom" -}}
 - configMapRef:
     name: {{ include "sochub.configMapName" . }}

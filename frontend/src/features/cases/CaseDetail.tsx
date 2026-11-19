@@ -127,7 +127,7 @@ export default function CaseDetail() {
         return typeof d === 'string' ? d : 'Could not save the case.';
     })();
 
-    const { data: caseData, isLoading } = useQuery({
+    const { data: caseData, isLoading, isError, error: caseError } = useQuery({
         queryKey: ['case', id],
         queryFn: async () => {
             const response = await api.get(`/cases/${id}`);
@@ -236,15 +236,20 @@ export default function CaseDetail() {
         );
     }
 
-    if (!caseData) return (
-        <PageContainer>
-            <div className="py-16 text-center space-y-2">
-                <p className="text-fg">Case not found.</p>
-                <p className="text-sm text-fg-3">It may have been deleted, or it belongs to another organization.</p>
-                <Link to="/cases" className="inline-block text-sm text-accent hover:underline">Back to cases</Link>
-            </div>
-        </PageContainer>
-    );
+    // An error wins over cached data: a case from another organization (or a deleted one) must not linger.
+    if (isError || !caseData) {
+        const status = (caseError as { response?: { status?: number } } | null)?.response?.status;
+        const notFound = !isError || status === 404 || status === 403;
+        return (
+            <PageContainer>
+                <div className="py-16 text-center space-y-2">
+                    <p className="text-fg">{notFound ? 'Case not found.' : 'Could not load this case.'}</p>
+                    <p className="text-sm text-fg-3">{notFound ? 'It may have been deleted, or it belongs to another organization.' : 'Check your connection and try again.'}</p>
+                    <Link to="/cases" className="inline-block text-sm text-accent hover:underline">Back to cases</Link>
+                </div>
+            </PageContainer>
+        );
+    }
 
     const isClosed = caseData.status === 'closed';
     const changeStatus = (status: string) => {

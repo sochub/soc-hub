@@ -435,12 +435,23 @@ async def test_ticket_sync_skips_inactive_tenant(ids, monkeypatch):
         synced.append(conn.tenant_id)
         return {"created": 0, "synced": 0, "errors": []}
     monkeypatch.setattr(ticket_sync, "sync_tenant", fake_sync)
+    dispatched = []
+    monkeypatch.setattr(ticketing.sync_ticket_connection_task, "delay", lambda cid: dispatched.append(cid))
     async with AsyncSessionLocal() as db:
-        dead = await tenant(db, ids, active=False)
-        db.add(TicketConnection(tenant_id=dead.id, provider="jira", base_url="https://x.atlassian.net",
-                                credentials_enc=ticket_sync.encrypt_credentials({}), settings={}))
+        conns = {}
+        for active in (False, True):
+            t = await tenant(db, ids, active=active)
+            c = TicketConnection(tenant_id=t.id, provider="jira", base_url="https://x.atlassian.net",
+                                 credentials_enc=ticket_sync.encrypt_credentials({}), settings={})
+            db.add(c)
+            await db.flush()
+            conns[active] = (t.id, c.id)
         await db.commit()
-        d = dead.id
     await engine.dispose()  # the sync task body runs its own loop: pooled connections must not cross loops
+    # the beat task fans out one task per connection, active tenants only
     await asyncio.to_thread(ticketing.sync_tickets_task.run)
-    assert d not in synced
+    assert conns[True][1] in dispatched and conns[False][1] not in dispatched
+    # a connection whose tenant was deactivated after the fan-out is skipped by its own task
+    await asyncio.to_thread(ticketing.sync_ticket_connection_task.run, conns[False][1])
+    await asyncio.to_thread(ticketing.sync_ticket_connection_task.run, conns[True][1])
+    assert synced == [conns[True][0]]

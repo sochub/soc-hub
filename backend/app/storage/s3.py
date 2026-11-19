@@ -10,8 +10,10 @@ CHUNK = 65536
 
 
 class S3Storage:
-    def __init__(self, bucket, region=None, endpoint_url=None, prefix=""):
+    def __init__(self, bucket, region=None, endpoint_url=None, prefix="", sse="AES256"):
         self.bucket, self.prefix = bucket, prefix or ""
+        # None: no ServerSideEncryption header (S3-compatible stores that reject it).
+        self.extra_args = {"ServerSideEncryption": sse} if sse else None
         # Fresh session per instance: the default session is not thread-safe and calls run in to_thread.
         self.client = boto3.session.Session().client("s3", region_name=region, endpoint_url=endpoint_url)
 
@@ -26,7 +28,7 @@ class S3Storage:
                 n += len(c)
             tmp.seek(0)
             await asyncio.to_thread(self.client.upload_fileobj, tmp, self.bucket, self._key(key),
-                                    ExtraArgs={"ServerSideEncryption": "AES256"})
+                                    ExtraArgs=self.extra_args)
         return n
 
     async def open(self, key):

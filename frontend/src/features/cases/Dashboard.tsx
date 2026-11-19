@@ -16,6 +16,7 @@ import {
     SEVERITY_ORDER, TONE_VAR, severityTone,
 } from '../../components/ui';
 import { CASE_STATUSES, statusLabel } from './statuses';
+import { getPage, OPEN_CASE_STATUSES } from '../../api/paging';
 
 interface CaseItem {
     id: number;
@@ -59,7 +60,6 @@ const STATUS_ORDER = CASE_STATUSES.map(s => s.value as string);
 // "ip_address" -> "IP address"; known acronyms stay upper case.
 const iocTypeLabel = (t: string) => t.split('_').map((w, i) => ['ip', 'url', 'md5', 'sha1', 'sha256'].includes(w) ? w.toUpperCase() : i ? w : w[0].toUpperCase() + w.slice(1)).join(' ');
 const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-const isActive = (c: CaseItem) => c.status !== 'resolved' && c.status !== 'closed';
 const atRisk = (c: CaseItem) => c.sla_overall_status === 'breached' || c.sla_overall_status === 'at_risk';
 
 /** The SLA deadline that drives the case's overall state: the earliest due among the targets in that state. */
@@ -143,37 +143,45 @@ export default function Dashboard() {
     const navigate = useNavigate();
     const [now] = useState(Date.now); // reference time for "over by" / "due in", fixed per visit
 
-    const casesQ = useQuery<CaseItem[]>({
-        queryKey: ['cases'],
-        queryFn: async () => (await api.get('/cases/', { params: { limit: 500 } })).data,
+    // Each panel asks the server for exactly its rows; the counts come from X-Total-Count.
+    const open = { status: OPEN_CASE_STATUSES };
+    const casesQ = useQuery({
+        queryKey: ['cases', 'dashboard'],
+        queryFn: async () => {
+            const [sla, severe, recent, active, critical, high] = await Promise.all([
+                getPage<CaseItem>('/cases/', { ...open, sla: 'pressure', sort: 'severity', limit: 9 }),
+                getPage<CaseItem>('/cases/', { ...open, severity: ['critical', 'high'], sort: 'severity', limit: 9 }),
+                getPage<CaseItem>('/cases/', { sort: '-created_at', limit: 7 }),
+                getPage<CaseItem>('/cases/', { ...open, limit: 1 }),
+                getPage<CaseItem>('/cases/', { ...open, severity: 'critical', limit: 1 }),
+                getPage<CaseItem>('/cases/', { ...open, severity: 'high', limit: 1 }),
+            ]);
+            // Union of "SLA pressure" and "critical or high"; exact only when both lists came back whole.
+            const byId = new Map([...sla.items, ...severe.items].map(c => [c.id, c]));
+            return {
+                priority: [...byId.values()], priorityComplete: sla.total <= sla.items.length && severe.total <= severe.items.length,
+                recent: recent.items,
+                counts: { active: active.total, critical: critical.total, high: high.total, sla: sla.total },
+            };
+        },
     });
     const statsQ = useQuery<Stats>({
         queryKey: ['stats'],
         queryFn: async () => (await api.get('/stats/')).data,
     });
-    const cases = casesQ.data;
     const stats = statsQ.data;
 
-    // Lead with what needs attention: SLA breached first, then at risk, then active critical/high by severity.
-    const active = useMemo(() => (cases ?? []).filter(isActive), [cases]);
+    // Lead with what needs attention: SLA breached first, then at risk, then critical/high by severity.
     const priorityCases = useMemo(() =>
-        active.filter(c => atRisk(c) || c.severity === 'critical' || c.severity === 'high')
-            .sort((a, b) =>
-                Number(b.sla_overall_status === 'breached') - Number(a.sla_overall_status === 'breached')
-                || Number(atRisk(b)) - Number(atRisk(a))
-                || (slaDue(a) ?? Infinity) - (slaDue(b) ?? Infinity) // the one that went over first leads
-                || (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9)),
-        [active]);
-    const counts = useMemo(() => ({
-        active: active.length,
-        critical: active.filter(c => c.severity === 'critical').length,
-        high: active.filter(c => c.severity === 'high').length,
-        sla: active.filter(atRisk).length,
-    }), [active]);
-
-    const recentCases = useMemo(() =>
-        [...(cases ?? [])].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, 7),
-        [cases]);
+        [...(casesQ.data?.priority ?? [])].sort((a, b) =>
+            Number(b.sla_overall_status === 'breached') - Number(a.sla_overall_status === 'breached')
+            || Number(atRisk(b)) - Number(atRisk(a))
+            || (slaDue(a) ?? Infinity) - (slaDue(b) ?? Infinity) // the one that went over first leads
+            || (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9)),
+        [casesQ.data]);
+    const counts = casesQ.data?.counts ?? { active: 0, critical: 0, high: 0, sla: 0 };
+    const recentCases = casesQ.data?.recent ?? [];
+    const priorityComplete = casesQ.data?.priorityComplete ?? true;
 
     // merge opened + resolved trends by date
     const trend = useMemo(() => {
@@ -249,7 +257,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                 <Card className="lg:col-span-2">
                     <CardHeader>
-                        <CardTitle>Priority and SLA at risk <span className="num ml-1 font-normal text-fg-3">{priorityCases.length}</span></CardTitle>
+                        <CardTitle>Priority and SLA at risk {priorityComplete && <span className="num ml-1 font-normal text-fg-3">{priorityCases.length}</span>}</CardTitle>
                         <Link to="/cases?status=active&sla=at_risk,breached" className="text-xs text-accent hover:underline">View SLA at risk</Link>
                     </CardHeader>
                     {priorityCases.length === 0 ? (
@@ -268,9 +276,9 @@ export default function Dashboard() {
                                     </Link>
                                 </li>
                             ))}
-                            {priorityCases.length > 8 && (
+                            {(priorityCases.length > 8 || !priorityComplete) && (
                                 <li className="px-4 py-2 text-xs text-fg-3">
-                                    <span className="num">{priorityCases.length - 8}</span> more.{' '}
+                                    {priorityComplete ? <><span className="num">{priorityCases.length - 8}</span> more.</> : 'More waiting.'}{' '}
                                     <Link to="/cases?status=active" className="text-accent hover:underline">See all active cases</Link>
                                 </li>
                             )}

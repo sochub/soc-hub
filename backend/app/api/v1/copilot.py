@@ -225,6 +225,18 @@ async def _create_session_with_briefing(
     db: AsyncSession, case_id: int, tenant_id: int, user_id: int
 ) -> CopilotSession:
     """Create a new copilot session with an AI-generated contextual briefing."""
+    # Build case context and generate a contextual welcome
+    context = await _build_full_case_context(db, case_id, tenant_id)
+
+    if context:
+        # Commit (a restart's session drop) and release the DB connection before the slow LLM call, so
+        # concurrent copilot requests can't drain the pool while they wait on the provider.
+        await db.commit()
+        service = AIService(tenant_id=tenant_id)
+        welcome_text = await service.generate_welcome_briefing(context)
+    else:
+        welcome_text = "Investigation session started. Ask me anything about this case."
+
     session = CopilotSession(
         case_id=case_id,
         tenant_id=tenant_id,
@@ -232,16 +244,6 @@ async def _create_session_with_briefing(
     )
     db.add(session)
     await db.flush()
-
-    # Build case context and generate a contextual welcome
-    context = await _build_full_case_context(db, case_id, tenant_id)
-
-    if context:
-        service = AIService(tenant_id=tenant_id)
-        welcome_text = await service.generate_welcome_briefing(context)
-    else:
-        welcome_text = "Investigation session started. Ask me anything about this case."
-
     welcome = CopilotMessage(
         session_id=session.id,
         role="assistant",
@@ -263,14 +265,14 @@ async def _create_general_session_with_briefing(
     db: AsyncSession, tenant_id: int, user_id: int
 ) -> CopilotSession:
     """Create the user's general (case-less) session with a queue-overview briefing."""
-    session = CopilotSession(case_id=None, tenant_id=tenant_id, user_id=user_id)
-    db.add(session)
-    await db.flush()
-
     context = await _build_general_context(db, tenant_id)
+    await db.commit()  # release the DB connection before the slow LLM call (see above)
     service = AIService(tenant_id=tenant_id)
     welcome_text = await service.generate_general_welcome(context)
 
+    session = CopilotSession(case_id=None, tenant_id=tenant_id, user_id=user_id)
+    db.add(session)
+    await db.flush()
     db.add(CopilotMessage(session_id=session.id, role="assistant", content=welcome_text))
     await db.commit()
 
@@ -437,11 +439,12 @@ async def chat_copilot(
         content=chat_in.message,
     )
     db.add(user_msg)
-    await db.flush()
-
-    # Build message history for AI
+    # Build message history for AI (before the commit: the user message isn't in session.messages yet)
     history = [{"role": m.role, "content": m.content} for m in session.messages]
     history.append({"role": "user", "content": chat_in.message})
+    # Commit the user message and release the DB connection before the LLM calls below (each up to
+    # AI_TIMEOUT_SECONDS): holding it would let a few slow chats drain the pool. The next query reopens one.
+    await db.commit()
 
     service = AIService(tenant_id=tenant_id)
     response_text = await service.chat(history, context, general=general)
@@ -525,6 +528,7 @@ async def analyze_case(
     if not case_data:
         raise HTTPException(status_code=404, detail="Case not found")
 
+    await db.commit()  # release the DB connection before the slow LLM call
     service = AIService(tenant_id=tenant_id)
     analysis = await service.analyze_case(case_data)
 

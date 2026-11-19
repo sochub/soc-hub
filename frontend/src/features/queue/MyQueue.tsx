@@ -1,23 +1,24 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api } from '../../api/client';
 import PageContainer from '../../components/layout/PageContainer';
 import NotificationsPage from '../notifications/NotificationsPage';
 import { SLABadge } from '../cases/SLABadge';
 import { Button, Card, CardHeader, CardTitle, ErrorState, PageHeader, SeverityStamp, Skeleton, StatusStamp } from '../../components/ui';
-import type { Case, User } from '../../types';
+import type { Case } from '../../types';
 import { errMsg, sinceShort, useEscalationAction, useEscalationQueue } from '../escalation/api';
 import type { EscalationQueueRow } from '../../types';
+import { getPage, OPEN_CASE_STATUSES, type Page } from '../../api/paging';
 
 const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-const isOpen = (c: Case) => c.status !== 'resolved' && c.status !== 'closed';
 const bySeverity = (a: Case, b: Case) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9);
+const SECTION_CAP = 100;
 
-function Section({ title, cases, empty }: { title: string; cases: Case[]; empty: string }) {
+function Section({ title, page, empty }: { title: string; page: Page<Case>; empty: string }) {
+    const { items: cases, total } = page;
     return (
         <Card>
             <CardHeader>
-                <CardTitle>{title} <span className="num ml-1 font-normal text-fg-3">{cases.length}</span></CardTitle>
+                <CardTitle>{title} <span className="num ml-1 font-normal text-fg-3">{total}</span></CardTitle>
             </CardHeader>
             {cases.length === 0 ? (
                 <p className="px-4 py-6 text-center text-sm text-fg-3">{empty}</p>
@@ -36,8 +37,21 @@ function Section({ title, cases, empty }: { title: string; cases: Case[]; empty:
                     ))}
                 </ul>
             )}
+            {total > cases.length && (
+                <p className="px-4 py-2 border-t border-line text-xs text-fg-3">
+                    Showing {cases.length} of {total}, most severe first. <Link to="/cases" className="text-accent hover:underline">All cases</Link>
+                </p>
+            )}
         </Card>
     );
+}
+
+/** One My Queue section: open cases matching `params`, most severe first. */
+function useOpenCases(name: string, params: Record<string, string>) {
+    return useQuery({
+        queryKey: ['cases', 'queue', name],
+        queryFn: () => getPage<Case>('/cases/', { ...params, status: OPEN_CASE_STATUSES, sort: 'severity', limit: SECTION_CAP }),
+    });
 }
 
 function AcceptButton({ row }: { row: EscalationQueueRow }) {
@@ -82,21 +96,21 @@ function WaitingForMyGroups() {
 
 /** Personal work queue: what needs me now, plus the notification inbox. */
 export default function MyQueue() {
-    const { data: me } = useQuery({
-        queryKey: ['currentUser'],
-        queryFn: async () => (await api.get('/users/me')).data as User,
-        staleTime: 300_000,
-    });
-    const { data: cases = [], isLoading, isError, refetch } = useQuery<Case[]>({
-        queryKey: ['cases'],
-        queryFn: async () => (await api.get('/cases/', { params: { limit: 500 } })).data,
-    });
-
-    const open = cases.filter(isOpen);
-    const mine = open.filter(c => c.owner_id === me?.id).sort(bySeverity);
-    const sla = open.filter(c => c.sla_overall_status === 'breached' || c.sla_overall_status === 'at_risk')
-        .sort((a, b) => Number(b.sla_overall_status === 'breached') - Number(a.sla_overall_status === 'breached') || bySeverity(a, b));
-    const unassigned = open.filter(c => c.owner_id == null).sort(bySeverity);
+    const empty: Page<Case> = { items: [], total: 0 };
+    const mineQ = useOpenCases('mine', { owner: 'me' });
+    const slaQ = useOpenCases('sla', { sla: 'pressure' });
+    const unassignedQ = useOpenCases('unassigned', { owner: 'unassigned' });
+    const isLoading = mineQ.isLoading || slaQ.isLoading || unassignedQ.isLoading;
+    const mine = mineQ.data ?? empty;
+    const unassigned = unassignedQ.data ?? empty;
+    const slaPage = slaQ.data ?? empty;
+    const sla = {
+        ...slaPage,
+        items: [...slaPage.items].sort((a, b) =>
+            Number(b.sla_overall_status === 'breached') - Number(a.sla_overall_status === 'breached') || bySeverity(a, b)),
+    };
+    const isError = mineQ.isError || slaQ.isError || unassignedQ.isError;
+    const refetch = () => { mineQ.refetch(); slaQ.refetch(); unassignedQ.refetch(); };
 
     return (
         <PageContainer width="wide">
@@ -109,9 +123,9 @@ export default function MyQueue() {
                 <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-4 items-start">
                     <div className="space-y-4">
                         <WaitingForMyGroups />
-                        <Section title="Assigned to me" cases={mine} empty="Nothing assigned to you." />
-                        <Section title="SLA at risk or breached" cases={sla} empty="No SLA pressure. Nice." />
-                        <Section title="Unassigned" cases={unassigned} empty="Every open case has an owner." />
+                        <Section title="Assigned to me" page={mine} empty="Nothing assigned to you." />
+                        <Section title="SLA at risk or breached" page={sla} empty="No SLA pressure. Nice." />
+                        <Section title="Unassigned" page={unassigned} empty="Every open case has an owner." />
                     </div>
                     <NotificationsPage bare />
                 </div>

@@ -12,3 +12,4 @@ export { default as PageHeader } from './PageHeader';
 export { Skeleton, EmptyState, ErrorState } from './States';
 export { useConfirm } from './useConfirm';
 export * from './tones';
+export { default as Pager } from './Pager';

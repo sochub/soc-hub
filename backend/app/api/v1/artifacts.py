@@ -1,5 +1,6 @@
-from typing import Any, List
+from typing import Any, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -77,17 +78,28 @@ async def create_artifact(
 @router.get("/", response_model=List[artifact_schema.ArtifactWithCases])
 async def read_artifacts_all(
     *,
+    response: Response,
     db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
+    q: Optional[str] = Query(None, max_length=500, description="Substring of the artifact value."),
+    artifact_type: Optional[str] = Query(None, max_length=100, description="Exact artifact type."),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ) -> Any:
-    """Get all artifacts with case info (tenant-scoped)."""
-    # Get artifacts
+    """Get all artifacts with case info (tenant-scoped), newest first. The body stays a bare list; the total
+    number of matches (ignoring skip/limit) is in `X-Total-Count`."""
+    conds = [Artifact.tenant_id == tenant_id, not_private()]
+    if q and q.strip():
+        conds.append(Artifact.value.icontains(q.strip(), autoescape=True))
+    if artifact_type:
+        conds.append(Artifact.artifact_type == artifact_type)
+    total = (await db.execute(select(func.count(Artifact.id)).where(*conds))).scalar_one()
+    response.headers["X-Total-Count"] = str(total)
     result = await db.execute(
         select(Artifact)
-        .where(Artifact.tenant_id == tenant_id, not_private())
+        .where(*conds)
+        .order_by(Artifact.created_at.desc(), Artifact.id.desc())
         .offset(skip).limit(limit)
     )
     artifacts = result.scalars().all()

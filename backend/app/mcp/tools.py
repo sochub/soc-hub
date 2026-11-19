@@ -435,8 +435,8 @@ async def create_case(db: AsyncSession, p: OAuthPrincipal, title: str, descripti
     Returns its id and url."""
     fields = {"title": title, "description": description, "severity": severity, "tags": tags, "owner_id": owner_id}
     data = case_schema.CaseCreate(**{k: v for k, v in fields.items() if v is not None}).model_dump()
-    if owner_id is not None and not await alert_service.is_tenant_member(db, owner_id, p.tenant_id):
-        raise ToolError("Owner is not a member of this tenant")
+    if owner_id not in (None, p.user.id) and owner_id not in await task_service.assignable_ids(db, p.tenant_id):
+        raise ToolError("Owner must be an active analyst or admin of this tenant")
     case, triage_id = await case_service.create_case_record(db, tenant_id=p.tenant_id, data=data, user_id=p.user.id)
     await db.commit()
     run_case_triage_task.delay(triage_id)

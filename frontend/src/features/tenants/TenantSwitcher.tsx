@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Check, ChevronsUpDown, Building2, Loader2 } from 'lucide-react';
 import { api } from '../../api/client';
 import { switchTenant } from '../../api/auth';
@@ -15,6 +15,7 @@ interface Option {
 
 export default function TenantSwitcher() {
     const qc = useQueryClient();
+    const navigate = useNavigate();
     const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState(false);
     const [mfaBlocked, setMfaBlocked] = useState(false);
@@ -58,7 +59,9 @@ export default function TenantSwitcher() {
         try {
             await switchTenant(id);
             setOpen(false);
-            await qc.invalidateQueries();
+            // Nothing cached belongs to the new organization: drop it all and start from the overview.
+            qc.clear();
+            navigate('/');
         } catch (err) {
             const e = err as { response?: { status?: number; data?: { detail?: unknown } } };
             const code = (e.response?.data?.detail as { code?: string; slug?: string } | undefined);

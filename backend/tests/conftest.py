@@ -89,7 +89,9 @@ def _no_real_enrichment_enqueue(monkeypatch):
             r = self
 
             class _Lock:
-                async def acquire(self):
+                async def acquire(self, blocking_timeout=None):
+                    if getattr(r, "busy", False):
+                        return False
                     r.locks.append(name)
                     return True
 

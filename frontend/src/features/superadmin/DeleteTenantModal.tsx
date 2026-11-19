@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
+import { apiErrorMessage } from '../../api/errors';
 import type { Tenant } from '../../types';
 import Modal, { modalInput, modalLabel, btnDanger, btnSecondary } from '../../components/layout/Modal';
 
@@ -26,8 +27,8 @@ export default function DeleteTenantModal({ tenant, isOpen, onClose }: DeleteTen
             queryClient.invalidateQueries({ queryKey: ['tenants'] });
             navigate('/settings/tenants');
         },
-        onError: (err: any) => {
-            setError(err.response?.data?.detail || 'Could not delete the organization.');
+        onError: (err) => {
+            setError(apiErrorMessage(err, 'Could not delete the organization.'));
         },
     });
 

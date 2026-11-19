@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, X, Loader2, Zap, ArrowUpRight, Lightbulb } from 'lucide-react';
 import { api } from '../../api/client';
+import { apiErrorMessage } from '../../api/errors';
 import type { CopilotAction, ActionResult } from '../../types';
 import { Button, TONE_TEXT } from '../../components/ui';
 
@@ -145,7 +146,7 @@ export default function CopilotActionCard(props: Props) {
             {/* Error */}
             {exec.isError && (
                 <p role="alert" className="text-severity-critical text-xs">
-                    {(exec.error as any)?.response?.data?.detail ?? 'Action failed.'}
+                    {apiErrorMessage(exec.error, 'Action failed.')}
                 </p>
             )}
 

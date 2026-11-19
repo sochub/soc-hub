@@ -1,34 +1,38 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search, LayoutList, Columns3, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import NewCaseModal from './NewCaseModal';
 import CasesBoard from './CasesBoard';
 import { SLABadge } from './SLABadge';
 import type { SLAStatus } from '../../types';
 import PageContainer from '../../components/layout/PageContainer';
-import { Button, EmptyState, ErrorState, Input, PageHeader, Select, SeverityStamp, Skeleton, StatusStamp, SEVERITY_ORDER } from '../../components/ui';
+import { Button, EmptyState, ErrorState, Input, PageHeader, Pager, Select, SeverityStamp, Skeleton, StatusStamp, SEVERITY_ORDER } from '../../components/ui';
+import { getPage, OPEN_CASE_STATUSES, showingText } from '../../api/paging';
 import { CASE_STATUSES } from './statuses';
 import { outcomeLabel } from './outcomes';
 
 interface Case {
     id: number;
     title: string;
-    description: string;
+    description: string | null;
     severity: 'info' | 'low' | 'medium' | 'high' | 'critical';
     status: string;
     tags: string[];
     source: string;
     created_at: string;
-    updated_at: string;
+    updated_at: string | null;
     sla_overall_status?: SLAStatus | null;
     owner_id?: number | null;
     outcome?: string | null;
 }
 
-const CLOSED = ['resolved', 'closed'];
+const PAGE_SIZE = 100;
+const DAY = 86_400_000;
+// URL values the dashboards link with -> the list endpoint's parameters.
+const SLA_PARAM: Record<string, string> = { 'at_risk,breached': 'pressure', breached: 'breached', at_risk: 'at_risk' };
 // Filters live in the URL so they survive back navigation and can be linked to (Dashboard tiles do).
 const FILTER_KEYS = ['q', 'status', 'severity', 'tag', 'sla', 'owner', 'age', 'outcome', 'from', 'to'] as const;
 // Age buckets match the dashboards' "open case aging" (backend stats._AGING): label -> [min, max) days.
@@ -52,10 +56,19 @@ export default function CasesList() {
     const outcomeFilter = searchParams.get('outcome');
     const fromFilter = searchParams.get('from');
     const toFilter = searchParams.get('to');
-    const setFilter = (key: FilterKey, value: string) =>
+    const [page, setPage] = useState(0);
+    const setFilter = (key: FilterKey, value: string) => {
+        setPage(0);
         setSearchParams(p => { if (!value || value === 'all') p.delete(key); else p.set(key, value); return p; }, { replace: true });
+    };
     const hasFilters = FILTER_KEYS.some(k => searchParams.has(k));
-    const clearFilters = () => setSearchParams(p => { FILTER_KEYS.forEach(k => p.delete(k)); return p; }, { replace: true });
+    const clearFilters = () => { setPage(0); setSearchParams(p => { FILTER_KEYS.forEach(k => p.delete(k)); return p; }, { replace: true }); };
+    // Search runs server-side; wait for a pause in typing before asking.
+    const [debouncedQuery, setDebouncedQuery] = useState(searchQuery.trim());
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 300);
+        return () => clearTimeout(t);
+    }, [searchQuery]);
     // URL wins (shareable links), else the last view this browser used
     const storedView = (() => { try { return localStorage.getItem('cases:view'); } catch { return null; } })();
     const view: 'table' | 'board' = (searchParams.get('view') ?? storedView) === 'board' ? 'board' : 'table';
@@ -65,13 +78,37 @@ export default function CasesList() {
     };
     const queryClient = useQueryClient();
 
-    const { data: cases, isLoading, isError, refetch } = useQuery<Case[]>({
-        queryKey: ['cases'],
-        queryFn: async () => {
-            const response = await api.get('/cases/', { params: { limit: 500 } });
-            return response.data;
-        }
+    // Every filter runs on the server; the table and the board share them (the board adds its own status per column).
+    const bucket = ageFilter ? AGE_BUCKETS[ageFilter] : undefined;
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const createdFrom = [fromFilter && `${fromFilter}T00:00:00Z`, bucket && Number.isFinite(bucket[1]) && iso(now - bucket[1] * DAY)]
+        .filter(Boolean).sort().at(-1); // the later bound wins
+    const createdBefore = [toFilter && iso(Date.parse(`${toFilter}T00:00:00Z`) + DAY), bucket && iso(now - bucket[0] * DAY)]
+        .filter(Boolean).sort()[0];
+    const filters: Record<string, string> = Object.fromEntries(Object.entries({
+        q: debouncedQuery.replace(/^#/, ''),
+        severity: severityFilter !== 'all' && severityFilter,
+        tag: tagFilter !== 'all' && tagFilter,
+        sla: SLA_PARAM[slaFilter],
+        owner: ownerFilter && (ownerFilter === 'none' ? 'unassigned' : ownerFilter),
+        outcome: outcomeFilter,
+        created_from: createdFrom,
+        created_before: createdBefore,
+    }).filter((e): e is [string, string] => !!e[1]));
+    const statusParam = statusFilter === 'all' ? {} : { status: statusFilter === 'active' ? OPEN_CASE_STATUSES : statusFilter };
+    const params = { ...filters, ...statusParam, skip: page * PAGE_SIZE, limit: PAGE_SIZE };
+    const { data: result, isLoading, isError, refetch } = useQuery({
+        queryKey: ['cases', 'list', params],
+        queryFn: () => getPage<Case>('/cases/', params),
+        placeholderData: keepPreviousData,
+        enabled: view === 'table',
     });
+    const filteredCases = result?.items ?? [];
+    const total = result?.total ?? 0;
+    // If the current page emptied (e.g. cases closed elsewhere), step back to the last page with rows.
+    useEffect(() => {
+        if (result && result.items.length === 0 && result.total > 0 && page > 0) setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
+    }, [result, page]);
 
     const { data: availableTags } = useQuery<string[]>({
         queryKey: ['cases', 'tags'],
@@ -136,38 +173,13 @@ export default function CasesList() {
         ['from', (fromFilter || toFilter) && `Created ${fromFilter ?? '…'} – ${toFilter ?? '…'}`],
     ] as const).filter((c): c is readonly [typeof c[0], string] => !!c[1]);
 
-    const q = searchQuery.trim().toLowerCase().replace(/^#/, '');
-    const slaValues = slaFilter.split(',');
-    const filteredCases = cases?.filter(c => {
-        const matchesSearch = !q || (
-            c.title.toLowerCase().includes(q) ||
-            (c.description ?? '').toLowerCase().includes(q) ||
-            String(c.id).includes(q)
-        );
-        const matchesSeverity = severityFilter === 'all' || c.severity === severityFilter;
-        const matchesStatus = statusFilter === 'all'
-            || (statusFilter === 'active' ? !CLOSED.includes(c.status) : c.status === statusFilter);
-        const matchesTag = tagFilter === 'all' || (c.tags && c.tags.includes(tagFilter));
-        const matchesSla = slaFilter === 'all' || slaValues.includes(c.sla_overall_status ?? '');
-        const matchesOwner = !ownerFilter || (ownerFilter === 'none' ? c.owner_id == null : String(c.owner_id) === ownerFilter);
-        const ageDays = (now - +new Date(c.created_at)) / 86_400_000;
-        const bucket = ageFilter ? AGE_BUCKETS[ageFilter] : undefined;
-        const matchesAge = !bucket || (ageDays >= bucket[0] && ageDays < bucket[1]);
-        const matchesOutcome = !outcomeFilter || (c.outcome ?? 'not_set') === outcomeFilter;
-        const day = c.created_at.slice(0, 10); // UTC day, same as the dashboards
-        const matchesRange = (!fromFilter || day >= fromFilter) && (!toFilter || day <= toFilter);
-
-        return matchesSearch && matchesSeverity && matchesStatus && matchesTag && matchesSla
-            && matchesOwner && matchesAge && matchesOutcome && matchesRange;
-    }) || [];
-
     const fmtDate = (d: string) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
     return (
         <PageContainer>
             <PageHeader
                 title="Cases"
-                count={cases ? filteredCases.length : undefined}
+                count={view === 'table' && result ? total : undefined}
                 className="mb-0"
             />
 
@@ -207,7 +219,7 @@ export default function CasesList() {
                 </Select>
                 {hasFilters && <Button size="sm" variant="ghost" onClick={clearFilters}>Clear filters</Button>}
                 {drillChips.map(([key, label]) => (
-                    <button key={key} type="button" onClick={() => setSearchParams(p => { p.delete(key); if (key === 'from') p.delete('to'); return p; }, { replace: true })}
+                    <button key={key} type="button" onClick={() => { setPage(0); setSearchParams(p => { p.delete(key); if (key === 'from') p.delete('to'); return p; }, { replace: true }); }}
                         className="inline-flex items-center gap-1 h-7 px-2 rounded-sm border border-accent/40 bg-accent/10 text-xs text-fg hover:border-accent"
                         aria-label={`Remove filter: ${label}`}>
                         {label}<X size={12} aria-hidden />
@@ -231,7 +243,9 @@ export default function CasesList() {
                 </div>
             </div>
 
-            {isLoading ? (
+            {view === 'board' ? (
+                <CasesBoard filters={filters} status={statusFilter} />
+            ) : isLoading ? (
                 <Skeleton rows={8} />
             ) : isError ? (
                 <ErrorState message="Could not load cases." onRetry={() => refetch()} />
@@ -245,8 +259,6 @@ export default function CasesList() {
                             action={<Button onClick={() => setShowNewCaseModal(true)}><Plus size={16} aria-hidden /> New case</Button>} />
                     )}
                 </div>
-            ) : view === 'board' ? (
-                <CasesBoard cases={filteredCases} />
             ) : (
                 <div className="rounded-md border border-line bg-panel overflow-x-auto">
                     <table className="w-full text-sm text-left">
@@ -291,11 +303,18 @@ export default function CasesList() {
                                             {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         </span>
                                     </td>
-                                    <td className="px-3 py-2.5 text-fg-3 text-xs whitespace-nowrap num">{fmtDate(c.updated_at)}</td>
+                                    <td className="px-3 py-2.5 text-fg-3 text-xs whitespace-nowrap num">{c.updated_at ? fmtDate(c.updated_at) : '—'}</td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
+                </div>
+            )}
+
+            {view === 'table' && total > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-fg-3">{showingText(page, PAGE_SIZE, filteredCases.length, total, 'cases')}</p>
+                    <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
                 </div>
             )}
 

@@ -134,6 +134,22 @@ def test_login_mfa_required_then_code():
     _scenario(body)
 
 
+def test_mfa_login_survives_redis_outage():
+    """Redis down: the code and the challenge are still single-use (in-process fallback), no 500."""
+    async def body(c, ids, redis):
+        async def broken(*a, **kw):
+            raise ConnectionError("redis down")
+        redis.set = broken
+        tok = (await _pw(c, ids, "mfa")).json()["mfa_token"]
+        code = totp.totp_at(ids["secret"], time.time())
+        r = await c.post(LOGIN2, json={"mfa_token": tok, "code": code})
+        assert r.status_code == 200, r.text
+        assert (await c.post(LOGIN2, json={"mfa_token": tok, "code": code})).status_code == 400  # code replay
+        tok2 = (await _pw(c, ids, "mfa")).json()["mfa_token"]
+        assert (await c.post(LOGIN2, json={"mfa_token": tok2, "code": code})).status_code == 400
+    _scenario(body, pass_redis=True)
+
+
 def test_wrong_code_400():
     async def body(c, ids):
         tok = (await _pw(c, ids, "mfa")).json()["mfa_token"]

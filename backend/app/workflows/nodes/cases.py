@@ -38,7 +38,7 @@ def _emit_updated(nctx: NodeContext, case_id: int, changes: dict) -> None:
 
 @executor("case_update")
 async def run_case_update(nctx: NodeContext, config: dict) -> dict:
-    case = await load_target_case(nctx, config)
+    case = await load_target_case(nctx, config, lock=True)  # the tag merge below reads case.tags
     update = {}
     try:
         if config.get("severity"):
@@ -57,10 +57,11 @@ async def run_case_update(nctx: NodeContext, config: dict) -> dict:
     if config.get("owner_email"):
         user = (await nctx.db.execute(
             select(User).join(TenantMembership, TenantMembership.user_id == User.id)
-            .where(func.lower(User.email) == _normalize_email(config["owner_email"]), TenantMembership.tenant_id == case.tenant_id)
+            .where(func.lower(User.email) == _normalize_email(config["owner_email"]), TenantMembership.tenant_id == case.tenant_id,
+                   TenantMembership.role.in_(["admin", "analyst"]), User.is_active.is_(True))
         )).scalars().first()
-        if not user:
-            raise NodeError(f"no tenant member with email {config['owner_email']}")
+        if not user:  # same rule as task_service.assignable_ids: only active analysts/admins own cases
+            raise NodeError(f"no active analyst or admin of this tenant with email {config['owner_email']}")
         update["owner_id"] = user.id
     add, remove = _as_list(config.get("add_tags")), set(_as_list(config.get("remove_tags")))
     if add or remove:

@@ -1,13 +1,16 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { ChevronDown, ChevronRight, Plus, Send, Trash2, X } from 'lucide-react';
 import type { IOC } from '../../types';
 import EnrichmentPanel from '../enrichment/EnrichmentPanel';
 import { useCanRun } from '../enrichment/useCanRun';
-import { Button, Input, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, useConfirm, verdictTone, tlpTone, TONE_VAR, type Tone } from '../../components/ui';
+import { Button, Input, Pager, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, useConfirm, verdictTone, tlpTone, TONE_VAR, type Tone } from '../../components/ui';
+import { getPage, showingText } from '../../api/paging';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
+
+const PAGE_SIZE = 100;
 
 const IOC_TYPES = ['ip_address', 'domain', 'url', 'file_hash', 'email', 'registry_key', 'mutex', 'user_agent', 'other'];
 const THREAT_LEVELS = ['critical', 'high', 'medium', 'low', 'info'];
@@ -53,14 +56,26 @@ export default function IOCList() {
     const [mispError, setMispError] = useState<string | null>(null);
 
     const { confirm, dialog } = useConfirm();
-    const q = searchParams.get('q') ?? '';
-    const { data: iocs, isLoading, isError, refetch } = useQuery<IOC[]>({
-        queryKey: ['iocs'],
-        queryFn: async () => {
-            const res = await api.get('/iocs/');
-            return res.data;
-        },
+    // Filters live in the URL; value search runs server-side after a pause in typing.
+    const [page, setPage] = useState(0);
+    const rawQ = searchParams.get('q') ?? '';
+    const typeFilter = searchParams.get('type'); // set by the Overview "Indicators" chart
+    const [q, setQ] = useState(rawQ.trim());
+    useEffect(() => {
+        const t = setTimeout(() => { setQ(rawQ.trim()); setPage(0); setSelected(new Set()); }, 300);
+        return () => clearTimeout(t);
+    }, [rawQ]);
+    const params = { ...(q && { q }), ...(typeFilter && { ioc_type: typeFilter }), skip: page * PAGE_SIZE, limit: PAGE_SIZE };
+    const { data: result, isLoading, isError, refetch } = useQuery({
+        queryKey: ['iocs', 'list', params],
+        queryFn: () => getPage<IOC>('/iocs/', params),
+        placeholderData: keepPreviousData,
     });
+    const iocs = result?.items;
+    const total = result?.total ?? 0;
+    if (result && result.items.length === 0 && result.total > 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
+    }
 
     const createMutation = useMutation({
         mutationFn: async (data: typeof defaultForm) => {
@@ -85,8 +100,7 @@ export default function IOCList() {
         },
     });
 
-    const typeFilter = searchParams.get('type'); // set by the Overview "Indicators" chart
-    const visible = (iocs ?? []).filter(i => i.value.toLowerCase().includes(q.toLowerCase()) && (!typeFilter || i.ioc_type === typeFilter));
+    const visible = iocs ?? [];
     const selectedIocs = (iocs ?? []).filter(i => selected.has(i.id));
     const selectedCaseIds = new Set(selectedIocs.map(i => i.case_id));
     const singleCaseId = selectedIocs.length > 0 && selectedCaseIds.size === 1 ? selectedIocs[0].case_id : null;
@@ -121,16 +135,16 @@ export default function IOCList() {
         <div className="p-4 space-y-4">
             <div className="flex flex-wrap items-center gap-2">
                 <p className="mr-auto text-sm text-fg-3">
-                    {isLoading ? '\u00a0' : <><span className="num">{q || typeFilter ? `${visible.length} of ${iocs?.length ?? 0}` : iocs?.length ?? 0}</span> indicators tracked across all cases.</>}
+                    {isLoading ? '\u00a0' : <>{showingText(page, PAGE_SIZE, visible.length, total, 'indicators')} tracked across all cases.</>}
                 </p>
                 {typeFilter && (
-                    <button type="button" onClick={() => setSearchParams(p => { p.delete('type'); return p; }, { replace: true })}
+                    <button type="button" onClick={() => { setPage(0); setSearchParams(p => { p.delete('type'); return p; }, { replace: true }); }}
                         className="inline-flex items-center gap-1 h-7 px-2 rounded-sm border border-accent/40 bg-accent/10 text-xs text-fg hover:border-accent"
                         aria-label={`Remove filter: type ${typeFilter}`}>
                         Type: {typeFilter.replace(/_/g, ' ')}<X size={12} aria-hidden />
                     </button>
                 )}
-                <Input type="search" inputSize="sm" className="w-56" aria-label="Filter by value" value={q} placeholder="Filter by value…"
+                <Input type="search" inputSize="sm" className="w-56" aria-label="Filter by value" value={rawQ} placeholder="Filter by value…"
                     onChange={e => setSearchParams(p => { if (e.target.value) p.set('q', e.target.value); else p.delete('q'); return p; }, { replace: true })} />
                 <Button size="sm" onClick={() => setShowModal(true)}>
                     <Plus size={14} aria-hidden />
@@ -176,7 +190,7 @@ export default function IOCList() {
                 </div>
             )}
 
-            {isError ? <ErrorState message="Could not load IOCs." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={8} /> : !iocs || iocs.length === 0 ? (
+            {isError ? <ErrorState message="Could not load IOCs." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={8} /> : visible.length === 0 && !rawQ && !typeFilter ? (
                 <EmptyState title="No IOCs recorded yet" body="Add one to get started, or promote an artifact from a case."
                     action={<Button size="sm" onClick={() => setShowModal(true)}><Plus size={14} aria-hidden />Add IOC</Button>} />
             ) : visible.length === 0 ? (
@@ -284,6 +298,7 @@ export default function IOCList() {
                         </table>
                     </div>
             )}
+            <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={(p) => { setPage(p); setSelected(new Set()); }} />
 
             {/* Add IOC Modal */}
             <Modal

@@ -42,8 +42,7 @@ async def spend_mfa_challenge(redis, jti) -> bool:
     """Mark an MFA challenge as used (single use). False if missing or already spent."""
     if not isinstance(jti, str) or not jti:
         return False
-    return bool(await redis.set(f"mfa:chal:{jti}", 1, nx=True,
-                                ex=security.MFA_CHALLENGE_MINUTES * 60))
+    return await totp.set_once(redis, f"mfa:chal:{jti}", security.MFA_CHALLENGE_MINUTES * 60)
 
 
 # 5 failures per window, per user; keys live under mfa:attempts:... (never login:).

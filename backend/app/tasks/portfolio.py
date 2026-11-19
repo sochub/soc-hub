@@ -11,7 +11,7 @@ WEEK = timedelta(days=7)
 def send_client_digests_task():
     """Hourly: email the 7-day summary to each active tenant with recipients, at most once a week
     (the first one goes out within the hour after recipients are set)."""
-    from sqlalchemy import select
+    from sqlalchemy import select, update
 
     from app.db.session import AsyncSessionLocal
     from app.models.tenant import Tenant
@@ -21,17 +21,30 @@ def send_client_digests_task():
     async def run():
         now = datetime.now(timezone.utc)
         async with AsyncSessionLocal() as db:
-            tenants = (await db.execute(select(Tenant).where(Tenant.is_active.is_(True)))).scalars().all()
-            for t in tenants:
-                if not t.digest_recipients or (t.digest_last_sent_at and now - t.digest_last_sent_at < WEEK):
+            tenant_ids = (await db.execute(select(Tenant.id).where(Tenant.is_active.is_(True)))).scalars().all()
+            for tid in tenant_ids:
+                # Claim before sending: lock the row (SKIP LOCKED: another run has it), stamp, COMMIT, then email.
+                # A crash mid-send never re-sends the week's digest; a run that overlaps this one skips the tenant.
+                t = (await db.execute(select(Tenant).where(Tenant.id == tid, Tenant.is_active.is_(True))
+                                      .with_for_update(skip_locked=True)
+                                      .execution_options(populate_existing=True))).scalars().first()
+                if t is None or not t.digest_recipients or (
+                        t.digest_last_sent_at and now - t.digest_last_sent_at < WEEK):
+                    await db.rollback()
                     continue
+                previous, t.digest_last_sent_at = t.digest_last_sent_at, now
                 d = await portfolio.digest(db, t, 7)
                 body = portfolio.digest_html(d)
-                sent = [r for r in t.digest_recipients
-                        if email_service._send_email(r, f"{t.name}: weekly security summary", body, log_recipient=False)]
-                if sent or not email_service._smtp_configured():  # unconfigured SMTP: don't retry every hour
-                    t.digest_last_sent_at = now
+                name, recipients = t.name, list(t.digest_recipients)
+                await db.commit()
+                sent = [r for r in recipients
+                        if email_service._send_email(r, f"{name}: weekly security summary", body, log_recipient=False)]
+                if not sent and email_service._smtp_configured():
+                    # Nothing went out (SMTP down): release the claim so next hour retries. Unconfigured SMTP
+                    # keeps the stamp, so it doesn't retry every hour.
+                    await db.execute(update(Tenant).where(Tenant.id == tid, Tenant.digest_last_sent_at == now)
+                                     .values(digest_last_sent_at=previous))
                     await db.commit()
-                logger.info("client digest tenant=%s sent=%d/%d", t.id, len(sent), len(t.digest_recipients))
+                logger.info("client digest tenant=%s sent=%d/%d", tid, len(sent), len(recipients))
 
     _run_async(run())

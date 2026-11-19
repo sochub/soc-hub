@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { apiErrorMessage } from '../../api/errors';
 import Modal, { modalInput, modalLabel, btnPrimary, btnSecondary } from '../../components/layout/Modal';
 
 interface InviteUserModalProps {
@@ -29,8 +30,8 @@ export default function InviteUserModal({ isOpen, onClose, tenantId }: InviteUse
             queryClient.invalidateQueries({ queryKey: ['invitations'] });
             setError('');
         },
-        onError: (err: any) => {
-            setError(err.response?.data?.detail || 'Failed to create invitation.');
+        onError: (err) => {
+            setError(apiErrorMessage(err, 'Failed to create invitation.'));
         },
     });
 
