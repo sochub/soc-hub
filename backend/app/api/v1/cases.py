@@ -112,6 +112,9 @@ async def read_cases(
     q: Optional[str] = Query(None, max_length=200, description="Matches title, description, or the case id."),
     sla: Optional[str] = Query(None, pattern="^(breached|at_risk|pressure)$",
                                description="Overall SLA state; pressure = at risk or breached."),
+    outcome: Optional[str] = Query(None, pattern=r"^[a-z_]{1,40}$", description="A closure outcome, or not_set."),
+    created_from: Optional[datetime] = Query(None, description="Created at or after this instant."),
+    created_before: Optional[datetime] = Query(None, description="Created before this instant."),
     sort: str = Query("-created_at", pattern="^-?(created_at|updated_at|severity|id)$"),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
@@ -134,6 +137,12 @@ async def read_cases(
         conds.append(Case.owner_id == int(owner))
     if tag:
         conds.append(cast(Case.tags, JSONB).contains([tag]))
+    if outcome:
+        conds.append(Case.outcome.is_(None) if outcome == "not_set" else Case.outcome == outcome)
+    if created_from:
+        conds.append(Case.created_at >= created_from)
+    if created_before:
+        conds.append(Case.created_at < created_before)
     term = (q or "").strip()
     if term:
         text_match = or_(Case.title.icontains(term, autoescape=True), Case.description.icontains(term, autoescape=True))

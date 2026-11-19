@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Mail } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
+import { Card } from '../../components/ui';
 
 interface Mailbox {
     id: number; name: string; host: string; port: number; use_ssl: boolean; username: string;
@@ -75,10 +76,10 @@ export default function MailboxCard({ tenantId }: { tenantId: number | null }) {
     );
 
     return (
-        <div className="bg-panel border border-line p-5 space-y-3">
+        <Card className="p-4 space-y-3">
             <div className="flex items-center gap-2">
                 <Mail size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">Mailboxes</h2>
+                <h3 className="text-sm font-semibold text-fg">Mailboxes</h3>
             </div>
             <p className="text-xs text-fg-3">New emails in a mailbox folder fire the <code>email.received</code> workflow trigger (see the Email to alert template). Passwords are write-only.</p>
 
@@ -95,7 +96,7 @@ export default function MailboxCard({ tenantId }: { tenantId: number | null }) {
                                 <button onClick={() => open(m)} className="h-7 px-2 border border-line-strong text-xs">Edit</button>
                                 {confirmDel === m.id ? (
                                     <>
-                                        <button onClick={() => del.mutate(m.id)} disabled={del.isPending} className="h-7 px-2 bg-red-600 text-white text-xs disabled:opacity-50">Confirm delete</button>
+                                        <button onClick={() => del.mutate(m.id)} disabled={del.isPending} className="h-7 px-2 bg-severity-critical text-white text-xs disabled:opacity-50">Confirm delete</button>
                                         <button onClick={() => setConfirmDel(null)} className="h-7 px-2 border border-line-strong text-xs">Cancel</button>
                                     </>
                                 ) : <button onClick={() => setConfirmDel(m.id)} className="h-7 px-2 border border-line-strong text-xs">Delete</button>}
@@ -104,8 +105,8 @@ export default function MailboxCard({ tenantId }: { tenantId: number | null }) {
                         <p className="text-xs text-fg-3">
                             Last polled: {m.last_polled_at ? new Date(m.last_polled_at).toLocaleString() : 'never'}
                         </p>
-                        {m.last_error && <p className="text-xs text-red-300 break-words">Last error: {m.last_error}</p>}
-                        {tests[m.id] && <p role="status" className={`text-xs break-words ${tests[m.id].ok ? 'text-emerald-300' : 'text-red-300'}`}>{tests[m.id].text}</p>}
+                        {m.last_error && <p className="text-xs text-severity-critical break-words">Last error: {m.last_error}</p>}
+                        {tests[m.id] && <p role="status" className={`text-xs break-words ${tests[m.id].ok ? 'text-lime' : 'text-severity-critical'}`}>{tests[m.id].text}</p>}
                     </li>
                 ))}
             </ul>
@@ -138,7 +139,7 @@ export default function MailboxCard({ tenantId }: { tenantId: number | null }) {
                     </div>
                 </div>
             ) : <button onClick={() => open(null)} className="h-8 px-3 border border-line-strong text-sm">Add mailbox</button>}
-            {msg && <p role="status" className={`text-xs break-words ${msg.ok ? 'text-emerald-300' : 'text-red-300'}`}>{msg.text}</p>}
-        </div>
+            {msg && <p role="status" className={`text-xs break-words ${msg.ok ? 'text-lime' : 'text-severity-critical'}`}>{msg.text}</p>}
+        </Card>
     );
 }

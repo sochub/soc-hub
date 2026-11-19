@@ -5,6 +5,8 @@ import { api, session } from '../../api/client';
 import { apiErrorMessage, PASSWORD_HINT, passwordProblem } from '../../api/errors';
 import type { InvitationValidation } from '../../types';
 import { saveReturnTo } from './returnTo';
+import AuthLayout from './AuthLayout';
+import { Button, Input, Label, Skeleton } from '../../components/ui';
 
 export default function AcceptInvitation() {
     const { token } = useParams<{ token: string }>();
@@ -92,140 +94,85 @@ export default function AcceptInvitation() {
     };
 
     if (loading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-canvas text-fg">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-accent" />
-            </div>
-        );
+        return <AuthLayout title="Checking your invitation" wide><Skeleton rows={3} /></AuthLayout>;
     }
 
     if (!validation?.valid) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-canvas text-fg">
-                <div className="max-w-md w-full p-8 bg-panel rounded-xl border border-line text-center space-y-4">
-                    <h2 className="text-2xl font-bold">Invalid Invitation</h2>
-                    <p className="text-fg-2">This invitation link is invalid, expired, or has already been used.</p>
-                    <button
-                        onClick={() => navigate('/login')}
-                        className="px-6 py-2 bg-accent hover:bg-accent text-on-accent rounded-md transition-colors"
-                    >
-                        Go to Login
-                    </button>
-                </div>
-            </div>
+            <AuthLayout title="Invalid invitation" wide
+                description="This invitation link is invalid, expired, or has already been used.">
+                <Button size="lg" className="w-full" onClick={() => navigate('/login')}>Go to sign in</Button>
+            </AuthLayout>
         );
     }
 
     if (success) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-canvas text-fg">
-                <div className="max-w-md w-full p-8 bg-panel rounded-xl border border-line text-center space-y-4">
-                    <h2 className="text-2xl font-bold text-green-400">Account Created!</h2>
-                    <p className="text-fg-2">Redirecting to login...</p>
-                </div>
-            </div>
+            <AuthLayout title="Account created" wide>
+                <p role="status" className="text-sm text-fg-2">Redirecting to sign in…</p>
+            </AuthLayout>
         );
     }
+
+    const intro = (
+        <>
+            <p>You've been invited as <span className="text-fg font-medium">{validation.role}</span> to join {validation.tenant_name} on sochub.</p>
+            <p className="mt-1 text-xs">{validation.email}</p>
+        </>
+    );
 
     if (validation.existing_account) {
         const sameAccount = meEmail !== null && meEmail.toLowerCase() === validation.email.toLowerCase();
         return (
-            <div className="min-h-screen flex items-center justify-center bg-canvas text-fg p-4">
-                <div className="max-w-md w-full p-8 bg-panel rounded-xl border border-line space-y-6">
-                    <div className="space-y-2">
-                        <h2 className="text-2xl font-bold">Join {validation.tenant_name}</h2>
+            <AuthLayout title={`Join ${validation.tenant_name}`} description={intro} wide>
+                {sameAccount ? (
+                    <Button size="lg" className="w-full" onClick={handleJoin} disabled={submitting}>
+                        {submitting ? 'Joining…' : `Join ${validation.tenant_name}`}
+                    </Button>
+                ) : (
+                    <div className="space-y-4">
                         <p className="text-fg-2 text-sm">
-                            You've been invited as <span className="text-fg font-medium">{validation.role}</span> to join {validation.tenant_name} on sochub.
+                            {meEmail
+                                ? `You're signed in as ${meEmail}. Sign in as ${validation.email} to accept this invitation.`
+                                : 'Sign in to your account to accept this invitation.'}
                         </p>
-                        <p className="text-fg-3 text-xs">{validation.email}</p>
+                        <Button size="lg" className="w-full" onClick={() => signInToAccept(meEmail !== null)}>
+                            {meEmail ? 'Sign in as another account' : 'Sign in'}
+                        </Button>
                     </div>
-                    {sameAccount ? (
-                        <button
-                            onClick={handleJoin}
-                            disabled={submitting}
-                            className="w-full bg-accent hover:bg-accent text-on-accent font-medium py-2 rounded-md transition-colors disabled:opacity-50"
-                        >
-                            {submitting ? 'Joining...' : `Join ${validation.tenant_name}`}
-                        </button>
-                    ) : (
-                        <>
-                            <p className="text-fg-2 text-sm">
-                                {meEmail
-                                    ? `You're signed in as ${meEmail}. Sign in as ${validation.email} to accept this invitation.`
-                                    : 'Sign in to your account to accept this invitation.'}
-                            </p>
-                            <button
-                                onClick={() => signInToAccept(meEmail !== null)}
-                                className="w-full bg-accent hover:bg-accent text-on-accent font-medium py-2 rounded-md transition-colors"
-                            >
-                                {meEmail ? 'Sign in as another account' : 'Sign in'}
-                            </button>
-                        </>
-                    )}
-                    {error && <p className="text-red-400 text-sm">{error}</p>}
-                </div>
-            </div>
+                )}
+                {error && <p role="alert" className="text-severity-critical text-sm">{error}</p>}
+            </AuthLayout>
         );
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-canvas text-fg p-4">
-            <div className="max-w-md w-full p-8 bg-panel rounded-xl border border-line space-y-6">
-                <div className="space-y-2">
-                    <h2 className="text-2xl font-bold">Join {validation.tenant_name}</h2>
-                    <p className="text-fg-2 text-sm">
-                        You've been invited as <span className="text-fg font-medium">{validation.role}</span> to join {validation.tenant_name} on sochub.
-                    </p>
-                    <p className="text-fg-3 text-xs">{validation.email}</p>
+        <AuthLayout title={`Join ${validation.tenant_name}`} description={intro} wide>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <Label htmlFor="invite-name">Full name</Label>
+                    <Input id="invite-name" type="text" required autoComplete="name"
+                        value={fullName} onChange={e => setFullName(e.target.value)} disabled={submitting} />
+                </div>
+                <div>
+                    <Label htmlFor="invite-password">Password</Label>
+                    <Input id="invite-password" type="password" required autoComplete="new-password"
+                        value={password} onChange={e => setPassword(e.target.value)} disabled={submitting}
+                        aria-describedby="invite-password-hint" />
+                    <p id="invite-password-hint" className="mt-1 text-xs text-fg-3">{PASSWORD_HINT}</p>
+                </div>
+                <div>
+                    <Label htmlFor="invite-password-again">Confirm password</Label>
+                    <Input id="invite-password-again" type="password" required autoComplete="new-password"
+                        value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} disabled={submitting} />
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-fg-2">Full Name</label>
-                        <input
-                            type="text"
-                            required
-                            className="w-full bg-canvas border border-line rounded-md px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
-                            value={fullName}
-                            onChange={e => setFullName(e.target.value)}
-                            disabled={submitting}
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-fg-2">Password</label>
-                        <input
-                            type="password"
-                            required
-                            className="w-full bg-canvas border border-line rounded-md px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
-                            value={password}
-                            onChange={e => setPassword(e.target.value)}
-                            disabled={submitting}
-                        />
-                        <p className="text-xs text-fg-3">{PASSWORD_HINT}</p>
-                    </div>
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-fg-2">Confirm Password</label>
-                        <input
-                            type="password"
-                            required
-                            className="w-full bg-canvas border border-line rounded-md px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-accent"
-                            value={confirmPassword}
-                            onChange={e => setConfirmPassword(e.target.value)}
-                            disabled={submitting}
-                        />
-                    </div>
+                {error && <p role="alert" className="text-severity-critical text-sm">{error}</p>}
 
-                    {error && <p className="text-red-400 text-sm">{error}</p>}
-
-                    <button
-                        type="submit"
-                        disabled={submitting}
-                        className="w-full bg-accent hover:bg-accent text-on-accent font-medium py-2 rounded-md transition-colors disabled:opacity-50"
-                    >
-                        {submitting ? 'Creating account...' : 'Create Account'}
-                    </button>
-                </form>
-            </div>
-        </div>
+                <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+                    {submitting ? 'Creating account…' : 'Create account'}
+                </Button>
+            </form>
+        </AuthLayout>
     );
 }

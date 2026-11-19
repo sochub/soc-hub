@@ -1,18 +1,19 @@
 import { useState } from 'react';
 import { isAxiosError } from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
-import { KeyRound, Plus, Workflow as WorkflowIcon } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { KeyRound, Plus } from 'lucide-react';
 import { api } from '../../api/client';
-import { cn } from '../../lib/utils';
 import type { SecretScanItem, User } from '../../types';
 import Modal, { btnPrimary, btnSecondary, modalInput } from '../../components/layout/Modal';
 import { NAME_RE, errText } from '../integrations/secretsUtil';
 import type { WorkflowSummary } from './types';
 import { TRIGGER_LABEL } from './nodeCatalog';
 import TemplateGallery from './TemplateGallery';
-import RunsTable, { StatusBadge } from './RunsTable';
+import RunsTable, { RelTime, StatusBadge } from './RunsTable';
+import EnabledSwitch from './EnabledSwitch';
 import PageContainer from '../../components/layout/PageContainer';
+import { Button, EmptyState, ErrorState, FolderTabs, PageHeader, Skeleton, TONE_TEXT } from '../../components/ui';
 
 const itemKey = (i: SecretScanItem) => `${i.node_id}|${i.location}|${i.key}`;
 
@@ -50,13 +51,13 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
         <Modal open onClose={onClose} size="lg" title="Plaintext credentials in workflows"
             footer={<button type="button" className={btnSecondary} onClick={onClose}>Close</button>}>
             <p className="text-xs text-fg-3 mb-3">Each credential becomes a secret restricted to the request host, and the workflow is rewritten to reference it. Pick the names, then convert per workflow.</p>
-            {status && <p role="status" className={`mb-3 text-xs ${status.ok ? 'text-emerald-300' : 'text-red-300'}`}>{status.text}</p>}
+            {status && <p role="status" className={`mb-3 text-xs ${status.ok ? TONE_TEXT.ok : 'text-severity-critical'}`}>{status.text}</p>}
             <div className="space-y-4">
                 {[...byWf.entries()].map(([wid, its]) => {
                     const todo = its.filter((i) => i.convertible);
                     const valid = todo.length > 0 && todo.every((i) => NAME_RE.test(names[`${wid}|${itemKey(i)}`] ?? ''));
                     return (
-                        <div key={wid} className="border border-line">
+                        <div key={wid} className="rounded-md border border-line overflow-hidden">
                             <div className="flex items-center gap-2 px-3 py-2 bg-surface border-b border-line">
                                 <span className="font-medium text-sm text-fg">{its[0].workflow_name}</span>
                                 <button type="button" className={`${btnPrimary} ml-auto h-8!`} disabled={busy !== null || !valid} onClick={() => convert(wid, todo)}>
@@ -68,7 +69,7 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
                                     return (
                                         <li key={k} className={`px-3 py-2 grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-2 items-center ${i.convertible ? '' : 'bg-surface'}`}>
                                             <div className="text-xs text-fg-2"><span className="font-mono">{i.node_id}</span> · {i.location} <span className="font-mono">{i.key}</span> · <span className="font-mono">{i.host}</span>
-                                                {!i.convertible && <div className="mt-0.5 text-amber-300">Not convertible: {i.reason ?? 'host not supported'}</div>}</div>
+                                                {!i.convertible && <div className="mt-0.5 text-severity-medium">Not convertible: {i.reason ?? 'host not supported'}</div>}</div>
                                             <input aria-label="Secret name" disabled={!i.convertible} title={i.convertible ? undefined : i.reason}
                                                 className={`${modalInput} font-mono py-1! text-xs! disabled:opacity-50 disabled:cursor-not-allowed`} value={names[k] ?? ''}
                                                 onChange={(e) => setNames((p) => ({ ...p, [k]: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') }))} />
@@ -76,7 +77,7 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
                                     );
                                 })}
                             </ul>
-                            {res[wid] && <p role="status" className={`px-3 py-2 text-xs ${res[wid].ok ? 'text-emerald-300' : 'text-red-300'}`}>{res[wid].text}</p>}
+                            {res[wid] && <p role="status" className={`px-3 py-2 text-xs ${res[wid].ok ? TONE_TEXT.ok : 'text-severity-critical'}`}>{res[wid].text}</p>}
                         </div>
                     );
                 })}
@@ -86,14 +87,24 @@ function ScanReview({ items, onClose, onDone }: { items: SecretScanItem[]; onClo
     );
 }
 
+type ListTab = 'workflows' | 'templates' | 'runs';
+
 export default function AutomationsList() {
     const qc = useQueryClient();
     const navigate = useNavigate();
-    const [tab, setTab] = useState<'workflows' | 'templates' | 'runs'>('workflows');
+    const [params, setParams] = useSearchParams();
     const [toggleError, setToggleError] = useState<string | null>(null);
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const isAdmin = me?.role === 'admin' || !!me?.is_super_admin;
+    const tabs: ListTab[] = isAdmin ? ['workflows', 'templates', 'runs'] : ['workflows', 'runs'];
+    const rawTab = params.get('tab') as ListTab | null;
+    const tab: ListTab = rawTab && tabs.includes(rawTab) ? rawTab : 'workflows';
+    const setTab = (t: ListTab) => {
+        const next = new URLSearchParams(params);
+        if (t === 'workflows') next.delete('tab'); else next.set('tab', t);
+        setParams(next, { replace: true });
+    };
 
     const tenantId = me?.active_tenant_id ?? null;
     const dismissKey = `secrets-scan-dismissed:${tenantId}`;
@@ -107,7 +118,7 @@ export default function AutomationsList() {
     });
     const scanWfCount = new Set(scan.map((i) => i.workflow_id)).size;
 
-    const { data: workflows = [], isLoading } = useQuery({
+    const { data: workflows = [], isLoading, isError, refetch } = useQuery({
         queryKey: ['workflows'],
         queryFn: async () => (await api.get('/workflows/')).data as WorkflowSummary[],
     });
@@ -128,81 +139,71 @@ export default function AutomationsList() {
         },
     });
 
+    const tabLabel: Record<ListTab, string> = { workflows: 'Workflows', templates: 'Templates', runs: 'Runs' };
+
     return (
         <PageContainer className="space-y-0">
-            <div className="flex items-end justify-between mb-5 flex-wrap gap-3">
-                <div>
-                    <h1 className="text-xl font-semibold tracking-tight text-fg">Workflows</h1>
-                    <p className="label-mono mt-1">workflows for cases and alerts</p>
-                </div>
-                {isAdmin && (
-                    <button onClick={() => navigate('/workflows/new')}
-                        className="inline-flex items-center gap-1.5 h-9 px-3.5 bg-accent text-on-accent text-sm font-medium hover:bg-accent-hover">
-                        <Plus size={15} /> New workflow
-                    </button>
-                )}
-            </div>
+            <PageHeader title="Workflows" description="Automations that run on cases and alerts."
+                actions={isAdmin && <Button onClick={() => navigate('/workflows/new')}><Plus size={15} aria-hidden /> New workflow</Button>} />
 
-            <div className="flex gap-4 border-b border-line mb-4">
-                {((isAdmin ? ['workflows', 'templates', 'runs'] : ['workflows', 'runs']) as ('workflows' | 'templates' | 'runs')[]).map((t) => (
-                    <button key={t} onClick={() => setTab(t)}
-                        className={cn('pb-2 text-sm capitalize', tab === t ? 'text-accent border-b-2 border-accent' : 'text-fg-3 hover:text-fg')}>{t}</button>
-                ))}
-            </div>
+            <FolderTabs items={tabs.map((t) => ({ value: t, label: tabLabel[t] }))} value={tab} onChange={setTab}
+                label="Workflow views" idPrefix="workflows-tab" />
 
+            <div id="workflows-tab-panel" role="tabpanel" aria-labelledby={`workflows-tab-${tab}`} className="pt-4 space-y-3">
             {isAdmin && scan.length > 0 && !dismissed && (
-                <div className="mb-3 px-3 py-2 text-sm border border-amber-500/30 bg-amber-500/10 text-amber-300 flex items-center gap-3 flex-wrap">
-                    <KeyRound size={15} />
-                    <span>{scanWfCount} workflow{scanWfCount === 1 ? '' : 's'} contain{scanWfCount === 1 ? 's' : ''} plaintext credentials — move them to Secrets</span>
-                    <button onClick={() => setReview(true)} className="ml-auto h-8 px-3 border border-amber-500/30 bg-panel text-sm hover:bg-amber-500/10">Review</button>
-                    <button onClick={() => { try { localStorage.setItem(dismissKey, '1'); } catch { /* storage unavailable */ } setDismissedKey(dismissKey); }}
-                        className="h-8 px-3 text-sm text-amber-300 hover:underline">Dismiss</button>
+                <div className="rounded-md px-3 py-2 text-sm border border-severity-medium/30 bg-severity-medium/5 text-severity-medium flex items-center gap-3 flex-wrap">
+                    <KeyRound size={15} aria-hidden />
+                    <span>{scanWfCount} workflow{scanWfCount === 1 ? '' : 's'} contain{scanWfCount === 1 ? 's' : ''} plaintext credentials. Move them to Secrets.</span>
+                    <Button variant="secondary" size="sm" className="ml-auto" onClick={() => setReview(true)}>Review</Button>
+                    <Button variant="ghost" size="sm"
+                        onClick={() => { try { localStorage.setItem(dismissKey, '1'); } catch { /* storage unavailable */ } setDismissedKey(dismissKey); }}>Dismiss</Button>
                 </div>
             )}
             {review && <ScanReview items={scan} onClose={() => setReview(false)} onDone={() => undefined} />}
 
-            {toggleError && <div role="alert" className="mb-3 px-3 py-2 text-sm border border-red-500/30 bg-red-500/10 text-red-300">{toggleError}</div>}
+            {toggleError && <ErrorState message={toggleError} />}
 
-            {tab === 'runs' ? <RunsTable /> : tab === 'templates' && isAdmin ? <TemplateGallery /> : (
-                <div className="bg-panel border border-line">
+            {tab === 'runs' ? <RunsTable /> : tab === 'templates' && isAdmin ? <TemplateGallery /> : isLoading ? <Skeleton rows={4} /> : isError ? (
+                <ErrorState message="Could not load workflows." onRetry={() => refetch()} />
+            ) : workflows.length === 0 ? (
+                <EmptyState title="No workflows yet"
+                    body="Workflows run steps automatically when a case or alert changes, on a schedule, or on demand."
+                    action={isAdmin ? <>
+                        <Button variant="secondary" onClick={() => setTab('templates')}>Start from a template</Button>
+                        <Button onClick={() => navigate('/workflows/new')}><Plus size={15} aria-hidden /> New workflow</Button>
+                    </> : undefined} />
+            ) : (
+                <div className="rounded-md bg-panel border border-line overflow-x-auto">
                     <table className="w-full text-sm">
-                        <thead className="bg-surface text-left label-mono">
-                            <tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Trigger</th><th className="px-4 py-2">Enabled</th>
-                                <th className="px-4 py-2">Last run</th><th className="px-4 py-2">Runs</th></tr>
+                        <thead className="text-left label-caps">
+                            <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Trigger</th><th className="px-3 py-2">Enabled</th>
+                                <th className="px-3 py-2">Last run</th><th className="px-3 py-2">Runs</th></tr>
                         </thead>
                         <tbody className="divide-y divide-line">
-                            {isLoading && <tr><td colSpan={5} className="px-4 py-8 text-center text-muted">Loading…</td></tr>}
-                            {!isLoading && workflows.length === 0 && (
-                                <tr><td colSpan={5} className="px-4 py-12 text-center text-muted">
-                                    <WorkflowIcon className="mx-auto mb-2 opacity-50" />No workflows yet
-                                </td></tr>
-                            )}
                             {workflows.map((w) => (
-                                <tr key={w.id} className="hover:bg-surface">
-                                    <td className="px-4 py-2.5">
+                                <tr key={w.id} className="hover:bg-raised">
+                                    <td className="px-3 py-2.5">
                                         <Link to={`/workflows/${w.id}`} className="font-medium text-fg hover:text-accent">{w.name}</Link>
                                         {w.description && <div className="text-xs text-fg-3">{w.description}</div>}
                                     </td>
-                                    <td className="px-4 py-2.5 font-mono text-xs text-fg-2">{TRIGGER_LABEL[w.trigger_type]}</td>
-                                    <td className="px-4 py-2.5">
-                                        <button type="button" role="switch" aria-checked={w.enabled} aria-label={`${w.name} enabled`}
+                                    <td className="px-3 py-2.5 text-xs text-fg-2">{TRIGGER_LABEL[w.trigger_type]}</td>
+                                    <td className="px-3 py-2.5">
+                                        <EnabledSwitch checked={w.enabled} label={`${w.name} enabled`}
                                             title={isAdmin ? undefined : 'Only admins can enable workflows'}
-                                            disabled={!isAdmin || toggle.isPending} onClick={() => toggle.mutate(w)}
-                                            className={cn('w-9 h-5 relative transition-colors disabled:opacity-50', w.enabled ? 'bg-accent' : 'bg-line-strong')}>
-                                            <span className={cn('absolute top-0.5 w-4 h-4 bg-panel transition-all', w.enabled ? 'left-[18px]' : 'left-0.5')} />
-                                        </button>
+                                            disabled={!isAdmin || toggle.isPending} onClick={() => toggle.mutate(w)} />
                                     </td>
-                                    <td className="px-4 py-2.5 text-xs text-fg-3">
+                                    <td className="px-3 py-2.5 text-xs text-fg-3">
                                         {w.last_run_status ? <span className="flex items-center gap-2"><StatusBadge status={w.last_run_status} />
-                                            {w.last_run_at && new Date(w.last_run_at).toLocaleString()}</span> : '—'}
+                                            {w.last_run_at && <RelTime iso={w.last_run_at} />}</span> : '—'}
                                     </td>
-                                    <td className="px-4 py-2.5 num">{w.run_count}</td>
+                                    <td className="px-3 py-2.5 num">{w.run_count}</td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
             )}
+            </div>
         </PageContainer>
     );
 }

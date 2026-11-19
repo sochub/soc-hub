@@ -84,26 +84,26 @@ export default function TenantSwitcher() {
     };
 
     return (
-        <div className="px-3 py-3 border-b border-line"><div className="relative">
-            <p className="label-mono mb-1.5 px-1">{isSuper ? 'viewing organization' : 'organization'}</p>
+        <div className="px-3 py-3 border-b border-rail-line"><div className="relative">
+            <p className="label-mono !text-rail-ink/50 mb-1.5 px-1">{isSuper ? 'viewing organization' : 'organization'}</p>
             <button
                 onClick={() => { setOpen((o) => !o); setMfaBlocked(false); setSwitchError(null); }}
                 disabled={busy}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 border border-line bg-panel text-sm text-fg hover:border-line-strong hover:bg-surface transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-60"
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-md border border-rail-line bg-rail-2 text-sm text-rail-ink hover:border-white/20 transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-lavender disabled:opacity-60"
             >
                 <span className="flex items-center gap-2 min-w-0">
-                    <Building2 size={14} className="text-accent shrink-0" />
+                    <Building2 size={14} className="text-lavender shrink-0" />
                     <span className="truncate font-medium">{active?.name ?? 'Select an organization'}</span>
                 </span>
                 {busy
-                    ? <Loader2 size={14} className="animate-spin text-muted shrink-0" />
-                    : <ChevronsUpDown size={14} className="text-muted shrink-0" />}
+                    ? <Loader2 size={14} className="animate-spin text-rail-ink/60 shrink-0" />
+                    : <ChevronsUpDown size={14} className="text-rail-ink/60 shrink-0" />}
             </button>
 
             {mfaBlocked && (
-                <p role="alert" className="mt-1.5 px-1 text-xs text-red-300">
+                <p role="alert" className="mt-1.5 px-1 text-xs text-[#ff5d6c]">
                     That tenant requires two-factor authentication.{' '}
                     <Link to="/settings/profile" className="underline font-medium" onClick={() => { setMfaBlocked(false); setOpen(false); }}>
                         Set it up in your profile
@@ -112,7 +112,7 @@ export default function TenantSwitcher() {
             )}
 
             {switchError && (
-                <p role="alert" className="mt-1.5 px-1 text-xs text-red-300">{switchError}</p>
+                <p role="alert" className="mt-1.5 px-1 text-xs text-[#ff5d6c]">{switchError}</p>
             )}
 
             {open && (

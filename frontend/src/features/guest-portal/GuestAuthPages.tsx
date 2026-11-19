@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Button, Input, Label } from '../../components/ui';
+import { Button, Input, Label, buttonClass } from '../../components/ui';
 import { guestApi, guestError, guestSession } from './guestApi';
 import { ssoErrorMessage } from '../auth/ssoErrors';
 
-export function GuestShell({ children }: { children: React.ReactNode }) {
+/** Minimal guest top bar: product mark, the organization (when known) and an optional account menu on the right. */
+export function GuestShell({ children, orgName, account }: { children: React.ReactNode; orgName?: string | null; account?: React.ReactNode }) {
     return (
         <div className="min-h-screen bg-canvas text-fg flex flex-col">
-            <header className="h-12 border-b border-line flex items-center px-4 text-sm font-semibold">
-                sochub <span className="ml-2 text-fg-3 font-normal">· guest access</span>
+            <header className="h-12 border-b border-line bg-panel flex items-center gap-2 px-4 text-sm">
+                <img src={`${import.meta.env.BASE_URL}logo.png`} alt="" className="w-6 h-6 p-0.5 rounded-sm bg-rail" />
+                <span className="font-semibold">sochub</span>
+                <span className="text-fg-3 truncate">· {orgName || 'guest access'}</span>
+                {account && <div className="ml-auto">{account}</div>}
             </header>
             <main className="flex-1 w-full max-w-3xl mx-auto px-4 py-8">{children}</main>
         </div>
@@ -17,8 +21,8 @@ export function GuestShell({ children }: { children: React.ReactNode }) {
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
     return (
-        <div className="max-w-sm mx-auto bg-panel border border-line rounded-lg p-6 space-y-4">
-            <h1 className="text-lg font-semibold">{title}</h1>
+        <div className="max-w-sm mx-auto bg-panel border border-line rounded-md p-6 space-y-4">
+            <h1 className="text-xl font-semibold">{title}</h1>
             {children}
         </div>
     );
@@ -90,7 +94,7 @@ export function GuestLoginPage() {
         {notice && <p role="status" className="text-sm text-fg-2">{notice}</p>}
         {slug && (
             <a href={`/api/v1/auth/sso/${encodeURIComponent(slug)}/login?guest=1`}
-                className="flex h-10 items-center justify-center rounded-lg border border-line text-sm hover:bg-raised/60">
+                className={buttonClass('outline', 'md') + ' w-full'}>
                 Sign in with SSO
             </a>
         )}
@@ -102,11 +106,11 @@ export function GuestLoginPage() {
                     <Input id="g-pw" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
             </>) : (
                 <div><Label htmlFor="g-code">Authentication code</Label>
-                    <Input id="g-code" inputMode="numeric" autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} /></div>
+                    <Input id="g-code" inputMode="numeric" autoComplete="one-time-code" maxLength={8} required value={code} onChange={(e) => setCode(e.target.value)} /></div>
             )}
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
             <Button type="submit" className="w-full" disabled={busy}>{mfaToken ? 'Verify' : 'Sign in'}</Button>
-            {mfaToken && <button type="button" className="text-xs text-accent" onClick={() => { setMfaToken(null); setCode(''); setError(null); }}>Back</button>}
+            {mfaToken && <Button variant="ghost" size="sm" className="w-full" onClick={() => { setMfaToken(null); setCode(''); setError(null); }}>Back</Button>}
         </form>
         <p className="text-xs text-fg-3">No password yet? Open the link from your invitation email.
             {' '}<Link to="/guest/forgot" className="text-accent">Forgot password?</Link></p>
@@ -121,7 +125,7 @@ export function GuestSsoPage() {
         guestSession.mark();
         navigate('/guest', { replace: true });
     }, [navigate]);
-    return <GuestShell><p className="font-mono text-xs text-muted">$ signing in…</p></GuestShell>;
+    return <GuestShell><p role="status" className="text-sm text-fg-3">Signing in…</p></GuestShell>;
 }
 
 export function GuestForgotPage() {

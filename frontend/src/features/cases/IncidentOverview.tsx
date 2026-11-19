@@ -7,12 +7,10 @@ import type { Case, CaseEvent, MilestoneKey } from '../../types';
 import { formatDateTime } from '../../utils/datetime';
 import MilestonesEditor from './MilestonesEditor';
 import { MILESTONES } from './milestones';
+import { TONE_VAR, statusTone } from '../../components/ui';
 
-const STATUS_COLOR: Record<string, string> = {
-    new: 'var(--color-lime)', open: 'var(--color-accent)', in_progress: 'var(--color-magenta)',
-    pending: 'var(--color-severity-medium)', resolved: 'var(--color-severity-low)', closed: 'var(--color-fg-3)',
-    before_case: 'var(--color-fg-3)',
-};
+// Phase colours follow the case-status tones used by StatusStamp everywhere else.
+const statusColor = (s: string) => TONE_VAR[statusTone(s)];
 const TYPE_COLOR: Record<string, string> = {
     status_change: 'var(--color-accent)', containment: 'var(--color-severity-high)', remediation: 'var(--color-lime)',
     investigation: 'var(--color-magenta)', artifact_added: 'var(--color-severity-low)',
@@ -25,6 +23,7 @@ const MILESTONE_COLOR: Record<MilestoneKey, string> = {
 const ALWAYS_SHOWN = new Set(['status_change', 'severity_change']); // they drive the phase bar
 const STATUS_RE = /Status changed from (\w+) to (\w+)/;
 const ROWS = 4; // flag heights, staggered like a plan chart
+const ROW_H = 26;
 
 function duration(ms: number): string {
     const m = Math.max(0, Math.round(ms / 60000));
@@ -110,24 +109,24 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
     const after = (t: number) => (recoveredAt && t > recoveredAt ? ` (${duration(t - recoveredAt)} after recovery)` : '');
 
     return (
-        <section aria-label="Incident at a glance" className="glass-panel rounded-xl border border-line bg-panel p-4 space-y-4">
+        <section aria-label="Incident at a glance" className="rounded-md border border-line bg-panel p-4 space-y-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="text-sm font-semibold text-fg">Incident at a glance</h3>
+                <h2 className="text-sm font-semibold text-fg">Incident at a glance</h2>
                 <div className="flex items-baseline gap-3">
-                    <span className="text-[11px] font-mono text-muted">
+                    <span className="text-xs num text-fg-3">
                         {formatDateTime(new Date(start), tz)} → {recoveredAt ? formatDateTime(new Date(recoveredAt), tz) : 'now'}
                     </span>
                     {ms && canEdit && (
                         <button type="button" onClick={() => setEditing((v) => !v)} aria-expanded={editing}
-                            className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline">
-                            <Pencil size={11} /> {editing ? 'Close' : 'Edit milestones'}
+                            className="inline-flex items-center gap-1 text-xs text-accent hover:underline rounded-sm">
+                            <Pencil size={11} aria-hidden /> {editing ? 'Close' : 'Edit milestones'}
                         </button>
                     )}
                 </div>
             </div>
 
             {ms && editing && (
-                <div className="rounded-lg border border-line bg-raised/40 p-3">
+                <div className="rounded-md border border-line bg-surface p-3">
                     <MilestonesEditor key={JSON.stringify(ms)} caseId={caseData.id} milestones={ms} canEdit={!!canEdit}
                         onDone={() => setEditing(false)} />
                 </div>
@@ -135,9 +134,9 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
 
             <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {stats.map(([k, v]) => (
-                    <div key={k} className="rounded-lg bg-raised px-3 py-2">
-                        <dt className="text-[10px] uppercase tracking-wide text-muted">{k}</dt>
-                        <dd className="text-sm font-semibold text-fg font-mono">{v}</dd>
+                    <div key={k} className="rounded-md bg-raised px-3 py-2">
+                        <dt className="label-caps">{k}</dt>
+                        <dd className="text-sm font-semibold text-fg num">{v}</dd>
                     </div>
                 ))}
             </dl>
@@ -146,7 +145,8 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
             <div className="overflow-x-auto">
                 <div className="relative min-w-[640px] px-2">
                     {/* Flags: the curated items, staggered over ROWS heights, pole down to the axis */}
-                    <div className="relative" style={{ height: ROWS * 26 + 8 }}>
+                    {/* Only as tall as the rows in use, so a quiet case doesn't leave an empty band above the axis. */}
+                    <div className="relative" style={{ height: items.length ? Math.min(items.length, ROWS) * ROW_H + 8 : 0 }}>
                         {items.map((e, i) => {
                             const row = i % ROWS;
                             const left = (clamp(e.at) - start) / (end - start);
@@ -154,10 +154,10 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
                                 <button key={e.key} type="button" onClick={e.open}
                                     title={`${formatDateTime(new Date(e.at), tz)} · ${e.type}${after(e.at)}\n${e.text}`}
                                     className="absolute bottom-0 flex items-start gap-1 group/flag text-left"
-                                    style={left > 0.7 ? { right: `calc(100% - ${pos(e.at)})`, top: row * 26, flexDirection: 'row-reverse' } : { left: pos(e.at), top: row * 26 }}>
+                                    style={left > 0.7 ? { right: `calc(100% - ${pos(e.at)})`, top: row * ROW_H, flexDirection: 'row-reverse' } : { left: pos(e.at), top: row * ROW_H }}>
                                     <span className="absolute top-0 bottom-0 w-px bg-line-strong" style={left > 0.7 ? { right: 0 } : { left: 0 }} />
                                     <Flag size={14} className="shrink-0 relative" style={{ color: e.color, fill: e.color }} />
-                                    <span className="text-[11px] leading-4 text-fg-2 group-hover/flag:text-fg max-w-[180px] truncate">{e.text}</span>
+                                    <span className="text-xs leading-4 text-fg-2 group-hover/flag:text-fg max-w-[180px] truncate">{e.text}</span>
                                 </button>
                             );
                         })}
@@ -181,16 +181,16 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
                     <div className="relative h-11 mt-2">
                         {phases.map((p, i) => (
                             <div key={i} className="absolute top-0 h-full overflow-hidden border-r border-panel px-1.5 py-1"
-                                style={{ left: pos(p.from), width: `${((Math.min(p.to, end) - p.from) / (end - start)) * 100}%`, background: `color-mix(in srgb, ${STATUS_COLOR[p.status] ?? 'var(--color-fg-3)'} 22%, transparent)` }}
+                                style={{ left: pos(p.from), width: `${((Math.min(p.to, end) - p.from) / (end - start)) * 100}%`, background: `color-mix(in srgb, ${statusColor(p.status)} 22%, transparent)` }}
                                 title={`${label(p.status)} · ${duration(p.to - p.from)}`}>
-                                <div className="text-[10px] uppercase tracking-wide text-fg-2 truncate">{label(p.status)}</div>
-                                <div className="text-xs font-semibold font-mono truncate" style={{ color: STATUS_COLOR[p.status] ?? 'var(--color-fg-3)' }}>{duration(p.to - p.from)}</div>
+                                <div className="label-caps text-fg-2 truncate">{label(p.status)}</div>
+                                <div className="text-xs font-semibold num truncate" style={{ color: statusColor(p.status) }}>{duration(p.to - p.from)}</div>
                             </div>
                         ))}
                     </div>
 
                     {/* Spans: response and resolution brackets */}
-                    <div className="relative h-5 mt-2 text-[10px] font-mono">
+                    <div className="relative h-5 mt-2 text-xs num">
                         {ack && <Span from={pos(created)} to={pos(ack)} color="var(--color-lime)" text={`respond ${duration(ack - created)}`} />}
                         <Span from={pos(ack ?? created)} to={pos(recoveredAt ?? end)} color="var(--color-accent)"
                             text={recoveredAt ? `resolve ${duration(recoveredAt - (ack ?? created))}` : 'in progress →'} />
@@ -198,14 +198,14 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
                 </div>
             </div>
 
-            <div className="flex flex-wrap gap-3 text-[10px] text-muted">
+            <div className="flex flex-wrap gap-3 text-xs text-fg-3">
                 {Object.entries(TYPE_COLOR).map(([t, c]) => (
                     <span key={t} className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: c }} />{label(t)}</span>
                 ))}
                 {MILESTONES.map(({ key, label: name }) => (
                     <span key={key} className="inline-flex items-center gap-1"><span className="h-2 w-0.5" style={{ background: MILESTONE_COLOR[key] }} />{name}</span>
                 ))}
-                <span className="text-muted">· pin entries in the feed below to show them here</span>
+                <span>· pin entries in the feed below to show them here</span>
             </div>
         </section>
     );

@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { AppNotification } from '../../types';
 import { useOpenNotification } from './useOpenNotification';
+import { Skeleton } from '../../components/ui';
 import { fetchNotifications, markAllRead, relativeTime, useTenantId, useUnreadCount } from './api';
 import { formatDateTime } from '../../utils/datetime';
 import { useMyTimezone } from '../../utils/useMyTimezone';
@@ -22,17 +23,17 @@ export function NotificationRow({ n, onOpen, role }: { n: AppNotification; onOpe
     const tz = useMyTimezone();
     return (
         <button type="button" role={role} onClick={() => onOpen(n)}
-            className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-line hover:bg-surface focus:bg-surface focus:outline-hidden',
+            className={cn('w-full text-left flex items-start gap-3 px-3 py-2.5 border-b border-line hover:bg-raised focus-visible:bg-raised',
                 unread && 'bg-accent/10')}>
             <Icon size={15} className="mt-0.5 shrink-0 text-fg-3" aria-hidden />
             <span className="flex-1 min-w-0">
                 <span className={cn('block text-sm text-fg wrap-break-word', unread && 'font-medium')}>{n.summary}</span>
-                <span className="block label-mono truncate mt-0.5">#{n.case_id} · {n.case_title ?? ''}</span>
+                <span className="block text-xs text-fg-3 truncate mt-0.5"><span className="num">#{n.case_id}</span> · {n.case_title ?? ''}</span>
             </span>
             <span className="shrink-0 flex items-center gap-2">
-                <time dateTime={n.created_at} title={formatDateTime(n.created_at, tz)} className="num text-xs text-muted">{relativeTime(n.created_at, tz)}</time>
+                <time dateTime={n.created_at} title={formatDateTime(n.created_at, tz)} className="num text-xs text-fg-3">{relativeTime(n.created_at, tz)}</time>
                 {unread
-                    ? <span className="w-1.5 h-1.5 bg-accent"><span className="sr-only">Unread</span></span>
+                    ? <span className="w-1.5 h-1.5 rounded-full bg-accent"><span className="sr-only">Unread</span></span>
                     : <span className="w-1.5 h-1.5" aria-hidden />}
             </span>
         </button>
@@ -89,13 +90,13 @@ export default function NotificationBell() {
                 className="relative p-2 text-fg-3 hover:text-fg">
                 <Bell size={17} />
                 {count > 0 && (
-                    <span className="absolute top-0.5 right-0 min-w-[16px] h-4 px-1 bg-accent text-on-accent num text-[10px] leading-4 text-center">
+                    <span className="absolute top-0.5 right-0 min-w-[16px] h-4 px-1 bg-accent text-on-accent num text-xs leading-4 text-center rounded-sm">
                         {count > 99 ? '99+' : count}
                     </span>
                 )}
             </button>
             {open && (
-                <div className="absolute right-0 top-full mt-1 w-[360px] max-w-[calc(100vw-2rem)] bg-panel border border-line shadow-lg z-50">
+                <div className="absolute right-0 top-full mt-1 w-[360px] max-w-[calc(100vw-2rem)] bg-panel border border-line rounded-md shadow-lg z-50 overflow-hidden">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-line">
                         <button type="button" onClick={() => readAll.mutate()} disabled={count === 0 || readAll.isPending}
                             className="text-xs text-accent hover:underline disabled:text-muted disabled:no-underline">
@@ -106,9 +107,9 @@ export default function NotificationBell() {
                         </Link>
                     </div>
                     {list.isLoading ? (
-                        <p className="px-3 py-6 text-center text-sm text-muted">Loading…</p>
+                        <Skeleton rows={4} className="p-3" />
                     ) : list.isError ? (
-                        <p className="px-3 py-6 text-center text-sm text-fg-3">Could not load notifications</p>
+                        <p role="alert" className="px-3 py-6 text-center text-sm text-severity-critical">Could not load notifications</p>
                     ) : items.length === 0 ? (
                         <p className="px-3 py-6 text-center text-sm text-fg-3">You're all caught up</p>
                     ) : (

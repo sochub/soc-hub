@@ -1,12 +1,11 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { cn } from '../../lib/utils';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Search, X, CheckCircle } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, X, CheckCircle, BellOff } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
 import { AlertRuns } from '../automations/CaseAutomation';
-import PageContainer from '../../components/layout/PageContainer';
+import { Button, Select, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, buttonClass, type Tone } from '../../components/ui';
 import { FIXED_COLUMN_COUNT, useAlertColumns } from './alertColumns';
 import ColumnsMenu from './ColumnsMenu';
 import Modal from '../../components/layout/Modal';
@@ -27,23 +26,10 @@ interface Alert {
     created_at: string;
 }
 
-const statusColor: Record<string, string> = {
-    pending: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
-    promoted: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
-    dismissed: 'text-fg-3 bg-raised border-line',
-};
-
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
-const severityColor: Record<string, string> = {
-    critical: 'text-red-300 bg-red-500/15 border-red-500/40',
-    high: 'text-orange-300 bg-orange-500/10 border-orange-500/30',
-    medium: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
-    low: 'text-fg-3 bg-raised border-line',
-    info: 'text-fg-3 bg-raised border-line',
-};
-const badge = 'inline-flex px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border';
+const alertStatusTone = (s: string): Tone => (s === 'pending' ? 'medium' : s === 'promoted' ? 'ok' : 'neutral');
 type SortKey = 'severity' | 'created_at';
-const PAGE_SIZE = 100;
+const PAGE_SIZES = [10, 40, 100] as const;
 
 function SimilarAlerts({ alertId, onOpen }: { alertId: number; onOpen: (id: number) => void }) {
     const { data } = useQuery<Alert[]>({
@@ -53,11 +39,11 @@ function SimilarAlerts({ alertId, onOpen }: { alertId: number; onOpen: (id: numb
     if (!data?.length) return null;
     return (
         <div className="mb-3">
-            <div className="text-xs font-semibold text-fg-3 uppercase tracking-wider mb-1">Similar alerts ({data.length})</div>
+            <h3 className="label-caps mb-1">Similar alerts <span className="num">({data.length})</span></h3>
             <ul className="space-y-1">
                 {data.map(s => (
                     <li key={s.id} className="text-xs flex items-center gap-2">
-                        <span className={cn(badge, severityColor[s.severity] || severityColor.info)}>{s.severity}</span>
+                        <SeverityStamp severity={s.severity} />
                         <button onClick={() => onOpen(s.id)} className="text-accent hover:underline">#{s.id} {s.title}</button>
                         {s.case_id && <Link to={`/cases/${s.case_id}`} className="text-accent hover:underline">Case #{s.case_id}</Link>}
                     </li>
@@ -76,14 +62,14 @@ function AlertDetailModal({ alertId, onOpen, onClose }: { alertId: number; onOpe
     return (
         <Modal open onClose={onClose} size="xl" title={a ? `Alert #${a.id}` : `Alert #${alertId}`}>
             {isLoading ? (
-                <div className="py-10 flex justify-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-line-strong" /></div>
+                <Skeleton rows={4} />
             ) : isError || !a ? (
                 <p className="text-sm text-severity-critical">{apiErrorMessage(error, 'Could not load this alert.')}</p>
             ) : (
                 <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className={cn(badge, severityColor[a.severity] || severityColor.info)}>{a.severity}</span>
-                        <span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span>
+                        <SeverityStamp severity={a.severity} />
+                        <Stamp tone={alertStatusTone(a.status)}>{a.status}</Stamp>
                         <span className="font-mono text-xs text-fg-2">{a.source}</span>
                         <span className="text-xs text-fg-3">{new Date(a.created_at).toLocaleString()}</span>
                         {a.case_id && <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>}
@@ -100,12 +86,28 @@ function AlertDetailModal({ alertId, onOpen, onClose }: { alertId: number; onOpe
 
 export default function AlertsList() {
     const qc = useQueryClient();
-    const [statusFilter, setStatusFilter] = useState('pending');
-    const [severityFilter, setSeverityFilter] = useState('all');
+    // Filters, page and page size live in the URL so dashboard widgets can deep-link a pre-filtered view.
+    const [sp, setSp] = useSearchParams();
+    const statusFilter = sp.get('status') ?? 'pending';
+    const severityFilter = sp.get('severity') ?? 'all';
+    const sourceFilter = sp.get('source') ?? 'all';
+    const sizeParam = Number(sp.get('size'));
+    const PAGE_SIZE = (PAGE_SIZES as readonly number[]).includes(sizeParam) ? sizeParam : 40;
+    const page = Math.max(0, Number(sp.get('page') ?? 1) - 1 || 0);
+    // Writes one or more params; 'all' (and the defaults) drop the key so URLs stay short. Any change but page returns to page 1.
+    const setParams = (next: Record<string, string | number | null>) => setSp(prev => {
+        const p = new URLSearchParams(prev);
+        if (!('page' in next)) p.delete('page');
+        for (const [k, v] of Object.entries(next)) {
+            const dflt = k === 'status' ? 'pending' : k === 'size' ? '40' : k === 'page' ? '1' : 'all';
+            if (v === null || String(v) === dflt) p.delete(k); else p.set(k, String(v));
+        }
+        return p;
+    }, { replace: true });
+    const setPage = (n: number) => setParams({ page: n + 1 });
     const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'created_at', dir: -1 });
     const [selected, setSelected] = useState<Set<number>>(new Set());
     const [bulkPromote, setBulkPromote] = useState(false);
-    const [sourceFilter, setSourceFilter] = useState('all');
     const [expanded, setExpanded] = useState<number | null>(null);
     const [promoting, setPromoting] = useState<Alert | null>(null);
     const [viewing, setViewing] = useState<number | null>(null);
@@ -114,7 +116,6 @@ export default function AlertsList() {
     const cols = useAlertColumns();
     const colSpan = FIXED_COLUMN_COUNT + cols.visibleCount;
 
-    const [page, setPage] = useState(0);
     // Server sort keys: 'severity' = most severe first, '-severity' = least severe first.
     const sortParam = sort.key === 'severity' ? (sort.dir === -1 ? 'severity' : '-severity') : (sort.dir === -1 ? '-created_at' : 'created_at');
     const params = {
@@ -123,7 +124,7 @@ export default function AlertsList() {
         ...(severityFilter !== 'all' && { severity: severityFilter }),
         ...(sourceFilter !== 'all' && { source: sourceFilter }),
     };
-    const { data: result, isLoading } = useQuery({
+    const { data: result, isLoading, isError, refetch } = useQuery({
         queryKey: ['alerts', 'list', params],
         queryFn: async () => {
             const r = await api.get<Alert[]>('/alerts/', { params });
@@ -138,11 +139,11 @@ export default function AlertsList() {
         queryFn: async () => (await api.get('/alerts/sources')).data,
     });
     // Changing a filter or the sort order returns to page 1 and drops the selection.
-    const resetView = () => { setPage(0); setSelected(new Set()); };
+    const resetView = () => setSelected(new Set());
     // If the current page emptied (e.g. last alert dismissed), step back to the last page that has rows.
-    if (result && result.items.length === 0 && result.total > 0 && page > 0) {
-        setPage(Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1));
-    }
+    const lastPage = result ? Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1) : 0;
+    const overshot = !!result && result.items.length === 0 && result.total > 0 && page > lastPage;
+    useEffect(() => { if (overshot) setPage(lastPage); });
 
     const dismiss = useMutation({
         mutationFn: async (id: number) => (await api.post(`/alerts/${id}/dismiss`)).data,
@@ -166,138 +167,132 @@ export default function AlertsList() {
         return next;
     });
     const sortHeader = (key: SortKey, label: string) => (
-        <button onClick={() => { setSort(s => ({ key, dir: s.key === key ? (-s.dir as 1 | -1) : -1 })); resetView(); }}
-            className="inline-flex items-center gap-1 uppercase hover:text-fg">
+        <button onClick={() => { setSort(s => ({ key, dir: s.key === key ? (-s.dir as 1 | -1) : -1 })); setParams({}); resetView(); }}
+            // uppercase: preflight resets text-transform on buttons, so sortable headers would lose the caps.
+            className="inline-flex items-center gap-1 uppercase tracking-[inherit] hover:text-fg">
             {label}{sort.key === key && (sort.dir === -1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />)}
         </button>
     );
     const openAlert = (id: number) => setViewing(id);
 
-    if (isLoading) {
-        return <PageContainer><div className="flex items-center justify-center h-[50vh]">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-line-strong" /></div></PageContainer>;
-    }
+    const filtersActive = statusFilter !== 'pending' || severityFilter !== 'all' || sourceFilter !== 'all';
+    const clearFilters = () => { setParams({ status: null, severity: null, source: null }); resetView(); };
+    const suppressLink = (id: number) => (
+        <Link to={`/alerts/suppressions?from_alert=${id}`} title="Create a suppression rule pre-filled from this alert"
+            className={buttonClass('ghost', 'sm')}><BellOff size={12} aria-hidden />Suppress similar</Link>
+    );
+
+    // Viewers see the linked case only; promote, dismiss and suppress need analyst or admin.
+    const rowActions = (a: Alert) => !canAct ? (
+        a.case_id ? <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
+            : <span className="text-xs text-fg-3">—</span>
+    ) : a.status === 'pending' ? (
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-1">
+            <Button size="sm" onClick={() => setPromoting(a)}><CheckCircle size={12} aria-hidden />Promote</Button>
+            <Button size="sm" variant="ghost" disabled={dismiss.isPending && dismiss.variables === a.id} onClick={() => dismiss.mutate(a.id)}><X size={12} aria-hidden />Dismiss</Button>
+            {suppressLink(a.id)}
+        </div>
+    ) : a.case_id ? (
+        <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
+    ) : !a.suppression_rule_id ? suppressLink(a.id) : <span className="text-xs text-muted">—</span>;
 
     return (
-        <PageContainer className="space-y-4">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-fg tracking-tight">Alerts</h1>
-                    <p className="text-fg-3 text-sm mt-0.5">{total === 0 ? '0 alerts' : `Showing ${(page * PAGE_SIZE + 1).toLocaleString()}–${(page * PAGE_SIZE + filtered.length).toLocaleString()} of ${total.toLocaleString()} alerts`}</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative">
-                        <select value={sourceFilter} onChange={e => { setSourceFilter(e.target.value); resetView(); }}
-                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
-                            <option value="all">All Sources</option>
-                            {sources.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                    </div>
-                    <div className="relative">
-                        <select value={severityFilter} onChange={e => { setSeverityFilter(e.target.value); resetView(); }}
-                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
-                            <option value="all">All Severities</option>
-                            {SEVERITIES.map(s => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                    </div>
-                    <div className="relative">
-                        <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); resetView(); }}
-                            className="appearance-none bg-panel border border-line rounded-lg pl-3 pr-8 py-1.5 text-sm text-fg-2 cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-accent">
-                            <option value="all">All Statuses</option>
-                            <option value="pending">Pending</option>
-                            <option value="promoted">Promoted</option>
-                            <option value="dismissed">Dismissed</option>
-                        </select>
-                        <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                    </div>
-                    <ColumnsMenu cols={cols} />
-                </div>
+        <div className="p-4 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+                <p className="mr-auto text-sm text-fg-3 num">{isLoading ? '\u00a0' : total === 0 ? '0 alerts' : `Showing ${(page * PAGE_SIZE + 1).toLocaleString()}–${(page * PAGE_SIZE + filtered.length).toLocaleString()} of ${total.toLocaleString()} alerts`}</p>
+                <Select inputSize="sm" className="w-auto" aria-label="Source" value={sourceFilter} onChange={e => { setParams({ source: e.target.value }); resetView(); }}>
+                    <option value="all">All sources</option>
+                    {sources.map(s => <option key={s} value={s}>{s}</option>)}
+                </Select>
+                <Select inputSize="sm" className="w-auto" aria-label="Severity" value={severityFilter} onChange={e => { setParams({ severity: e.target.value }); resetView(); }}>
+                    <option value="all">All severities</option>
+                    {SEVERITIES.map(s => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
+                </Select>
+                <Select inputSize="sm" className="w-auto" aria-label="Status" value={statusFilter} onChange={e => { setParams({ status: e.target.value }); resetView(); }}>
+                    <option value="all">All statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="promoted">Promoted</option>
+                    <option value="dismissed">Dismissed</option>
+                </Select>
+                <ColumnsMenu cols={cols} />
             </div>
 
-            {actionError && (
-                <div role="alert" className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-severity-critical/40 bg-severity-critical/10 text-sm text-severity-critical">
-                    <span>{actionError}</span>
-                    <button onClick={() => setActionError(null)} className="text-xs text-fg-2 hover:text-fg">Dismiss</button>
-                </div>
-            )}
-
             {canAct && selectedIds.length > 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-line bg-panel text-sm">
-                    <span className="text-fg-2">{selectedIds.length} selected</span>
-                    <button onClick={() => setBulkPromote(true)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent text-on-accent hover:bg-accent-hover flex items-center gap-1"><CheckCircle size={12} />Promote selected…</button>
-                    <button disabled={bulkDismiss.isPending} onClick={() => bulkDismiss.mutate(selectedIds)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 flex items-center gap-1"><X size={12} />Dismiss selected</button>
-                    <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-muted hover:text-fg-2">Clear</button>
+                <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-line bg-raised text-sm">
+                    <span className="text-fg-2 num">{selectedIds.length} selected</span>
+                    <Button size="sm" onClick={() => setBulkPromote(true)}><CheckCircle size={12} aria-hidden />Promote selected…</Button>
+                    <Button size="sm" variant="secondary" disabled={bulkDismiss.isPending} onClick={() => bulkDismiss.mutate(selectedIds)}><X size={12} aria-hidden />Dismiss selected</Button>
+                    <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(new Set())}>Clear</Button>
                 </div>
             )}
 
-            <div className="glass-panel rounded-lg border border-line overflow-hidden">
+            {actionError && (
+                <p role="alert" className="flex items-center gap-2 text-sm text-severity-critical">
+                    {actionError}
+                    <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss error" className="text-fg-3 hover:text-fg"><X size={14} /></button>
+                </p>
+            )}
+
+            {isError ? <ErrorState message="Could not load alerts." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={8} /> : (
+            <div className="-mx-4 overflow-x-auto border-y border-line">
                 <table className="w-full text-sm text-left">
-                    <thead className="bg-panel border-b border-line text-xs uppercase text-fg-3 font-semibold tracking-wider">
-                        <tr>
-                            <th className="px-4 py-3 w-8">
+                    <thead className="border-b border-line bg-surface">
+                        <tr className="label-caps">
+                            <th className="px-3 py-2 w-8">
                                 {canAct && <input type="checkbox" aria-label="Select all" checked={allSelected}
                                     onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map(a => a.id)))} />}
                             </th>
-                            <th className="px-4 py-3 w-8"></th>
-                            {cols.isVisible('severity') && <th className="px-4 py-3 w-28">{sortHeader('severity', 'Severity')}</th>}
-                            {cols.isVisible('source') && <th className="px-4 py-3 w-40">Source</th>}
-                            <th className="px-4 py-3">Title</th>
-                            {cols.isVisible('status') && <th className="px-4 py-3 w-28">Status</th>}
-                            {cols.isVisible('created_at') && <th className="px-4 py-3 w-40">{sortHeader('created_at', 'Received')}</th>}
-                            <th className="px-4 py-3 w-56">Actions</th>
+                            <th className="px-3 py-2 w-8"><span className="sr-only">Details</span></th>
+                            {cols.isVisible('severity') && <th className="hidden sm:table-cell px-3 py-2 w-28">{sortHeader('severity', 'Severity')}</th>}
+                            {/* Below sm the title needs the width: source hides here and shows in the expanded details instead. */}
+                            {cols.isVisible('source') && <th className="hidden sm:table-cell px-3 py-2 w-40">Source</th>}
+                            <th className="px-3 py-2 sm:min-w-56">Title</th>
+                            {cols.isVisible('status') && <th className="hidden sm:table-cell px-3 py-2 w-28">Status</th>}
+                            {cols.isVisible('created_at') && <th className="hidden sm:table-cell px-3 py-2 w-40">{sortHeader('created_at', 'Received')}</th>}
+                            <th className="hidden sm:table-cell px-3 py-2 w-72">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
                         {filtered.length === 0 ? (
-                            <tr><td colSpan={colSpan} className="px-6 py-12 text-center text-muted">
-                                <Search size={32} className="mb-2 opacity-50 mx-auto" />No alerts</td></tr>
+                            <tr><td colSpan={colSpan}>
+                                {filtersActive
+                                    ? <EmptyState title="No alerts match these filters" action={<Button size="sm" variant="secondary" onClick={clearFilters}>Clear filters</Button>} />
+                                    : <EmptyState title="No pending alerts" body="Alerts sent to your webhooks land here for triage." />}
+                            </td></tr>
                         ) : filtered.map(a => (
                             <Fragment key={a.id}>
                                 <tr className="group hover:bg-raised">
-                                    <td className="px-4 py-2.5">
+                                    <td className="px-3 py-2.5">
                                         {canAct && <input type="checkbox" aria-label={`Select alert ${a.id}`} checked={selected.has(a.id)} onChange={() => toggle(a.id)} />}
                                     </td>
-                                    <td className="px-4 py-2.5">
-                                        <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="text-muted hover:text-fg-2">
+                                    <td className="px-3 py-2.5">
+                                        <button onClick={() => setExpanded(expanded === a.id ? null : a.id)} className="text-muted hover:text-fg-2"
+                                            aria-expanded={expanded === a.id} aria-label={`${expanded === a.id ? 'Hide' : 'Show'} details for alert ${a.id}`}>
                                             {expanded === a.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                         </button>
                                     </td>
-                                    {cols.isVisible('severity') && <td className="px-4 py-2.5"><span className={cn(badge, severityColor[a.severity] || severityColor.info)}>{a.severity}</span></td>}
-                                    {cols.isVisible('source') && <td className="px-4 py-2.5"><span className="font-mono text-xs text-fg-2">{a.source}</span></td>}
-                                    <td className="px-4 py-2.5 font-medium text-fg">
-                                        {a.title}
+                                    {cols.isVisible('severity') && <td className="hidden sm:table-cell px-3 py-2.5"><SeverityStamp severity={a.severity} /></td>}
+                                    {cols.isVisible('source') && <td className="hidden sm:table-cell px-3 py-2.5"><span className="text-xs text-fg-2">{a.source}</span></td>}
+                                    <td className="px-3 py-2.5 font-medium text-fg">
+                                        {/* Phones: severity rides above the title instead of taking a column. */}
+                                        <SeverityStamp severity={a.severity} className="sm:hidden mb-1.5" />
+                                        <span className="block sm:inline">{a.title}</span>
                                         {a.suppression_rule_id && (
                                             <Link to="/alerts/suppressions" title="Dismissed at ingest by a suppression rule"
-                                                className="ml-1.5 text-[10px] font-normal text-muted hover:text-fg-2">rule #{a.suppression_rule_id}</Link>
+                                                className="ml-1.5 text-xs font-normal text-muted hover:text-fg-2">rule #{a.suppression_rule_id}</Link>
                                         )}
+                                        {/* Phones: the actions column would scroll off-screen, so actions sit under the title. */}
+                                        <div className="sm:hidden mt-2 font-normal">{rowActions(a)}</div>
                                     </td>
-                                    {cols.isVisible('status') && <td className="px-4 py-2.5"><span className={cn(badge, statusColor[a.status] || statusColor.dismissed)}>{a.status}</span></td>}
-                                    {cols.isVisible('created_at') && <td className="px-4 py-2.5 text-fg-3 text-xs whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</td>}
-                                    <td className="px-4 py-2.5">
-                                        {!canAct ? (
-                                            a.case_id ? <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
-                                                : <span className="text-xs text-muted">—</span>
-                                        ) : a.status === 'pending' ? (
-                                            <div className="flex items-center gap-2">
-                                                <button onClick={() => setPromoting(a)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-accent text-on-accent hover:bg-accent-hover flex items-center gap-1"><CheckCircle size={12} />Promote</button>
-                                                <button onClick={() => dismiss.mutate(a.id)} className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 flex items-center gap-1"><X size={12} />Dismiss</button>
-                                                <Link to={`/alerts/suppressions?from_alert=${a.id}`} title="Create a suppression rule pre-filled from this alert"
-                                                    className="text-xs text-fg-3 hover:text-fg hover:underline whitespace-nowrap">Suppress similar</Link>
-                                            </div>
-                                        ) : a.case_id ? (
-                                            <Link to={`/cases/${a.case_id}`} className="text-xs text-accent hover:underline">Case #{a.case_id}</Link>
-                                        ) : !a.suppression_rule_id ? (
-                                            <Link to={`/alerts/suppressions?from_alert=${a.id}`} title="Create a suppression rule pre-filled from this alert"
-                                                className="text-xs text-fg-3 hover:text-fg hover:underline">Suppress similar</Link>
-                                        ) : <span className="text-xs text-muted">—</span>}
-                                    </td>
+                                    {cols.isVisible('status') && <td className="hidden sm:table-cell px-3 py-2.5"><Stamp tone={alertStatusTone(a.status)}>{a.status}</Stamp></td>}
+                                    {cols.isVisible('created_at') && <td className="hidden sm:table-cell px-3 py-2.5 text-fg-3 text-xs whitespace-nowrap num">{new Date(a.created_at).toLocaleString()}</td>}
+                                    <td className="hidden sm:table-cell px-3 py-2.5">{rowActions(a)}</td>
                                 </tr>
                                 {expanded === a.id && (
-                                    <tr><td colSpan={colSpan} className="px-6 py-3 bg-surface">
+                                    <tr><td colSpan={colSpan} className="px-4 py-3 bg-surface">
                                         <SimilarAlerts alertId={a.id} onOpen={openAlert} />
                                         <AlertRuns alertId={a.id} />
+                                        <p className="sm:hidden mb-2 text-xs text-fg-3">Source: <span className="text-fg-2">{a.source}</span></p>
                                         <pre className="text-xs text-fg-2 overflow-x-auto">{JSON.stringify(a.payload, null, 2)}</pre>
                                     </td></tr>
                                 )}
@@ -306,15 +301,19 @@ export default function AlertsList() {
                     </tbody>
                 </table>
             </div>
+            )}
 
-            {total > PAGE_SIZE && (
-                <div className="flex items-center justify-end gap-2 text-sm text-fg-3">
-                    <span>Page {page + 1} of {Math.ceil(total / PAGE_SIZE)}</span>
-                    <button disabled={page === 0} onClick={() => { setPage(p => p - 1); setSelected(new Set()); }}
-                        className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 disabled:opacity-50 flex items-center gap-1"><ChevronLeft size={12} />Prev</button>
-                    <button disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => { setPage(p => p + 1); setSelected(new Set()); }}
-                        className="px-2 py-1 text-xs font-semibold rounded-sm bg-raised text-fg-2 hover:bg-raised-2 disabled:opacity-50 flex items-center gap-1">Next<ChevronRight size={12} /></button>
-                </div>
+            {total > PAGE_SIZES[0] && (
+                <nav aria-label="Pagination" className="flex flex-wrap items-center justify-end gap-2 text-sm text-fg-3">
+                    <label className="mr-auto inline-flex items-center gap-2">Per page
+                        <Select inputSize="sm" className="w-auto" value={PAGE_SIZE} onChange={e => { setParams({ size: e.target.value }); resetView(); }}>
+                            {PAGE_SIZES.map(n => <option key={n} value={n}>{n}</option>)}
+                        </Select>
+                    </label>
+                    <span className="num">Page {page + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+                    <Button size="sm" variant="secondary" disabled={page === 0} onClick={() => { setPage(page - 1); resetView(); }}><ChevronLeft size={12} aria-hidden />Prev</Button>
+                    <Button size="sm" variant="secondary" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => { setPage(page + 1); resetView(); }}>Next<ChevronRight size={12} aria-hidden /></Button>
+                </nav>
             )}
 
             {viewing !== null && <AlertDetailModal alertId={viewing} onOpen={setViewing} onClose={() => setViewing(null)} />}
@@ -323,6 +322,6 @@ export default function AlertsList() {
                 <PromoteAlertModal alert={filtered.find(a => a.id === selectedIds[0])!} ids={selectedIds}
                     onClose={() => setBulkPromote(false)} />
             )}
-        </PageContainer>
+        </div>
     );
 }

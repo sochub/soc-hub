@@ -3,19 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { ExternalLink } from 'lucide-react';
 import { api } from '../../api/client';
-import { cn } from '../../lib/utils';
+import { Button, Skeleton, ErrorState, Stamp, verdictTone } from '../../components/ui';
 import type { EnrichmentResultRow, EnrichmentView, IOC } from '../../types';
 
 const SOURCE_LABEL: Record<string, string> = {
     virustotal: 'VirusTotal', urlhaus: 'URLhaus', threatfox: 'ThreatFox', rdap: 'RDAP', crtsh: 'crt.sh', misp: 'MISP',
 };
-const VERDICT_BADGE: Record<string, string> = {
-    malicious: 'bg-red-500/10 text-red-300 border-red-500/30',
-    suspicious: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
-    harmless: 'bg-green-500/10 text-green-300 border-green-500/30',
-    unknown: 'bg-raised text-fg-3 border-line',
-};
-
 const relTime = (iso: string): string => {
     const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
     if (s < 60) return 'just now';
@@ -59,7 +52,7 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
     const [confirmMsg, setConfirmMsg] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
 
-    const { data, isLoading } = useQuery({
+    const { data, isLoading, isError, refetch } = useQuery({
         queryKey: key,
         queryFn: async () => (await api.get(`/enrichment/${kind}/${id}`)).data as EnrichmentView,
         refetchInterval: (q) => q.state.data?.results.some((r) => r.status === 'pending' && !r.stalled) ? 3000 : false,
@@ -91,7 +84,8 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
         onError: (e) => setErr(errText(e, 'Could not apply the suggestion')),
     });
 
-    if (isLoading || !data) return <p className="text-xs text-muted">Loading…</p>;
+    if (isError) return <ErrorState message="Could not load threat intel." onRetry={() => refetch()} />;
+    if (isLoading || !data) return <Skeleton rows={2} />;
     if (!data.enrichable) return <p className="text-xs text-muted">Not enrichable ({data.indicator_type ?? ioc?.ioc_type ?? kind})</p>;
 
     const tlp = data.effective_tlp ?? 'unknown';
@@ -109,12 +103,12 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
                         return (
                             <li key={r.source} className="py-1.5 flex items-center gap-2 flex-wrap text-xs">
                                 <span className="font-semibold text-fg-2 w-24">{SOURCE_LABEL[r.source] ?? r.source}</span>
-                                {r.verdict && <span className={cn('px-1.5 py-0.5 border text-[11px] font-bold uppercase', VERDICT_BADGE[r.verdict] ?? VERDICT_BADGE.unknown)}>{r.verdict}</span>}
+                                {r.verdict && <Stamp tone={verdictTone(r.verdict)}>{r.verdict}</Stamp>}
                                 {r.score && <span className="num text-fg-2">{r.score}</span>}
-                                {st && <span className={r.status === 'error' || r.status === 'rate_limited' ? 'text-red-300' : 'text-fg-3'}>{st}</span>}
+                                {st && <span className={r.status === 'error' || r.status === 'rate_limited' ? 'text-severity-critical' : 'text-fg-3'}>{st}</span>}
                                 {f.map((x) => <span key={x} className="text-fg-3 font-mono">{x}</span>)}
-                                {r.link && <a href={r.link} target="_blank" rel="noopener noreferrer" className="text-accent inline-flex items-center gap-0.5">view<ExternalLink size={11} /></a>}
-                                {r.fetched_at && <span className="ml-auto text-muted">{relTime(r.fetched_at)}</span>}
+                                {r.link && <a href={r.link} target="_blank" rel="noopener noreferrer" className="text-accent inline-flex items-center gap-0.5">view<ExternalLink size={11} aria-hidden /></a>}
+                                {r.fetched_at && <span className="ml-auto text-fg-3 num">{relTime(r.fetched_at)}</span>}
                             </li>
                         );
                     })}
@@ -122,26 +116,26 @@ export default function EnrichmentPanel({ kind, id, canRun, ioc }: Props) {
             )}
 
             {sug && (sug.threat_level || sug.tags.length > 0) && (
-                <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-xs text-amber-300">
+                <div className="flex items-center gap-2 rounded-md border border-severity-medium/40 bg-severity-medium/10 px-2 py-1 text-xs text-fg-2">
                     <span>Suggest: {sug.threat_level ?? ''}{sug.tags.length > 0 && ` +${sug.tags.join(' +')}`}</span>
-                    {canRun && <button onClick={() => apply.mutate()} disabled={apply.isPending} className="ml-auto h-6 px-2 bg-amber-600 text-white disabled:opacity-50">Apply</button>}
+                    {canRun && <Button size="sm" variant="secondary" onClick={() => apply.mutate()} disabled={apply.isPending} className="ml-auto h-6">Apply</Button>}
                 </div>
             )}
 
             {canRun && (confirmMsg ? (
-                <div className="bg-amber-500/10 border border-amber-500/30 p-2 text-xs text-amber-300 space-y-2">
+                <div className="rounded-md border border-severity-medium/40 bg-severity-medium/10 p-2 text-xs text-fg-2 space-y-2">
                     <p>{confirmMsg}</p>
                     <div className="flex gap-2">
-                        <button onClick={() => run.mutate(true)} disabled={run.isPending} className="h-7 px-3 bg-accent text-on-accent disabled:opacity-50">Send</button>
-                        <button onClick={() => setConfirmMsg(null)} className="h-7 px-3 border border-line-strong bg-panel text-fg-2">Cancel</button>
+                        <Button size="sm" onClick={() => run.mutate(true)} disabled={run.isPending}>Send</Button>
+                        <Button size="sm" variant="secondary" onClick={() => setConfirmMsg(null)}>Cancel</Button>
                     </div>
                 </div>
             ) : (
-                <button onClick={() => { setErr(null); run.mutate(false); }} disabled={run.isPending} className="h-7 px-3 border border-line-strong text-xs disabled:opacity-50">
+                <Button size="sm" variant="secondary" onClick={() => { setErr(null); run.mutate(false); }} disabled={run.isPending}>
                     {data.results.length === 0 ? 'Enrich' : 'Re-check'}
-                </button>
+                </Button>
             ))}
-            {err && <p role="status" className="text-xs text-red-300">{err}</p>}
+            {err && <p role="alert" className="text-xs text-severity-critical">{err}</p>}
         </div>
     );
 }

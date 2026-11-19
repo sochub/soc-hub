@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageContainer from '../../components/layout/PageContainer';
-import { cn } from '../../lib/utils';
+import { Button, FolderTabs, PageHeader, Skeleton, ErrorState, EmptyState } from '../../components/ui';
 import { NotificationRow } from './NotificationBell';
 import { useOpenNotification } from './useOpenNotification';
 import { PAGE_SIZE, fetchNotifications, markAllRead, useTenantId, useUnreadCount } from './api';
@@ -28,38 +28,43 @@ export default function NotificationsPage({ bare = false }: { bare?: boolean }) 
     });
 
     const items = q.data?.pages.flat() ?? [];
-    const tab = (active: boolean) => cn('px-3 py-1.5 text-sm border-b-2 -mb-px',
-        active ? 'border-accent text-fg font-medium' : 'border-transparent text-fg-3 hover:text-fg');
+    const markAll = (
+        <Button size="sm" variant="ghost" onClick={() => readAll.mutate()} disabled={count === 0 || readAll.isPending}>Mark all read</Button>
+    );
 
     const body = (
         <>
-            <div className="flex items-center justify-between">
-                <h1 className={bare ? 'label-mono' : 'text-lg font-semibold text-fg'}>{bare ? '// inbox' : 'Notifications'}</h1>
-                <button type="button" onClick={() => readAll.mutate()} disabled={count === 0 || readAll.isPending}
-                    className="text-sm text-accent hover:underline disabled:text-muted disabled:no-underline">Mark all read</button>
-            </div>
-            <div className="flex gap-1 border-b border-line">
-                <button aria-pressed={!unreadOnly} className={tab(!unreadOnly)} onClick={() => setUnreadOnly(false)}>All</button>
-                <button aria-pressed={unreadOnly} className={tab(unreadOnly)} onClick={() => setUnreadOnly(true)}>Unread</button>
-            </div>
-            <div className="bg-panel border border-line">
+            {bare && (
+                <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-fg">Inbox</h2>
+                    {markAll}
+                </div>
+            )}
+            <FolderTabs label="Notification filter" idPrefix="notif" value={unreadOnly ? 'unread' : 'all'}
+                onChange={v => setUnreadOnly(v === 'unread')}
+                items={[{ value: 'all', label: 'All' }, { value: 'unread', label: 'Unread', count: count || undefined }]} />
+            <div id="notif-panel" role="tabpanel" aria-labelledby={`notif-${unreadOnly ? 'unread' : 'all'}`} className="bg-panel border border-line rounded-md overflow-hidden">
                 {q.isLoading ? (
-                    <p className="px-3 py-8 text-center text-sm text-muted">Loading…</p>
+                    <Skeleton rows={5} className="p-3" />
                 ) : q.isError ? (
-                    <p className="px-3 py-8 text-center text-sm text-fg-3">Could not load notifications</p>
+                    <ErrorState message="Could not load notifications." onRetry={() => q.refetch()} className="m-3" />
                 ) : items.length === 0 ? (
-                    <p className="px-3 py-8 text-center text-sm text-fg-3">You're all caught up</p>
+                    <EmptyState title="You're all caught up" />
                 ) : items.map(n => <NotificationRow key={n.id} n={n} onOpen={open} />)}
             </div>
             {q.hasNextPage && (
                 <div className="flex justify-center">
-                    <button type="button" onClick={() => q.fetchNextPage()} disabled={q.isFetchingNextPage}
-                        className="px-4 py-1.5 text-sm border border-line bg-panel hover:bg-surface disabled:text-muted">
-                        {q.isFetchingNextPage ? 'Loading…' : 'Load more'}
-                    </button>
+                    <Button size="sm" variant="secondary" onClick={() => q.fetchNextPage()} disabled={q.isFetchingNextPage}>
+                        {q.isFetchingNextPage ? 'Loading more…' : 'Load more'}
+                    </Button>
                 </div>
             )}
         </>
     );
-    return bare ? <div className="space-y-3">{body}</div> : <PageContainer width="narrow">{body}</PageContainer>;
+    return bare ? <div className="space-y-3">{body}</div> : (
+        <PageContainer width="narrow">
+            <PageHeader title="Notifications" actions={markAll} />
+            <div className="space-y-3">{body}</div>
+        </PageContainer>
+    );
 }

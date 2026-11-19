@@ -1,31 +1,21 @@
 import { Suspense } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import PageSkeleton from './PageSkeleton';
-import { cn } from '../../lib/utils';
+import { FolderTabLinks } from '../ui/Tabs';
 
 export interface HubTab { label: string; to: string; end?: boolean; show?: boolean }
 
-/** Section with a tab strip on top; each tab is a routed child page (Settings, Observables). */
+/** A section whose sub-pages are folder tabs (Alerts, Observables). The hub owns the page title; tabs sit on the sheet below. */
 export default function HubLayout({ title, tabs }: { title: string; tabs: HubTab[] }) {
     return (
-        <div>
-            <div className="px-4 sm:px-6 pt-5 border-b border-line bg-surface/60">
-                <p className="label-mono mb-1">// {title}</p>
-                <nav className="flex gap-1 overflow-x-auto -mb-px">
-                    {tabs.filter(t => t.show !== false).map(t => (
-                        <NavLink key={t.to} to={t.to} end={t.end}
-                            className={({ isActive }) => cn(
-                                'px-3 py-2 text-sm border-b-2 whitespace-nowrap transition-colors',
-                                isActive ? 'border-accent text-fg font-medium' : 'border-transparent text-fg-3 hover:text-fg',
-                            )}>
-                            {t.label}
-                        </NavLink>
-                    ))}
-                </nav>
+        <div className="px-4 sm:px-6 pt-5 mx-auto w-full max-w-[1600px]">
+            <h1 className="text-2xl font-semibold text-fg capitalize mb-3">{title}</h1>
+            <FolderTabLinks label={`${title} sections`} items={tabs.filter((t) => t.show !== false)} />
+            <div className="bg-panel border border-t-0 border-line rounded-b-md mb-6">
+                <Suspense fallback={<PageSkeleton />}>
+                    <Outlet />
+                </Suspense>
             </div>
-            <Suspense fallback={<PageSkeleton />}>
-                <Outlet />
-            </Suspense>
         </div>
     );
 }

@@ -54,3 +54,4 @@ celerybeat.pid
 .claude/
 docs/superpowers/
 frontend/dist-demo/
+tour-out/

@@ -27,6 +27,7 @@ from app.main import app
 from app.models.case import Alert, Case, CaseLink, TimelineEvent
 from app.models.case_task import CaseTask
 from app.models.containment import ContainmentAction
+from app.models.copilot_session import CopilotMessage, CopilotSession
 from app.models.membership import TenantMembership
 from app.models.notification import Notification
 from app.models.playbook import PlaybookTemplate
@@ -144,6 +145,9 @@ STORY_EVENTS = [  # (hours after case creation, ATT&CK category, title)
     (5, "command_and_control", "HTTPS beacon to update-portal.example every 60s"),
     (7, "remediation", "Host isolated and credentials rotated"),
 ]
+
+
+COPILOT_CASE: int | None = None  # set by new_features: the case with the recorded copilot chat
 
 
 async def setup() -> tuple[int, str]:
@@ -281,6 +285,11 @@ async def new_features(c: httpx.AsyncClient, tid: int, hero_ids: list[int]) -> N
     await c.put("/api/v1/ticketing/connection", json={"provider": "jira", "base_url": "https://greenbow.atlassian.net",
                                                       "credentials": {"email": "soc@greenbow.example", "token": "demo"},
                                                       "settings": {"project_key": "SEC"}, "auto_create_min_severity": "high"})
+    # Placeholder values: the API only ever returns names, hosts and descriptions, never the value.
+    for name, host, note in (("CROWDSTRIKE_API", "api.crowdstrike.com", "Falcon API client for containment"),
+                             ("SLACK_WEBHOOK", "hooks.slack.com", "Fallback channel for paging")):
+        await c.post("/api/v1/secrets/", json={"name": name, "value": "demo-placeholder", "allowed_hosts": [host],
+                                               "description": note})
     rules = [("Okta: Forrest's cross-country runs", [{"field": "source", "op": "equals", "value": "okta"},
                                                       {"field": "title", "op": "contains", "value": "impossible travel"}],
               "He really is running across the country.", 14, 30),
@@ -339,6 +348,29 @@ async def new_features(c: httpx.AsyncClient, tid: int, hero_ids: list[int]) -> N
                 (300, main, "sla_breach", None, f"Case #{main} breached its resolution SLA")):
             db.add(Notification(tenant_id=tid, user_id=me, case_id=case_id, type=type_, actor_id=actor, summary=summary,
                                 created_at=now - timedelta(minutes=minutes)))
+        # Copilot: the demo has no model behind it, so it ships two recorded conversations (fictional, like the rest).
+        general = CopilotSession(tenant_id=tid, user_id=me, case_id=None)
+        on_case = CopilotSession(tenant_id=tid, user_id=me, case_id=main)
+        db.add_all([general, on_case])
+        await db.flush()
+        for sess, role, content, action, ago in (
+                (general, "assistant", f"**Morning, Forrest.** Three phishing cases (#{hero_ids[0]}, #{hero_ids[1]} and "
+                 f"#{main}) share `update-portal.example`, so they are probably one campaign.", None, 40),
+                (general, "user", "Which of the phishing cases needs me first?", None, 38),
+                (general, "assistant", f"**#{main}**: it is still in progress, with an active host containment on "
+                 f"SHRIMP-BOAT-01 and a password reset waiting in Jira. #{hero_ids[0]} and #{hero_ids[1]} are already "
+                 "resolved.", None, 37),
+                (on_case, "user", "What do we know about the beacon on SHRIMP-BOAT-01?", None, 20),
+                (on_case, "assistant", "The proxy log in the activity feed shows `GET https://update-portal.example/c2` "
+                 "every 60 seconds until the host was contained. `update-portal.example` is not on this case yet.", None, 19),
+                (on_case, "user", "Add it as an artifact.", None, 18),
+                (on_case, "assistant", "Here is the artifact. Nothing is written until you confirm.",
+                 {"type": "add_artifact", "summary": "Add the C2 domain seen in the proxy log",
+                  "params": {"value": "update-portal.example", "artifact_type": "domain"}}, 17)):
+            db.add(CopilotMessage(session_id=sess.id, role=role, content=content, action=action,
+                                  created_at=now - timedelta(minutes=ago)))
+        global COPILOT_CASE
+        COPILOT_CASE = main
         await db.commit()
 
 
@@ -354,13 +386,15 @@ async def capture(c: httpx.AsyncClient, case_ids: list[int]) -> dict:
               "/notifications/", "/notifications/unread-count", "/tenants/", "/tenants/sla-policies", "/artifact-types/",
               "/ai/info", "/enrichment/config", "/audit-logs", "/audit-logs/facets", "/tenants/current/report-branding",
               "/tenants/current/security", "/tenants/current/guests", "/openapi.json",
-              "/suppressions/", "/ticketing/connection", "/ticketing/status", "/containment/policy", "/containment/actions",
-              "/portfolio/"]
+              "/suppressions/", "/secrets/", "/ticketing/connection", "/ticketing/status", "/containment/policy", "/containment/actions",
+              "/portfolio/", "/stats/team-insights", "/stats/analyst-workload"]  # workload: default range (this week)
     per_case = ["/cases/{id}", "/artifacts/case/{id}", "/cases/{id}/tasks", "/cases/{id}/events", "/cases/{id}/assets",
                 "/cases/{id}/attachments", "/cases/{id}/follow", "/cases/{id}/report", "/audit-logs/case/{id}",
                 "/cases/{id}/report/charts/lifecycle.svg", "/cases/{id}/report/charts/timeline.svg", "/cases/{id}/ticket"]
     out = {}
-    paths = static + [p.format(id=i) for i in case_ids for p in per_case]
+    paths = static + [p.format(id=i) for i in case_ids for p in per_case] + ["/copilot/sessions/general"]
+    if COPILOT_CASE:
+        paths.append(f"/copilot/sessions/{COPILOT_CASE}")
     for wf in (await c.get("/api/v1/workflows/")).json():
         paths.append(f"/workflows/{wf['id']}")
     for pb in (await c.get("/api/v1/playbooks/")).json():

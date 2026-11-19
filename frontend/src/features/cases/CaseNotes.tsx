@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, Eye, EyeOff, Pencil, Pin, PinOff, Trash2, X } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
+import { Button, Badge, fieldClass, useConfirm } from '../../components/ui';
 import Avatar from '../../components/Avatar';
 import { Markdown, MarkdownField } from '../../components/Markdown';
 import { formatDateTime } from '../../utils/datetime';
@@ -11,7 +12,7 @@ import { stripMentions } from './mentionChips';
 import type { TimelineEvent, User } from '../../types';
 import { NOTE_TYPES } from './notes';
 
-const field = 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
+const field = fieldClass();
 const isConflict = (err: unknown) => {
     const r = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
     return r?.status === 409 && r.data?.detail === 'version_conflict';
@@ -37,7 +38,7 @@ function NoteFields({ caseId, value, onChange }: { caseId: number; value: { even
                         placeholder="What's new? (type @ to mention a teammate)" />
                 ) : (
                     <textarea value={value.content} onChange={(e) => onChange({ ...value, content: e.target.value })}
-                        placeholder="What's new?" rows={3} className={cn(field, 'resize-none')} />
+                        placeholder="What's new?" rows={3} className={cn(field, 'h-auto py-2 resize-none')} />
                 )}
             </MarkdownField>
         </>
@@ -52,19 +53,18 @@ export function NoteComposer({ caseId, onClose }: { caseId: number; onClose: () 
         onSuccess: () => { qc.invalidateQueries({ queryKey: ['case', String(caseId)] }); onClose(); },
     });
     return (
-        <div className="glass-panel p-4 rounded-xl border border-line bg-panel space-y-3">
+        <div className="p-4 rounded-md border border-line bg-panel space-y-3">
             <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-fg">New note <span className="font-normal text-muted">· stamped now</span></h4>
-                <button onClick={onClose} className="text-muted hover:text-fg" aria-label="Close"><X size={16} /></button>
+                <h3 className="text-sm font-semibold text-fg">New note <span className="font-normal text-fg-3">· stamped now</span></h3>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close"><X size={16} /></Button>
             </div>
             <NoteFields caseId={caseId} value={draft} onChange={setDraft} />
             {add.isError && <p role="alert" className="text-xs text-severity-critical">{apiError(add.error, 'Could not add the note.')}</p>}
             <div className="flex justify-end gap-2">
-                <button onClick={onClose} className="px-3 py-1.5 text-xs text-fg-3 hover:text-fg">Cancel</button>
-                <button onClick={() => add.mutate()} disabled={!draft.content.trim() || add.isPending}
-                    className="px-3 py-1.5 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50">
+                <Button variant="secondary" onClick={onClose}>Cancel</Button>
+                <Button onClick={() => add.mutate()} disabled={!draft.content.trim() || add.isPending}>
                     {add.isPending ? 'Adding…' : 'Add note'}
-                </button>
+                </Button>
             </div>
         </div>
     );
@@ -74,6 +74,7 @@ export function NoteComposer({ caseId, onClose }: { caseId: number; onClose: () 
 export function NoteEntry({ caseId, note, me }: { caseId: number; note: TimelineEvent; me?: User }) {
     const qc = useQueryClient();
     const [editing, setEditing] = useState<{ event_type: string; content: string } | null>(null);
+    const { confirm, dialog } = useConfirm();
     const baseVersion = useRef<string | null>(null); // updated_at as loaded when editing started; refetches must not advance it
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
     const canWrite = isAdmin || me?.role === 'analyst';
@@ -89,40 +90,41 @@ export function NoteEntry({ caseId, note, me }: { caseId: number; note: Timeline
     const error = [save, remove, share, pin].find((m) => m.isError)?.error;
 
     return (
-        <div className="rounded-lg border border-line bg-panel p-3">
+        <div className="rounded-md border border-line bg-panel p-3">
+            {dialog}
             <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-mono text-muted">{formatDateTime(note.created_at, me?.timezone)}</span>
-                <span className="text-[10px] font-mono text-muted bg-raised px-1.5 py-0.5 rounded-sm">{note.event_type.replace(/_/g, ' ')}</span>
+                <span className="text-xs num text-fg-3">{formatDateTime(note.created_at, me?.timezone)}</span>
+                <Badge>{note.event_type.replace(/_/g, ' ')}</Badge>
                 {note.user && (
-                    <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-muted">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-fg-3">
                         <Avatar userId={note.user.id} name={note.user.full_name || note.user.email}
                             hasAvatar={note.user.has_avatar} version={note.user.avatar_version} size={18} />
                         {note.user.full_name || note.user.email}
                     </span>
                 )}
                 {note.guest_email && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300"
-                        title="Written by an external guest — treat attachments as untrusted">Guest · {note.guest_email}</span>
+                    <Badge variant="medium"
+                        title="Written by an external guest — treat attachments as untrusted">Guest · {note.guest_email}</Badge>
                 )}
                 {note.via === 'mcp' && (
-                    <span className="text-[10px] font-mono text-muted bg-raised px-1.5 py-0.5 rounded-sm"
-                        title="Written by an MCP client acting for this user">via MCP{note.via_client ? ` · ${note.via_client}` : ''}</span>
+                    <Badge
+                        title="Written by an MCP client acting for this user">via MCP{note.via_client ? ` · ${note.via_client}` : ''}</Badge>
                 )}
-                {note.shared_with_guests && <span className="text-[10px] font-medium text-accent">Shared</span>}
+                {note.shared_with_guests && <span className="text-xs font-medium text-accent">Shared</span>}
                 {note.pinned && <Pin size={12} className="text-accent" aria-label="Pinned to glance" />}
                 {canWrite && !editing && (
-                    <span className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                        <button onClick={() => pin.mutate()} aria-pressed={!!note.pinned} title={note.pinned ? 'Unpin from glance' : 'Pin to glance'}
-                            className={cn('hover:text-fg', note.pinned ? 'text-accent' : 'text-muted')}>
+                    <span className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                        <button onClick={() => pin.mutate()} aria-pressed={!!note.pinned} title={note.pinned ? 'Unpin from glance' : 'Pin to glance'} aria-label={note.pinned ? 'Unpin from glance' : 'Pin to glance'}
+                            className={cn('hover:text-fg', note.pinned ? 'text-accent' : 'text-fg-3')}>
                             {note.pinned ? <Pin size={13} /> : <PinOff size={13} />}
                         </button>
                         <button onClick={() => share.mutate()} aria-pressed={!!note.shared_with_guests}
-                            title={note.shared_with_guests ? 'Shared with guests — click to stop sharing' : 'Share with guests'}
-                            className={note.shared_with_guests ? 'text-accent' : 'text-muted hover:text-fg'}>
+                            title={note.shared_with_guests ? 'Shared with guests — click to stop sharing' : 'Share with guests'} aria-label="Share with guests"
+                            className={note.shared_with_guests ? 'text-accent' : 'text-fg-3 hover:text-fg'}>
                             {note.shared_with_guests ? <Eye size={13} /> : <EyeOff size={13} />}
                         </button>
-                        {canModify && <button onClick={() => { baseVersion.current = note.updated_at ?? null; setEditing({ event_type: note.event_type, content: note.content }); }} title="Edit" className="text-muted hover:text-fg"><Pencil size={13} /></button>}
-                        {canModify && <button onClick={() => { if (confirm('Delete this note?')) remove.mutate(); }} title="Delete" className="text-muted hover:text-severity-critical"><Trash2 size={13} /></button>}
+                        {canModify && <button onClick={() => { baseVersion.current = note.updated_at ?? null; setEditing({ event_type: note.event_type, content: note.content }); }} title="Edit" aria-label="Edit note" className="text-fg-3 hover:text-fg"><Pencil size={13} /></button>}
+                        {canModify && <button onClick={async () => { if (await confirm({ title: 'Delete this note?', danger: true })) remove.mutate(); }} title="Delete" aria-label="Delete note" className="text-fg-3 hover:text-severity-critical"><Trash2 size={13} /></button>}
                     </span>
                 )}
             </div>
@@ -130,11 +132,10 @@ export function NoteEntry({ caseId, note, me }: { caseId: number; note: Timeline
                 <div className="mt-2 space-y-2">
                     <NoteFields caseId={caseId} value={editing} onChange={setEditing} />
                     <div className="flex justify-end gap-2">
-                        <button onClick={() => setEditing(null)} className="px-2 py-1 text-xs text-fg-3 hover:text-fg">Cancel</button>
-                        <button onClick={() => save.mutate()} disabled={!editing.content.trim() || save.isPending}
-                            className="px-2 py-1 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50 flex items-center gap-1">
-                            <Check size={12} /> Save
-                        </button>
+                        <Button size="sm" variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
+                        <Button size="sm" onClick={() => save.mutate()} disabled={!editing.content.trim() || save.isPending}>
+                            <Check size={12} aria-hidden /> Save
+                        </Button>
                     </div>
                 </div>
             ) : (

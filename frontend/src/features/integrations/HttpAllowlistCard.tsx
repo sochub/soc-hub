@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
+import { Card } from '../../components/ui';
 
 function errorText(e: unknown): string {
     const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
@@ -17,8 +18,8 @@ export default function HttpAllowlistCard() {
         onSuccess: (res) => { setText(null); qc.setQueryData(['http-allowlist'], res); },
     });
     return (
-        <div className="bg-panel border border-line p-5">
-            <h2 className="font-semibold text-fg">Automation HTTP allowlist</h2>
+        <Card className="p-4">
+            <h3 className="text-sm font-semibold text-fg">Automation HTTP allowlist</h3>
             <p className="text-xs text-fg-3 mt-1 mb-3">
                 Workflow HTTP requests to private or internal addresses are blocked. List internal hostnames (one per line, e.g. <span className="font-mono">soar.corp.example.com</span> or <span className="font-mono">*.corp.example.com</span>) that workflows may call. IP addresses and single-label names are not accepted; reaching private addresses also requires the platform operator to enable it. Loopback and cloud metadata addresses are always blocked.
             </p>
@@ -26,7 +27,7 @@ export default function HttpAllowlistCard() {
                 placeholder="soar.internal.corp" onChange={(e) => { save.reset(); setText(e.target.value); }} />
             <button onClick={() => save.mutate()} disabled={save.isPending}
                 className="mt-2 h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50">{save.isSuccess ? 'Saved' : 'Save'}</button>
-            {save.isError && <span role="alert" className="ml-2 text-xs text-red-300">{errorText(save.error)}</span>}
-        </div>
+            {save.isError && <span role="alert" className="ml-2 text-xs text-severity-critical">{errorText(save.error)}</span>}
+        </Card>
     );
 }

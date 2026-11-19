@@ -1,16 +1,11 @@
+import '@fontsource-variable/inter'
+import '@fontsource-variable/jetbrains-mono'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import '@fontsource/inter/400.css'
-import '@fontsource/inter/500.css'
-import '@fontsource/inter/600.css'
-import '@fontsource/inter/700.css'
-import '@fontsource/inter-tight/500.css'
-import '@fontsource/inter-tight/600.css'
-import '@fontsource/inter-tight/700.css'
-import '@fontsource/inter-tight/800.css'
-import '@fontsource/space-mono/400.css'
-import '@fontsource/space-mono/700.css'
 import './index.css'
+
+// Apply the viewer's theme choice before first paint (Layout owns the toggle).
+try { const t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch { /* storage blocked */ }
 import App from './App.tsx'
 import { api } from './api/client'
 

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, Copy } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
+import { Button, Card, useConfirm } from '../../components/ui';
 
 type Provider = 'ollama' | 'openai' | 'openai_compatible' | 'anthropic' | 'gemini' | 'vertex' | 'bedrock';
 type SecretField = 'api_key' | 'organization' | 'access_key_id' | 'secret_access_key' | 'session_token' | 'service_account_json';
@@ -57,6 +58,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
     // Tenant-scoped key: switching tenants must never show (or save over) another tenant's config.
     const key = ['ai-config', tenantId];
     const qc = useQueryClient();
+    const { confirm, dialog } = useConfirm();
     const { data } = useQuery({ queryKey: key, queryFn: async () => (await api.get('/ai/config')).data as AIConfig });
     const [draft, setDraft] = useState<Record<string, FormValue> | null>(null);
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -131,10 +133,11 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
     };
 
     return (
-        <div className="bg-panel border border-line p-5 space-y-3">
+        <Card className="p-4 space-y-3">
+            {dialog}
             <div className="flex items-center gap-2">
                 <Bot size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">AI provider</h2>
+                <h3 className="text-sm font-semibold text-fg">AI provider</h3>
                 <span className="ml-auto label-mono">{status}</span>
             </div>
             {readOnly ? (
@@ -174,7 +177,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                                                 <span className="label-mono">trust policy for that role · external id <span className="num">{data.external_id}</span></span>
                                                 <button type="button" className="text-xs text-accent flex items-center gap-1" onClick={copyTrust}><Copy size={12} />Copy</button>
                                             </div>
-                                            <pre className="text-[11px] font-mono bg-surface border border-line p-2 overflow-x-auto">{trust}</pre>
+                                            <pre className="text-xs font-mono bg-surface border border-line p-2 overflow-x-auto">{trust}</pre>
                                             {!data.deployment_principal_arn && <p className="text-xs text-fg-3 mt-1">Replace the placeholder principal with the ARN of the role the sochub server runs as.</p>}
                                         </div>
                                     ) : <p className="text-xs text-fg-3">Save with role mode to generate the External ID.</p>}
@@ -183,7 +186,7 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                         </fieldset>
                     )}
                     {secretFields.map((f) => (
-                        <label key={f} className="block"><span className="label-mono">{FIELD_LABEL[f]}{secretIsSet(f) && <span className="ml-2 text-emerald-300">· set</span>}</span>
+                        <label key={f} className="block"><span className="label-mono">{FIELD_LABEL[f]}{secretIsSet(f) && <span className="ml-2 text-lime">· set</span>}</span>
                             {f === 'service_account_json'
                                 ? <textarea rows={4} className={`${input} font-mono text-xs`} value={(form[`secret_${f}`] as string) ?? ''} onChange={(e) => set(`secret_${f}`, e.target.value)} placeholder={secretIsSet(f) ? '•••• (saved — leave blank to keep)' : 'Paste the service-account JSON key'} />
                                 : <input type="password" autoComplete="off" className={`${input} font-mono`} value={(form[`secret_${f}`] as string) ?? ''} onChange={(e) => set(`secret_${f}`, e.target.value)} placeholder={secretIsSet(f) ? '•••• (saved — leave blank to keep)' : ''} />}
@@ -192,11 +195,12 @@ export default function AIProviderCard({ tenantId }: { tenantId: number | null }
                     <div className="flex items-center gap-2 flex-wrap">
                         <button onClick={() => save.mutate()} disabled={save.isPending || !form.model} className="h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50">Save</button>
                         <button onClick={() => test.mutate()} disabled={test.isPending || (!!draft && !form.model)} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test'}</button>
-                        {saved && <button onClick={() => { if (confirm('Remove this organization\'s AI provider and use the deployment default?')) reset.mutate(); }} disabled={reset.isPending} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">Reset to deployment default</button>}
-                        {msg && <span role="status" className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</span>}
+                        {saved && <Button size="sm" variant="secondary" disabled={reset.isPending}
+                            onClick={async () => { if (await confirm({ title: 'Reset to the deployment default?', body: "This removes this organization's AI provider and uses the deployment default.", confirmLabel: 'Reset' })) reset.mutate(); }}>Reset to deployment default</Button>}
+                        {msg && <span role="status" className={msg.ok ? 'text-xs text-lime' : 'text-xs text-severity-critical'}>{msg.text}</span>}
                     </div>
                 </>
             )}
-        </div>
+        </Card>
     );
 }

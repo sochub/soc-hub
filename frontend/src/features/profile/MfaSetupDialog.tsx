@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { Check, Copy, Loader2 } from 'lucide-react';
 import { api } from '../../api/client';
-import Modal, { btnPrimary, btnSecondary, modalInput, modalLabel } from '../../components/layout/Modal';
+import Modal from '../../components/layout/Modal';
+import { Button, Input, Label, Skeleton } from '../../components/ui';
 import { refreshSession } from '../../api/queryClient';
 import { mfaErrorMessage } from './mfaErrors';
 
@@ -91,42 +92,42 @@ export default function MfaSetupDialog({ open, onClose, onEnabled, authToken, re
     return (
         <Modal open={open} onClose={onClose} title="Turn on two-factor authentication" size="md"
             footer={<>
-                <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
-                <button type="submit" form="mfa-setup-form" className={btnPrimary} disabled={busy || loading || !secret || code.length !== 6 || (!!requirePassword && !pw)}>
+                <Button variant="secondary" onClick={onClose}>Cancel</Button>
+                <Button type="submit" form="mfa-setup-form" disabled={busy || loading || !secret || code.length !== 6 || (!!requirePassword && !pw)}>
                     {busy && <Loader2 size={14} className="animate-spin" />} Confirm
-                </button>
+                </Button>
             </>}>
             <form id="mfa-setup-form" className="space-y-4" onSubmit={(e) => { e.preventDefault(); void confirm(); }}>
                 <p className="text-sm text-fg-2">
                     Scan the QR code with an authenticator app, then enter the 6-digit code it shows.
                 </p>
-                {loading && <p className="font-mono text-xs text-muted">$ generating key…</p>}
-                {qr && <img src={qr} alt="Scan with your authenticator app" width={192} height={192} className="border border-line" />}
+                {loading && <Skeleton rows={2} />}
+                {qr && <img src={qr} alt="Scan with your authenticator app" width={192} height={192} className="border border-line rounded-md" />}
                 {secret && (
                     <div>
-                        <span className={modalLabel}>Can't scan? Enter this key manually</span>
+                        <span className="block text-xs font-medium text-fg-2 mb-1.5">Can't scan? Enter this key manually</span>
                         <div className="flex items-center gap-2">
-                            <code className="font-mono text-sm bg-surface border border-line px-2 py-1.5 break-all select-all">{secret}</code>
-                            <button type="button" className={btnSecondary} onClick={() => void copy()} aria-label="Copy key">
+                            <code className="font-mono text-sm bg-surface border border-line rounded-md px-2 py-1.5 break-all select-all">{secret}</code>
+                            <Button variant="secondary" onClick={() => void copy()} aria-label="Copy key">
                                 {copied ? <Check size={14} /> : <Copy size={14} />}
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 )}
                 {requirePassword && (
                     <div>
-                        <label htmlFor="mfa-pw" className={modalLabel}>Current password</label>
-                        <input id="mfa-pw" type="password" autoComplete="current-password" className={modalInput}
+                        <Label htmlFor="mfa-pw">Current password</Label>
+                        <Input id="mfa-pw" type="password" autoComplete="current-password"
                             value={pw} onChange={(e) => setPw(e.target.value)} />
                     </div>
                 )}
                 <div>
-                    <label htmlFor="mfa-code" className={modalLabel}>6-digit code</label>
-                    <input id="mfa-code" className={`${modalInput} font-mono tracking-widest`} inputMode="numeric"
+                    <Label htmlFor="mfa-code">6-digit code</Label>
+                    <Input id="mfa-code" className="font-mono tracking-widest" inputMode="numeric"
                         autoComplete="one-time-code" maxLength={6} value={code}
                         onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
                 </div>
-                {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+                {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
             </form>
         </Modal>
     );

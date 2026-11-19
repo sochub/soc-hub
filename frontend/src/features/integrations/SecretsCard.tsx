@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import Modal, { btnPrimary, btnSecondary, modalInput, modalLabel } from '../../components/layout/Modal';
 import type { Secret } from '../../types';
 import { NAME_RE, errText, hostStatus, parseHosts } from './secretsUtil';
+import { Card } from '../../components/ui';
 
 export interface SecretPrefill { name: string; value: string; host: string }
 
@@ -59,7 +60,7 @@ export function SecretDialog({ secret, prefill, tenantId, onClose, onSaved }: {
                 <label className="block"><span className={modalLabel}>Name</span>
                     <input className={`${modalInput} font-mono`} value={name} disabled={edit} placeholder="EXAMPLE_API_KEY"
                         onChange={(e) => setName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))} />
-                    {!edit && name && !nameOk && <span className="text-xs text-red-300">Start with a letter; A-Z, 0-9 and _ only, 2-64 characters.</span>}
+                    {!edit && name && !nameOk && <span className="text-xs text-severity-critical">Start with a letter; A-Z, 0-9 and _ only, 2-64 characters.</span>}
                 </label>
                 <label className="block"><span className={modalLabel}>Value</span>
                     <input type="password" autoComplete="new-password" className={`${modalInput} font-mono`} value={value}
@@ -72,18 +73,18 @@ export function SecretDialog({ secret, prefill, tenantId, onClose, onSaved }: {
                         onChange={(e) => setHosts(e.target.value)} />
                     <ul className="text-xs space-y-0.5 mt-1">
                         {list.map((h, i) => statuses[i] !== 'ok' && (
-                            <li key={`${h}-${i}`} className={statuses[i] === 'bad' ? 'text-red-300' : 'text-amber-300'}>
+                            <li key={`${h}-${i}`} className={statuses[i] === 'bad' ? 'text-severity-critical' : 'text-severity-medium'}>
                                 <span className="font-mono">{h}</span>: {statuses[i] === 'bad'
                                     ? 'not a valid host pattern (lowercase hostname or *.domain)'
                                     : 'must be on the organization HTTP allowlist'}
                             </li>
                         ))}
                     </ul>
-                    {list.length === 0 && <span className="text-xs text-amber-300">With no hosts the secret cannot be sent anywhere.</span>}
+                    {list.length === 0 && <span className="text-xs text-severity-medium">With no hosts the secret cannot be sent anywhere.</span>}
                 </label>
                 <label className="block"><span className={modalLabel}>Description</span>
                     <input className={modalInput} value={desc} maxLength={500} onChange={(e) => setDesc(e.target.value)} /></label>
-                {err && <p role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 p-2">{err}</p>}
+                {err && <p role="alert" className="text-xs text-severity-critical bg-severity-critical/5 border border-severity-critical/30 rounded-md p-2">{err}</p>}
             </form>
         </Modal>
     );
@@ -113,20 +114,20 @@ export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
         },
     });
 
-    if (isError) return <div role="alert" className="bg-panel border border-line p-5 text-sm text-red-300">Secrets: {errText(error, 'could not load secrets')}</div>;
+    if (isError) return <div role="alert" className="rounded-md bg-panel border border-line p-4 text-sm text-severity-critical">Secrets: {errText(error, 'could not load secrets')}</div>;
     if (!data) return null;
     const btn = 'h-8 px-3 text-sm';
 
     return (
-        <div className="bg-panel border border-line p-5 space-y-3">
+        <Card className="p-4 space-y-3">
             <div className="flex items-center gap-2">
                 <KeyRound size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">Secrets</h2>
+                <h3 className="text-sm font-semibold text-fg">Secrets</h3>
                 <button onClick={() => { setMsg(null); setDialog({ secret: null }); }}
                     className={`ml-auto ${btn} bg-accent text-on-accent inline-flex items-center gap-1.5`}><Plus size={14} />Add secret</button>
             </div>
             <p className="text-xs text-fg-3">Credentials for workflow HTTP requests. Reference one as <code className="font-mono">{'{{ secrets.NAME }}'}</code> in a URL, header value or body. Values are encrypted, only sent to the allowed hosts, and redacted from run history.</p>
-            {msg && <p role="status" className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</p>}
+            {msg && <p role="status" className={msg.ok ? 'text-xs text-lime' : 'text-xs text-severity-critical'}>{msg.text}</p>}
 
             <div className="border border-line overflow-x-auto">
                 <table className="w-full text-sm">
@@ -142,8 +143,8 @@ export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
                                 <td className="px-3 py-2 text-xs text-fg-2">{s.description || '—'}</td>
                                 <td className="px-3 py-2">
                                     <div className="flex flex-wrap gap-1">
-                                        {s.allowed_hosts.length === 0 && <span className="text-xs text-amber-300">none</span>}
-                                        {s.allowed_hosts.map((h) => <span key={h} className="px-1.5 py-0.5 border border-line bg-surface font-mono text-[11px]">{h}</span>)}
+                                        {s.allowed_hosts.length === 0 && <span className="text-xs text-severity-medium">none</span>}
+                                        {s.allowed_hosts.map((h) => <span key={h} className="px-1.5 py-0.5 border border-line bg-surface font-mono text-xs">{h}</span>)}
                                     </div>
                                 </td>
                                 <td className="px-3 py-2 text-xs">
@@ -154,12 +155,12 @@ export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
                                 <td className="px-3 py-2 whitespace-nowrap">
                                     {confirm === s.name ? (
                                         <span className="flex items-center gap-2 text-xs text-fg-2">Delete?
-                                            <button onClick={() => del.mutate({ name: s.name, force: false })} disabled={del.isPending} className={`${btn} bg-red-600 text-white disabled:opacity-50`}>Delete</button>
+                                            <button onClick={() => del.mutate({ name: s.name, force: false })} disabled={del.isPending} className={`${btn} bg-severity-critical text-white disabled:opacity-50`}>Delete</button>
                                             <button onClick={() => setConfirm(null)} className={`${btn} border border-line-strong`}>Cancel</button></span>
                                     ) : (
                                         <span className="flex items-center gap-2">
                                             <button aria-label={`Edit ${s.name}`} onClick={() => { setMsg(null); setDialog({ secret: s }); }} className="p-1 text-muted hover:text-accent"><Pencil size={14} /></button>
-                                            <button aria-label={`Delete ${s.name}`} onClick={() => { setMsg(null); setInUse(null); setConfirm(s.name); }} className="p-1 text-muted hover:text-red-400"><Trash2 size={14} /></button>
+                                            <button aria-label={`Delete ${s.name}`} onClick={() => { setMsg(null); setInUse(null); setConfirm(s.name); }} className="p-1 text-muted hover:text-severity-critical"><Trash2 size={14} /></button>
                                         </span>
                                     )}
                                 </td>
@@ -170,16 +171,16 @@ export default function SecretsCard({ tenantId }: { tenantId: number | null }) {
             </div>
 
             {inUse && (
-                <div role="alert" className="text-xs border border-amber-500/30 bg-amber-500/10 text-amber-300 p-3 space-y-2">
+                <div role="alert" className="text-xs border border-severity-medium/30 bg-severity-medium/10 text-severity-medium p-3 space-y-2">
                     <p><span className="font-mono">{inUse.name}</span> is used by {inUse.workflows.length} workflow(s): {inUse.workflows.map((w) => w.name).join(', ')}. Deleting it will make those workflows fail.</p>
                     <div className="flex gap-2">
-                        <button onClick={() => del.mutate({ name: inUse.name, force: true })} disabled={del.isPending} className={`${btn} bg-red-600 text-white disabled:opacity-50`}>Delete anyway</button>
+                        <button onClick={() => del.mutate({ name: inUse.name, force: true })} disabled={del.isPending} className={`${btn} bg-severity-critical text-white disabled:opacity-50`}>Delete anyway</button>
                         <button onClick={() => setInUse(null)} className={`${btn} border border-line-strong bg-panel`}>Cancel</button>
                     </div>
                 </div>
             )}
 
             {dialog && <SecretDialog secret={dialog.secret} tenantId={tenantId} onClose={() => setDialog(null)} />}
-        </div>
+        </Card>
     );
 }

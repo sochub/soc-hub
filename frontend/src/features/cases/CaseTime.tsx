@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Trash2 } from 'lucide-react';
 import { api } from '../../api/client';
 import type { User } from '../../types';
-import { Badge, Button, Input } from '../../components/ui';
+import { Badge, Button, Input, Skeleton, ErrorState, useConfirm } from '../../components/ui';
 import { formatDuration, useCaseTime, type TimeEntry } from './timeApi';
 
 function apiError(e: unknown): string {
@@ -20,7 +20,8 @@ export default function CaseTime({ caseId }: { caseId: number }) {
     });
     const isAdmin = !!me && (me.role === 'admin' || !!me.is_super_admin);
     const canWrite = isAdmin || me?.role === 'analyst';
-    const { data, isLoading, isError } = useCaseTime(caseId);
+    const { data, isLoading, isError, refetch } = useCaseTime(caseId);
+    const { confirm, dialog } = useConfirm();
     const refresh = () => qc.invalidateQueries({ queryKey: ['case-time', caseId] });
 
     const [minutes, setMinutes] = useState('');
@@ -59,14 +60,15 @@ export default function CaseTime({ caseId }: { caseId: number }) {
     const fmt = (iso: string) => new Date(iso).toLocaleString(undefined, { timeZone: me?.timezone || undefined });
     const minsValid = Number(minutes) > 0 && Number.isFinite(Number(minutes));
 
-    if (isLoading) return <p className="text-sm text-muted">Loading…</p>;
-    if (isError || !data) return <p role="alert" className="text-sm text-severity-critical">Could not load time.</p>;
+    if (isLoading) return <Skeleton rows={3} />;
+    if (isError || !data) return <ErrorState message="Could not load time." onRetry={() => refetch()} />;
 
     return (
         <div className="space-y-6">
+            {dialog}
             <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-fg-2">Total</span>
-                <span className="text-lg font-semibold text-fg">{formatDuration(data.total_seconds)}</span>
+                <span className="text-lg font-semibold text-fg num">{formatDuration(data.total_seconds)}</span>
                 {data.by_user.map((u) => (
                     <Badge key={u.user_id}>{u.email}: {formatDuration(u.seconds)}</Badge>
                 ))}
@@ -74,10 +76,10 @@ export default function CaseTime({ caseId }: { caseId: number }) {
 
             {canWrite && (
                 <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (minsValid) add.mutate(); }}>
-                    <label className="text-xs text-muted">Minutes
+                    <label className="text-xs font-medium text-fg-2">Minutes
                         <Input type="number" min={1} value={minutes} onChange={(e) => setMinutes(e.target.value)} className="w-28 mt-1" />
                     </label>
-                    <label className="text-xs text-muted flex-1 min-w-48">Note (optional)
+                    <label className="text-xs font-medium text-fg-2 flex-1 min-w-48">Note (optional)
                         <Input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} className="mt-1" />
                     </label>
                     <Button type="submit" size="md" disabled={!minsValid || add.isPending}>Add time</Button>
@@ -86,13 +88,14 @@ export default function CaseTime({ caseId }: { caseId: number }) {
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
 
             {data.entries.length === 0 ? (
-                <p className="text-sm text-muted">No time recorded yet.</p>
+                <p className="text-sm text-fg-3">No time recorded yet.</p>
             ) : (
+                <div className="overflow-x-auto rounded-md border border-line">
                 <table className="w-full text-sm">
                     <thead>
-                        <tr className="text-left text-xs uppercase tracking-wider text-muted border-b border-line">
-                            <th className="py-2 pr-4">Analyst</th><th className="pr-4">Started</th><th className="pr-4">Duration</th>
-                            <th className="pr-4">Source</th><th className="pr-4">Note</th><th />
+                        <tr className="text-left label-caps border-b border-line">
+                            <th className="px-3 py-2">Analyst</th><th className="px-3 py-2">Started</th><th className="px-3 py-2">Duration</th>
+                            <th className="px-3 py-2">Source</th><th className="px-3 py-2">Note</th><th className="px-3 py-2"><span className="sr-only">Actions</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -100,25 +103,25 @@ export default function CaseTime({ caseId }: { caseId: number }) {
                             const mine = me?.id === e.user_id || isAdmin;
                             const editing = editId === e.id;
                             return (
-                                <tr key={e.id} className="border-b border-line/50 text-fg-2">
-                                    <td className="py-2 pr-4">{who(e.user_id)}</td>
-                                    <td className="pr-4 whitespace-nowrap">{fmt(e.started_at)}</td>
-                                    <td className="pr-4">
+                                <tr key={e.id} className="border-b border-line last:border-b-0 text-fg-2 hover:bg-raised">
+                                    <td className="px-3 py-2.5">{who(e.user_id)}</td>
+                                    <td className="px-3 py-2.5 whitespace-nowrap num">{fmt(e.started_at)}</td>
+                                    <td className="px-3 py-2.5 num">
                                         {editing
                                             ? <Input type="number" min={1} value={editMinutes} onChange={(ev) => setEditMinutes(ev.target.value)} className="w-24" aria-label="Minutes" />
                                             : formatDuration(e.seconds)}
                                     </td>
-                                    <td className="pr-4">
+                                    <td className="px-3 py-2.5">
                                         {e.source === 'auto'
-                                            ? <Badge variant="info">estimated from case activity</Badge>
-                                            : <Badge>manual</Badge>}
+                                            ? <Badge variant="info">Estimated from case activity</Badge>
+                                            : <Badge>Manual</Badge>}
                                     </td>
-                                    <td className="pr-4">
+                                    <td className="px-3 py-2.5">
                                         {editing
                                             ? <Input value={editNote} maxLength={500} onChange={(ev) => setEditNote(ev.target.value)} aria-label="Note" />
                                             : e.note}
                                     </td>
-                                    <td className="text-right whitespace-nowrap">
+                                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
                                         {mine && (editing ? (
                                             <>
                                                 <Button size="sm" disabled={!(Number(editMinutes) > 0) || save.isPending} onClick={() => save.mutate(e)}>Save</Button>
@@ -126,12 +129,12 @@ export default function CaseTime({ caseId }: { caseId: number }) {
                                             </>
                                         ) : (
                                             <>
-                                                <button aria-label="Edit entry" className="p-1.5 text-fg-3 hover:text-fg"
+                                                <button aria-label="Edit entry" className="p-1.5 rounded-sm text-fg-3 hover:text-fg hover:bg-raised"
                                                     onClick={() => { setEditId(e.id); setEditMinutes(String(Math.max(1, Math.round(e.seconds / 60)))); setEditNote(e.note ?? ''); }}>
                                                     <Pencil size={14} />
                                                 </button>
-                                                <button aria-label="Delete entry" className="p-1.5 text-fg-3 hover:text-severity-critical"
-                                                    disabled={remove.isPending} onClick={() => remove.mutate(e.id)}>
+                                                <button aria-label="Delete entry" className="p-1.5 rounded-sm text-fg-3 hover:text-severity-critical hover:bg-raised"
+                                                    disabled={remove.isPending} onClick={async () => { if (await confirm({ title: 'Delete this time entry?', danger: true })) remove.mutate(e.id); }}>
                                                     <Trash2 size={14} />
                                                 </button>
                                             </>
@@ -142,6 +145,7 @@ export default function CaseTime({ caseId }: { caseId: number }) {
                         })}
                     </tbody>
                 </table>
+                </div>
             )}
         </div>
     );

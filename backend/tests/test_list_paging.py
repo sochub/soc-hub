@@ -77,6 +77,14 @@ def test_case_list_filters_sort_total():
             r = await cl.get("/api/v1/cases/", headers=h, params={"sla": "pressure", "status": "new"})
             assert _ids(r) == [b.id]
 
+            # Dashboard drill-downs: outcome (not_set = no outcome yet) and a created-at window.
+            assert _ids(await cl.get("/api/v1/cases/", headers=h, params={"outcome": "false_positive"})) == [c.id]
+            assert c.id not in _ids(await cl.get("/api/v1/cases/", headers=h, params={"outcome": "not_set"}))
+            old = {"created_before": (now - timedelta(days=7)).isoformat()}
+            assert _ids(await cl.get("/api/v1/cases/", headers=h, params=old)) == [b.id]
+            recent = {"created_from": (now - timedelta(days=7)).isoformat()}
+            assert b.id not in _ids(await cl.get("/api/v1/cases/", headers=h, params=recent))
+
             assert (await cl.get("/api/v1/cases/", headers=h, params={"status": "bogus"})).status_code == 422
             assert (await cl.get("/api/v1/cases/", headers=h, params={"sort": "title"})).status_code == 422
             assert (await cl.get("/api/v1/cases/", headers=h, params={"owner": "x"})).status_code == 422
@@ -112,6 +120,10 @@ def test_ioc_and_artifact_lists_total_and_search():
                     assert [x["value"] for x in r.json()] == ["203.0.113.7"] and r.headers["x-total-count"] == "1"
                     r = await cl.get(path, headers=h, params={"q": "_"})
                     assert r.json() == [] and r.headers["x-total-count"] == "0"
+                r = await cl.get("/api/v1/artifacts/", headers=h, params={"artifact_type": "other"})
+                assert r.headers["x-total-count"] == "3"
+                r = await cl.get("/api/v1/artifacts/", headers=h, params={"artifact_type": "ip"})
+                assert r.json() == [] and r.headers["x-total-count"] == "0"
         finally:
             async with AsyncSessionLocal() as db:
                 await db.execute(delete(IOC).where(IOC.id.in_(ioc_ids or [-1])))

@@ -283,8 +283,8 @@ export type SLAStatus = 'not_tracked' | 'met' | 'on_track' | 'at_risk' | 'breach
 
 /** PUT /cases/{id} body from the edit modal; `reason` is only sent when status or severity changed. */
 export interface CaseEditPayload {
-  title: string; description: string; severity: string; status: string; tags: string[]; source: string;
-  outcome: string | null; closing_note: string | null; reason?: string;
+  title?: string; description?: string; severity?: string; status?: string; tags?: string[]; source?: string;
+  outcome?: string | null; closing_note?: string | null; reason?: string;
 }
 
 export interface Case {

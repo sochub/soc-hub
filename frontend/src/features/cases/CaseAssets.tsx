@@ -3,16 +3,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Trash2, X, Server, User as UserIcon, Globe, Network, Box } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
+import { Button, Badge, Stamp, Skeleton, ErrorState, fieldClass, useConfirm, type Tone } from '../../components/ui';
 import type { CaseAsset, User } from '../../types';
 
 const TYPES: [string, string, typeof Server][] = [
     ['host', 'Host', Server], ['account', 'Account', UserIcon], ['ip', 'IP', Network],
     ['domain', 'Domain', Globe], ['service', 'Service', Box], ['other', 'Other', Box],
 ];
-const STATUSES: [string, string, string][] = [
-    ['unknown', 'Unknown', 'bg-raised text-muted border-line'],
-    ['compromised', 'Compromised', 'bg-red-500/15 text-red-400 border-red-500/30'],
-    ['not_compromised', 'Not compromised', 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'],
+const STATUSES: [string, string, Tone][] = [
+    ['unknown', 'Unknown', 'neutral'],
+    ['compromised', 'Compromised', 'critical'],
+    ['not_compromised', 'Not compromised', 'ok'],
 ];
 
 type AssetDraft = { name: string; asset_type: string; ip: string; domain: string; description: string; compromise_status: string; tags: string };
@@ -23,7 +24,7 @@ const assetPayload = (d: AssetDraft) => ({
     tags: d.tags.split(',').map((t) => t.trim()).filter(Boolean),
 });
 
-const field = 'w-full bg-panel border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
+const field = fieldClass();
 
 /** The asset form fields, shared by AddAssetForm and the inline edit. */
 function AssetFields({ draft, setDraft }: { draft: AssetDraft; setDraft: (d: AssetDraft) => void }) {
@@ -39,7 +40,7 @@ function AssetFields({ draft, setDraft }: { draft: AssetDraft; setDraft: (d: Ass
                 {STATUSES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
             </select>
             <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} placeholder="Tags, comma separated" className={field} aria-label="Tags" />
-            <textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Description" rows={2} className={cn(field, 'sm:col-span-2 resize-none')} aria-label="Description" />
+            <textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Description" rows={2} className={cn(field, 'h-auto py-2 sm:col-span-2 resize-none')} aria-label="Description" />
         </div>
     );
 }
@@ -57,11 +58,10 @@ export function AddAssetForm({ caseId, onDone }: { caseId: number; onDone: () =>
             <AssetFields draft={draft} setDraft={setDraft} />
             {add.isError && <p role="alert" className="text-xs text-severity-critical">Could not add the asset.</p>}
             <div className="flex justify-end gap-2">
-                <button onClick={onDone} className="px-3 py-1.5 text-xs text-fg-3 hover:text-fg">Cancel</button>
-                <button onClick={() => add.mutate()} disabled={!draft.name.trim() || add.isPending}
-                    className="px-3 py-1.5 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50">
+                <Button variant="secondary" onClick={onDone}>Cancel</Button>
+                <Button onClick={() => add.mutate()} disabled={!draft.name.trim() || add.isPending}>
                     {add.isPending ? 'Adding…' : 'Add asset'}
-                </button>
+                </Button>
             </div>
         </div>
     );
@@ -72,11 +72,12 @@ export default function CaseAssets({ caseId }: { caseId: number }) {
     const qc = useQueryClient();
     const [editing, setEditing] = useState<number | null>(null);
     const [draft, setDraft] = useState<AssetDraft>(blankAsset);
+    const { confirm, dialog } = useConfirm();
 
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const canEdit = me?.role === 'admin' || me?.role === 'analyst' || me?.is_super_admin;
     const key = ['case-assets', caseId];
-    const { data: assets = [], isLoading } = useQuery({ queryKey: key, queryFn: async () => (await api.get(`/cases/${caseId}/assets`)).data as CaseAsset[] });
+    const { data: assets = [], isLoading, isError, refetch } = useQuery({ queryKey: key, queryFn: async () => (await api.get(`/cases/${caseId}/assets`)).data as CaseAsset[] });
 
     const invalidate = () => { qc.invalidateQueries({ queryKey: key }); };
     const save = useMutation({
@@ -85,21 +86,21 @@ export default function CaseAssets({ caseId }: { caseId: number }) {
     });
     const remove = useMutation({ mutationFn: async (id: number) => api.delete(`/cases/${caseId}/assets/${id}`), onSuccess: invalidate });
 
-    if (isLoading) return <p className="font-mono text-xs text-muted">$ loading assets…</p>;
+    if (isLoading) return <Skeleton rows={2} />;
+    if (isError) return <ErrorState message="Could not load the assets." onRetry={() => refetch()} />;
 
     const form = (
-        <div className="glass-panel p-4 rounded-xl border border-line bg-panel space-y-3">
+        <div className="p-4 rounded-md border border-line bg-panel space-y-3">
             <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-fg">Edit asset</h4>
-                <button onClick={() => setEditing(null)} className="text-muted hover:text-fg" aria-label="Close"><X size={16} /></button>
+                <h3 className="text-sm font-semibold text-fg">Edit asset</h3>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditing(null)} aria-label="Close"><X size={16} /></Button>
             </div>
             <AssetFields draft={draft} setDraft={setDraft} />
             <div className="flex justify-end gap-2">
-                <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs text-fg-3 hover:text-fg">Cancel</button>
-                <button onClick={() => save.mutate()} disabled={!draft.name.trim() || save.isPending}
-                    className="px-3 py-1.5 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50">
+                <Button variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
+                <Button onClick={() => save.mutate()} disabled={!draft.name.trim() || save.isPending}>
                     {save.isPending ? 'Saving…' : 'Save'}
-                </button>
+                </Button>
             </div>
             {save.isError && <p role="alert" className="text-xs text-severity-critical">Could not save the asset.</p>}
         </div>
@@ -107,9 +108,10 @@ export default function CaseAssets({ caseId }: { caseId: number }) {
 
     return (
         <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-fg-2">Assets <span className="font-mono text-xs text-muted">{assets.length}</span></h3>
+            {dialog}
+            <h2 className="text-sm font-semibold text-fg">Assets <span className="num text-xs font-normal text-fg-3">{assets.length}</span></h2>
             {!assets.length && (
-                <p className="text-sm text-muted">No assets yet. Add the hosts and accounts the incident touched, and whether they are compromised.</p>
+                <p className="text-sm text-fg-3">No assets yet. Add the hosts and accounts the incident touched, and whether they are compromised.</p>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {assets.map((a) => {
@@ -117,15 +119,15 @@ export default function CaseAssets({ caseId }: { caseId: number }) {
                     const Icon = (TYPES.find(([k]) => k === a.asset_type) ?? TYPES[5])[2];
                     const st = STATUSES.find(([k]) => k === a.compromise_status) ?? STATUSES[0];
                     return (
-                        <article key={a.id} className="group rounded-lg border border-line bg-panel p-3">
+                        <article key={a.id} className="group rounded-md border border-line bg-panel p-3">
                             <div className="flex items-center gap-2">
-                                <Icon size={16} className="text-fg-3 shrink-0" />
+                                <Icon size={16} className="text-fg-3 shrink-0" aria-hidden />
                                 <span className="text-sm font-medium text-fg truncate">{a.name}</span>
-                                <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded-sm border', st[2])}>{st[1]}</span>
+                                <Stamp tone={st[2]}>{st[1]}</Stamp>
                                 {canEdit && (
-                                    <span className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                                        <button onClick={() => { setDraft(fromAsset(a)); setEditing(a.id); }} title="Edit" className="text-muted hover:text-fg"><Pencil size={13} /></button>
-                                        <button onClick={() => { if (confirm('Delete this asset?')) remove.mutate(a.id); }} title="Delete" className="text-muted hover:text-severity-critical"><Trash2 size={13} /></button>
+                                    <span className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                                        <button onClick={() => { setDraft(fromAsset(a)); setEditing(a.id); }} title="Edit" aria-label={`Edit ${a.name}`} className="p-1 rounded-sm text-fg-3 hover:text-fg hover:bg-raised"><Pencil size={13} /></button>
+                                        <button onClick={async () => { if (await confirm({ title: `Delete asset ${a.name}?`, danger: true })) remove.mutate(a.id); }} title="Delete" aria-label={`Delete ${a.name}`} className="p-1 rounded-sm text-fg-3 hover:text-severity-critical hover:bg-raised"><Trash2 size={13} /></button>
                                     </span>
                                 )}
                             </div>
@@ -133,7 +135,7 @@ export default function CaseAssets({ caseId }: { caseId: number }) {
                             {a.description && <p className="mt-1 text-sm text-fg-2 whitespace-pre-wrap">{a.description}</p>}
                             {a.tags.length > 0 && (
                                 <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {a.tags.map((t) => <span key={t} className="px-2 py-0.5 rounded-full border border-line bg-raised text-fg-3 text-[11px]">#{t}</span>)}
+                                    {a.tags.map((t) => <Badge key={t}>#{t}</Badge>)}
                                 </div>
                             )}
                         </article>

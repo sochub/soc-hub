@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils';
 import MilestonesEditor from './MilestonesEditor';
 import { usePasteImage } from './usePasteImage';
 import { useCanRun } from '../enrichment/useCanRun';
-import { btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import { Button, Stamp, Textarea, Skeleton, ErrorState, TONE_TEXT, tlpTone } from '../../components/ui';
 import type { CaseReportView, ReportDraft, TLPLevel } from '../../types';
 
 const TEXT_MAX = 20000;
@@ -24,12 +24,6 @@ const lockHolder = (e: unknown): string | null => {
 };
 const TLP_ORDER: TLPLevel[] = ['white', 'green', 'amber', 'red'];
 const TLP_LABEL: Record<TLPLevel, string> = { white: 'CLEAR', green: 'GREEN', amber: 'AMBER', red: 'RED' };
-const TLP_STYLE: Record<TLPLevel, { backgroundColor: string; color: string }> = {
-    white: { backgroundColor: '#FFFFFF', color: '#000000' },
-    green: { backgroundColor: '#33FF00', color: '#000000' },
-    amber: { backgroundColor: '#FFC000', color: '#000000' },
-    red: { backgroundColor: '#FF2B2B', color: '#FFFFFF' },
-};
 
 const TEXT_FIELDS = [
     { key: 'executive_summary', label: 'Executive summary' },
@@ -99,21 +93,21 @@ function sameForm(a: Form, b: Form): boolean {
     return (Object.keys(a) as (keyof Form)[]).every((k) => a[k] === b[k]);
 }
 
+/** The TLP marking: a stamp when read-only, a stamp-styled native select when it can change. */
 function TlpSelect({ value, onChange, min, disabled, label }:
     { value: TLPLevel; onChange: (t: TLPLevel) => void; min: TLPLevel; disabled?: boolean; label: string }) {
+    if (disabled) return <Stamp tone={tlpTone(value)} aria-label={`${label}: TLP:${TLP_LABEL[value]}`}>TLP:{TLP_LABEL[value]}</Stamp>;
     return (
         <select
             aria-label={label}
             value={value}
-            disabled={disabled}
             onChange={(e) => onChange(e.target.value as TLPLevel)}
-            style={TLP_STYLE[value]}
-            className="h-8 px-2 text-xs font-bold num border border-line-strong focus:outline-hidden focus:ring-1 focus:ring-accent disabled:opacity-100 disabled:cursor-default"
+            className={cn('stamp h-8 cursor-pointer bg-panel hover:bg-raised', TONE_TEXT[tlpTone(value)])}
         >
             {TLP_ORDER.map((t) => {
                 const below = tlpIndex(t) < tlpIndex(min);
                 return (
-                    <option key={t} value={t} disabled={below} style={TLP_STYLE[t]}
+                    <option key={t} value={t} disabled={below}
                         title={below ? `Case IOCs require ≥ ${TLP_LABEL[min]}` : undefined}>
                         TLP:{TLP_LABEL[t]}
                     </option>
@@ -145,11 +139,11 @@ function ChartPreview({ caseId, name, version, alt }: { caseId: number; name: 'l
 
     const current = state?.key === key ? state : null;
     return (
-        <div className="border border-line bg-panel p-3 overflow-hidden">
+        <div className="rounded-md border border-line bg-panel p-3 overflow-hidden">
             {current?.url ? (
                 <img src={current.url} alt={alt} style={{ maxWidth: '100%', height: 'auto' }} className="block mx-auto" />
             ) : (
-                <div className="py-10 text-center text-xs text-muted">{current?.failed ? 'Chart unavailable' : 'Loading chart...'}</div>
+                current?.failed ? <div className="py-10 text-center text-xs text-fg-3">Chart unavailable</div> : <Skeleton rows={1} className="py-6" />
             )}
         </div>
     );
@@ -164,7 +158,7 @@ function ReportTextarea({ caseId, id, rows, readOnly, value, onChange, placehold
         (f, t) => value.includes(f) && (onChange(value.replace(f, () => t)), true));
     return (
         <>
-            <textarea
+            <Textarea
                 ref={ref}
                 id={id}
                 rows={rows}
@@ -175,10 +169,9 @@ function ReportTextarea({ caseId, id, rows, readOnly, value, onChange, placehold
                 onPaste={readOnly ? undefined : paste.onPaste}
                 onDrop={readOnly ? undefined : paste.onDrop}
                 placeholder={placeholder}
-                className={cn('w-full text-sm border border-line rounded-sm px-3 py-2 bg-panel text-fg focus:outline-hidden focus:border-accent resize-y',
-                    readOnly && 'bg-surface text-fg-2')}
+                className={cn('resize-y', readOnly && 'bg-surface text-fg-2')}
             />
-            {paste.error && <p role="alert" className="mt-1 text-xs text-red-300">{paste.error}</p>}
+            {paste.error && <p role="alert" className="mt-1 text-xs text-severity-critical">{paste.error}</p>}
         </>
     );
 }
@@ -356,9 +349,9 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
         }
     };
 
-    if (isLoading) return <div className="text-center py-8 text-muted">Loading report...</div>;
+    if (isLoading) return <Skeleton rows={6} />;
     if (isError || !data || !form) {
-        return <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">Could not load the report.</div>;
+        return <ErrorState message="Could not load the report." onRetry={() => queryClient.invalidateQueries({ queryKey })} />;
     }
 
     const ms = data.milestones;
@@ -371,10 +364,10 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
     return (
         <div className="space-y-4">
             {/* Header */}
-            <div className="glass-panel p-4 rounded-lg bg-panel border border-line flex flex-wrap items-center gap-3">
-                <h3 className="text-sm font-semibold text-fg-2 mr-auto">Incident report</h3>
+            <div className="p-4 rounded-md bg-panel border border-line flex flex-wrap items-center gap-3">
+                <h2 className="text-sm font-semibold text-fg mr-auto">Incident report</h2>
                 <label className="flex items-center gap-2 text-xs text-fg-3">
-                    <span className="label-mono">TLP</span>
+                    <span className="label-caps">TLP</span>
                     <TlpSelect label="Report TLP" value={form.tlp} min={data.min_tlp} disabled={readOnly}
                         onChange={(t) => update({ tlp: t })} />
                 </label>
@@ -382,53 +375,51 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
                     confirmDraft ? (
                         <span className="inline-flex items-center gap-2 text-xs">
                             <span className="text-fg-2">Replace current text with an AI draft?</span>
-                            <button onClick={() => draft.mutate()} disabled={draft.isPending}
-                                className="px-2 py-1 bg-accent text-on-accent rounded-sm hover:bg-accent-hover disabled:opacity-50">
-                                {draft.isPending ? 'Drafting...' : 'Replace'}
-                            </button>
-                            <button onClick={() => setConfirmDraft(false)} disabled={draft.isPending}
-                                className="px-2 py-1 bg-raised text-fg-2 rounded-sm hover:bg-raised-2 disabled:opacity-50">Cancel</button>
+                            <Button size="sm" onClick={() => draft.mutate()} disabled={draft.isPending}>
+                                {draft.isPending ? 'Drafting…' : 'Replace'}
+                            </Button>
+                            <Button size="sm" variant="secondary" onClick={() => setConfirmDraft(false)} disabled={draft.isPending}>Cancel</Button>
                         </span>
                     ) : (
-                        <button onClick={requestDraft} disabled={draft.isPending} className={btnSecondary}>
-                            <Sparkles size={14} />{draft.isPending ? 'Drafting...' : 'Draft with AI'}
-                        </button>
+                        <Button size="sm" variant="secondary" onClick={requestDraft} disabled={draft.isPending}>
+                            <Sparkles size={14} aria-hidden />{draft.isPending ? 'Drafting…' : 'Draft with AI'}
+                        </Button>
                     )
                 )}
-                <div className="w-full text-xs text-muted">
+                <div className="w-full text-xs text-fg-3">
                     {data.report.updated_at
                         ? <>Last saved by {data.report.updated_by_email ?? 'unknown'} · {relTime(data.report.updated_at)}</>
                         : 'Not saved yet'}
-                    {dirty && <span className="ml-2 text-amber-300">· Unsaved changes</span>}
+                    {dirty && <span className="ml-2 font-medium text-severity-medium">· Unsaved changes</span>}
                 </div>
             </div>
 
             {canWrite && typeof lock === 'object' && (
-                <div role="status" className="flex flex-wrap items-center gap-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-sm px-3 py-2">
-                    <AlertTriangle size={14} className="shrink-0" />
+                <div role="status" className="flex flex-wrap items-center gap-3 text-xs text-fg bg-severity-medium/10 border border-severity-medium/30 rounded-md px-3 py-2">
+                    <AlertTriangle size={14} className="shrink-0 text-severity-medium" aria-hidden />
                     <span className="mr-auto">Being edited by {lock.by}</span>
-                    <button onClick={takeOver} disabled={takingOver} className={btnSecondary}>
-                        {takingOver ? 'Taking over...' : 'Take over'}
-                    </button>
+                    <Button size="sm" variant="secondary" onClick={takeOver} disabled={takingOver}>
+                        {takingOver ? 'Taking over…' : 'Take over'}
+                    </Button>
                 </div>
             )}
             {conflict && (
-                <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">{CONFLICT_COPY}</div>
+                <div role="alert" className="text-xs text-severity-critical bg-severity-critical/5 border border-severity-critical/30 rounded-md px-3 py-2">{CONFLICT_COPY}</div>
             )}
             {error && (
-                <div role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-sm px-3 py-2">{error}</div>
+                <div role="alert" className="text-xs text-severity-critical bg-severity-critical/5 border border-severity-critical/30 rounded-md px-3 py-2">{error}</div>
             )}
             {notice && !error && (
-                <div role="status" className="text-xs text-accent bg-accent/10 border border-accent/40 rounded-sm px-3 py-2">{notice}</div>
+                <div role="status" className="text-xs text-accent bg-accent/10 border border-accent/30 rounded-md px-3 py-2">{notice}</div>
             )}
 
             {/* Narrative */}
-            <div className="glass-panel p-4 rounded-lg bg-panel border border-line space-y-4">
+            <div className="p-4 rounded-md bg-panel border border-line space-y-4">
                 {TEXT_FIELDS.map(({ key, label }) => (
                     <div key={key}>
                         <div className="flex items-baseline justify-between mb-1.5">
                             <label htmlFor={`report-${key}`} className="text-xs font-medium text-fg-2">{label}</label>
-                            <span className={cn('num text-[11px]', form[key].length >= TEXT_MAX ? 'text-red-300' : 'text-muted')}>
+                            <span className={cn('num text-xs', form[key].length >= TEXT_MAX ? 'text-severity-critical' : 'text-fg-3')}>
                                 {form[key].length.toLocaleString()} / {TEXT_MAX.toLocaleString()}
                             </span>
                         </div>
@@ -440,14 +431,14 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
             </div>
 
             {/* Milestones */}
-            <div className="glass-panel p-4 rounded-lg bg-panel border border-line space-y-3">
+            <div className="p-4 rounded-md bg-panel border border-line space-y-3">
                 <div className="flex items-baseline justify-between">
-                    <h4 className="text-xs font-semibold text-fg-2 uppercase tracking-wider">Milestones</h4>
-                    <span className="text-[11px] text-muted">Shared with the case timeline · leave blank to use the computed value</span>
+                    <h3 className="text-sm font-semibold text-fg">Milestones</h3>
+                    <span className="text-xs text-fg-3">Shared with the case timeline · leave blank to use the computed value</span>
                 </div>
                 {outOfOrder.length > 0 && (
-                    <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-sm px-3 py-2">
-                        <AlertTriangle size={14} className="mt-px shrink-0" />
+                    <div className="flex items-start gap-2 text-xs text-fg bg-severity-medium/10 border border-severity-medium/30 rounded-md px-3 py-2">
+                        <AlertTriangle size={14} className="mt-px shrink-0 text-severity-medium" aria-hidden />
                         <span>
                             Milestones are out of order ({DURATIONS.filter((d) => outOfOrder.includes(d.key)).map((d) => d.span).join(', ')}).
                             The affected durations are reported as unknown.
@@ -465,43 +456,43 @@ export default function CaseReport({ caseId, onDirtyChange }: { caseId: number; 
             {!readOnly && (
                 <div className="flex items-center justify-end gap-3">
                     {dirty && (
-                        <button onClick={() => { setEdited(null); setError(null); setNotice(null); }} disabled={save.isPending} className={btnSecondary}>
+                        <Button variant="secondary" onClick={() => { setEdited(null); setError(null); setNotice(null); }} disabled={save.isPending}>
                             Discard changes
-                        </button>
+                        </Button>
                     )}
-                    <button onClick={() => save.mutate()} disabled={!dirty || save.isPending} className={btnPrimary}>
-                        <Save size={14} />{save.isPending ? 'Saving...' : 'Save report'}
-                    </button>
+                    <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+                        <Save size={14} aria-hidden />{save.isPending ? 'Saving…' : 'Save report'}
+                    </Button>
                 </div>
             )}
 
             {/* Previews */}
             <div className="space-y-3">
-                <h4 className="text-xs font-semibold text-fg-2 uppercase tracking-wider">Preview</h4>
+                <h3 className="text-sm font-semibold text-fg">Preview</h3>
                 <ChartPreview caseId={caseId} name="lifecycle" version={chartVersion} alt="Incident lifecycle chart" />
                 <ChartPreview caseId={caseId} name="timeline" version={chartVersion} alt="Incident timeline chart" />
             </div>
 
             {/* Export */}
             {canWrite && (
-                <div className="glass-panel p-4 rounded-lg bg-panel border border-line flex flex-wrap items-center gap-3">
-                    <h4 className="text-xs font-semibold text-fg-2 uppercase tracking-wider mr-auto">Export</h4>
+                <div className="p-4 rounded-md bg-panel border border-line flex flex-wrap items-center gap-3">
+                    <h3 className="text-sm font-semibold text-fg mr-auto">Export</h3>
                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                         <input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} />
                         Include full timeline &amp; audit trail
                     </label>
                     <label className="flex items-center gap-2 text-xs text-fg-3">
-                        <span className="label-mono">TLP</span>
+                        <span className="label-caps">TLP</span>
                         <TlpSelect label="Export TLP" value={exportValue} min={data.min_tlp} onChange={setExportTlp} />
                     </label>
-                    <button onClick={() => runExport('pdf')} disabled={!!exporting} className={btnPrimary}>
-                        <FileDown size={14} />{exporting === 'pdf' ? 'Exporting...' : 'Export PDF'}
-                    </button>
-                    <button onClick={() => runExport('json')} disabled={!!exporting} className={btnSecondary}>
-                        <FileJson size={14} />{exporting === 'json' ? 'Exporting...' : 'Export JSON'}
-                    </button>
-                    {dirty && <p className="w-full text-[11px] text-amber-300">Exports use the last saved report. Save first to include your changes.</p>}
-                    <p className="w-full text-[11px] text-muted">Cover logo, colors and disclaimer come from Settings → Organization → Report branding.</p>
+                    <Button size="sm" onClick={() => runExport('pdf')} disabled={!!exporting}>
+                        <FileDown size={14} aria-hidden />{exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => runExport('json')} disabled={!!exporting}>
+                        <FileJson size={14} aria-hidden />{exporting === 'json' ? 'Exporting…' : 'Export JSON'}
+                    </Button>
+                    {dirty && <p className="w-full text-xs text-severity-medium">Exports use the last saved report. Save first to include your changes.</p>}
+                    <p className="w-full text-xs text-fg-3">Cover logo, colors and disclaimer come from Settings → Organization → Report branding.</p>
                 </div>
             )}
         </div>

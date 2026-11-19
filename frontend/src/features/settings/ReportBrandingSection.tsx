@@ -62,11 +62,11 @@ export default function ReportBrandingSection() {
     });
 
     return (
-        <section className="bg-panel border border-line">
+        <section className="rounded-md bg-panel border border-line">
             <div className="flex items-center justify-between px-4 h-11 border-b border-line">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
                     <FileText size={15} className="text-accent" /> Report branding
-                </h2>
+                </h3>
             </div>
             <div className="p-4 space-y-4">
                 <p className="text-xs text-fg-3">Shown on the cover, page headers and disclaimer of exported incident reports.</p>
@@ -93,7 +93,7 @@ export default function ReportBrandingSection() {
                     <div className="mt-1 flex items-center gap-3">
                         <div className="h-12 w-32 border border-line flex items-center justify-center bg-white">
                             {logoUrl ? <img src={logoUrl} alt="Report logo" className="max-h-10 max-w-28 object-contain" />
-                                : <span className="text-[10px] text-zinc-500">No logo</span>}
+                                : <span className="text-xs text-fg-3">No logo</span>}
                         </div>
                         <label className={`${btnSecondary} relative cursor-pointer`}>
                             {upload.isPending ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />} Upload
@@ -107,7 +107,7 @@ export default function ReportBrandingSection() {
                         )}
                     </div>
                 </div>
-                {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+                {error && <p role="alert" className="text-xs text-severity-critical">{error}</p>}
                 <div className="flex items-center gap-3">
                     <button type="button" className={btnPrimary} disabled={save.isPending} onClick={() => save.mutate()}>
                         {save.isPending && <Loader2 size={14} className="animate-spin" />} Save branding

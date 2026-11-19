@@ -83,6 +83,7 @@ async def read_artifacts_all(
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
     q: Optional[str] = Query(None, max_length=500, description="Substring of the artifact value."),
+    artifact_type: Optional[str] = Query(None, max_length=100, description="Exact artifact type."),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ) -> Any:
@@ -91,6 +92,8 @@ async def read_artifacts_all(
     conds = [Artifact.tenant_id == tenant_id, not_private()]
     if q and q.strip():
         conds.append(Artifact.value.icontains(q.strip(), autoescape=True))
+    if artifact_type:
+        conds.append(Artifact.artifact_type == artifact_type)
     total = (await db.execute(select(func.count(Artifact.id)).where(*conds))).scalar_one()
     response.headers["X-Total-Count"] = str(total)
     result = await db.execute(

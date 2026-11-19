@@ -26,9 +26,9 @@ export default function FollowButton({ caseId, isOwner, ready }: { caseId: numbe
         return (
             <span
                 title="Owners always follow their case"
-                className="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium whitespace-nowrap border bg-accent text-on-accent border-accent opacity-60 cursor-default"
+                className="inline-flex items-center gap-1.5 h-8 px-2.5 text-xs whitespace-nowrap rounded-md border border-line text-fg-3 cursor-default"
             >
-                <Bell size={14} /> Following (owner)
+                <Bell size={14} className="text-accent" aria-hidden /> Following (owner)
             </span>
         );
     }
@@ -39,14 +39,15 @@ export default function FollowButton({ caseId, isOwner, ready }: { caseId: numbe
             disabled={isLoading || toggle.isPending}
             aria-pressed={following}
             className={cn(
-                'group inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium whitespace-nowrap border transition-colors disabled:opacity-50',
+                // Quiet toggle: "Close case" is the one filled action in the header.
+                'group inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium whitespace-nowrap rounded-md border border-line-strong bg-panel transition-colors disabled:opacity-50',
                 following
-                    ? 'bg-accent text-on-accent border-accent hover:bg-red-600 hover:border-red-600'
-                    : 'bg-panel text-accent border-accent hover:bg-accent/10'
+                    ? 'text-fg hover:text-severity-critical hover:border-severity-critical/40'
+                    : 'text-fg hover:bg-raised'
             )}
         >
-            {following ? <Bell size={14} className="group-hover:hidden group-focus-visible:hidden" /> : <Bell size={14} />}
-            {following && <BellOff size={14} className="hidden group-hover:block group-focus-visible:block" />}
+            {following ? <Bell size={14} className="group-hover:hidden group-focus-visible:hidden" aria-hidden /> : <Bell size={14} aria-hidden />}
+            {following && <BellOff size={14} className="hidden group-hover:block group-focus-visible:block" aria-hidden />}
             {following ? (
                 <>
                     <span className="group-hover:hidden group-focus-visible:hidden">Following</span>

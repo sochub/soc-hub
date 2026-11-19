@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldQuestion } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
+import { Card } from '../../components/ui';
 
 interface TIConfig {
     auto_max_tlp: string; artifact_tlp: string; cache_ttl_hours: number;
@@ -91,7 +92,7 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
     const sources = draft.sources ?? data.sources;
     const keyField = (label: string, isSet: boolean, valKey: 'vt_key' | 'abusech_key' | 'misp_key', clearKey: 'clear_virustotal' | 'clear_abusech' | 'clear_misp', note?: string) => (
         <div>
-            <label className="block"><span className="label-mono">{label}{isSet && <span className="ml-2 text-emerald-300">· set</span>}</span>
+            <label className="block"><span className="label-mono">{label}{isSet && <span className="ml-2 text-lime">· set</span>}</span>
                 <input type="password" autoComplete="off" className={`${input} font-mono`} value={draft[valKey] ?? ''}
                     onChange={(e) => set({ [valKey]: e.target.value })} placeholder={isSet ? '•••• (saved — leave blank to keep)' : ''} /></label>
             {note && <p className="text-xs text-fg-3 mt-1">{note}</p>}
@@ -100,10 +101,10 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
     );
 
     return (
-        <div className="bg-panel border border-line p-5 space-y-3">
+        <Card className="p-4 space-y-3">
             <div className="flex items-center gap-2">
                 <ShieldQuestion size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">Threat intelligence</h2>
+                <h3 className="text-sm font-semibold text-fg">Threat intelligence</h3>
             </div>
             <p className="text-xs text-fg-3">Indicators are sent to the enabled external sources to enrich IOCs and artifacts. Private and internal values are never sent.</p>
 
@@ -118,7 +119,7 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
                 <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.misp_verify_tls ?? data.misp_verify_tls}
                     onChange={(e) => set({ misp_verify_tls: e.target.checked })} />Verify TLS certificate</label>
                 {!(draft.misp_verify_tls ?? data.misp_verify_tls) && (
-                    <p role="alert" className="text-xs text-amber-300">TLS verification disabled — exposed to interception. Use only for trusted internal servers.</p>
+                    <p role="alert" className="text-xs text-severity-medium">TLS verification disabled — exposed to interception. Use only for trusted internal servers.</p>
                 )}
             </div>
 
@@ -156,18 +157,18 @@ export default function ThreatIntelCard({ tenantId }: { tenantId: number | null 
                 <button onClick={() => test.mutate()} disabled={test.isPending} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">{test.isPending ? 'Testing…' : 'Test keys'}</button>
                 {confirmReset ? (
                     <span className="flex items-center gap-2 text-xs text-fg-2">Remove keys and settings for this organization?
-                        <button onClick={() => reset.mutate()} disabled={reset.isPending} className="h-8 px-3 bg-red-600 text-white text-sm disabled:opacity-50">Reset</button>
+                        <button onClick={() => reset.mutate()} disabled={reset.isPending} className="h-8 px-3 bg-severity-critical text-white text-sm disabled:opacity-50">Reset</button>
                         <button onClick={() => setConfirmReset(false)} className="h-8 px-3 border border-line-strong text-sm">Cancel</button></span>
                 ) : <button onClick={() => setConfirmReset(true)} className="h-8 px-3 border border-line-strong text-sm">Reset to defaults</button>}
-                {msg && <span role="status" className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</span>}
+                {msg && <span role="status" className={msg.ok ? 'text-xs text-lime' : 'text-xs text-severity-critical'}>{msg.text}</span>}
             </div>
             {tests && (
                 <ul className="text-xs space-y-0.5">
                     {Object.entries(tests).map(([k, v]) => (
-                        <li key={k} className={v.ok ? 'text-emerald-300' : 'text-red-300'}><span className="font-semibold">{k === 'abusech' ? 'abuse.ch' : k === 'misp' ? 'MISP' : 'VirusTotal'}</span>: {v.message}</li>
+                        <li key={k} className={v.ok ? 'text-lime' : 'text-severity-critical'}><span className="font-semibold">{k === 'abusech' ? 'abuse.ch' : k === 'misp' ? 'MISP' : 'VirusTotal'}</span>: {v.message}</li>
                     ))}
                 </ul>
             )}
-        </div>
+        </Card>
     );
 }

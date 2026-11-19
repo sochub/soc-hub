@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, X, Search } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
-import PageContainer from '../../components/layout/PageContainer';
+import { Button, Input, Select, Skeleton, ErrorState, EmptyState, Badge, fieldClass, useConfirm } from '../../components/ui';
 import type { User } from '../../types';
 
 type Condition = { field: string; op: string; value: string };
@@ -20,7 +20,7 @@ const OPS: [string, string][] = [
 ];
 const BASE_FIELDS = ['source', 'title', 'severity'];
 const EXPIRY: [string, number | null][] = [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Never', null]];
-const field = 'h-9 bg-panel border border-line rounded-lg px-2.5 text-sm text-fg focus:outline-hidden focus:ring-1 focus:ring-white/50';
+const field = fieldClass();
 const apiError = (err: unknown, fallback: string) => {
     const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
     return typeof d === 'string' ? d : fallback;
@@ -65,10 +65,10 @@ function FieldPicker({ value, groups, onChange }: { value: string; groups: [stri
                 className={cn(field, 'font-mono text-xs w-full')} />
             {listed && (
                 <ul id={id} role="listbox" aria-label="Fields"
-                    className="absolute z-30 left-0 top-full mt-1 min-w-full w-max max-w-[min(32rem,calc(100vw-2rem))] max-h-64 overflow-auto rounded-lg border border-line bg-panel shadow-lg py-1">
+                    className="absolute z-30 left-0 top-full mt-1 min-w-full w-max max-w-[min(32rem,calc(100vw-2rem))] max-h-64 overflow-auto rounded-md border border-line bg-panel shadow-lg py-1">
                     {shown.map(([g, opts]) => (
                         <li key={g} role="presentation">
-                            <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted">{g}</p>
+                            <p className="px-2.5 pt-1.5 pb-0.5 label-caps">{g}</p>
                             <ul role="group" aria-label={g}>
                                 {opts.map((f) => {
                                     const i = flat.indexOf(f);
@@ -117,18 +117,18 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
     const set = (i: number, patch: Partial<Condition>) => { setConds(conds.map((c, j) => (j === i ? { ...c, ...patch } : c))); preview.reset(); };
 
     return (
-        <div className="glass-panel p-4 rounded-xl border border-line bg-panel space-y-3">
+        <div className="p-4 rounded-md border border-line bg-panel space-y-3">
             <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-fg">New suppression rule{fromAlert && <span className="font-normal text-muted"> · from alert #{fromAlert.id}</span>}</h3>
-                <button onClick={onDone} className="text-muted hover:text-fg" aria-label="Close"><X size={16} /></button>
+                <Button variant="ghost" size="icon" onClick={onDone} aria-label="Close"><X size={16} /></Button>
             </div>
             <p className="text-xs text-fg-3">New alerts that match <strong>every</strong> condition are stored as dismissed and start no workflows. Matching ignores case.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" className={cn(field, 'sm:col-span-2')} />
-                <select value={days ?? ''} onChange={(e) => setDays(e.target.value ? Number(e.target.value) : null)} aria-label="Expires after" className={field}>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" className="sm:col-span-2" />
+                <Select value={days ?? ''} onChange={(e) => setDays(e.target.value ? Number(e.target.value) : null)} aria-label="Expires after">
                     {EXPIRY.map(([label, d]) => <option key={label} value={d ?? ''}>Expires: {label}</option>)}
-                </select>
-                <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this noise? (e.g. VPN egress, approved scanner)" aria-label="Reason" className={cn(field, 'sm:col-span-3')} />
+                </Select>
+                <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this noise? (e.g. VPN egress, approved scanner)" aria-label="Reason" className="sm:col-span-3" />
             </div>
             <p className="text-xs text-muted">
                 Fields: <code className="font-mono">source</code>, <code className="font-mono">title</code>, <code className="font-mono">severity</code>, or any payload path such as <code className="font-mono">payload.agent.name</code>.
@@ -154,7 +154,7 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
                 <button onClick={() => setConds([...conds, { field: 'title', op: 'contains', value: '' }])} className="text-xs text-accent hover:underline">+ Add condition</button>
             )}
             {preview.data && (
-                <div className="text-xs rounded-lg border border-line bg-raised/40 p-2.5 space-y-1">
+                <div className="text-xs rounded-md border border-line bg-raised p-2.5 space-y-1">
                     <p className={preview.data.matched > preview.data.scanned / 2 ? 'text-severity-high' : 'text-fg-2'}>
                         Would have suppressed <strong>{preview.data.matched}</strong> of the last {preview.data.scanned} alerts.
                         {preview.data.matched > preview.data.scanned / 2 && ' That is most of your alerts: check the conditions are narrow enough.'}
@@ -164,13 +164,12 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
             )}
             {(save.isError || preview.isError) && <p role="alert" className="text-xs text-severity-critical">{apiError(save.error ?? preview.error, 'Check the conditions.')}</p>}
             <div className="flex justify-end gap-2">
-                <button onClick={() => preview.mutate()} disabled={!valid || preview.isPending} className="px-3 py-1.5 text-xs bg-raised text-fg-2 rounded-sm hover:bg-raised-2 disabled:opacity-50 flex items-center gap-1.5">
-                    <Search size={12} /> Preview
-                </button>
-                <button onClick={() => save.mutate()} disabled={!valid || !name.trim() || save.isPending}
-                    className="px-3 py-1.5 text-xs bg-accent text-on-accent rounded-sm font-medium hover:bg-accent-hover disabled:opacity-50">
+                <Button size="sm" variant="secondary" onClick={() => preview.mutate()} disabled={!valid || preview.isPending}>
+                    <Search size={12} aria-hidden /> Preview
+                </Button>
+                <Button size="sm" onClick={() => save.mutate()} disabled={!valid || !name.trim() || save.isPending}>
                     {save.isPending ? 'Saving…' : 'Save rule'}
-                </button>
+                </Button>
             </div>
         </div>
     );
@@ -184,7 +183,8 @@ export default function SuppressionsList() {
     const [showInactive, setShowInactive] = useState(false);
     const { data: me } = useQuery({ queryKey: ['currentUser'], queryFn: async () => (await api.get('/users/me')).data as User, staleTime: 300_000 });
     const canEdit = me?.role === 'admin' || me?.role === 'analyst' || me?.is_super_admin;
-    const { data: rules = [], isLoading } = useQuery({ queryKey: ['suppressions'], queryFn: async () => (await api.get('/suppressions/')).data as Rule[] });
+    const { confirm, dialog } = useConfirm();
+    const { data: rules = [], isLoading, isError, refetch } = useQuery({ queryKey: ['suppressions'], queryFn: async () => (await api.get('/suppressions/')).data as Rule[] });
     const { data: fromAlert } = useQuery({
         queryKey: ['alert', fromId], enabled: !!fromId,
         queryFn: async () => (await api.get(`/alerts/${fromId}`)).data as { id: number; source: string; title: string; payload: unknown },
@@ -199,37 +199,33 @@ export default function SuppressionsList() {
     const close = () => { setCreating(false); if (fromId) setParams({}); };
 
     return (
-        <PageContainer className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-fg tracking-tight">Suppressions</h1>
-                    <p className="text-fg-3 text-sm mt-0.5">Known noise is auto-dismissed at ingest and kept for the record. A rule that has suppressed alerts can only be disabled; disabled rules are hidden unless you choose to show them.</p>
-                </div>
+        <div className="p-4 space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+                <p className="mr-auto text-sm text-fg-3 num">{isLoading ? '\u00a0' : `${shown.length} ${shown.length === 1 ? 'rule' : 'rules'}`}</p>
+                {inactive > 0 && (
+                    <label className="flex items-center gap-1.5 text-xs text-fg-2">
+                        <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show disabled and expired rules <span className="num">({inactive})</span>
+                    </label>
+                )}
                 {canEdit && !formOpen && (
-                    <button onClick={() => setCreating(true)} className="text-xs bg-accent text-on-accent hover:bg-accent-hover px-3 py-1.5 rounded-sm flex items-center gap-1.5 font-medium shrink-0">
-                        <Plus size={12} /> New rule
-                    </button>
+                    <Button size="sm" onClick={() => setCreating(true)}><Plus size={12} aria-hidden /> New rule</Button>
                 )}
             </div>
+            <p className="text-sm text-fg-3 max-w-[80ch]">Known noise is auto-dismissed at ingest and kept for the record. A rule that has suppressed alerts can only be disabled; disabled rules are hidden unless you choose to show them.</p>
             {formOpen && <RuleForm key={fromAlert?.id ?? 'new'} fromAlert={fromAlert ?? null} onDone={close} />}
             {(toggle.isError || remove.isError) && <p role="alert" className="text-xs text-severity-critical">{apiError(toggle.error ?? remove.error, 'Could not change the rule.')}</p>}
-            {isLoading ? <p className="font-mono text-xs text-muted">$ loading suppressions…</p> : !rules.length ? (
-                <p className="text-sm text-muted py-8 text-center">No suppression rules yet. Use “Suppress similar” on an alert you dismissed as noise.</p>
+            {isError ? <ErrorState message="Could not load suppression rules." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={4} /> : !rules.length ? (
+                <EmptyState title="No suppression rules yet" body="Use “Suppress similar” on an alert you dismissed as noise." />
             ) : (
                 <div className="space-y-2">
-                    {inactive > 0 && (
-                        <label className="flex items-center gap-1.5 text-xs text-fg-2">
-                            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show disabled and expired rules ({inactive})
-                        </label>
-                    )}
-                    {!shown.length && <p className="text-sm text-muted py-6 text-center">No active rules.</p>}
+                    {!shown.length && <EmptyState title="No active rules" />}
                     {shown.map((r) => (
-                        <article key={r.id} className={cn('rounded-lg border border-line bg-panel p-3', (!r.enabled || expired(r)) && 'opacity-60')}>
+                        <article key={r.id} className={cn('rounded-md border border-line bg-panel p-3', (!r.enabled || expired(r)) && 'opacity-60')}>
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-sm font-medium text-fg">{r.name}</span>
-                                {!r.enabled && <span className="text-[10px] px-1.5 py-0.5 rounded-sm border border-line text-muted">Disabled</span>}
-                                {expired(r) && <span className="text-[10px] px-1.5 py-0.5 rounded-sm border border-line text-muted">Expired</span>}
-                                <span className="text-xs font-mono text-fg-3">{r.hit_count} suppressed{r.last_hit_at && ` · last ${new Date(r.last_hit_at).toLocaleString()}`}</span>
+                                {!r.enabled && <Badge>Disabled</Badge>}
+                                {expired(r) && <Badge>Expired</Badge>}
+                                <span className="text-xs text-fg-3 num">{r.hit_count} suppressed{r.last_hit_at && ` · last ${new Date(r.last_hit_at).toLocaleString()}`}</span>
                                 <span className="text-xs text-muted">{r.expires_at ? `expires ${new Date(r.expires_at).toLocaleDateString()}` : 'never expires'}</span>
                                 {canEdit && (
                                     <span className="ml-auto flex items-center gap-3">
@@ -237,7 +233,7 @@ export default function SuppressionsList() {
                                             <input type="checkbox" checked={r.enabled} onChange={() => toggle.mutate(r)} /> Enabled
                                         </label>
                                         {/* aria-disabled, not disabled: disabled buttons swallow hover, so the reason tooltip never shows */}
-                                        <button onClick={() => { if (r.hit_count === 0 && confirm('Delete this rule?')) remove.mutate(r.id); }} aria-disabled={r.hit_count > 0}
+                                        <button onClick={async () => { if (r.hit_count === 0 && await confirm({ title: 'Delete this rule?', danger: true, confirmLabel: 'Delete rule' })) remove.mutate(r.id); }} aria-disabled={r.hit_count > 0}
                                             title={r.hit_count > 0 ? 'Can’t delete: this rule has suppressed alerts and is kept for their history. Disable it instead; disabled rules are hidden from this list.' : 'Delete'}
                                             aria-label={r.hit_count > 0 ? 'Delete unavailable: rule has suppressed alerts' : 'Delete rule'}
                                             className={cn('text-muted', r.hit_count > 0 ? 'opacity-30 cursor-not-allowed' : 'hover:text-severity-critical')}><Trash2 size={13} /></button>
@@ -250,6 +246,7 @@ export default function SuppressionsList() {
                     ))}
                 </div>
             )}
-        </PageContainer>
+            {dialog}
+        </div>
     );
 }

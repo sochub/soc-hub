@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import PageContainer from '../../components/layout/PageContainer';
-import { Button, Input } from '../../components/ui';
+import { Button, ErrorState, Input, SeverityStamp, Skeleton } from '../../components/ui';
+import SettingsPageHeader from './SettingsPageHeader';
 import { formatDuration } from '../cases/timeApi';
 
 interface Row { user_email: string; case_id: number; case_title: string; severity: string; seconds: number }
@@ -19,7 +19,7 @@ export default function TimeMetrics() {
     const params = (format: string) => ({ start, end, format });
     const valid = !!start && !!end && start <= end;
 
-    const { data, isLoading, isError } = useQuery({
+    const { data, isLoading, isError, refetch } = useQuery({
         queryKey: ['time-metrics', start, end],
         queryFn: async () => (await api.get('/stats/time', { params: params('json') })).data as { rows: Row[] },
         enabled: valid,
@@ -42,43 +42,43 @@ export default function TimeMetrics() {
     };
 
     return (
-        <PageContainer>
             <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-fg tracking-tight">Time spent</h1>
+            <SettingsPageHeader title="Time spent" description="Time analysts logged on cases, by day range." />
             <div className="flex flex-wrap items-end gap-3">
-                <label className="text-xs text-muted">From
+                <label className="text-xs font-medium text-fg-2">From
                     <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="mt-1" />
                 </label>
-                <label className="text-xs text-muted">To
+                <label className="text-xs font-medium text-fg-2">To
                     <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="mt-1" />
                 </label>
                 <Button variant="secondary" disabled={!valid || busy} onClick={download}>Download CSV</Button>
             </div>
             {!valid && <p role="alert" className="text-sm text-severity-critical">Pick a valid date range.</p>}
             {error && <p role="alert" className="text-sm text-severity-critical">{error}</p>}
-            {isError && <p role="alert" className="text-sm text-severity-critical">Could not load time metrics.</p>}
-            {isLoading ? <p className="text-sm text-muted">Loading…</p> : valid && (
+            {isError && <ErrorState message="Could not load time metrics." onRetry={() => refetch()} />}
+            {isLoading ? <Skeleton rows={5} /> : valid && !isError && (
+                <div className="rounded-md border border-line bg-panel overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead>
-                        <tr className="text-left text-xs uppercase tracking-wider text-muted border-b border-line">
-                            <th className="py-2 pr-4">Analyst</th><th className="pr-4">Case</th><th className="pr-4">Severity</th><th className="text-right">Time</th>
+                        <tr className="text-left label-caps border-b border-line">
+                            <th className="px-3 py-2">Analyst</th><th className="px-3 py-2">Case</th><th className="px-3 py-2">Severity</th><th className="px-3 py-2 text-right">Time</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-line">
                         {rows.map((r, i) => (
-                            <tr key={i} className="border-b border-line/50 text-fg-2">
-                                <td className="py-2 pr-4">{r.user_email}</td>
-                                <td className="pr-4">#{r.case_id} {r.case_title}</td>
-                                <td className="pr-4 capitalize">{r.severity}</td>
-                                <td className="text-right">{formatDuration(r.seconds)}</td>
+                            <tr key={i} className="text-fg-2 hover:bg-raised">
+                                <td className="px-3 py-2.5">{r.user_email}</td>
+                                <td className="px-3 py-2.5"><span className="num text-fg-3">#{r.case_id}</span> {r.case_title}</td>
+                                <td className="px-3 py-2.5"><SeverityStamp severity={r.severity} /></td>
+                                <td className="px-3 py-2.5 text-right num">{formatDuration(r.seconds)}</td>
                             </tr>
                         ))}
-                        {rows.length === 0 && <tr><td colSpan={4} className="py-4 text-muted">No time recorded in this range.</td></tr>}
-                        <tr className="font-semibold text-fg"><td className="py-2" colSpan={3}>Total</td><td className="text-right">{formatDuration(total)}</td></tr>
+                        {rows.length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-fg-3">No time recorded in this range.</td></tr>}
+                        <tr className="font-semibold text-fg"><td className="px-3 py-2.5" colSpan={3}>Total</td><td className="px-3 py-2.5 text-right num">{formatDuration(total)}</td></tr>
                     </tbody>
                 </table>
+                </div>
             )}
             </div>
-        </PageContainer>
     );
 }

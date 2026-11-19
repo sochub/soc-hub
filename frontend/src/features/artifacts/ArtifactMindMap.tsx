@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useArtifactTypes } from './useArtifactTypes';
+import { PageHeader, Button, Input, SeverityStamp, StatusStamp, Stamp, Badge, TONE_VAR, TONE_TEXT, severityTone, tlpTone } from '../../components/ui';
 
 /* ------------------------------------------------------------------ *
  * Investigation Graph — cases ◉, artifacts ▢, IOCs ◇ and the links
@@ -15,8 +16,18 @@ import { useArtifactTypes } from './useArtifactTypes';
  * value equals an artifact's value (cross-case correlation).
  * ------------------------------------------------------------------ */
 
-const SEV: Record<string, string> = {
-    critical: '#f87171', high: '#fb923c', medium: '#fbbf24', low: '#8fc3ff', info: '#8e8e95',
+// Colours come from the theme tokens (CSS variables), applied through `style` so SVG resolves var().
+const sevColor = (s?: string | null) => TONE_VAR[severityTone(s)];
+const C = {
+    caseFallback: TONE_VAR.accent,
+    artifact: TONE_VAR.neutral,
+    iocFallback: 'var(--color-magenta)',
+    match: TONE_VAR.medium,
+    focus: TONE_VAR.accent,
+    link: 'var(--color-line-strong)',
+    nodeRing: 'var(--color-panel)',
+    selectedRing: 'var(--color-fg)',
+    caseIcon: 'var(--color-panel)',
 };
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 const THREATS = ['critical', 'high', 'medium', 'low'];
@@ -60,7 +71,8 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
         .map(([label, p]) => `${p!.items.length} of ${p!.total} ${label}`);
 
     // ---- filters ----
-    const [railOpen, setRailOpen] = useState(true);
+    // Wide screens start with the filter rail open; below md it overlays the graph and starts hidden.
+    const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || window.matchMedia('(min-width: 768px)').matches);
     const [showKind, setShowKind] = useState({ case: true, artifact: true, ioc: true });
     const [sevFilter, setSevFilter] = useState<Set<string>>(new Set());      // empty = all
     const [threatFilter, setThreatFilter] = useState<Set<string>>(new Set()); // empty = all
@@ -88,21 +100,21 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
             cases.forEach((c: any) => {
                 if (sevFilter.size && !sevFilter.has(c.severity)) return;
                 if (!matches(c.title)) return;
-                ns.push({ id: `case-${c.id}`, kind: 'case', label: c.title, color: SEV[c.severity] ?? '#a4a8ff', data: c, x: 0, y: 0, vx: 0, vy: 0 });
+                ns.push({ id: `case-${c.id}`, kind: 'case', label: c.title, color: c.severity ? sevColor(c.severity) : C.caseFallback, data: c, x: 0, y: 0, vx: 0, vy: 0 });
             });
         }
         if (showKind.artifact) {
             artifacts.forEach((a: any) => {
                 if (hiddenTypes.has(a.artifact_type)) return;
                 if (!matches(a.value)) return;
-                ns.push({ id: `artifact-${a.id}`, kind: 'artifact', label: a.value, color: '#8e8e95', data: a, x: 0, y: 0, vx: 0, vy: 0 });
+                ns.push({ id: `artifact-${a.id}`, kind: 'artifact', label: a.value, color: C.artifact, data: a, x: 0, y: 0, vx: 0, vy: 0 });
             });
         }
         if (showKind.ioc) {
             iocs.forEach((i: any) => {
                 if (threatFilter.size && !threatFilter.has(i.threat_level)) return;
                 if (!matches(i.value)) return;
-                ns.push({ id: `ioc-${i.id}`, kind: 'ioc', label: i.value, color: SEV[i.threat_level] ?? '#e08cff', data: i, x: 0, y: 0, vx: 0, vy: 0 });
+                ns.push({ id: `ioc-${i.id}`, kind: 'ioc', label: i.value, color: i.threat_level ? sevColor(i.threat_level) : C.iocFallback, data: i, x: 0, y: 0, vx: 0, vy: 0 });
             });
         }
 
@@ -295,40 +307,53 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
 
     return (
         <div className={caseId === undefined ? 'p-4 sm:p-6 flex flex-col h-[calc(100vh-3.5rem)]' : 'flex flex-col h-[70vh]'}>
-            <div className="flex justify-between items-end mb-4 shrink-0 flex-wrap gap-2">
-                <div className={caseId === undefined ? undefined : 'hidden'}>
-                    <h1 className="text-xl font-semibold text-fg tracking-tight">Investigation Graph</h1>
-                    <p className="label-mono mt-1">cases ◉ · artifacts ▢ · iocs ◇ — drag, zoom, click for details</p>
-
-                </div>
-                <div className="flex items-center gap-4 text-xs text-fg-3">
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-accent" /> case</span>
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-muted" /> artifact</span>
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rotate-45 bg-severity-high" /> ioc</span>
-                    <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-amber-500" /> value match</span>
-                </div>
-            </div>
+            {(() => {
+                const legend = (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-3">
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-accent" /> Case</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 bg-muted" /> Artifact</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rotate-45 bg-severity-high" /> IOC</span>
+                        <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-severity-medium" /> Value match</span>
+                    </div>
+                );
+                const filtersToggle = (
+                    <Button variant="secondary" size="sm" className="md:hidden" aria-expanded={railOpen} aria-controls="graph-filters"
+                        onClick={() => setRailOpen(o => !o)}>
+                        <SlidersHorizontal size={13} aria-hidden /> Filters
+                    </Button>
+                );
+                return caseId === undefined ? (
+                    <PageHeader className="shrink-0" title="Investigation graph"
+                        description="Cases, artifacts and IOCs, and the links between them. Drag, zoom, and click a node for details."
+                        actions={<>{legend}{filtersToggle}</>} />
+                ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3 shrink-0">{legend}{filtersToggle}</div>
+                );
+            })()}
             {truncated.length > 0 && (
-                <p className="text-xs text-muted -mt-2 mb-3 shrink-0">Graph built from the newest {truncated.join(', ')}.</p>
+                <p className="text-xs text-fg-3 -mt-2 mb-3 shrink-0">Graph built from the newest {truncated.join(', ')}.</p>
             )}
 
             <div className="flex-1 min-h-0 flex border border-line bg-panel relative overflow-hidden">
                 {/* Filter rail */}
-                <aside className={cn('shrink-0 border-r border-line bg-surface/70 transition-[width] duration-200 overflow-hidden',
-                    railOpen ? 'w-56' : 'w-9')}>
+                <aside id="graph-filters" aria-label="Graph filters"
+                    className={cn('border-line bg-surface overflow-y-auto',
+                        railOpen
+                            ? 'absolute inset-y-0 left-0 z-10 w-56 border-r shadow-lg md:static md:z-auto md:shrink-0 md:shadow-none'
+                            : 'hidden md:block md:w-9 md:shrink-0 md:border-r')}>
                     {railOpen ? (
                         <div className="p-3 space-y-4 w-56">
                             <div className="flex items-center justify-between">
-                                <span className="label-mono">// filters</span>
+                                <h2 className="label-caps">Filters</h2>
                                 <button onClick={() => setRailOpen(false)} className="p-1 text-muted hover:text-fg" aria-label="Collapse filters">
                                     <ChevronLeft size={14} />
                                 </button>
                             </div>
 
                             <div className="relative">
-                                <Search size={13} className="absolute left-2 top-2 text-muted" />
-                                <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search value / title…"
-                                    className="w-full bg-panel border border-line pl-7 pr-2 py-1.5 text-xs focus:outline-hidden focus:ring-1 focus:ring-accent" />
+                                <Search size={13} className="absolute left-2 top-2.5 text-muted" aria-hidden />
+                                <Input inputSize="sm" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search value or title…"
+                                    aria-label="Search value or title" className="pl-7" />
                             </div>
 
                             <div className="space-y-1">
@@ -338,24 +363,23 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                                         <label key={k} className="flex items-center gap-2 text-sm text-fg-2 cursor-pointer hover:bg-raised px-1.5 py-1">
                                             <input type="checkbox" checked={showKind[k]}
                                                 onChange={() => setShowKind(s => ({ ...s, [k]: !s[k] }))}
-                                                className="border-line-strong text-accent focus:ring-accent" />
-                                            <Meta.icon size={13} className="text-fg-3" />
+                                            />
+                                            <Meta.icon size={13} className="text-fg-3" aria-hidden />
                                             {Meta.label}
-                                            <span className="num text-[10px] text-muted ml-auto">{counts[k]}</span>
+                                            <span className="num text-xs text-fg-3 ml-auto">{counts[k]}</span>
                                         </label>
                                     );
                                 })}
                             </div>
 
                             <div>
-                                <p className="label-mono mb-1.5">case severity</p>
+                                <p className="label-caps mb-1.5">Case severity</p>
                                 <div className="flex flex-wrap gap-1">
                                     {SEVERITIES.map(s => (
-                                        <button key={s} onClick={() => toggleSet(sevFilter, s, setSevFilter)}
-                                            className={cn('font-mono text-[10px] uppercase px-1.5 py-0.5 border transition-colors',
+                                        <button key={s} onClick={() => toggleSet(sevFilter, s, setSevFilter)} aria-pressed={sevFilter.has(s)}
+                                            className={cn('text-xs px-1.5 py-0.5 rounded-sm border border-current/40 transition-opacity', TONE_TEXT[severityTone(s)],
                                                 sevFilter.size === 0 || sevFilter.has(s)
-                                                    ? 'opacity-100' : 'opacity-30')}
-                                            style={{ color: SEV[s], borderColor: SEV[s] + '66' }}>
+                                                    ? 'opacity-100' : 'opacity-40')}>
                                             {s}
                                         </button>
                                     ))}
@@ -363,13 +387,12 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                             </div>
 
                             <div>
-                                <p className="label-mono mb-1.5">ioc threat</p>
+                                <p className="label-caps mb-1.5">IOC threat</p>
                                 <div className="flex flex-wrap gap-1">
                                     {THREATS.map(s => (
-                                        <button key={s} onClick={() => toggleSet(threatFilter, s, setThreatFilter)}
-                                            className={cn('font-mono text-[10px] uppercase px-1.5 py-0.5 border transition-colors',
-                                                threatFilter.size === 0 || threatFilter.has(s) ? 'opacity-100' : 'opacity-30')}
-                                            style={{ color: SEV[s], borderColor: SEV[s] + '66' }}>
+                                        <button key={s} onClick={() => toggleSet(threatFilter, s, setThreatFilter)} aria-pressed={threatFilter.has(s)}
+                                            className={cn('text-xs px-1.5 py-0.5 rounded-sm border border-current/40 transition-opacity', TONE_TEXT[severityTone(s)],
+                                                threatFilter.size === 0 || threatFilter.has(s) ? 'opacity-100' : 'opacity-40')}>
                                             {s}
                                         </button>
                                     ))}
@@ -377,15 +400,13 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                             </div>
 
                             <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
-                                <input type="checkbox" checked={connectedOnly} onChange={() => setConnectedOnly(v => !v)}
-                                    className="border-line-strong text-accent focus:ring-accent" />
-                                connected nodes only
+                                <input type="checkbox" checked={connectedOnly} onChange={() => setConnectedOnly(v => !v)} />
+                                Connected nodes only
                             </label>
 
-                            <button onClick={resetView}
-                                className="w-full inline-flex items-center justify-center gap-1.5 border border-line-strong text-fg-2 text-xs py-1.5 hover:bg-raised">
-                                <Maximize2 size={12} /> reset view
-                            </button>
+                            <Button variant="secondary" size="sm" className="w-full" onClick={resetView}>
+                                <Maximize2 size={12} aria-hidden /> Reset view
+                            </Button>
                         </div>
                     ) : (
                         <button onClick={() => setRailOpen(true)}
@@ -407,7 +428,7 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                                 const inFocus = !focusSet || (focusSet.has(l.source) && focusSet.has(l.target));
                                 return (
                                     <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y}
-                                        stroke={l.match ? '#fbbf24' : inFocus && focusSet ? '#a4a8ff' : '#3f3f46'}
+                                        style={{ stroke: l.match ? C.match : inFocus && focusSet ? C.focus : C.link }}
                                         strokeWidth={l.match ? 1.6 : inFocus && focusSet ? 1.6 : 1}
                                         strokeDasharray={l.match ? '5 4' : undefined}
                                         opacity={inFocus ? (l.match ? 0.95 : 0.7) : 0.08} />
@@ -425,19 +446,19 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                                         onMouseLeave={() => setHoverId(null)}
                                         onClick={(e) => { e.stopPropagation(); setSelected(n); }}>
                                         {n.kind === 'case' && (
-                                            <circle r={r} fill={n.color} stroke={isSel ? '#d6e37f' : '#111113'} strokeWidth={isSel ? 3 : 2} />
+                                            <circle r={r} style={{ fill: n.color, stroke: isSel ? C.selectedRing : C.nodeRing }} strokeWidth={isSel ? 3 : 2} />
                                         )}
                                         {n.kind === 'artifact' && (
-                                            <rect x={-r} y={-r} width={r * 2} height={r * 2} fill={n.color}
-                                                stroke={isSel ? '#d6e37f' : '#111113'} strokeWidth={isSel ? 3 : 2} />
+                                            <rect x={-r} y={-r} width={r * 2} height={r * 2}
+                                                style={{ fill: n.color, stroke: isSel ? C.selectedRing : C.nodeRing }} strokeWidth={isSel ? 3 : 2} />
                                         )}
                                         {n.kind === 'ioc' && (
-                                            <rect x={-r} y={-r} width={r * 2} height={r * 2} fill={n.color} transform="rotate(45)"
-                                                stroke={isSel ? '#d6e37f' : '#111113'} strokeWidth={isSel ? 3 : 2} />
+                                            <rect x={-r} y={-r} width={r * 2} height={r * 2} transform="rotate(45)"
+                                                style={{ fill: n.color, stroke: isSel ? C.selectedRing : C.nodeRing }} strokeWidth={isSel ? 3 : 2} />
                                         )}
-                                        {n.kind === 'case' && <ShieldAlert size={15} x={-7.5} y={-7.5} className="text-white pointer-events-none" />}
+                                        {n.kind === 'case' && <ShieldAlert size={15} x={-7.5} y={-7.5} className="pointer-events-none" style={{ color: C.caseIcon }} />}
                                         <text y={n.kind === 'case' ? 28 : 22} textAnchor="middle"
-                                            className={cn('text-[10px] pointer-events-none',
+                                            className={cn('text-xs pointer-events-none',
                                                 isSel ? 'fill-accent font-semibold' : 'fill-muted',
                                                 n.kind === 'case' && 'font-medium')}>
                                             {(n.label || '').length > 22 ? n.label.slice(0, 20) + '…' : n.label}
@@ -449,37 +470,36 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                     </svg>
 
                     {/* stats strip */}
-                    <div className="absolute bottom-2 left-2 font-mono text-[10px] text-muted bg-panel/80 border border-line px-2 py-1">
-                        {nodes.length} nodes · {graph.links.length} links · <span className="text-amber-400">{matchCount} value match{matchCount === 1 ? '' : 'es'}</span> · zoom {Math.round(view.k * 100)}%
+                    <div className="absolute bottom-2 left-2 num text-xs text-fg-3 bg-panel border border-line rounded-sm px-2 py-1">
+                        {nodes.length} nodes · {graph.links.length} links · <span className="text-severity-medium">{matchCount} value match{matchCount === 1 ? '' : 'es'}</span> · zoom {Math.round(view.k * 100)}%
                     </div>
 
                     {nodes.length === 0 && (
-                        <div className="absolute inset-0 flex items-center justify-center text-muted font-mono text-xs pointer-events-none">
-                            {graph.nodes.length === 0 ? 'nothing matches the current filters' : '$ rendering graph…'}
+                        <div role="status" className="absolute inset-0 flex items-center justify-center text-fg-3 text-sm pointer-events-none">
+                            {graph.nodes.length === 0 ? 'Nothing matches the current filters.' : 'Rendering graph…'}
                         </div>
                     )}
 
                     {/* Detail dossier */}
                     {selected && (
-                        <div className="absolute top-3 right-3 w-72 bg-panel border border-line shadow-lg animate-fade-in" onMouseDown={e => e.stopPropagation()}>
+                        <div className="absolute top-3 right-3 w-72 max-w-[calc(100%-1.5rem)] bg-panel border border-line rounded-md shadow-lg animate-fade-in" onMouseDown={e => e.stopPropagation()}>
                             <div className="flex items-center justify-between px-3 h-9 border-b border-line">
-                                <span className="label-mono">{selected.kind} detail</span>
-                                <button onClick={() => setSelected(null)} className="text-muted hover:text-fg"><X size={15} /></button>
+                                <h2 className="label-caps">{selected.kind === 'ioc' ? 'IOC' : selected.kind} detail</h2>
+                                <button onClick={() => setSelected(null)} className="text-muted hover:text-fg" aria-label="Close details"><X size={15} /></button>
                             </div>
                             <div className="p-3 space-y-2 text-sm">
                                 {selected.kind === 'case' && (
                                     <>
                                         <p className="font-semibold text-fg">{selected.data.title}</p>
                                         <div className="flex items-center gap-2">
-                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border"
-                                                style={{ color: selected.color, borderColor: selected.color + '55' }}>{selected.data.severity}</span>
-                                            <span className="font-mono text-[10px] uppercase text-fg-3">{selected.data.status}</span>
+                                            <SeverityStamp severity={selected.data.severity} />
+                                            <StatusStamp status={selected.data.status} />
                                         </div>
                                         {selected.data.description && <p className="text-xs text-fg-3 line-clamp-3">{selected.data.description}</p>}
                                         <p className="text-xs text-fg-3">
                                             linked: <span className="num text-fg">{(neighbors.get(selected.id)?.size ?? 0)}</span> node(s)
                                         </p>
-                                        <Link to={`/cases/${selected.data.id}`} className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent font-medium">
+                                        <Link to={`/cases/${selected.data.id}`} className="inline-flex items-center gap-1 text-xs text-accent hover:underline font-medium">
                                             Open case #{selected.data.id} <ArrowUpRight size={12} />
                                         </Link>
                                     </>
@@ -488,13 +508,13 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                                     <>
                                         <p className="num text-sm text-fg break-all">{selected.data.value}</p>
                                         <div className="flex items-center gap-2">
-                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border border-line text-fg-2">{selected.data.artifact_type}</span>
-                                            {selected.data.isolated && <span className="font-mono text-[10px] uppercase text-amber-300">isolated</span>}
+                                            <Badge>{selected.data.artifact_type}</Badge>
+                                            {selected.data.isolated && <Badge variant="medium">Isolated</Badge>}
                                         </div>
                                         <p className="text-xs text-fg-3">in <span className="num text-fg">{selected.data.case_ids?.length ?? 0}</span> case(s)</p>
                                         <div className="flex flex-wrap gap-1.5">
                                             {(selected.data.case_ids || []).map((cid: number) => (
-                                                <Link key={cid} to={`/cases/${cid}`} className="num text-[11px] text-accent hover:text-accent border border-line px-1.5">#{cid}</Link>
+                                                <Link key={cid} to={`/cases/${cid}`} className="num text-xs text-accent hover:underline border border-line rounded-sm px-1.5">#{cid}</Link>
                                             ))}
                                         </div>
                                     </>
@@ -503,16 +523,15 @@ export default function ArtifactMindMap({ caseId }: { caseId?: number } = {}) {
                                     <>
                                         <p className="num text-sm text-fg break-all">{selected.data.value}</p>
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border border-line text-fg-2">{selected.data.ioc_type}</span>
-                                            <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 border"
-                                                style={{ color: selected.color, borderColor: selected.color + '55' }}>{selected.data.threat_level}</span>
-                                            <span className="font-mono text-[10px] uppercase text-fg-3">tlp:{selected.data.tlp}</span>
+                                            <Badge>{selected.data.ioc_type}</Badge>
+                                            <SeverityStamp severity={selected.data.threat_level} />
+                                            <Stamp tone={tlpTone(selected.data.tlp)}>TLP:{selected.data.tlp}</Stamp>
                                         </div>
                                         <p className="text-xs text-fg-3">
                                             confidence <span className="num text-fg">{selected.data.confidence}%</span> · status <span className="text-fg-2">{selected.data.status}</span>
                                         </p>
                                         {selected.data.case_id && (
-                                            <Link to={`/cases/${selected.data.case_id}`} className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent font-medium">
+                                            <Link to={`/cases/${selected.data.case_id}`} className="inline-flex items-center gap-1 text-xs text-accent hover:underline font-medium">
                                                 Open case #{selected.data.case_id} <ArrowUpRight size={12} />
                                             </Link>
                                         )}

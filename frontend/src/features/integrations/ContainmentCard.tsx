@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
+import { Card } from '../../components/ui';
 
 type Entry = { kind: string; pattern: string; note?: string | null };
 type Policy = { enabled: boolean; daily_cap: number; max_targets_per_case: number; protected: Entry[] };
@@ -41,10 +42,10 @@ export default function ContainmentCard({ tenantId, isAdmin }: { tenantId: numbe
         protected: toLines(data.protected) };
     const set = (patch: Partial<typeof form>) => { setDraft({ ...form, ...patch }); setMsg(null); };
     return (
-        <div className="bg-panel border border-line p-5 space-y-3">
+        <Card className="p-4 space-y-3">
             <div className="flex items-center gap-2">
                 <ShieldCheck size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">Containment guardrails</h2>
+                <h3 className="text-sm font-semibold text-fg">Containment guardrails</h3>
                 <span className="ml-auto label-mono">{data.enabled ? `${data.daily_cap}/day · ${data.max_targets_per_case}/case` : 'off'}</span>
             </div>
             <p className="text-xs text-fg-3">
@@ -68,8 +69,8 @@ export default function ContainmentCard({ tenantId, isAdmin }: { tenantId: numbe
                     <span className="block text-muted">Host and user patterns are case-insensitive, <code>*</code> is a wildcard; ip takes an address or CIDR range.</span>
                 </label>
             </fieldset>
-            {msg && <p role={msg.ok ? 'status' : 'alert'} className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</p>}
+            {msg && <p role={msg.ok ? 'status' : 'alert'} className={msg.ok ? 'text-xs text-lime' : 'text-xs text-severity-critical'}>{msg.text}</p>}
             {isAdmin && <button onClick={() => save.mutate()} disabled={!draft || save.isPending} className="px-3 py-1.5 text-sm bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-50">Save</button>}
-        </div>
+        </Card>
     );
 }

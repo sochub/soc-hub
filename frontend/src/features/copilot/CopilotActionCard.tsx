@@ -5,6 +5,7 @@ import { Check, X, Loader2, Zap, ArrowUpRight, Lightbulb } from 'lucide-react';
 import { api } from '../../api/client';
 import { apiErrorMessage } from '../../api/errors';
 import type { CopilotAction, ActionResult } from '../../types';
+import { Button, TONE_TEXT } from '../../components/ui';
 
 const WRITE_ACTIONS = new Set(['create_case', 'add_artifact', 'add_timeline_note', 'update_case']);
 
@@ -106,9 +107,9 @@ export default function CopilotActionCard(props: Props) {
     const result = exec.data ?? action.result;
 
     return (
-        <div className="mt-2 rounded-xl border border-accent/30 bg-accent/6 p-3 text-sm">
+        <div className="mt-2 rounded-md border border-accent/30 bg-accent/5 p-3 text-sm">
             <div className="flex items-center gap-2 mb-1.5 text-accent font-medium">
-                <Zap size={14} />
+                <Zap size={14} aria-hidden />
                 <span>{ACTION_LABEL[action.type] ?? action.type}</span>
             </div>
 
@@ -119,11 +120,11 @@ export default function CopilotActionCard(props: Props) {
             {result && (
                 <div className="text-fg">
                     <p className="flex items-center gap-1.5">
-                        <Check size={14} className="text-emerald-400 shrink-0" />
+                        <Check size={14} className={`${TONE_TEXT.ok} shrink-0`} aria-hidden />
                         {result.message}
                     </p>
                     {result.case_id && action.type === 'create_case' && (
-                        <Link to={`/cases/${result.case_id}`} className="inline-flex items-center gap-1 mt-1.5 text-accent hover:text-accent">
+                        <Link to={`/cases/${result.case_id}`} className="inline-flex items-center gap-1 mt-1.5 text-accent hover:underline">
                             Open case #{result.case_id} <ArrowUpRight size={13} />
                         </Link>
                     )}
@@ -131,7 +132,7 @@ export default function CopilotActionCard(props: Props) {
                         <ul className="mt-1.5 space-y-1">
                             {result.related.map((r) => (
                                 <li key={r.case_id}>
-                                    <Link to={`/cases/${r.case_id}`} className="text-accent hover:text-accent inline-flex items-center gap-1">
+                                    <Link to={`/cases/${r.case_id}`} className="text-accent hover:underline inline-flex items-center gap-1">
                                         #{r.case_id} {r.title} <ArrowUpRight size={12} />
                                     </Link>
                                     <span className="text-xs text-fg-3"> — shares {r.shared_values.join(', ')}</span>
@@ -144,7 +145,7 @@ export default function CopilotActionCard(props: Props) {
 
             {/* Error */}
             {exec.isError && (
-                <p className="text-severity-critical text-xs">
+                <p role="alert" className="text-severity-critical text-xs">
                     {apiErrorMessage(exec.error, 'Action failed.')}
                 </p>
             )}
@@ -152,7 +153,7 @@ export default function CopilotActionCard(props: Props) {
             {/* Pending */}
             {exec.isPending && (
                 <p className="flex items-center gap-2 text-fg-2">
-                    <Loader2 size={14} className="animate-spin" /> Working…
+                    <Loader2 size={14} className="animate-spin" aria-hidden /> Working…
                 </p>
             )}
 
@@ -162,18 +163,12 @@ export default function CopilotActionCard(props: Props) {
                     <p className="text-fg-3 text-xs">Cancelled.</p>
                 ) : (
                     <div className="flex items-center gap-2 mt-1">
-                        <button
-                            onClick={() => exec.mutate()}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-on-accent text-xs font-semibold hover:bg-accent transition-colors"
-                        >
-                            <Check size={13} /> Confirm
-                        </button>
-                        <button
-                            onClick={() => setState('cancelled')}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-fg-2 text-xs hover:bg-raised/60 transition-colors"
-                        >
-                            <X size={13} /> Cancel
-                        </button>
+                        <Button size="sm" onClick={() => exec.mutate()}>
+                            <Check size={13} aria-hidden /> Confirm
+                        </Button>
+                        <Button size="sm" variant="secondary" onClick={() => setState('cancelled')}>
+                            <X size={13} aria-hidden /> Cancel
+                        </Button>
                     </div>
                 )
             )}
@@ -192,29 +187,27 @@ export function CopilotSuggestionChip(props: Props) {
 
     if (done) {
         return (
-            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-400">
-                <Check size={13} className="shrink-0" /> {done.message}
+            <p className={`mt-1.5 flex items-center gap-1.5 text-xs ${TONE_TEXT.ok}`}>
+                <Check size={13} className="shrink-0" aria-hidden /> {done.message}
             </p>
         );
     }
 
     return (
-        <div className="mt-1.5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-2.5 py-2 text-xs">
-            <Lightbulb size={13} className="text-amber-400 shrink-0 mt-0.5" />
+        <div className="mt-1.5 flex items-start gap-2 rounded-md border border-severity-medium/40 bg-severity-medium/10 px-2.5 py-2 text-xs">
+            <Lightbulb size={13} className={`${TONE_TEXT.medium} shrink-0 mt-0.5`} aria-hidden />
             <span className="flex-1 text-fg-2">{action.summary}</span>
-            {exec.isError && <span className="text-severity-critical">failed</span>}
+            {exec.isError && <span role="alert" className="text-severity-critical">Failed</span>}
             {exec.isPending ? (
-                <Loader2 size={13} className="animate-spin text-fg-2 shrink-0 mt-0.5" />
+                <Loader2 size={13} className="animate-spin text-fg-2 shrink-0 mt-0.5" aria-label="Adding" />
             ) : (
                 <span className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => exec.mutate()}
-                        className="px-2 py-0.5 rounded-sm bg-amber-500/90 text-on-accent font-semibold hover:bg-amber-400 transition-colors">
+                    <Button size="sm" variant="secondary" className="h-6 px-2" onClick={() => exec.mutate()}>
                         Add
-                    </button>
-                    <button onClick={() => setDismissed(true)} aria-label="Dismiss suggestion"
-                        className="p-0.5 text-fg-3 hover:text-fg-2">
+                    </Button>
+                    <Button variant="ghost" className="h-6 w-6 p-0" onClick={() => setDismissed(true)} aria-label="Dismiss suggestion">
                         <X size={13} />
-                    </button>
+                    </Button>
                 </span>
             )}
         </div>

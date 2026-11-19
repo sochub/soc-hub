@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, KeyRound, Copy, Check, Save, Loader2, Timer, Clock } from 'lucide-react';
+import { Navigate } from 'react-router-dom';
 import { api } from '../../api/client';
-import { cn } from '../../lib/utils';
 import type { TenantOAuthSession, LoginMethod, SLAPolicyItem, SSOConfig, User } from '../../types';
-import PageContainer from '../../components/layout/PageContainer';
-import Modal, { btnPrimary, btnSecondary } from '../../components/layout/Modal';
+import Modal from '../../components/layout/Modal';
+import { Button, Input, Label, Select, Skeleton, Textarea } from '../../components/ui';
+import SettingsPageHeader from './SettingsPageHeader';
 import { formatDateTime } from '../../utils/datetime';
 import { mfaErrorMessage } from '../profile/mfaErrors';
 import GuestSettingsSection from '../guests/GuestSettingsSection';
@@ -46,15 +47,15 @@ function SLAPoliciesSection() {
     };
 
     return (
-        <section className="bg-panel border border-line">
+        <section id="sla" className="scroll-mt-4 rounded-md bg-panel border border-line">
             <div className="flex items-center justify-between px-4 h-11 border-b border-line">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
-                    <Timer size={15} className="text-accent" /> SLA Policies
-                </h2>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <Timer size={15} className="text-accent" /> SLA policies
+                </h3>
             </div>
 
             {isLoading ? (
-                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+                <Skeleton rows={3} className="p-4" />
             ) : (
                 <div className="p-4 space-y-4">
                     <p className="text-xs text-muted">
@@ -63,10 +64,10 @@ function SLAPoliciesSection() {
                     </p>
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="text-left label-mono text-muted">
-                                <th className="pb-2 font-normal">Severity</th>
-                                <th className="pb-2 font-normal">Response (min)</th>
-                                <th className="pb-2 font-normal">Resolution (min)</th>
+                            <tr className="text-left label-caps">
+                                <th className="pb-2">Severity</th>
+                                <th className="pb-2">Response (min)</th>
+                                <th className="pb-2">Resolution (min)</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-line">
@@ -74,21 +75,21 @@ function SLAPoliciesSection() {
                                 <tr key={r.severity}>
                                     <td className="py-2 text-fg-2">{SEVERITY_LABEL[r.severity] ?? r.severity}</td>
                                     <td className="py-2 pr-4">
-                                        <input
+                                        <Input
                                             type="number" min={0}
-                                            value={r.response_target_minutes ?? ''}
+                                            value={r.response_target_minutes ?? ''} aria-label={`${SEVERITY_LABEL[r.severity] ?? r.severity} response target (minutes)`}
                                             onChange={(e) => updateRow(r.severity, 'response_target_minutes', e.target.value)}
                                             placeholder="—"
-                                            className="w-28 border border-line-strong px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent"
+                                            inputSize="sm" className="w-28 num"
                                         />
                                     </td>
                                     <td className="py-2">
-                                        <input
+                                        <Input
                                             type="number" min={0}
-                                            value={r.resolution_target_minutes ?? ''}
+                                            value={r.resolution_target_minutes ?? ''} aria-label={`${SEVERITY_LABEL[r.severity] ?? r.severity} resolution target (minutes)`}
                                             onChange={(e) => updateRow(r.severity, 'resolution_target_minutes', e.target.value)}
                                             placeholder="—"
-                                            className="w-28 border border-line-strong px-2 py-1 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent"
+                                            inputSize="sm" className="w-28 num"
                                         />
                                     </td>
                                 </tr>
@@ -96,12 +97,10 @@ function SLAPoliciesSection() {
                         </tbody>
                     </table>
 
-                    <button onClick={() => save.mutate()} disabled={save.isPending}
-                        className={cn('inline-flex items-center gap-1.5 h-9 px-4 text-sm font-medium text-white transition-colors disabled:opacity-50',
-                            savedFlash ? 'bg-emerald-600' : 'bg-accent hover:bg-accent-hover')}>
+                    <Button onClick={() => save.mutate()} disabled={save.isPending}>
                         {save.isPending ? <Loader2 size={14} className="animate-spin" /> : savedFlash ? <Check size={14} /> : <Save size={14} />}
                         {savedFlash ? 'Saved' : 'Save SLA policies'}
-                    </button>
+                    </Button>
                 </div>
             )}
         </section>
@@ -123,24 +122,24 @@ function SessionPolicySection() {
         onSuccess: (d) => qc.setQueryData(['tenant-security'], d),
     });
     const select = (label: string, key: keyof SessionPolicy, choices: [string, number | null][]) => (
-        <label className="flex flex-col gap-1 text-xs text-fg-2">
-            {label}
-            <select value={data?.[key] ?? ''} disabled={save.isPending} aria-label={label}
+        <div>
+            <Label htmlFor={`session-${key}`}>{label}</Label>
+            <Select id={`session-${key}`} value={data?.[key] ?? ''} disabled={save.isPending}
                 onChange={(e) => save.mutate({ [key]: e.target.value ? Number(e.target.value) : null })}
-                className="bg-panel border border-line rounded-lg px-2.5 py-1.5 text-sm text-fg w-48">
+                className="w-48">
                 {choices.map(([l, v]) => <option key={l} value={v ?? ''}>{l}</option>)}
-            </select>
-        </label>
+            </Select>
+        </div>
     );
     return (
-        <section className="bg-panel border border-line">
+        <section id="sessions" className="scroll-mt-4 rounded-md bg-panel border border-line">
             <div className="flex items-center justify-between px-4 h-11 border-b border-line">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
                     <Clock size={15} className="text-accent" /> Session length
-                </h2>
+                </h3>
             </div>
             {isLoading || !data ? (
-                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+                <Skeleton rows={3} className="p-4" />
             ) : (
                 <div className="p-4 space-y-3">
                     <div className="flex flex-wrap gap-4">
@@ -151,7 +150,7 @@ function SessionPolicySection() {
                         Applies to browser sign-ins of every member. Someone who belongs to several organizations gets the strictest setting.
                         Limits are checked when the session renews, so a sign-out can come up to an hour late. API tokens and MCP clients are not affected.
                     </p>
-                    {save.isError && <p role="alert" className="text-xs text-red-300">{mfaErrorMessage(save.error, 'Could not update the setting.')}</p>}
+                    {save.isError && <p role="alert" className="text-xs text-severity-critical">{mfaErrorMessage(save.error, 'Could not update the setting.')}</p>}
                 </div>
             )}
         </section>
@@ -173,14 +172,14 @@ function MfaRequirementSection() {
     });
     const n = data?.members_without_mfa ?? 0;
     return (
-        <section className="bg-panel border border-line">
+        <section id="mfa" className="scroll-mt-4 rounded-md bg-panel border border-line">
             <div className="flex items-center justify-between px-4 h-11 border-b border-line">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
                     <ShieldCheck size={15} className="text-accent" /> Two-factor authentication
-                </h2>
+                </h3>
             </div>
             {isLoading || !data ? (
-                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+                <Skeleton rows={3} className="p-4" />
             ) : (
                 <div className="p-4 space-y-3">
                     <label className="flex items-center gap-2 text-sm text-fg cursor-pointer">
@@ -196,15 +195,15 @@ function MfaRequirementSection() {
                         {data.require_mfa && n > 0 && ' They will be asked to set it up at their next sign-in.'}
                     </p>
                     <p className="text-xs text-fg-3">Members who sign in through single sign-on are not affected; their identity provider handles two-factor.</p>
-                    {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+                    {error && <p role="alert" className="text-xs text-severity-critical">{error}</p>}
                 </div>
             )}
             <Modal open={confirmOn} onClose={() => setConfirmOn(false)} title="Require two-factor authentication?" size="md"
                 footer={<>
-                    <button type="button" className={btnSecondary} onClick={() => setConfirmOn(false)}>Cancel</button>
-                    <button type="button" className={btnPrimary} disabled={toggle.isPending} onClick={() => toggle.mutate(true)}>
+                    <Button variant="secondary" onClick={() => setConfirmOn(false)}>Cancel</Button>
+                    <Button disabled={toggle.isPending} onClick={() => toggle.mutate(true)}>
                         {toggle.isPending && <Loader2 size={14} className="animate-spin" />} Require two-factor
-                    </button>
+                    </Button>
                 </>}>
                 <div className="space-y-2 text-sm text-fg-2">
                     <p>Every member of this organization will need two-factor authentication to sign in or switch into it.</p>
@@ -238,14 +237,14 @@ function McpSection() {
         onError: (err) => setError(mfaErrorMessage(err, 'Could not revoke the session.')),
     });
     return (
-        <section className="bg-panel border border-line">
+        <section id="mcp" className="scroll-mt-4 rounded-md bg-panel border border-line">
             <div className="flex items-center justify-between px-4 h-11 border-b border-line">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
                     <KeyRound size={15} className="text-accent" /> AI clients (MCP)
-                </h2>
+                </h3>
             </div>
             {isLoading || !data ? (
-                <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+                <Skeleton rows={3} className="p-4" />
             ) : (
                 <div className="p-4 space-y-3">
                     <label className="flex items-center gap-2 text-sm text-fg cursor-pointer">
@@ -255,30 +254,30 @@ function McpSection() {
                         Allow AI clients (MCP)
                     </label>
                     <p className="text-xs text-fg-3">Lets members connect AI clients that act with their own permissions in this organization.</p>
-                    {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
-                    <h3 className="text-xs font-semibold text-fg-2 pt-2">Connected apps</h3>
+                    {error && <p role="alert" className="text-xs text-severity-critical">{error}</p>}
+                    <h4 className="text-xs font-semibold text-fg-2 pt-2">Connected apps</h4>
                     {!apps || apps.length === 0 ? <p className="text-xs text-fg-3">No connected apps.</p> : (
-                        <table className="w-full text-sm">
+                        <div className="overflow-x-auto"><table className="w-full text-sm">
                             <thead>
-                                <tr className="text-left text-xs text-fg-3 border-b border-line">
-                                    <th className="py-1 font-normal">App</th><th className="py-1 font-normal">Member</th>
-                                    <th className="py-1 font-normal">Last used</th><th />
+                                <tr className="text-left label-caps border-b border-line">
+                                    <th className="py-2">App</th><th className="py-2">Member</th>
+                                    <th className="py-2">Last used</th><th><span className="sr-only">Actions</span></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {apps.map((a) => (
                                     <tr key={a.id} className="border-b border-line">
-                                        <td className="py-1.5 text-fg">{a.client_name ?? 'Unknown app'}</td>
-                                        <td className="py-1.5 text-fg-2">{a.user_email}</td>
-                                        <td className="py-1.5 text-fg-3">{formatDateTime(a.last_used_at)}</td>
-                                        <td className="py-1.5 text-right">
-                                            <button type="button" className={btnSecondary} disabled={revoke.isPending}
-                                                onClick={() => revoke.mutate(a.id)}>Revoke</button>
+                                        <td className="py-2 text-fg">{a.client_name ?? 'Unknown app'}</td>
+                                        <td className="py-2 text-fg-2">{a.user_email}</td>
+                                        <td className="py-2 text-fg-3">{formatDateTime(a.last_used_at)}</td>
+                                        <td className="py-2 text-right">
+                                            <Button variant="secondary" size="sm" disabled={revoke.isPending}
+                                                onClick={() => revoke.mutate(a.id)}>Revoke</Button>
                                         </td>
                                     </tr>
                                 ))}
                             </tbody>
-                        </table>
+                        </table></div>
                     )}
                 </div>
             )}
@@ -304,12 +303,12 @@ function CopyField({ label, value }: { label: string; value: string }) {
     };
     return (
         <div>
-            <p className="label-mono mb-1">{label}</p>
+            <p className="label-caps mb-1">{label}</p>
             <div className="flex items-center gap-1.5">
-                <code className="flex-1 num text-[11px] text-fg-2 bg-surface border border-line px-2 py-1.5 truncate">{value}</code>
-                <button onClick={copy} className="p-1.5 border border-line text-fg-3 hover:text-fg hover:bg-surface" aria-label={`Copy ${label}`}>
-                    {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
-                </button>
+                <code className="flex-1 font-mono text-xs text-fg-2 bg-surface border border-line rounded-md px-2 py-1.5 truncate">{value}</code>
+                <Button variant="outline" size="icon" onClick={copy} className="h-8 w-8" aria-label={`Copy ${label}`}>
+                    {copied ? <Check size={13} className="text-lime" /> : <Copy size={13} />}
+                </Button>
             </div>
         </div>
     );
@@ -379,125 +378,122 @@ export default function Settings() {
     const field = (label: string, key: 'idp_entity_id' | 'idp_sso_url' | 'oidc_issuer' | 'oidc_client_id' | 'oidc_client_secret' | 'oidc_scopes' | 'groups_claim',
         placeholder: string, type = 'text') => (
         <div>
-            <label className="label-mono block mb-1">{label}</label>
-            <input type={type} autoComplete="off" value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                placeholder={placeholder}
-                className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
+            <Label htmlFor={`sso-${key}`}>{label}</Label>
+            <Input id={`sso-${key}`} type={type} autoComplete="off" value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                placeholder={placeholder} className="font-mono" />
         </div>
     );
 
-    return (
-        <PageContainer width="narrow">
-            <div>
-                <h1 className="text-xl font-semibold text-fg tracking-tight">Organization settings</h1>
-                <p className="label-mono mt-1">organization configuration</p>
-            </div>
+    if (me && !isAdmin) return <Navigate to="/settings/profile" replace />;
 
-            {!isAdmin ? (
-                <div className="bg-panel border border-line p-8 text-center text-sm text-fg-3">
-                    Tenant settings are managed by your tenant admin.
-                </div>
-            ) : (
-                <section className="bg-panel border border-line">
+    const toc: [string, string][] = [
+        ['sso', 'Single sign-on'], ['mfa', 'Two-factor'], ['sessions', 'Session length'], ['mcp', 'AI clients'],
+        ['guests', 'Case guests'], ['sla', 'SLA policies'], ['artifact-types', 'Artifact types'], ['report-branding', 'Report branding'],
+    ];
+
+    return (
+        <div className="space-y-6">
+            <SettingsPageHeader title="General" description="Sign-in, security and defaults for this organization." />
+            <nav aria-label="On this page" className="flex flex-wrap gap-x-4 gap-y-1 text-sm border-b border-line pb-3">
+                {toc.map(([id, label]) => (
+                    <a key={id} href={`#${id}`} className="text-fg-3 hover:text-fg underline-offset-4 hover:underline">{label}</a>
+                ))}
+            </nav>
+
+            {!me ? <Skeleton rows={6} /> : (
+                <section id="sso" className="scroll-mt-4 rounded-md bg-panel border border-line">
                     <div className="flex items-center justify-between px-4 h-11 border-b border-line">
-                        <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
-                            <KeyRound size={15} className="text-accent" /> Single Sign-On
-                        </h2>
+                        <h3 className="flex items-center gap-2 text-sm font-semibold text-fg">
+                            <KeyRound size={15} className="text-accent" /> Single sign-on
+                        </h3>
                     </div>
 
                     {isLoading ? (
-                        <p className="p-4 font-mono text-xs text-muted">$ loading…</p>
+                        <Skeleton rows={3} className="p-4" />
                     ) : (
                         <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
                             {/* IdP side */}
                             <div className="space-y-4">
                                 <div>
-                                    <label className="text-xs text-fg-2">
-                                        <span className="label-mono block mb-1">member sign-in</span>
-                                        <select value={form.member_login_method} aria-label="Member sign-in"
-                                            onChange={e => setForm(f => ({ ...f, member_login_method: e.target.value as LoginMethod }))}
-                                            className="border border-line-strong bg-panel px-1.5 py-1.5 text-sm">
-                                            <option value="password">Password</option>
-                                            <option value="saml">SAML</option>
-                                            <option value="oidc">OIDC</option>
-                                        </select>
-                                    </label>
-                                    <p className="text-[11px] text-fg-3 mt-1">Guest sign-in is set in the Case guests section below.</p>
+                                    <Label htmlFor="sso-member-login">Member sign-in</Label>
+                                    <Select id="sso-member-login" value={form.member_login_method} className="w-48"
+                                        onChange={e => setForm(f => ({ ...f, member_login_method: e.target.value as LoginMethod }))}>
+                                        <option value="password">Password</option>
+                                        <option value="saml">SAML</option>
+                                        <option value="oidc">OIDC</option>
+                                    </Select>
+                                    <p className="text-xs text-fg-3 mt-1">Guest sign-in is set in the Case guests section below.</p>
                                 </div>
-                                {field('groups claim / attribute', 'groups_claim', 'groups')}
-                                <p className="text-[11px] text-fg-3 -mt-2">
+                                {field('Groups claim or attribute', 'groups_claim', 'groups')}
+                                <p className="text-xs text-fg-3 -mt-2">
                                     Name of the SAML attribute or OIDC claim carrying the user's groups, used to sync escalation
                                     groups at sign-in. If the IdP omits it, memberships are left unchanged. Okta: add <code>groups</code> to the OIDC
                                     scopes above and set the app's Groups claim (filter e.g. "Matches regex .*"). Entra: add the groups
                                     claim under Token configuration. SAML: use the attribute name your IdP sends.
                                 </p>
-                                <p className="label-mono">// saml</p>
-                                <p className="label-mono">// identity provider (from your idp)</p>
-                                {field('idp entity id', 'idp_entity_id', 'https://idp.example.com/entityid')}
-                                {field('idp sso url', 'idp_sso_url', 'https://idp.example.com/sso/saml')}
+                                <h4 className="text-sm font-semibold text-fg pt-2">SAML</h4>
+                                <p className="label-caps">Identity provider (from your IdP)</p>
+                                {field('IdP entity ID', 'idp_entity_id', 'https://idp.example.com/entityid')}
+                                {field('IdP SSO URL', 'idp_sso_url', 'https://idp.example.com/sso/saml')}
                                 <div>
-                                    <label className="label-mono block mb-1">idp x509 certificate</label>
-                                    <textarea value={form.idp_x509_cert}
+                                    <Label htmlFor="sso-idp-cert">IdP X.509 certificate</Label>
+                                    <Textarea id="sso-idp-cert" value={form.idp_x509_cert}
                                         onChange={e => setForm(f => ({ ...f, idp_x509_cert: e.target.value }))}
                                         rows={6} placeholder="-----BEGIN CERTIFICATE-----"
-                                        className="w-full bg-panel border border-line-strong px-2.5 py-2 text-[11px] num focus:outline-hidden focus:ring-1 focus:ring-accent" />
-                                    <p className="text-[11px] text-fg-3 mt-1">The IdP must sign the assertion (in Keycloak, enable “Sign assertions”).</p>
+                                        className="font-mono text-xs" />
+                                    <p className="text-xs text-fg-3 mt-1">The IdP must sign the assertion (in Keycloak, enable “Sign assertions”).</p>
                                 </div>
                                 <div>
                                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                         <input type="checkbox" checked={form.saml_allow_idp_initiated}
                                             onChange={e => setForm(f => ({ ...f, saml_allow_idp_initiated: e.target.checked }))}
                                             className="border-line-strong text-accent focus:ring-accent" />
-                                        allow IdP-initiated sign-in
+                                        Allow IdP-initiated sign-in
                                     </label>
-                                    <p className="text-[11px] text-fg-3 mt-1">
+                                    <p className="text-xs text-fg-3 mt-1">
                                         Off by default: only sign-ins started from this site are accepted. Turning it on lets users
                                         start from the IdP's app dashboard, but also exposes the organization to login CSRF: anyone with an
                                         account at the same IdP can silently sign a colleague's browser into their own account.
                                     </p>
                                 </div>
-                                <p className="label-mono pt-2">// oidc</p>
-                                {field('issuer url', 'oidc_issuer', 'https://idp.example.com')}
-                                {field('client id', 'oidc_client_id', '')}
-                                {field('client secret', 'oidc_client_secret', cfg?.has_oidc_client_secret ? 'saved (leave blank to keep)' : '', 'password')}
-                                {field('scopes', 'oidc_scopes', 'openid email profile')}
+                                <h4 className="text-sm font-semibold text-fg pt-2">OIDC</h4>
+                                {field('Issuer URL', 'oidc_issuer', 'https://idp.example.com')}
+                                {field('Client ID', 'oidc_client_id', '')}
+                                {field('Client secret', 'oidc_client_secret', cfg?.has_oidc_client_secret ? 'saved (leave blank to keep)' : '', 'password')}
+                                {field('Scopes', 'oidc_scopes', 'openid email profile')}
                                 <div className="flex items-center gap-4 flex-wrap">
                                     <label className="flex items-center gap-2 text-xs text-fg-2 cursor-pointer">
                                         <input type="checkbox" checked={form.auto_provision}
                                             onChange={e => setForm(f => ({ ...f, auto_provision: e.target.checked }))}
                                             className="border-line-strong text-accent focus:ring-accent" />
-                                        auto-provision new users
+                                        Auto-provision new users
                                     </label>
                                     <label className="flex items-center gap-2 text-xs text-fg-2">
-                                        default role
-                                        <select value={form.default_role}
+                                        Default role
+                                        <Select inputSize="sm" className="w-28" value={form.default_role}
                                             onChange={e => setForm(f => ({ ...f, default_role: e.target.value as 'analyst' | 'viewer' }))}
-                                            disabled={!form.auto_provision}
-                                            className="border border-line-strong px-1.5 py-1 text-xs font-mono disabled:opacity-50">
-                                            <option value="viewer">viewer</option>
-                                            <option value="analyst">analyst</option>
-                                        </select>
+                                            disabled={!form.auto_provision}>
+                                            <option value="viewer">Viewer</option>
+                                            <option value="analyst">Analyst</option>
+                                        </Select>
                                     </label>
                                 </div>
                                 <div>
-                                    <label className="label-mono block mb-1">auto-provision email domains</label>
-                                    <input type="text" autoComplete="off" value={form.allowed_email_domains}
+                                    <Label htmlFor="sso-domains">Auto-provision email domains</Label>
+                                    <Input id="sso-domains" type="text" autoComplete="off" value={form.allowed_email_domains}
                                         onChange={e => setForm(f => ({ ...f, allowed_email_domains: e.target.value }))}
-                                        placeholder="example.com, example.org"
-                                        className="w-full bg-panel border border-line-strong px-2.5 py-2 text-sm num focus:outline-hidden focus:ring-1 focus:ring-accent" />
+                                        placeholder="example.com, example.org" className="font-mono" />
                                     <p className="text-xs text-fg-3 mt-1">
                                         Required with auto-provisioning: only new users with an email at one of these domains get an account on first SSO sign-in.
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                    <button onClick={() => save.mutate()} disabled={save.isPending}
-                                        className={cn('inline-flex items-center gap-1.5 h-9 px-4 text-sm font-medium text-white transition-colors disabled:opacity-50',
-                                            savedFlash ? 'bg-emerald-600' : 'bg-accent hover:bg-accent-hover')}>
+                                    <Button onClick={() => save.mutate()} disabled={save.isPending}>
                                         {save.isPending ? <Loader2 size={14} className="animate-spin" /> : savedFlash ? <Check size={14} /> : <Save size={14} />}
                                         {savedFlash ? 'Saved' : 'Save SSO settings'}
-                                    </button>
+                                    </Button>
                                     {save.isError && (
-                                        <span className="text-xs text-severity-critical">
+                                        <span role="alert" className="text-xs text-severity-critical">
                                             {detailMessage((save.error as any)?.response?.data?.detail)}
                                         </span>
                                     )}
@@ -506,17 +502,17 @@ export default function Settings() {
 
                             {/* SP side */}
                             <div className="space-y-3 lg:border-l lg:border-line lg:pl-6">
-                                <p className="label-mono">// service provider (give these to your idp)</p>
+                                <p className="label-caps">Service provider (give these to your IdP)</p>
                                 {cfg && (
                                     <>
-                                        <CopyField label="sp entity id / audience" value={cfg.sp_entity_id} />
-                                        <CopyField label="acs url (single sign on url)" value={cfg.sp_acs_url} />
-                                        <CopyField label="sp metadata url" value={cfg.sp_metadata_url} />
-                                        <CopyField label="sso login url (for your users)" value={cfg.sp_login_url} />
-                                        <CopyField label="oidc redirect uri (give this to your idp)" value={cfg.oidc_redirect_uri} />
+                                        <CopyField label="SP entity ID / audience" value={cfg.sp_entity_id} />
+                                        <CopyField label="ACS URL (single sign-on URL)" value={cfg.sp_acs_url} />
+                                        <CopyField label="SP metadata URL" value={cfg.sp_metadata_url} />
+                                        <CopyField label="SSO login URL (for your users)" value={cfg.sp_login_url} />
+                                        <CopyField label="OIDC redirect URI (give this to your IdP)" value={cfg.oidc_redirect_uri} />
                                     </>
                                 )}
-                                <p className="text-[11px] text-muted leading-relaxed pt-1">
+                                <p className="text-xs text-fg-3 leading-relaxed pt-1">
                                     Users sign in via “Sign in with SSO” on the login page using your organization slug.
                                     Send the email as the NameID (format emailAddress) or an <code className="num">email</code> attribute,
                                     and the full name as <code className="num">displayName</code>. Admins can always use the password form on the login page.
@@ -530,10 +526,10 @@ export default function Settings() {
             {isAdmin && <MfaRequirementSection />}
             {isAdmin && <SessionPolicySection />}
             {isAdmin && <McpSection />}
-            {isAdmin && <GuestSettingsSection />}
+            {isAdmin && <div id="guests" className="scroll-mt-4"><GuestSettingsSection /></div>}
             {isAdmin && <SLAPoliciesSection />}
-            {isAdmin && <ArtifactTypesSection />}
-            {isAdmin && <ReportBrandingSection />}
-        </PageContainer>
+            {isAdmin && <div id="artifact-types" className="scroll-mt-4"><ArtifactTypesSection /></div>}
+            {isAdmin && <div id="report-branding" className="scroll-mt-4"><ReportBrandingSection /></div>}
+        </div>
     );
 }

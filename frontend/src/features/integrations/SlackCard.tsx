@@ -4,6 +4,7 @@ import { MessageSquare } from 'lucide-react';
 import { isAxiosError } from 'axios';
 import { api } from '../../api/client';
 import { DEFAULT_TEMPLATE, previewName } from './warRoomName';
+import { Card } from '../../components/ui';
 
 interface SlackConfig {
     configured: boolean; team_id: string | null; default_channel: string | null;
@@ -47,10 +48,10 @@ export default function SlackCard() {
 
     const input = 'w-full border border-line-strong px-2 py-1.5 text-sm font-mono';
     return (
-        <div className="bg-panel border border-line p-5 space-y-3">
+        <Card className="p-4 space-y-3">
             <div className="flex items-center gap-2">
                 <MessageSquare size={16} className="text-accent" />
-                <h2 className="font-semibold text-fg">Slack</h2>
+                <h3 className="text-sm font-semibold text-fg">Slack</h3>
                 <span className="ml-auto label-mono">{data?.team_id ? `connected · ${data.team_id}${data.socket_mode ? ' · socket mode' : ''}` : data?.configured ? 'saved · not tested' : 'not configured'}</span>
             </div>
             <div className="text-xs text-fg-3 space-y-1">
@@ -63,7 +64,7 @@ export default function SlackCard() {
             <label className="block"><span className="label-mono">app-level token (socket mode)</span>
                 <input type="password" className={input} value={appToken} placeholder={data?.socket_mode ? '•••••• (unchanged) · type - to remove' : 'xapp-…'} onChange={(e) => setAppToken(e.target.value)} /></label>
             {data?.socket_mode && (
-                <p className={data.socket_connected ? 'text-xs text-emerald-300' : 'text-xs text-amber-300'}>
+                <p className={data.socket_connected ? 'text-xs text-lime' : 'text-xs text-severity-medium'}>
                     {data.socket_connected ? '● socket connected' : '○ socket not connected yet (is the slack-socket service running?)'}
                 </p>
             )}
@@ -96,8 +97,8 @@ export default function SlackCard() {
             <div className="flex items-center gap-2">
                 <button onClick={() => save.mutate()} disabled={save.isPending} className="h-8 px-3 bg-accent text-on-accent text-sm disabled:opacity-50">Save</button>
                 <button onClick={() => test.mutate()} disabled={!data?.configured || test.isPending} className="h-8 px-3 border border-line-strong text-sm disabled:opacity-50">Test</button>
-                {msg && <span className={msg.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-300'}>{msg.text}</span>}
+                {msg && <span className={msg.ok ? 'text-xs text-lime' : 'text-xs text-severity-critical'}>{msg.text}</span>}
             </div>
-        </div>
+        </Card>
     );
 }

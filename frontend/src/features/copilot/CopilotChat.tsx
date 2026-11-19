@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User as UserIcon, Loader2, Terminal, Eraser, X } from 'lucide-react';
+import { Send, Bot, User as UserIcon, Loader2, Eraser, X, Sparkles } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import CopilotActionCard, { CopilotSuggestionChip } from './CopilotActionCard';
 import type { CopilotAction } from '../../types';
+import { Button, Skeleton } from '../../components/ui';
 
 interface Message {
     id: number;
@@ -95,50 +96,45 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
     };
 
     return (
-        <div className="flex flex-col h-full bg-canvas/50">
+        <div className="flex flex-col h-full bg-surface">
             {/* Header */}
-            <div className="p-4 border-b border-line bg-panel/50 backdrop-blur-md flex items-center justify-between shrink-0">
-                <h3 className="font-bold text-fg flex items-center gap-2 text-sm uppercase tracking-wider">
-                    <Bot size={16} className="text-accent" />
-                    SOC-bot
-                    <span className="text-[10px] font-medium text-fg-3 normal-case tracking-normal">
-                        {isCase ? `· case #${caseId}` : '· general'}
-                    </span>
-                    {aiInfo?.provider && (
-                        <span className="font-mono text-[10px] font-medium text-fg-3 normal-case tracking-normal truncate max-w-56" title="Where case data is sent">
-                            · AI: {aiInfo.provider} · {aiInfo.model}
+            <div className="px-4 py-3 border-b border-line bg-panel flex items-center justify-between gap-2 shrink-0">
+                <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-fg flex items-center gap-2">
+                        <Sparkles size={14} className="text-accent" aria-hidden />
+                        Copilot
+                        <span className="text-xs font-normal text-fg-3">
+                            {isCase ? <>· case <span className="num">#{caseId}</span></> : '· general'}
                         </span>
+                    </h2>
+                    {aiInfo?.provider && (
+                        <p className="mt-0.5 text-xs text-fg-3 truncate" title="Where case data is sent">
+                            AI: <span className="font-mono">{aiInfo.provider} · {aiInfo.model}</span>
+                        </p>
                     )}
-                </h3>
-                <div className="flex items-center gap-2">
-                    <button
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                        variant="ghost" size="sm"
                         onClick={() => restartMutation.mutate()}
                         disabled={restartMutation.isPending || chatMutation.isPending || isLoadingSession}
                         title="Clear conversation"
-                        aria-label="Clear conversation"
-                        className="flex items-center gap-1 px-2 py-1 text-xs text-fg-3 hover:text-fg hover:bg-raised rounded-md transition-all disabled:opacity-50"
                     >
-                        {restartMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Eraser size={13} />}
+                        {restartMutation.isPending ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Eraser size={13} aria-hidden />}
                         Clear
-                    </button>
+                    </Button>
                     {onClose && (
-                        <button
-                            onClick={onClose}
-                            aria-label="Close copilot"
-                            className="p-1.5 text-fg-3 hover:text-white hover:bg-raised rounded-md transition-all"
-                        >
+                        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close copilot" title="Close (⌘J)">
                             <X size={16} />
-                        </button>
+                        </Button>
                     )}
                 </div>
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+            <div className="flex-1 overflow-y-auto p-4 space-y-5" aria-live="polite">
                 {isLoadingSession ? (
-                    <div className="flex items-center justify-center py-8">
-                        <Loader2 size={20} className="animate-spin text-accent" />
-                    </div>
+                    <Skeleton rows={3} />
                 ) : (
                     messages.map((msg) => (
                         <motion.div
@@ -148,18 +144,18 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                             className={cn('flex gap-3', msg.role === 'user' ? 'flex-row-reverse' : '')}
                         >
                             <div className={cn(
-                                'w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border shadow-lg',
+                                'w-7 h-7 rounded-md flex items-center justify-center shrink-0 border',
                                 msg.role === 'assistant'
                                     ? 'bg-accent/10 border-accent/30 text-accent'
-                                    : 'bg-accent/10 border-accent/30 text-accent'
-                            )}>
+                                    : 'bg-raised border-line text-fg-3'
+                            )} aria-hidden>
                                 {msg.role === 'assistant' ? <Bot size={16} /> : <UserIcon size={16} />}
                             </div>
                             <div className={cn(
-                                'rounded-xl p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere]',
+                                'rounded-md p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere]',
                                 msg.role === 'assistant'
-                                    ? 'bg-raised/80 text-fg border border-line shadow-xs'
-                                    : 'bg-accent/10 text-accent border border-accent/20'
+                                    ? 'bg-panel text-fg border border-line'
+                                    : 'bg-raised text-fg border border-line'
                             )}>
                                 {msg.role === 'assistant' ? (
                                     <>
@@ -182,26 +178,26 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                 {chatMutation.isPending && (
                     <>
                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3 flex-row-reverse">
-                            <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/30 text-accent flex items-center justify-center shrink-0 shadow-lg">
+                            <div className="w-7 h-7 rounded-md bg-raised border border-line text-fg-3 flex items-center justify-center shrink-0" aria-hidden>
                                 <UserIcon size={16} />
                             </div>
-                            <div className="rounded-xl p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere] bg-accent/10 text-accent border border-accent/20">
+                            <div className="rounded-md p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere] bg-raised text-fg border border-line">
                                 <p className="leading-relaxed whitespace-pre-wrap">{chatMutation.variables}</p>
                             </div>
                         </motion.div>
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/30 text-accent flex items-center justify-center shrink-0">
+                            <div className="w-7 h-7 rounded-md bg-accent/10 border border-accent/30 text-accent flex items-center justify-center shrink-0" aria-hidden>
                                 <Bot size={16} />
                             </div>
-                            <div className="bg-raised/50 rounded-xl p-3 text-sm text-fg-2 flex items-center gap-2 border border-line">
-                                <Loader2 size={14} className="animate-spin text-accent" />
-                                <span className="animate-pulse">Analyzing…</span>
+                            <div role="status" className="bg-panel rounded-md p-3 text-sm text-fg-2 flex items-center gap-2 border border-line">
+                                <Loader2 size={14} className="animate-spin text-accent" aria-hidden />
+                                <span>Analyzing…</span>
                             </div>
                         </motion.div>
                     </>
                 )}
                 {chatMutation.isError && (
-                    <p role="alert" className="text-xs text-severity-critical bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                    <p role="alert" className="text-xs text-severity-critical bg-severity-critical/5 border border-severity-critical/30 rounded-md p-3">
                         The copilot didn't answer in time. If a reply arrives it will show up here; otherwise try again.
                     </p>
                 )}
@@ -209,9 +205,8 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
             </div>
 
             {/* Input */}
-            <div className="p-4 border-t border-line bg-panel/30 shrink-0">
-                <form onSubmit={handleSubmit} className="relative group">
-                    <div className="absolute inset-0 bg-accent/5 rounded-lg -z-10 group-focus-within:bg-accent/10 transition-colors" />
+            <div className="p-4 border-t border-line bg-panel shrink-0">
+                <form onSubmit={handleSubmit} className="relative">
                     <textarea
                         ref={inputRef}
                         rows={1}
@@ -224,14 +219,13 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                         placeholder={isCase ? 'Ask about this case…' : 'Ask about the queue or SOC topics…'}
                         disabled={isLoadingSession || !session}
                         aria-label="Message the copilot"
-                        className="block w-full max-h-48 resize-none overflow-y-auto bg-canvas/80 border border-line rounded-lg py-3 pl-10 pr-10 text-sm focus:outline-hidden focus:ring-1 focus:ring-accent/50 focus:border-accent/50 transition-all text-fg placeholder:text-fg-3 font-medium disabled:opacity-50"
+                        className="block w-full max-h-48 resize-none overflow-y-auto bg-panel border border-line-strong rounded-md py-2.5 pl-3 pr-10 text-sm focus:outline-2 focus:-outline-offset-1 focus:outline-accent text-fg placeholder:text-muted disabled:opacity-50"
                     />
-                    <Terminal size={14} className="absolute left-3.5 top-3.5 text-fg-3 group-focus-within:text-accent transition-colors" />
                     <button
                         type="submit"
                         disabled={!input.trim() || chatMutation.isPending || !session}
                         aria-label="Send message"
-                        className="absolute right-2 top-2 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md disabled:opacity-50 disabled:hover:bg-transparent transition-all"
+                        className="absolute right-1.5 top-1.5 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
                     >
                         <Send size={14} />
                     </button>

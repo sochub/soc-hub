@@ -1,23 +1,18 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, UserPlus, RefreshCw, X, Copy, Check, Trash2 } from 'lucide-react';
 import { api } from '../../api/client';
 import type { Tenant, User, Invitation } from '../../types';
 import InviteUserModal from '../admin/InviteUserModal';
 import DeleteTenantModal from './DeleteTenantModal';
-import PageContainer from '../../components/layout/PageContainer';
+import { Button, Card, CardHeader, CardTitle, EmptyState, Input, Label, Skeleton, Stamp, buttonClass, type Tone } from '../../components/ui';
+import SettingsPageHeader from '../settings/SettingsPageHeader';
 
-const statusColors: Record<string, string> = {
-    pending: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
-    accepted: 'bg-green-500/10 text-green-300 border-green-500/30',
-    expired: 'bg-raised-2 text-fg-3 border-line-strong',
-    revoked: 'bg-red-500/10 text-red-300 border-red-500/30',
-};
+const INVITE_TONE: Record<string, Tone> = { pending: 'medium', accepted: 'ok', expired: 'neutral', revoked: 'critical' };
 
 export default function TenantDetail() {
     const { id } = useParams<{ id: string }>();
-    const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [editing, setEditing] = useState(false);
     const [editName, setEditName] = useState('');
@@ -119,192 +114,136 @@ export default function TenantDetail() {
     const otherInvitations = invitations.filter(i => i.status !== 'pending');
 
     if (tenantLoading) {
-        return (
-            <PageContainer>
-                <div className="flex justify-center py-16">
-                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-accent" />
-                </div>
-            </PageContainer>
-        );
+        return <Skeleton rows={6} />;
     }
 
     if (!tenant) {
-        return <PageContainer><p className="text-fg-3">Tenant not found.</p></PageContainer>;
+        return <EmptyState title="Organization not found" action={<Link to="/settings/tenants" className={buttonClass('secondary', 'sm')}>Back to organizations</Link>} />;
     }
 
     return (
-        <PageContainer>
-            <button
-                onClick={() => navigate('/settings/tenants')}
-                className="flex items-center gap-2 text-sm text-fg-3 hover:text-fg transition-colors"
-            >
-                <ArrowLeft size={16} />
-                Back to Tenants
-            </button>
+        <div className="space-y-6">
+            <Link to="/settings/tenants" className="inline-flex items-center gap-1.5 text-sm text-fg-3 hover:text-fg">
+                <ArrowLeft size={14} aria-hidden />
+                Organizations
+            </Link>
 
-            {/* Tenant Info */}
-            <div className="bg-panel border border-line rounded-xl p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                    <h1 className="text-xl font-bold text-fg">{tenant.name}</h1>
-                    <div className="flex items-center gap-2">
-                        {!editing && (
-                            <button
-                                onClick={startEdit}
-                                className="px-3 py-1.5 text-xs bg-raised hover:bg-raised-2 text-fg rounded-md transition-colors"
-                            >
-                                Edit
-                            </button>
-                        )}
-                        <button
-                            onClick={() => toggleActiveMutation.mutate()}
-                            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                                tenant.is_active
-                                    ? 'bg-red-500/10 text-red-300 hover:bg-red-500/10'
-                                    : 'bg-green-500/10 text-green-300 hover:bg-green-500/10'
-                            }`}
-                        >
-                            {tenant.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
-                        {!tenant.is_active && (
-                            <button
-                                onClick={() => setShowDeleteModal(true)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 text-red-300 hover:bg-red-500/10 rounded-md transition-colors"
-                            >
-                                <Trash2 size={12} />
-                                Delete Permanently
-                            </button>
-                        )}
-                    </div>
-                </div>
+            <SettingsPageHeader title={tenant.name}
+                actions={<>
+                    {!editing && <Button variant="secondary" size="sm" onClick={startEdit}>Edit</Button>}
+                    <Button variant={tenant.is_active ? 'danger' : 'secondary'} size="sm" onClick={() => toggleActiveMutation.mutate()}>
+                        {tenant.is_active ? 'Deactivate' : 'Activate'}
+                    </Button>
+                    {!tenant.is_active && (
+                        <Button variant="danger" size="sm" onClick={() => setShowDeleteModal(true)}>
+                            <Trash2 size={12} />
+                            Delete permanently
+                        </Button>
+                    )}
+                </>} />
 
+            <Card className="p-4">
                 {editing ? (
-                    <div className="space-y-3">
-                        <div className="space-y-1">
-                            <label className="text-xs text-muted">Name</label>
-                            <input
-                                className="w-full bg-panel border border-line rounded-md px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-2 focus:ring-accent"
-                                value={editName}
-                                onChange={e => setEditName(e.target.value)}
-                            />
+                    <div className="space-y-3 max-w-md">
+                        <div>
+                            <Label htmlFor="tenant-name">Name</Label>
+                            <Input id="tenant-name" value={editName} onChange={e => setEditName(e.target.value)} />
                         </div>
-                        <div className="space-y-1">
-                            <label className="text-xs text-muted">Slug</label>
-                            <input
-                                className="w-full bg-panel border border-line rounded-md px-3 py-2 text-sm text-fg focus:outline-hidden focus:ring-2 focus:ring-accent"
-                                value={editSlug}
-                                onChange={e => setEditSlug(e.target.value)}
-                            />
+                        <div>
+                            <Label htmlFor="tenant-slug">Slug</Label>
+                            <Input id="tenant-slug" className="font-mono" value={editSlug} onChange={e => setEditSlug(e.target.value)} />
                         </div>
                         <div className="flex gap-2">
-                            <button
-                                onClick={handleSave}
-                                disabled={updateMutation.isPending}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover text-on-accent rounded-md transition-colors disabled:opacity-50"
-                            >
+                            <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
                                 <Save size={12} />
                                 Save
-                            </button>
-                            <button
-                                onClick={() => setEditing(false)}
-                                className="px-3 py-1.5 text-xs bg-raised hover:bg-raised-2 text-fg-2 rounded-md transition-colors"
-                            >
-                                Cancel
-                            </button>
+                            </Button>
+                            <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>Cancel</Button>
                         </div>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-2 gap-4 text-sm">
+                    <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
                         <div>
-                            <p className="text-xs text-muted">Slug</p>
-                            <p className="text-fg-2">{tenant.slug}</p>
+                            <dt className="label-caps">Slug</dt>
+                            <dd className="mt-1 font-mono text-fg-2">{tenant.slug}</dd>
                         </div>
                         <div>
-                            <p className="text-xs text-muted">Status</p>
-                            <p className={tenant.is_active ? 'text-green-300' : 'text-red-300'}>
-                                {tenant.is_active ? 'Active' : 'Inactive'}
-                            </p>
+                            <dt className="label-caps">Status</dt>
+                            <dd className="mt-1"><Stamp tone={tenant.is_active ? 'ok' : 'critical'}>{tenant.is_active ? 'Active' : 'Inactive'}</Stamp></dd>
                         </div>
                         <div>
-                            <p className="text-xs text-muted">Created</p>
-                            <p className="text-fg-2">{new Date(tenant.created_at).toLocaleDateString()}</p>
+                            <dt className="label-caps">Created</dt>
+                            <dd className="mt-1 num text-fg-2">{new Date(tenant.created_at).toLocaleDateString()}</dd>
                         </div>
                         <div>
-                            <p className="text-xs text-muted">Users</p>
-                            <p className="text-fg-2">{users.length}</p>
+                            <dt className="label-caps">Users</dt>
+                            <dd className="mt-1 num text-fg-2">{users.length}</dd>
                         </div>
-                    </div>
+                    </dl>
                 )}
-            </div>
+            </Card>
 
-            {/* Users Table */}
-            <div className="bg-panel border border-line rounded-xl overflow-hidden">
-                <div className="px-6 py-4 border-b border-line flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-fg-2">Users ({users.length})</h2>
-                    <button
-                        onClick={() => setShowInviteModal(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent hover:bg-accent-hover text-on-accent rounded-md transition-colors"
-                    >
+            <Card>
+                <CardHeader>
+                    <CardTitle>Users <span className="num font-normal text-fg-3">{users.length}</span></CardTitle>
+                    <Button size="sm" onClick={() => setShowInviteModal(true)}>
                         <UserPlus size={12} />
-                        Invite User
-                    </button>
-                </div>
-                <table className="w-full">
+                        Invite user
+                    </Button>
+                </CardHeader>
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm">
                     <thead>
-                        <tr className="border-b border-line">
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">User</th>
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Role</th>
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Status</th>
+                        <tr className="border-b border-line label-caps text-left">
+                            <th className="px-3 py-2">User</th>
+                            <th className="px-3 py-2">Role</th>
+                            <th className="px-3 py-2">Status</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
                         {usersLoading ? (
-                            <tr>
-                                <td colSpan={3} className="px-6 py-8 text-center">
-                                    <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-accent mx-auto" />
-                                </td>
-                            </tr>
+                            <tr><td colSpan={3} className="p-3"><Skeleton rows={3} /></td></tr>
                         ) : users.length === 0 ? (
                             <tr>
-                                <td colSpan={3} className="px-6 py-8 text-center text-muted text-sm">No users in this tenant</td>
+                                <td colSpan={3} className="px-3 py-8 text-center text-fg-3">No users in this organization</td>
                             </tr>
                         ) : users.map(user => (
                             <tr key={user.id} className="hover:bg-raised transition-colors">
-                                <td className="px-6 py-3">
-                                    <p className="text-sm text-fg">{user.full_name || 'Unnamed'}</p>
-                                    <p className="text-xs text-muted">{user.email}</p>
+                                <td className="px-3 py-2.5">
+                                    <p className="text-fg">{user.full_name || 'Unnamed'}</p>
+                                    <p className="text-xs text-fg-3">{user.email}</p>
                                 </td>
-                                <td className="px-6 py-3">
-                                    <span className="text-xs text-fg-3">{user.role}</span>
+                                <td className="px-3 py-2.5">
+                                    <span className="text-xs text-fg-2 capitalize">{user.role}</span>
                                 </td>
-                                <td className="px-6 py-3">
-                                    <span className={`w-2 h-2 rounded-full inline-block ${user.is_active ? 'bg-green-400' : 'bg-red-400'}`} />
+                                <td className="px-3 py-2.5">
+                                    <Stamp tone={user.is_active ? 'ok' : 'critical'}>{user.is_active ? 'Active' : 'Inactive'}</Stamp>
                                 </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
-            </div>
-
-            {/* Invitations Table */}
-            <div className="bg-panel border border-line rounded-xl overflow-hidden">
-                <div className="px-6 py-4 border-b border-line">
-                    <h2 className="text-sm font-semibold text-fg-2">Invitations ({invitations.length})</h2>
                 </div>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Invitations <span className="num font-normal text-fg-3">{invitations.length}</span></CardTitle>
+                </CardHeader>
                 {invitationsLoading ? (
-                    <div className="px-6 py-8 flex justify-center">
-                        <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-accent" />
-                    </div>
+                    <Skeleton rows={3} className="p-3" />
                 ) : invitations.length === 0 ? (
-                    <div className="px-6 py-8 text-center text-muted text-sm">No invitations yet</div>
+                    <EmptyState title="No invitations yet" className="py-8" />
                 ) : (
-                    <table className="w-full">
+                    <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
                         <thead>
-                            <tr className="border-b border-line">
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Email</th>
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Role</th>
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Status</th>
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Expires</th>
-                                <th className="text-right px-6 py-3 text-xs font-semibold text-muted uppercase tracking-wider">Actions</th>
+                            <tr className="border-b border-line label-caps text-left">
+                                <th className="px-3 py-2">Email</th>
+                                <th className="px-3 py-2">Role</th>
+                                <th className="px-3 py-2">Status</th>
+                                <th className="px-3 py-2">Expires</th>
+                                <th className="px-3 py-2 text-right"><span className="sr-only">Actions</span></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-line">
@@ -313,48 +252,33 @@ export default function TenantDetail() {
                                 const displayStatus = isExpired ? 'expired' : inv.status;
                                 return (
                                     <tr key={inv.id} className="hover:bg-raised transition-colors">
-                                        <td className="px-6 py-3">
-                                            <p className="text-sm text-fg">{inv.email}</p>
+                                        <td className="px-3 py-2.5 text-fg">{inv.email}</td>
+                                        <td className="px-3 py-2.5">
+                                            <span className="text-xs text-fg-2 capitalize">{inv.role}</span>
                                         </td>
-                                        <td className="px-6 py-3">
-                                            <span className="text-xs text-fg-3">{inv.role}</span>
+                                        <td className="px-3 py-2.5">
+                                            <Stamp tone={INVITE_TONE[displayStatus] ?? 'neutral'}>{displayStatus}</Stamp>
                                         </td>
-                                        <td className="px-6 py-3">
-                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border ${statusColors[displayStatus] || statusColors.pending}`}>
-                                                {displayStatus}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-3">
-                                            <span className="text-xs text-muted">
+                                        <td className="px-3 py-2.5">
+                                            <span className="text-xs text-fg-3 num">
                                                 {new Date(inv.expires_at).toLocaleString()}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-3 text-right">
+                                        <td className="px-3 py-2.5 text-right">
                                             {(displayStatus === 'pending' || displayStatus === 'expired') && (
                                                 <div className="flex items-center justify-end gap-1">
-                                                    <button
-                                                        onClick={() => handleCopyLink(inv)}
-                                                        className="p-1.5 text-fg-3 hover:text-fg transition-colors rounded-sm"
-                                                        title="Copy invite link"
-                                                    >
-                                                        {copiedId === inv.id ? <Check size={14} className="text-green-300" /> : <Copy size={14} />}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => resendMutation.mutate(inv.id)}
-                                                        disabled={resendMutation.isPending}
-                                                        className="p-1.5 text-fg-3 hover:text-accent transition-colors rounded-sm disabled:opacity-50"
-                                                        title="Resend invitation"
-                                                    >
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleCopyLink(inv)}
+                                                        title="Copy invite link" aria-label={`Copy invite link for ${inv.email}`}>
+                                                        {copiedId === inv.id ? <Check size={14} className="text-lime" /> : <Copy size={14} />}
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => resendMutation.mutate(inv.id)}
+                                                        disabled={resendMutation.isPending} title="Resend invitation" aria-label={`Resend invitation to ${inv.email}`}>
                                                         <RefreshCw size={14} className={resendMutation.isPending ? 'animate-spin' : ''} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => revokeMutation.mutate(inv.id)}
-                                                        disabled={revokeMutation.isPending}
-                                                        className="p-1.5 text-fg-3 hover:text-red-300 transition-colors rounded-sm disabled:opacity-50"
-                                                        title="Revoke invitation"
-                                                    >
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8 hover:text-severity-critical" onClick={() => revokeMutation.mutate(inv.id)}
+                                                        disabled={revokeMutation.isPending} title="Revoke invitation" aria-label={`Revoke invitation for ${inv.email}`}>
                                                         <X size={14} />
-                                                    </button>
+                                                    </Button>
                                                 </div>
                                             )}
                                         </td>
@@ -363,8 +287,9 @@ export default function TenantDetail() {
                             })}
                         </tbody>
                     </table>
+                    </div>
                 )}
-            </div>
+            </Card>
 
             <InviteUserModal
                 isOpen={showInviteModal}
@@ -381,6 +306,6 @@ export default function TenantDetail() {
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
             />
-        </PageContainer>
+        </div>
     );
 }

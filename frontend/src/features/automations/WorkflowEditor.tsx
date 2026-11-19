@@ -6,23 +6,30 @@ import {
     type Connection, type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, Save, CheckCircle2, AlertTriangle, FlaskConical } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, AlertTriangle, FlaskConical, PanelLeft, PanelRight, X } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { User } from '../../types';
 import type { TriggerType, ValidationError, Workflow, WfGraph, WfNode } from './types';
 import { NODE_DEF, NODE_DEFS, TRIGGER_LABEL } from './nodeCatalog';
-import { fromFlow, nextNodeId, toFlow, type WfFlowNode } from './flow';
+import { FLOW_DOT_COLOR, FLOW_PANEL_CLASS, FLOW_THEME, fromFlow, nextNodeId, toFlow, type WfFlowNode } from './flow';
 import WorkflowNode from './WorkflowNode';
 import NodeInspector from './NodeInspector';
 import RunsTable from './RunsTable';
 import DryRunDialog from './DryRunDialog';
+import EnabledSwitch from './EnabledSwitch';
+import { Button, FolderTabs, Select, Textarea, Label, TONE_TEXT } from '../../components/ui';
 
 type ApiErr = { response?: { data?: { detail?: { errors?: ValidationError[]; message?: string } } } };
 const nodeTypes = { wf: WorkflowNode };
 const EMPTY_GRAPH: WfGraph = { nodes: [{ id: 'start', type: 'trigger', position: { x: 250, y: 40 }, config: {} }], edges: [] };
 
 interface Meta { name: string; description: string; trigger_type: TriggerType; trigger_filter: string }
+const NEW_META: Meta = { name: 'Untitled workflow', description: '', trigger_type: 'case.created', trigger_filter: '' };
+type Notice = { kind: 'status' | 'alert'; text: string };
+
+/** What a save would send; compared against the last saved/loaded snapshot to show "Unsaved changes". */
+const snapshot = (meta: Meta, nodes: WfFlowNode[], edges: Edge[]) => JSON.stringify({ meta, graph: fromFlow(nodes, edges) });
 
 function Editor() {
     const { id } = useParams();
@@ -40,14 +47,19 @@ function Editor() {
         enabled: !isNew,
     });
 
-    const [meta, setMeta] = useState<Meta>({ name: 'Untitled workflow', description: '', trigger_type: 'case.created', trigger_filter: '' });
+    const [meta, setMeta] = useState<Meta>(NEW_META);
     const [nodes, setNodes, onNodesChange] = useNodesState<WfFlowNode>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [errors, setErrors] = useState<ValidationError[]>([]);
     const [tab, setTab] = useState<'editor' | 'runs'>('editor');
     const [dryRunOpen, setDryRunOpen] = useState(false);
-    const [banner, setBanner] = useState<string | null>(null);
+    const [notice, setNotice] = useState<Notice | null>(null);
+    const setStatus = (text: string) => setNotice({ kind: 'status', text });
+    const setAlert = (text: string) => setNotice({ kind: 'alert', text });
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    const [inspectorOpen, setInspectorOpen] = useState(false);
+    const [savedSnap, setSavedSnap] = useState<string | null>(null);
     const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
     // id of the workflow the canvas was last hydrated for; server responses never re-hydrate after that
     const hydratedFor = useRef<string | null>(null);
@@ -57,13 +69,16 @@ function Editor() {
         if (isNew && hydratedFor.current !== 'new') {
             hydratedFor.current = 'new';
             const f = toFlow(EMPTY_GRAPH); setNodes(f.nodes); setEdges(f.edges); setLoadedVersion(0);
+            setSavedSnap(snapshot(NEW_META, f.nodes, f.edges));
         }
         if (wf && hydratedFor.current !== String(wf.id)) {
             hydratedFor.current = String(wf.id);
-            setMeta({ name: wf.name, description: wf.description ?? '', trigger_type: wf.trigger_type, trigger_filter: wf.trigger_filter ?? '' });
+            const m: Meta = { name: wf.name, description: wf.description ?? '', trigger_type: wf.trigger_type, trigger_filter: wf.trigger_filter ?? '' };
+            setMeta(m);
             const invalid = new Set(wf.validation_errors.map((e) => e.node_id).filter(Boolean) as string[]);
             const f = toFlow(wf.graph, { invalidIds: invalid });
             setNodes(f.nodes); setEdges(f.edges); setErrors(wf.validation_errors); setLoadedVersion(wf.version);
+            setSavedSnap(snapshot(m, f.nodes, f.edges));
         }
     }, [wf, isNew, setNodes, setEdges]);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -103,7 +118,7 @@ function Editor() {
     const updateNode = (updated: WfNode) =>
         setNodes((ns) => ns.map((n) => (n.id === updated.id ? { ...n, data: { ...n.data, wf: updated } } : n)));
     const renameNode = (oldId: string, newId: string) => {
-        if (nodes.some((n) => n.id === newId)) { setBanner(`Node id "${newId}" already exists`); return false; }
+        if (nodes.some((n) => n.id === newId)) { setAlert(`Node id "${newId}" already exists`); return false; }
         setNodes((ns) => ns.map((n) => {
             if (n.id === oldId) return { ...n, id: newId, data: { ...n.data, wf: { ...n.data.wf, id: newId } } };
             if (n.parentId === oldId) return { ...n, parentId: newId };
@@ -132,14 +147,17 @@ function Editor() {
 
     const save = useMutation({
         mutationFn: async () => {
+            const snap = snapshot(meta, nodes, edges);
             const body = { ...meta, trigger_filter: meta.trigger_filter || null, description: meta.description || null, graph: fromFlow(nodes, edges) };
-            return (isNew ? await api.post('/workflows/', body) : await api.put(`/workflows/${id}`, body)).data as Workflow;
+            const saved = (isNew ? await api.post('/workflows/', body) : await api.put(`/workflows/${id}`, body)).data as Workflow;
+            return { saved, snap };
         },
-        onSuccess: (saved) => {
+        onSuccess: ({ saved, snap }) => {
+            setSavedSnap(snap);
             hydratedFor.current = String(saved.id);
             setLoadedVersion(saved.version);
             setErrors(saved.validation_errors);
-            setBanner(saved.validation_errors.length ? `Saved with ${saved.validation_errors.length} problem(s)` : 'Saved');
+            setStatus(saved.validation_errors.length ? `Saved with ${saved.validation_errors.length} problem(s)` : 'Saved');
             qc.invalidateQueries({ queryKey: ['workflows'] });
             qc.setQueryData(['workflow', String(saved.id)], saved);
             if (isNew) navigate(`/workflows/${saved.id}`, { replace: true });
@@ -147,68 +165,101 @@ function Editor() {
         onError: (err: ApiErr) => {
             const detail = err?.response?.data?.detail;
             if (detail?.errors) setErrors(detail.errors);
-            setBanner(detail?.message ?? 'Save failed');
+            setAlert(detail?.message ?? 'Save failed');
         },
     });
 
     const toggle = useMutation({
         mutationFn: async () => (await api.post(`/workflows/${id}/${wf?.enabled ? 'disable' : 'enable'}`)).data as Workflow,
-        onSuccess: (w) => { qc.setQueryData(['workflow', id], w); qc.invalidateQueries({ queryKey: ['workflows'] }); setBanner(w.enabled ? 'Enabled' : 'Disabled'); },
-        onError: (err: ApiErr) => { setErrors(err?.response?.data?.detail?.errors ?? []); setBanner('Fix the problems below before enabling'); },
+        onSuccess: (w) => { qc.setQueryData(['workflow', id], w); qc.invalidateQueries({ queryKey: ['workflows'] }); setStatus(w.enabled ? 'Enabled' : 'Disabled'); },
+        onError: (err: ApiErr) => { setErrors(err?.response?.data?.detail?.errors ?? []); setAlert('Fix the problems below before enabling'); },
     });
 
     const invalidIds = useMemo(() => new Set(errors.map((e) => e.node_id).filter(Boolean) as string[]), [errors]);
     const displayNodes = useMemo(() => nodes.map((n) => ({ ...n, data: { ...n.data, invalid: invalidIds.has(n.id) } })), [nodes, invalidIds]);
 
+    const dirty = !readOnly && savedSnap !== null && savedSnap !== snapshot(meta, nodes, edges);
+
+    // Cmd/Ctrl+S saves (also from inside inputs).
+    const { mutate: saveNow, isPending: saving } = save;
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (!readOnly && !saving) saveNow();
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [readOnly, saving, saveNow]);
+
+    // Click-to-add drops the node in the middle of the visible canvas.
+    const addAtCentre = useCallback((type: string) => {
+        const r = document.getElementById('wf-canvas')?.getBoundingClientRect();
+        const pt = r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        addNode(type, screenToFlowPosition(pt));
+        setPaletteOpen(false);
+    }, [addNode, screenToFlowPosition]);
+
     const palette = NODE_DEFS.filter((d) => d.type !== 'trigger' && (!d.alertOnly || meta.trigger_type === 'alert.ingested'));
+
+    const panelBase = 'bg-panel overflow-y-auto absolute inset-y-0 z-20 shadow-console-hover lg:static lg:z-auto lg:shadow-none';
 
     return (
         <div className="flex flex-col h-[calc(100vh-3.5rem)]">
-            <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-panel flex-wrap">
-                <Link to="/workflows" className="p-1 text-fg-3 hover:text-fg" aria-label="Back"><ArrowLeft size={18} /></Link>
-                <input className="text-base font-semibold text-fg border-b border-transparent focus:border-accent outline-hidden min-w-[220px]"
+            <div className="flex items-center gap-x-3 gap-y-2 px-4 pt-2 border-b border-line bg-panel flex-wrap">
+                <Link to="/workflows" className="p-1 text-fg-3 hover:text-fg" aria-label="Back to workflows"><ArrowLeft size={18} aria-hidden /></Link>
+                <input className="text-base font-semibold text-fg bg-transparent border-b border-transparent focus:border-accent min-w-0 w-56 sm:w-72"
                     disabled={readOnly} value={meta.name} onChange={(e) => setMeta({ ...meta, name: e.target.value })} aria-label="Workflow name" />
                 {wf && <span className="num text-xs text-muted">v{wf.version}</span>}
-                <div className="flex gap-3 ml-2">
-                    {(['editor', 'runs'] as const).map((t) => (
-                        <button key={t} disabled={isNew && t === 'runs'} onClick={() => setTab(t)}
-                            className={cn('text-sm capitalize', tab === t ? 'text-accent font-medium' : 'text-fg-3')}>{t}</button>
-                    ))}
-                </div>
-                <div className="ml-auto flex items-center gap-2">
-                    {banner && <span className="text-xs text-fg-2">{banner}</span>}
-                    {!readOnly && (
-                        <button onClick={() => save.mutate()} disabled={save.isPending}
-                            className="inline-flex items-center gap-1.5 h-8 px-3 bg-accent text-on-accent text-sm hover:bg-accent-hover disabled:opacity-50">
-                            <Save size={14} /> Save
-                        </button>
+                {dirty && <span className="text-xs font-medium text-severity-medium">Unsaved changes</span>}
+                <FolderTabs className="border-b-0 self-end"
+                    items={isNew ? [{ value: 'editor' as const, label: 'Editor' }] : [{ value: 'editor' as const, label: 'Editor' }, { value: 'runs' as const, label: 'Runs' }]}
+                    value={tab} onChange={setTab} label="Workflow views" idPrefix="wf-tab" />
+                <div className="ml-auto flex items-center gap-2 pb-2 flex-wrap">
+                    {notice?.kind === 'status' && <span role="status" className={cn('text-xs', TONE_TEXT.ok)}>{notice.text}</span>}
+                    {!readOnly && !isNew && (
+                        <EnabledSwitch checked={!!wf?.enabled} label="Workflow enabled" disabled={toggle.isPending} onClick={() => toggle.mutate()}>
+                            {wf?.enabled ? 'Enabled' : 'Disabled'}
+                        </EnabledSwitch>
                     )}
                     {!readOnly && !isNew && wf && (
-                        <button onClick={() => setDryRunOpen(true)} title="Uses the last saved version"
-                            className="inline-flex items-center gap-1.5 h-8 px-3 border border-violet-500/30 text-violet-300 text-sm hover:bg-violet-500/10">
-                            <FlaskConical size={14} /> Dry run
-                        </button>
+                        <Button variant="secondary" size="sm" onClick={() => setDryRunOpen(true)} title="Uses the last saved version">
+                            <FlaskConical size={14} aria-hidden /> Dry run
+                        </Button>
                     )}
-                    {!readOnly && !isNew && (
-                        <button onClick={() => toggle.mutate()} disabled={toggle.isPending}
-                            className={cn('h-8 px-3 text-sm border', wf?.enabled ? 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10' : 'border-line-strong text-fg-2')}>
-                            {wf?.enabled ? 'Enabled' : 'Disabled'}
-                        </button>
+                    {!readOnly && (
+                        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending} title="Save (Ctrl+S / ⌘S)">
+                            <Save size={14} aria-hidden /> {save.isPending ? 'Saving…' : 'Save'}
+                        </Button>
                     )}
                 </div>
             </div>
+            {notice?.kind === 'alert' && (
+                <div role="alert" className="flex items-center gap-2 px-4 py-2 text-sm border-b border-severity-critical/30 bg-severity-critical/5 text-severity-critical">
+                    <AlertTriangle size={14} aria-hidden className="shrink-0" />
+                    <span className="mr-auto">{notice.text}</span>
+                    <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="p-1 rounded-sm hover:bg-raised"><X size={14} aria-hidden /></button>
+                </div>
+            )}
 
-            {tab === 'runs' && wf ? <div className="p-4 overflow-auto"><RunsTable workflowId={wf.id} /></div> : (
-                <div className="flex flex-1 min-h-0">
-                    <aside className="w-56 border-r border-line bg-panel overflow-y-auto p-3 space-y-4">
+            {tab === 'runs' && wf ? <div id="wf-tab-panel" role="tabpanel" aria-labelledby="wf-tab-runs" className="p-4 overflow-auto"><RunsTable workflowId={wf.id} /></div> : (
+                <div id="wf-tab-panel" role="tabpanel" aria-labelledby="wf-tab-editor" className="relative flex flex-1 min-h-0">
+                    <aside id="wf-palette" aria-label="Trigger and nodes"
+                        className={cn(panelBase, 'left-0 w-64 max-w-[85%] border-r border-line p-3 space-y-4 lg:w-56', paletteOpen ? 'block' : 'hidden lg:block')}>
+                        <div className="flex items-center justify-between lg:hidden">
+                            <span className="text-sm font-semibold text-fg">Nodes</span>
+                            <button type="button" onClick={() => setPaletteOpen(false)} aria-label="Close nodes panel" className="p-1 rounded-sm text-fg-3 hover:bg-raised"><X size={16} aria-hidden /></button>
+                        </div>
                         <div className="space-y-2">
-                            <p className="label-mono">trigger</p>
-                            <select className="w-full border border-line-strong px-2 py-1.5 text-sm" disabled={readOnly} value={meta.trigger_type}
+                            <Label htmlFor="wf-trigger" className="label-mono">Trigger</Label>
+                            <Select id="wf-trigger" inputSize="sm" disabled={readOnly} value={meta.trigger_type}
                                 onChange={(e) => setMeta({ ...meta, trigger_type: e.target.value as TriggerType })}>
                                 {Object.entries(TRIGGER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                            </select>
+                            </Select>
                             {meta.trigger_type === 'schedule' && <p className="label-mono">Cron expression (UTC)</p>}
-                            <textarea rows={2} className="w-full border border-line-strong px-2 py-1.5 font-mono text-xs" disabled={readOnly}
+                            <Textarea rows={2} className="font-mono text-xs" disabled={readOnly}
+                                aria-label={meta.trigger_type === 'schedule' ? 'Cron expression (UTC)' : 'Trigger filter'}
                                 placeholder={meta.trigger_type === 'schedule' ? '*/15 * * * *' : "filter, e.g. 'x' in case.tags"} value={meta.trigger_filter}
                                 onChange={(e) => setMeta({ ...meta, trigger_filter: e.target.value })} />
                             {meta.trigger_type === 'email.received' && (
@@ -226,47 +277,65 @@ function Editor() {
                                 <div key={cat}>
                                     <p className="label-mono mb-1">{cat}</p>
                                     {items.map((d) => (
-                                        <div key={d.type} draggable onDragStart={(e) => { e.dataTransfer.setData('application/wf-node', d.type); e.dataTransfer.effectAllowed = 'move'; }}
-                                            onClick={() => addNode(d.type, screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }))}
-                                            className="flex items-center gap-2 px-2 py-1.5 mb-1 border border-line text-sm cursor-grab hover:border-accent/40 bg-surface">
-                                            <d.icon size={14} className="text-accent" />{d.label}
-                                        </div>
+                                        <button type="button" key={d.type} draggable
+                                            onDragStart={(e) => { e.dataTransfer.setData('application/wf-node', d.type); e.dataTransfer.effectAllowed = 'move'; }}
+                                            onClick={() => addAtCentre(d.type)} title={`Add ${d.label} (or drag onto the canvas)`}
+                                            className="w-full flex items-center gap-2 px-2 py-1.5 mb-1 rounded-sm border border-line text-left text-sm text-fg cursor-grab hover:border-line-strong hover:bg-raised bg-surface">
+                                            <d.icon size={14} className="text-accent shrink-0" aria-hidden />{d.label}
+                                        </button>
                                     ))}
                                 </div>
                             );
                         })}
                     </aside>
 
-                    <div className="flex-1 relative" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }} onDrop={onDrop}>
+                    <div id="wf-canvas" className="flex-1 min-w-0 relative" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }} onDrop={onDrop}>
+                        <div className="absolute z-10 top-2 left-2 flex gap-1.5 lg:hidden">
+                            <Button variant="secondary" size="sm" onClick={() => { setPaletteOpen((o) => !o); setInspectorOpen(false); }}
+                                aria-expanded={paletteOpen} aria-controls="wf-palette">
+                                <PanelLeft size={14} aria-hidden /> Nodes
+                            </Button>
+                            <Button variant="secondary" size="sm" onClick={() => { setInspectorOpen((o) => !o); setPaletteOpen(false); }}
+                                aria-expanded={inspectorOpen} aria-controls="wf-inspector">
+                                <PanelRight size={14} aria-hidden /> Inspector
+                            </Button>
+                        </div>
                         {graphErrors.length > 0 && (
-                            <div className="absolute z-10 top-2 left-2 right-2 bg-red-500/10 border border-red-500/30 text-red-300 text-xs p-2">
-                                <AlertTriangle size={12} className="inline mr-1" />{graphErrors.map((e) => e.message).join(' · ')}
+                            <div role="alert" className="absolute z-10 top-12 lg:top-2 left-2 right-2 rounded-md bg-panel border border-severity-critical/30 text-severity-critical text-xs p-2">
+                                <AlertTriangle size={12} className="inline mr-1" aria-hidden />{graphErrors.map((e) => e.message).join(' · ')}
                             </div>
                         )}
                         {errors.length === 0 && loadedVersion !== null && loadedVersion > 0 && (
-                            <div className="absolute z-10 top-2 right-2 text-xs text-emerald-300 flex items-center gap-1"><CheckCircle2 size={12} />valid</div>
+                            <div className={cn('absolute z-10 top-2 right-2 text-xs flex items-center gap-1', TONE_TEXT.ok)}><CheckCircle2 size={12} aria-hidden />Valid</div>
                         )}
-                        <ReactFlow colorMode="dark" nodes={displayNodes} edges={edges} nodeTypes={nodeTypes}
+                        <ReactFlow style={FLOW_THEME} nodes={displayNodes} edges={edges} nodeTypes={nodeTypes}
                             onNodesChange={readOnly ? undefined : onNodesChange} onEdgesChange={readOnly ? undefined : onEdgesChange}
                             onConnect={readOnly ? undefined : onConnect}
-                            onNodeClick={(_, n) => setSelectedId(n.id)} onPaneClick={() => setSelectedId(null)}
+                            onNodeClick={(_, n) => { setSelectedId(n.id); setInspectorOpen(true); setPaletteOpen(false); }} onPaneClick={() => setSelectedId(null)}
                             nodesDraggable={!readOnly} nodesConnectable={!readOnly} deleteKeyCode={readOnly ? null : undefined} onBeforeDelete={onBeforeDelete} fitView>
-                            <Background gap={16} color="#27272a" />
-                            <Controls />
-                            <MiniMap pannable zoomable />
+                            <Background gap={16} color={FLOW_DOT_COLOR} />
+                            <Controls className={FLOW_PANEL_CLASS} />
+                            <MiniMap pannable zoomable className={cn(FLOW_PANEL_CLASS, 'hidden! sm:block!')} />
                         </ReactFlow>
                     </div>
 
-                    <aside className="w-80 border-l border-line bg-panel overflow-y-auto">
+                    <aside id="wf-inspector" aria-label="Inspector"
+                        className={cn(panelBase, 'right-0 w-80 max-w-[90%] border-l border-line', inspectorOpen ? 'block' : 'hidden lg:block')}>
+                        <div className="flex items-center justify-between px-4 pt-3 lg:hidden">
+                            <span className="text-sm font-semibold text-fg">Inspector</span>
+                            <button type="button" onClick={() => setInspectorOpen(false)} aria-label="Close inspector" className="p-1 rounded-sm text-fg-3 hover:bg-raised"><X size={16} aria-hidden /></button>
+                        </div>
                         {selected ? (
                             <NodeInspector key={selected.id} node={selected} readOnly={readOnly} errors={selectedErrors}
                                 onChange={updateNode} onRename={renameNode} onDelete={() => deleteNode(selected.id)} />
                         ) : (
                             <div className="p-4 text-sm text-fg-3 space-y-3">
-                                <p>Select a node to configure it. Drag nodes from the left palette; connect handles to build the flow.</p>
-                                <label className="block"><span className="label-mono">description</span>
-                                    <textarea rows={3} className="w-full border border-line-strong px-2 py-1.5 text-sm" disabled={readOnly}
-                                        value={meta.description} onChange={(e) => setMeta({ ...meta, description: e.target.value })} /></label>
+                                <p>Select a node to configure it. Add nodes from the palette (click or drag); connect handles to build the flow.</p>
+                                <div>
+                                    <Label htmlFor="wf-description" className="label-mono">Description</Label>
+                                    <Textarea id="wf-description" rows={3} disabled={readOnly}
+                                        value={meta.description} onChange={(e) => setMeta({ ...meta, description: e.target.value })} />
+                                </div>
                             </div>
                         )}
                     </aside>

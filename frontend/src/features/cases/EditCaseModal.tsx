@@ -27,7 +27,6 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
         title: '',
         description: '',
         severity: '',
-        status: '',
         source: '',
         tags: '',
         outcome: '',
@@ -41,7 +40,6 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                 title: caseData.title,
                 description: caseData.description ?? '',
                 severity: caseData.severity,
-                status: caseData.status,
                 source: caseData.source || 'user-reported',
                 tags: caseData.tags ? caseData.tags.join(', ') : '',
                 outcome: caseData.outcome || '',
@@ -52,20 +50,21 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
     }, [caseData, show]);
 
     const [localError, setLocalError] = useState<string | null>(null);
+    const isClosed = caseData.status === 'closed';
     const handleSubmit = () => {
-        if (formData.status === 'closed' && (!formData.outcome || !formData.closing_note.trim())) {
-            setLocalError('Pick an outcome and write a closing note to close the case.');
+        if (isClosed && (!formData.outcome || !formData.closing_note.trim())) {
+            setLocalError('A closed case needs an outcome and a closing note.');
             return;
         }
         setLocalError(null);
+        // Status changes live in the header status chip and the Close case dialog, not here.
         const { reason, ...rest } = formData;
-        const changed = formData.status !== caseData.status || formData.severity !== caseData.severity;
+        const changed = formData.severity !== caseData.severity;
         const tagsArray = formData.tags.split(',').map(t => t.trim()).filter(t => t);
         onSubmit({
             ...rest,
             ...(changed && reason.trim() ? { reason: reason.trim() } : {}),
-            outcome: formData.outcome || null,
-            closing_note: formData.closing_note || null,
+            ...(isClosed ? { outcome: formData.outcome || null, closing_note: formData.closing_note || null } : { outcome: undefined, closing_note: undefined }),
             tags: tagsArray
         });
         // the parent closes the modal on success, so a failed save keeps the form and shows why
@@ -75,22 +74,23 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
         <Modal
             open={show}
             onClose={onClose}
-            title={`Edit Case #${caseData.id}`}
+            title={`Edit case #${caseData.id}`}
             size="lg"
             footer={<>
                 <button onClick={onClose} className={btnSecondary}>
                     Cancel
                 </button>
                 <button onClick={handleSubmit} disabled={isSubmitting} className={btnPrimary}>
-                    {isSubmitting ? 'Saving...' : 'Save Changes'}
+                    {isSubmitting ? 'Saving…' : 'Save changes'}
                 </button>
             </>}
         >
             <div className="space-y-4">
                 {(localError || error) && <p role="alert" className="text-sm text-severity-critical">{localError || error}</p>}
                 <div>
-                    <label className={modalLabel}>Title</label>
+                    <label htmlFor="edit-case-title" className={modalLabel}>Title</label>
                     <input
+                        id="edit-case-title"
                         type="text"
                         value={formData.title}
                         onChange={(e) => setFormData({ ...formData, title: e.target.value })}
@@ -99,8 +99,9 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                 </div>
 
                 <div>
-                    <label className={modalLabel}>Description</label>
+                    <label htmlFor="edit-case-description" className={modalLabel}>Description</label>
                     <textarea
+                        id="edit-case-description"
                         value={formData.description}
                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                         className={`${modalInput} min-h-[120px]`}
@@ -109,8 +110,9 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
 
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label className={modalLabel}>Severity</label>
+                        <label htmlFor="edit-case-severity" className={modalLabel}>Severity</label>
                         <select
+                            id="edit-case-severity"
                             value={formData.severity}
                             onChange={(e) => setFormData({ ...formData, severity: e.target.value })}
                             className={modalInput}
@@ -123,52 +125,39 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                         </select>
                     </div>
                     <div>
-                        <label className={modalLabel}>Status</label>
+                        <label htmlFor="edit-case-source" className={modalLabel}>Source</label>
                         <select
-                            value={formData.status}
-                            onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                            className={modalInput}
-                        >
-                            <option value="new">New</option>
-                            <option value="open">Open</option>
-                            <option value="investigating">Investigating</option>
-                            <option value="resolved">Resolved</option>
-                            <option value="closed">Closed</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className={modalLabel}>Source</label>
-                        <select
+                            id="edit-case-source"
                             value={formData.source}
                             onChange={(e) => setFormData({ ...formData, source: e.target.value })}
                             className={modalInput}
                         >
-                            <option value="user-reported">User Reported</option>
+                            <option value="user-reported">User reported</option>
                             <option value="siem">SIEM</option>
                             <option value="email">Email</option>
                             <option value="phone">Phone</option>
                             <option value="other">Other</option>
                         </select>
                     </div>
-                    <div>
-                        <label className={modalLabel}>Tags</label>
+                </div>
+
+                <div>
+                        <label htmlFor="edit-case-tags" className={modalLabel}>Tags</label>
                         <input
+                            id="edit-case-tags"
                             type="text"
                             value={formData.tags}
                             onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
                             className={modalInput}
                             placeholder="Comma separated tags"
                         />
-                    </div>
                 </div>
 
-                {(formData.status !== caseData.status || formData.severity !== caseData.severity) && (
+                {formData.severity !== caseData.severity && (
                     <div>
-                        <label className={modalLabel}>Reason <span className="text-muted font-normal">(optional, shown on the timeline and in the war room)</span></label>
+                        <label htmlFor="edit-case-reason" className={modalLabel}>Reason <span className="text-fg-3 font-normal">(optional, shown on the timeline and in the war room)</span></label>
                         <input
+                            id="edit-case-reason"
                             type="text"
                             value={formData.reason}
                             onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
@@ -178,9 +167,11 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                     </div>
                 )}
 
+                {isClosed && <>
                 <div>
-                    <label className={modalLabel}>Outcome <span className="text-muted font-normal">(required to close)</span></label>
+                    <label htmlFor="edit-case-outcome" className={modalLabel}>Outcome</label>
                     <select
+                        id="edit-case-outcome"
                         value={formData.outcome}
                         onChange={(e) => setFormData({ ...formData, outcome: e.target.value })}
                         className={modalInput}
@@ -191,14 +182,16 @@ export default function EditCaseModal({ show, onClose, caseData, onSubmit, isSub
                 </div>
 
                 <div>
-                    <label className={modalLabel}>Closing note <span className="text-muted font-normal">(required to close)</span></label>
+                    <label htmlFor="edit-case-closing_note" className={modalLabel}>Closing note</label>
                     <textarea
+                        id="edit-case-closing_note"
                         value={formData.closing_note}
                         onChange={(e) => setFormData({ ...formData, closing_note: e.target.value })}
                         className={`${modalInput} min-h-[80px]`}
                         maxLength={8000}
                     />
                 </div>
+                </>}
             </div>
         </Modal>
     );
