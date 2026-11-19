@@ -76,7 +76,7 @@ jobs:
         with:
           persist-credentials: false
       # reporter: local prints to the log and needs no write permissions.
-      - uses: reviewdog/action-actionlint@619a81ec64ff8c0211cd6146eb2b21e8f1d7f440 # v1.81.1
+      - uses: reviewdog/action-actionlint@ae857e78c1b42b3d0a49637181b09d3d56d402b4 # v1.84.1
         with:
           reporter: local
           filter_mode: nofilter # local has no diff to filter against
