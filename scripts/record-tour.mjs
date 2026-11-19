@@ -61,8 +61,10 @@ await scene('Press ⌘K to jump to any case, IOC or page', async () => {
   await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',metaKey:true,ctrlKey:true,bubbles:true}))"); await sleep(600);
   await typeSlow('phish'); await sleep(1400); await key('Escape', 'Escape', 27); await sleep(600);
 });
-// The copilot fixture is recorded for this case (backend/app/scripts/demo_fixtures.py, COPILOT_CASE).
-const heroCase = process.env.TOUR_CASE || '13';
+// The case the copilot fixture was recorded for (demo_fixtures.py COPILOT_CASE); ids change with every demo build.
+const fixtures = await (await fetch(new URL('demo-fixtures.json', B.replace(/#.*$/, '')))).json();
+const heroCase = process.env.TOUR_CASE
+    || Object.keys(fixtures.responses).map((k) => k.match(/^\/copilot\/sessions\/(\d+)$/)?.[1]).find(Boolean);
 await scene('A case: SLA, owner and the incident at a glance, with one click to ask the AI for triage', async () => { await go(`/cases/${heroCase}`); await sleep(1600); await scroll(330, 2200); });
 await scene('The copilot runs on your model and proposes; nothing is written until you confirm', async () => {
   await scroll(0, 500); await js("window.dispatchEvent(new Event('copilot:toggle'))"); await sleep(4200);

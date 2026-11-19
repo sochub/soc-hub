@@ -55,21 +55,48 @@ export async function installDemo(api: AxiosInstance): Promise<void> {
             return reply(config, 200, new Blob([typeof data === 'string' ? data : JSON.stringify(data)],
                 { type: svg ? 'image/svg+xml' : 'application/json' }));
         }
-        if (path === '/alerts/' && Array.isArray(data)) return alertsPage(config, data);
+        const me = (responses['/users/me'] as { id?: number } | undefined)?.id;
+        if (path in LISTS && Array.isArray(data)) return listPage(config, data, LISTS[path], me);
         return reply(config, 200, data);
     };
 }
 
-// The Alerts list pages on the server; mirror its filters, sort and X-Total-Count so the demo behaves the same.
+// Lists that page and filter on the server: mirror their filters, sort and X-Total-Count so the demo behaves the same.
+type Row = Record<string, unknown>;
+type P = Record<string, unknown>;
 const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-function alertsPage(config: InternalAxiosRequestConfig, all: Record<string, unknown>[]): AxiosResponse {
-    const p = (config.params ?? {}) as Record<string, string | number | undefined>;
-    const rows = all.filter((a) => ['status', 'severity', 'source'].every((k) => p[k] == null || a[k] === p[k]));
+const SLA_STATES: Record<string, string[]> = { breached: ['breached'], at_risk: ['at_risk'], pressure: ['at_risk', 'breached'] };
+const anyOf = (v: unknown) => (v == null ? null : (Array.isArray(v) ? v : [v]).map(String));
+const has = (q: unknown, ...fields: unknown[]) => fields.some((f) => String(f ?? '').toLowerCase().includes(String(q).toLowerCase()));
+const t = (v: unknown) => Date.parse(String(v));
+
+const LISTS: Record<string, (r: Row, p: P, me?: number) => boolean> = {
+    '/alerts/': (a, p) => ['status', 'severity', 'source'].every((k) => p[k] == null || a[k] === p[k]),
+    '/cases/': (c, p, me) => {
+        const id = String(p.q ?? '').trim().replace(/^#/, '');
+        return (!anyOf(p.status) || anyOf(p.status)!.includes(String(c.status)))
+            && (!anyOf(p.severity) || anyOf(p.severity)!.includes(String(c.severity)))
+            && (p.owner == null || (p.owner === 'me' ? c.owner_id === me : p.owner === 'unassigned' ? c.owner_id == null : String(c.owner_id) === String(p.owner)))
+            && (p.tag == null || (c.tags as string[] | undefined ?? []).includes(String(p.tag)))
+            && (!id || has(id, c.title, c.description) || String(c.id) === id)
+            && (p.sla == null || (SLA_STATES[String(p.sla)] ?? []).includes(String(c.sla_overall_status)))
+            && (p.outcome == null || (p.outcome === 'not_set' ? c.outcome == null : c.outcome === p.outcome))
+            && (p.created_from == null || t(c.created_at) >= t(p.created_from))
+            && (p.created_before == null || t(c.created_at) < t(p.created_before));
+    },
+    '/iocs/': (i, p) => (p.q == null || has(p.q, i.value)) && ['ioc_type', 'status', 'case_id'].every((k) => p[k] == null || String(i[k]) === String(p[k])),
+    '/artifacts/': (a, p) => (p.q == null || has(p.q, a.value)) && (p.artifact_type == null || a.artifact_type === p.artifact_type),
+};
+
+function listPage(config: InternalAxiosRequestConfig, all: Row[], keep: (r: Row, p: P, me?: number) => boolean, me?: number): AxiosResponse {
+    const p = (config.params ?? {}) as P;
+    const rows = all.filter((r) => keep(r, p, me));
     const sort = String(p.sort ?? '-created_at');
-    const key = (a: Record<string, unknown>) => sort.endsWith('severity') ? SEV_RANK[String(a.severity)] ?? 9 : Date.parse(String(a.created_at));
-    // 'severity' = most severe first (rank ascending), 'created_at' = oldest first; a leading '-' reverses.
+    const field = sort.replace(/^-/, '');
+    const key = (r: Row) => field === 'severity' ? SEV_RANK[String(r.severity)] ?? 9 : field === 'id' ? Number(r.id) : t(r[field]) || 0;
+    // 'severity' = most severe first (rank ascending), dates and ids ascending; a leading '-' reverses.
     const dir = sort.startsWith('-') ? -1 : 1;
-    rows.sort((x, y) => dir * (key(x) - key(y)));
+    rows.sort((x, y) => dir * (key(x) - key(y)) || Number(y.id) - Number(x.id));
     const skip = Number(p.skip ?? 0), limit = Number(p.limit ?? 100);
     const res = reply(config, 200, rows.slice(skip, skip + limit));
     res.headers = { 'x-total-count': String(rows.length) };

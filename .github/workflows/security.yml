@@ -69,9 +69,11 @@ jobs:
           helm lint deploy/helm/sochub
           helm lint deploy/helm/sochub -f deploy/helm/sochub/values-production.yaml
           mkdir rendered
-          helm template sochub deploy/helm/sochub > rendered/default.yaml
+          # The chart refuses to render production without public URLs (values.yaml leaves them empty on purpose).
+          urls="--set config.frontendUrl=https://sochub.example.com --set config.publicBaseUrl=https://sochub.example.com"
+          helm template sochub deploy/helm/sochub $urls > rendered/default.yaml
           helm template sochub deploy/helm/sochub -f deploy/helm/sochub/values-production.yaml > rendered/production.yaml
-          helm template sochub deploy/helm/sochub --set ollama.enabled=true --set slackSocket.enabled=true \
+          helm template sochub deploy/helm/sochub $urls --set ollama.enabled=true --set slackSocket.enabled=true \
             --set ingress.enabled=true --set 'ingress.tls[0].secretName=tls' > rendered/all-components.yaml
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

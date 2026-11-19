@@ -285,6 +285,11 @@ async def new_features(c: httpx.AsyncClient, tid: int, hero_ids: list[int]) -> N
     await c.put("/api/v1/ticketing/connection", json={"provider": "jira", "base_url": "https://greenbow.atlassian.net",
                                                       "credentials": {"email": "soc@greenbow.example", "token": "demo"},
                                                       "settings": {"project_key": "SEC"}, "auto_create_min_severity": "high"})
+    # Placeholder values: the API only ever returns names, hosts and descriptions, never the value.
+    for name, host, note in (("CROWDSTRIKE_API", "api.crowdstrike.com", "Falcon API client for containment"),
+                             ("SLACK_WEBHOOK", "hooks.slack.com", "Fallback channel for paging")):
+        await c.post("/api/v1/secrets/", json={"name": name, "value": "demo-placeholder", "allowed_hosts": [host],
+                                               "description": note})
     rules = [("Okta: Forrest's cross-country runs", [{"field": "source", "op": "equals", "value": "okta"},
                                                       {"field": "title", "op": "contains", "value": "impossible travel"}],
               "He really is running across the country.", 14, 30),
@@ -381,7 +386,7 @@ async def capture(c: httpx.AsyncClient, case_ids: list[int]) -> dict:
               "/notifications/", "/notifications/unread-count", "/tenants/", "/tenants/sla-policies", "/artifact-types/",
               "/ai/info", "/enrichment/config", "/audit-logs", "/audit-logs/facets", "/tenants/current/report-branding",
               "/tenants/current/security", "/tenants/current/guests", "/openapi.json",
-              "/suppressions/", "/ticketing/connection", "/ticketing/status", "/containment/policy", "/containment/actions",
+              "/suppressions/", "/secrets/", "/ticketing/connection", "/ticketing/status", "/containment/policy", "/containment/actions",
               "/portfolio/", "/stats/team-insights", "/stats/analyst-workload"]  # workload: default range (this week)
     per_case = ["/cases/{id}", "/artifacts/case/{id}", "/cases/{id}/tasks", "/cases/{id}/events", "/cases/{id}/assets",
                 "/cases/{id}/attachments", "/cases/{id}/follow", "/cases/{id}/report", "/audit-logs/case/{id}",
