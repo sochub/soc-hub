@@ -41,7 +41,15 @@ const js = async (expr) => (await send('Runtime.evaluate', { expression: expr, r
 const hideToast = () => js("document.getElementById('demo-notice')?.remove()");
 const go = async (hash) => { await js(`location.hash = ${JSON.stringify(hash)}`); await sleep(1600); await hideToast(); };
 const scroll = (y, ms = 1800) => js(`document.querySelector('main').scrollTo({ top: ${y}, behavior: 'smooth' })`).then(() => sleep(ms));
-const click = (txt) => js(`[...document.querySelectorAll('button,a,[role=tab]')].find(e => e.offsetParent && e.textContent.trim().startsWith(${JSON.stringify(txt)}))?.click()`);
+// Waits up to 3s for the control to render (the page may still be loading its data).
+const click = async (txt) => {
+    for (let i = 0; i < 30; i++) {
+        const ok = await js(`(() => { const e = [...document.querySelectorAll('button,a,[role=tab]')].find(e => e.offsetParent && e.textContent.trim().startsWith(${JSON.stringify(txt)})); e?.click(); return !!e; })()`);
+        if (ok) return;
+        await sleep(100);
+    }
+    console.warn(`  ! no control "${txt}"`);
+};
 const key = async (k, code, vk) => { for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk }); };
 const typeSlow = async (s) => { for (const ch of s) { await send('Input.insertText', { text: ch }); await sleep(110); } };
 
@@ -59,7 +67,7 @@ await scene('Alerts arrive from your SIEM, EDR and email security, paged 10, 40 
 await scene('Cases as a board: drag a card to change its status', async () => { await go('/cases?view=board'); await sleep(2800); });
 await scene('Press ⌘K to jump to any case, IOC or page', async () => {
   await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',metaKey:true,ctrlKey:true,bubbles:true}))"); await sleep(600);
-  await typeSlow('phish'); await sleep(1400); await key('Escape', 'Escape', 27); await sleep(600);
+  await typeSlow('phish'); await sleep(2400); await key('Escape', 'Escape', 27); await sleep(600);
 });
 // The case the copilot fixture was recorded for (demo_fixtures.py COPILOT_CASE); ids change with every demo build.
 const fixtures = await (await fetch(new URL('demo-fixtures.json', B.replace(/#.*$/, '')))).json();
