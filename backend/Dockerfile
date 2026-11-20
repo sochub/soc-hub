@@ -1,6 +1,6 @@
 # Builder: compilers and -dev headers, used only to build the virtualenv (xmlsec for python3-saml
 # compiles against libxml2/libxmlsec1). Nothing from this stage ships except /opt/venv.
-FROM python:3.11-slim AS builder
+FROM python:3.15-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -23,7 +23,7 @@ ARG INSTALL_DEV=false
 RUN if [ "$INSTALL_DEV" = "true" ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
 
 # Runtime: shared libraries only, no compilers or headers.
-FROM python:3.11-slim
+FROM python:3.15-slim
 
 # libxmlsec1-openssl (pulls libxmlsec1, libxml2, libxslt1.1): the xmlsec binding behind SAML.
 # pango/harfbuzz/shared-mime-info: WeasyPrint (incident report PDF export).
