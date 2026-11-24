@@ -47,6 +47,9 @@ export async function installDemo(api: AxiosInstance): Promise<void> {
             notice();
             return fail(config, 403, DEMO_READ_ONLY);
         }
+        if (path === '/alerts/fields') {
+            return reply(config, 200, alertFields(responses['/alerts/'] as Row[], (config.params as P | undefined)?.source));
+        }
         const key = [path, path.endsWith('/') ? path.slice(0, -1) : `${path}/`].find((k) => k in responses);
         if (key === undefined) return fail(config, 404, 'Not available in the demo.');
         const data = responses[key];
@@ -71,7 +74,10 @@ const has = (q: unknown, ...fields: unknown[]) => fields.some((f) => String(f ??
 const t = (v: unknown) => Date.parse(String(v));
 
 const LISTS: Record<string, (r: Row, p: P, me?: number) => boolean> = {
-    '/alerts/': (a, p) => ['status', 'severity', 'source'].every((k) => p[k] == null || a[k] === p[k]),
+    '/alerts/': (a, p) => ['status', 'severity', 'source'].every((k) => p[k] == null || a[k] === p[k])
+        && (p.received_from == null || t(a.created_at) >= t(p.received_from))
+        && (p.received_before == null || t(a.created_at) < t(p.received_before))
+        && (p.where == null || (JSON.parse(String(p.where)) as Cond[]).every((c) => condHolds(a, c))),
     '/cases/': (c, p, me) => {
         const id = String(p.q ?? '').trim().replace(/^#/, '');
         return (!anyOf(p.status) || anyOf(p.status)!.includes(String(c.status)))
@@ -87,6 +93,47 @@ const LISTS: Record<string, (r: Row, p: P, me?: number) => boolean> = {
     '/iocs/': (i, p) => (p.q == null || has(p.q, i.value)) && ['ioc_type', 'status', 'case_id'].every((k) => p[k] == null || String(i[k]) === String(p[k])),
     '/artifacts/': (a, p) => (p.q == null || has(p.q, a.value)) && (p.artifact_type == null || a.artifact_type === p.artifact_type),
 };
+
+// Alert field conditions, as the server applies them: case-insensitive, a missing value matches only not_equals,
+// lists and objects compare as their JSON text. in_cidr is IPv4-only here (the demo data has no IPv6).
+type Cond = { field: string; op: string; value: string };
+function fieldText(a: Row, field: string): string | null {
+    let cur: unknown = field.startsWith('payload.') ? a.payload : a[field];
+    for (const k of field.startsWith('payload.') ? field.split('.').slice(1) : []) {
+        cur = cur && typeof cur === 'object' ? (cur as Record<string, unknown>)[k] : undefined;
+    }
+    return cur == null ? null : typeof cur === 'object' ? JSON.stringify(cur) : String(cur);
+}
+const ip4 = (s: string) => s.split('.').reduce((n, o) => n * 256 + Number(o), 0);
+function condHolds(a: Row, c: Cond): boolean {
+    const raw = fieldText(a, c.field);
+    if (raw == null) return c.op === 'not_equals';
+    const x = raw.trim().toLowerCase(), v = c.value.trim().toLowerCase();
+    if (c.op === 'in_cidr') {
+        const [net, bits = '32'] = v.split('/');
+        const mask = Number(bits) === 0 ? 0 : (~0 << (32 - Number(bits))) >>> 0;
+        return /^\d+\.\d+\.\d+\.\d+$/.test(x) && ((ip4(x) & mask) >>> 0) === ((ip4(net) & mask) >>> 0);
+    }
+    return { equals: x === v, not_equals: x !== v, contains: x.includes(v), starts_with: x.startsWith(v), ends_with: x.endsWith(v) }[c.op] ?? false;
+}
+
+/** GET /alerts/fields: payload paths in the recorded alerts, most common first. */
+function alertFields(alerts: Row[], source?: unknown): { field: string; count: number; examples: string[] }[] {
+    const seen = new Map<string, { count: number; examples: string[] }>();
+    const walk = (v: unknown, path: string, depth: number) => {
+        if (v && typeof v === 'object' && !Array.isArray(v) && depth < 8) {
+            for (const [k, x] of Object.entries(v)) if (/^[A-Za-z0-9_\-@$]{1,64}$/.test(k)) walk(x, `${path}.${k}`, depth + 1);
+            return;
+        }
+        if (depth === 0) return;
+        const slot = seen.get(path) ?? { count: 0, examples: [] };
+        slot.count += 1;
+        if (v != null && typeof v !== 'object' && slot.examples.length < 3 && !slot.examples.includes(String(v))) slot.examples.push(String(v).slice(0, 80));
+        seen.set(path, slot);
+    };
+    alerts.filter((a) => source == null || a.source === source).forEach((a) => walk(a.payload, 'payload', 0));
+    return [...seen].map(([field, s]) => ({ field, ...s })).sort((x, y) => y.count - x.count || x.field.localeCompare(y.field));
+}
 
 function listPage(config: InternalAxiosRequestConfig, all: Row[], keep: (r: Row, p: P, me?: number) => boolean, me?: number): AxiosResponse {
     const p = (config.params ?? {}) as P;

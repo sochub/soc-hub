@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, X, Search } from 'lucide-react';
@@ -6,86 +6,23 @@ import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { Button, Input, Select, Skeleton, ErrorState, EmptyState, Badge, fieldClass, useConfirm } from '../../components/ui';
 import type { User } from '../../types';
+import { BASE_FIELDS, FIELD_RE, OPS, describe, payloadPaths, type Condition } from './conditions';
+import FieldPicker from './FieldPicker';
 
-type Condition = { field: string; op: string; value: string };
 type Rule = {
     id: number; name: string; reason: string | null; conditions: Condition[]; enabled: boolean;
     expires_at: string | null; hit_count: number; last_hit_at: string | null; created_from_alert_id: number | null;
 };
 type Preview = { scanned: number; matched: number; sample: { id: number; title: string; source: string; status: string }[] };
 
-const OPS: [string, string][] = [
-    ['equals', 'equals'], ['not_equals', 'is not'], ['contains', 'contains'],
-    ['starts_with', 'starts with'], ['ends_with', 'ends with'], ['in_cidr', 'in CIDR'],
-];
-const BASE_FIELDS = ['source', 'title', 'severity'];
 const EXPIRY: [string, number | null][] = [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Never', null]];
 const field = fieldClass();
 const apiError = (err: unknown, fallback: string) => {
     const d = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
     return typeof d === 'string' ? d : fallback;
 };
-const describe = (c: Condition) => `${c.field} ${OPS.find(([k]) => k === c.op)?.[1] ?? c.op} "${c.value}"`;
 const expired = (r: Rule) => !!r.expires_at && new Date(r.expires_at) < new Date();
 
-/** Flatten an alert payload into payload.<path> = value pairs (scalars only) for the field picker. */
-function payloadPaths(obj: unknown, prefix = 'payload', out: [string, string][] = []): [string, string][] {
-    if (out.length >= 40 || obj === null || obj === undefined) return out;
-    if (typeof obj !== 'object') { out.push([prefix, String(obj)]); return out; }
-    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-        if (/^[A-Za-z0-9_\-@$]{1,64}$/.test(k)) payloadPaths(v, `${prefix}.${k}`, out);
-    }
-    return out;
-}
-
-/** Field box with its own suggestion list: opens below the box (a native select popup covers it on macOS), and any
- *  payload path can be typed. An exact known field lists everything, unlike a datalist that filters down to itself (#130). */
-function FieldPicker({ value, groups, onChange }: { value: string; groups: [string, string[]][]; onChange: (v: string) => void }) {
-    const [open, setOpen] = useState(false);
-    const [active, setActive] = useState(0);
-    const id = useId();
-    const q = groups.some(([, o]) => o.includes(value)) ? '' : value.toLowerCase();
-    const shown = groups.map(([g, o]): [string, string[]] => [g, o.filter((f) => f.toLowerCase().includes(q))]).filter(([, o]) => o.length);
-    const flat = shown.flatMap(([, o]) => o);
-    const listed = open && flat.length > 0;
-    const pick = (f: string) => { onChange(f); setOpen(false); };
-    return (
-        <div className="relative min-w-0">
-            <input role="combobox" aria-label="Field" aria-autocomplete="list" aria-expanded={listed} aria-controls={id}
-                aria-activedescendant={listed ? `${id}-${active}` : undefined} value={value} placeholder="field or payload.path" spellCheck={false}
-                onFocus={() => { setOpen(true); setActive(0); }} onBlur={() => setOpen(false)}
-                onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(0); }}
-                onKeyDown={(e) => {
-                    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && flat.length) {
-                        e.preventDefault(); setOpen(true);
-                        setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : flat.length - 1)) % flat.length);
-                    } else if (e.key === 'Enter' && listed) { e.preventDefault(); pick(flat[active]); }
-                    else if (e.key === 'Escape') setOpen(false);
-                }}
-                className={cn(field, 'font-mono text-xs w-full')} />
-            {listed && (
-                <ul id={id} role="listbox" aria-label="Fields"
-                    className="absolute z-30 left-0 top-full mt-1 min-w-full w-max max-w-[min(32rem,calc(100vw-2rem))] max-h-64 overflow-auto rounded-md border border-line bg-panel shadow-lg py-1">
-                    {shown.map(([g, opts]) => (
-                        <li key={g} role="presentation">
-                            <p className="px-2.5 pt-1.5 pb-0.5 label-caps">{g}</p>
-                            <ul role="group" aria-label={g}>
-                                {opts.map((f) => {
-                                    const i = flat.indexOf(f);
-                                    return (
-                                        <li key={f} id={`${id}-${i}`} role="option" aria-selected={i === active} title={f}
-                                            onMouseDown={(e) => { e.preventDefault(); pick(f); }} onMouseEnter={() => setActive(i)}
-                                            className={cn('px-2.5 py-1 font-mono text-xs truncate cursor-pointer', i === active ? 'bg-raised text-fg' : 'text-fg-2')}>{f}</li>
-                                    );
-                                })}
-                            </ul>
-                        </li>
-                    ))}
-                </ul>
-            )}
-        </div>
-    );
-}
 
 function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: string; title: string; payload: unknown } | null; onDone: () => void }) {
     const qc = useQueryClient();
@@ -104,7 +41,7 @@ function RuleForm({ fromAlert, onDone }: { fromAlert: { id: number; source: stri
         : [...new Set(recent.flatMap((a) => payloadPaths(a.payload).map(([p]) => p)))].slice(0, 80).map((p): [string, string] => [p, '']);
     const groups: [string, string[]][] = [['Alert fields', BASE_FIELDS],
         ...(paths.length ? [[fromAlert ? `Payload of alert #${fromAlert.id}` : 'Payload (recent alerts)', paths.map(([p]) => p)] as [string, string[]]] : [])];
-    const valid = conds.length > 0 && conds.every((c) => c.value.trim() && /^(source|title|severity|payload(\.[A-Za-z0-9_\-@$]{1,64}){1,8})$/.test(c.field));
+    const valid = conds.length > 0 && conds.every((c) => c.value.trim() && FIELD_RE.test(c.field));
 
     const preview = useMutation({ mutationFn: async () => (await api.post('/suppressions/preview', { conditions: conds })).data as Preview });
     const save = useMutation({

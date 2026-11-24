@@ -1,7 +1,10 @@
+import json
 import logging
 import time
+from datetime import datetime
 from typing import Any, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +18,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
+from app.schemas.suppression import Conditions
 from app.services import alert_service, email_intake, suppression_service
 from app.workflows.events import emit_event
 
@@ -102,6 +106,11 @@ async def read_alerts(
     status: Optional[str] = None,
     severity: Optional[str] = None,
     source: Optional[str] = None,
+    where: Optional[str] = Query(None, max_length=8000, description=(
+        'JSON list of conditions, all of which must hold: [{"field": "payload.agent_name", "op": "equals", '
+        '"value": "test"}]. Fields and ops are those of suppression rules; matching ignores case.')),
+    received_from: Optional[datetime] = Query(None, description="Received by sochub at or after this instant."),
+    received_before: Optional[datetime] = Query(None, description="Received by sochub before this instant."),
     sort: str = Query("-created_at", pattern="^(-?created_at|-?severity)$"),
     current_user: User = Depends(deps.get_current_active_user),
     tenant_id: int = Depends(deps.get_effective_tenant_id),
@@ -114,10 +123,38 @@ async def read_alerts(
     for col, val in ((Alert.status, status), (Alert.severity, severity), (Alert.source, source)):
         if val:
             q = q.where(col == val)
+    if received_from:
+        q = q.where(Alert.created_at >= received_from)
+    if received_before:
+        q = q.where(Alert.created_at < received_before)
+    if where:
+        q = await alert_service.apply_conditions(db, q, _parse_conditions(where))
     total = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
     response.headers["X-Total-Count"] = str(total)
     result = await db.execute(q.order_by(alert_service.SORTS[sort], Alert.id.desc()).offset(skip).limit(limit))
     return result.scalars().all()
+
+
+def _parse_conditions(raw: str) -> list:
+    try:
+        conds = TypeAdapter(Conditions).validate_python(json.loads(raw))
+    except (ValueError, ValidationError) as e:  # JSONDecodeError is a ValueError
+        detail = e.errors(include_url=False, include_input=False, include_context=False) if isinstance(e, ValidationError) else "where must be a JSON list"
+        raise HTTPException(status_code=422, detail=detail) from None
+    if len(conds) > alert_service.MAX_LIST_CONDITIONS:
+        raise HTTPException(status_code=422, detail=f"At most {alert_service.MAX_LIST_CONDITIONS} conditions")
+    return [c.model_dump() for c in conds]
+
+
+@router.get("/fields")
+async def alert_fields(
+    source: Optional[str] = Query(None, max_length=200),
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Payload fields seen in recent alerts (optionally of one source), for the Alerts field filter."""
+    return await alert_service.payload_fields(db, tenant_id, source)
 
 
 @router.get("/sources", response_model=List[str])

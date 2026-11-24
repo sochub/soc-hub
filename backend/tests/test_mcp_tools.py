@@ -321,6 +321,11 @@ def test_lists_clamp_and_ioc_case_isolation():
         assert len(r["alerts"]) == 1
         r = await tools.list_alerts(db, p, limit=1000, offset=-5)
         assert len(r["alerts"]) == 3 and all(a["url"] for a in r["alerts"])
+        await _alert(db, ids, t, title="agent test", payload={"agent_name": "Test"})
+        r = await tools.list_alerts(db, p, conditions=[{"field": "payload.agent_name", "op": "equals", "value": "test"}])
+        assert [a["title"] for a in r["alerts"]] == ["agent test"]
+        with pytest.raises(ToolError):
+            await tools.list_alerts(db, p, conditions=[{"field": "payload.x", "op": "regex", "value": "a"}])
         foreign_case = await make_case(db, ids, other)
         await _not_found(tools.add_ioc(db, p, ioc_type="ip_address", value="1.1.1.1", case_id=foreign_case.id))
         r = await tools.add_ioc(db, p, ioc_type="ip_address", value="1.1.1.1", tlp="green",

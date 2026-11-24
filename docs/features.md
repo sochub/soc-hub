@@ -229,6 +229,26 @@ an hour, promotes it into a high case grouped by user with a note saying what ha
 alert. Use one of them instead of *Identity alerts: group by user into a case* for the same sources. Someone who
 controls the user's mailbox or Slack can answer *It was me*, so keep it for low-to-medium alerts.
 
+### Filtering alerts by field
+
+**Field filters** on the Alerts page narrows the list by any field your integration sends, such as the agent,
+host, user, source IP or detection rule. Each condition is a field, an operator and a value, with the same
+fields and operators as suppression rules (below): `source`, `title`, `severity` or `payload.<path>`, compared
+case-insensitively with equals, is not, contains, starts with, ends with, or in CIDR. All conditions must hold,
+together with the source, severity and status filters.
+
+- The Field box suggests the paths seen in the last 300 alerts (of the selected source), and any path can be
+  typed, nested ones included (`payload.agent.name`). A key that itself contains a dot can't be named.
+- In an expanded alert, **Filter alerts by** turns any short payload value into an *equals* filter in one click.
+- **Received from / before** limits the time sochub received the alert. Sort the Received column for oldest
+  or newest first, to read an endpoint's alerts in order.
+- Filtering runs on the server across all alerts, so paging and the count are exact. Filters live in the URL,
+  so a filtered view is a link you can share or bookmark.
+- A list or object field matches as its JSON text, so `contains` finds an item in a list such as rule groups.
+- REST: `GET /alerts/?where=[{"field":"payload.agent_name","op":"equals","value":"test"}]` with
+  `received_from` / `received_before`; `GET /alerts/fields` lists the known paths. The MCP `list_alerts` tool
+  takes the same `conditions`.
+
 ### Suppression rules
 
 ![Suppression rules](images/suppressions.png)
