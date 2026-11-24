@@ -1,21 +1,47 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, Plus, Trash2, BookText, Play, RefreshCw, Ticket, Workflow as WorkflowIcon } from 'lucide-react';
+import { Check, ChevronDown, Plus, Trash2, BookText, Play, RefreshCw, Ticket, Workflow as WorkflowIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { Button, Input, Select, Skeleton, ErrorState, EmptyState } from '../../components/ui';
 import type { CaseTask, PlaybookSummary, User } from '../../types';
+import type { WorkflowSummary } from '../automations/types';
 import { PHASES, PHASE_LABEL, PHASE_COLOR } from '../playbooks/phases';
 import AssigneeSelect, { PILL } from './AssigneeSelect';
 
 const RUNNING = ['pending', 'running', 'waiting'];
+
+/** Pill-shaped picker of the tenant's manual workflows (the only kind a task can run); the linked one stays listed even if it no longer qualifies. */
+function WorkflowSelect({ value, currentName, workflows, onChange, disabled, label }: {
+    value: number | null; currentName?: string | null; workflows: WorkflowSummary[];
+    onChange: (id: number | null) => void; disabled?: boolean; label: string;
+}) {
+    const known = value == null || workflows.some((w) => w.id === value);
+    const shown = value == null ? 'No workflow' : workflows.find((w) => w.id === value)?.name ?? currentName ?? 'Workflow removed';
+    return (
+        <span className={cn(PILL, 'relative bg-panel hover:bg-raised focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent',
+            disabled ? 'opacity-60' : 'cursor-pointer')}>
+            <WorkflowIcon size={12} className={value == null ? 'text-fg-3' : 'text-accent'} aria-hidden />
+            <span className={cn('max-w-[14rem] truncate', value == null ? 'text-fg-3' : 'text-fg-2')} aria-hidden>{shown}</span>
+            <ChevronDown size={12} className="shrink-0 text-fg-3" aria-hidden />
+            <select aria-label={label} value={value ?? ''} disabled={disabled}
+                onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-default">
+                <option value="">No workflow</option>
+                {!known && <option value={value!}>{shown}</option>}
+                {workflows.map((w) => <option key={w.id} value={w.id}>{w.name}{w.enabled ? '' : ' (disabled)'}</option>)}
+            </select>
+        </span>
+    );
+}
 
 export default function CaseTasks({ caseId }: { caseId: number }) {
     const qc = useQueryClient();
     const [adding, setAdding] = useState(false);
     const [newTitle, setNewTitle] = useState('');
     const [newPhase, setNewPhase] = useState('identification');
+    const [newWorkflow, setNewWorkflow] = useState<number | null>(null);
     const [applyId, setApplyId] = useState<string>('');
     const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
     const [confirmTicket, setConfirmTicket] = useState<number | null>(null);
@@ -39,6 +65,14 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
         queryKey: ['playbooks', 'mine'],
         queryFn: async () => (await api.get('/playbooks/')).data as PlaybookSummary[],
         enabled: canEdit,
+    });
+
+    // Manual workflows only: the API refuses to link any other trigger to a task.
+    const { data: workflows = [] } = useQuery({
+        queryKey: ['workflows'],
+        queryFn: async () => (await api.get('/workflows/')).data as WorkflowSummary[],
+        enabled: canEdit, staleTime: 60_000,
+        select: (all) => all.filter((w) => w.trigger_type === 'manual'),
     });
 
     const invalidate = () => {
@@ -91,9 +125,18 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
             setAssignError({ id: t.id, text: typeof d === 'string' ? d : 'Could not assign the task' });
         },
     });
+    const link = useMutation({
+        mutationFn: async ({ t, workflow_id }: { t: CaseTask; workflow_id: number | null }) =>
+            api.put(`/cases/${caseId}/tasks/${t.id}`, { workflow_id }),
+        onSuccess: () => { setRunError(null); invalidate(); },
+        onError: (e: { response?: { data?: { detail?: unknown } } }, { t }) => {
+            const d = e?.response?.data?.detail;
+            setRunError({ id: t.id, text: typeof d === 'string' ? d : 'Could not link the workflow' });
+        },
+    });
     const add = useMutation({
-        mutationFn: async () => api.post(`/cases/${caseId}/tasks`, { phase: newPhase, title: newTitle }),
-        onSuccess: () => { setNewTitle(''); setAdding(false); invalidate(); },
+        mutationFn: async () => api.post(`/cases/${caseId}/tasks`, { phase: newPhase, title: newTitle, workflow_id: newWorkflow }),
+        onSuccess: () => { setNewTitle(''); setNewWorkflow(null); setAdding(false); invalidate(); },
     });
     const apply = useMutation({
         mutationFn: async (templateId: number) => api.post(`/cases/${caseId}/apply-playbook/${templateId}`),
@@ -136,7 +179,7 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
             )}
 
             {tasks.length === 0 ? (
-                <EmptyState title="No tasks yet" body="Apply a playbook or add tasks manually." className="rounded-md border border-dashed border-line-strong" />
+                <EmptyState title="No tasks yet" body="Apply a playbook or add tasks manually. A task can run any manual workflow." className="rounded-md border border-dashed border-line-strong" />
             ) : (
                 <div className="space-y-4">
                     {grouped.map(([phase, list]) => (
@@ -204,8 +247,18 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                                                             <Ticket size={12} /> Create ticket
                                                         </button>
                                                     ))}
+                                                    {canEdit && !t.workflow_id && (
+                                                        <WorkflowSelect label={`Workflow for ${t.title}`} value={null} workflows={workflows}
+                                                            disabled={link.isPending && link.variables?.t.id === t.id}
+                                                            onChange={(v) => link.mutate({ t, workflow_id: v })} />
+                                                    )}
+                                                    {!t.workflow_id && runError?.id === t.id && <span role="alert" className="text-severity-critical">{runError.text}</span>}
                                                     {t.workflow_id && (<>
-                                                        <span className={PILL}><WorkflowIcon size={12} className="text-accent" />{t.workflow_name ?? 'Workflow removed'}</span>
+                                                        {canEdit ? (
+                                                            <WorkflowSelect label={`Workflow for ${t.title}`} value={t.workflow_id} currentName={t.workflow_name} workflows={workflows}
+                                                                disabled={(link.isPending && link.variables?.t.id === t.id) || RUNNING.includes(t.last_run_status ?? '')}
+                                                                onChange={(v) => link.mutate({ t, workflow_id: v })} />
+                                                        ) : <span className={PILL}><WorkflowIcon size={12} className="text-accent" />{t.workflow_name ?? 'Workflow removed'}</span>}
                                                         {canEdit && t.workflow_runnable && (
                                                             <button onClick={() => runTask.mutate(t)} disabled={runTask.isPending || RUNNING.includes(t.last_run_status ?? '')}
                                                                 className={cn(PILL, 'border-accent bg-accent text-on-accent font-medium hover:bg-accent-hover disabled:opacity-50')}>
@@ -255,6 +308,7 @@ export default function CaseTasks({ caseId }: { caseId: number }) {
                         <Input inputSize="sm" autoFocus aria-label="Task title" value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && newTitle && add.mutate()}
                             placeholder="Task title" className="flex-1 min-w-40" />
+                        <WorkflowSelect label="Workflow for the new task" value={newWorkflow} workflows={workflows} onChange={setNewWorkflow} />
                         <Button size="sm" onClick={() => newTitle && add.mutate()} disabled={!newTitle}>Add</Button>
                         <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
                     </div>
