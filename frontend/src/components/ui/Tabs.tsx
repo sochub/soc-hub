@@ -2,6 +2,11 @@ import { useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 
+// The strip, not each tab, sits 1px over the row rule so the active underline covers it. A tab offset would make
+// the content 1px taller than the strip, and overflow-x:auto then also scrolls vertically: browsers with always-on
+// scrollbars draw up/down arrows (#172). Only horizontal scrolling is wanted, for narrow screens.
+const STRIP = '-mb-px flex items-end gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]';
+
 export interface TabItem<T extends string> { value: T; label: React.ReactNode; count?: number }
 
 /**
@@ -22,7 +27,7 @@ export function FolderTabs<T extends string>({ items, value, onChange, label, id
     };
     return (
         <div className={cn('flex items-end gap-2 border-b border-line', className)}>
-            <div ref={ref} role="tablist" aria-label={label} className="flex items-end gap-0.5 overflow-x-auto">
+            <div ref={ref} role="tablist" aria-label={label} className={STRIP}>
                 {items.map((t, i) => (
                     <button key={t.value} type="button" role="tab" id={`${idPrefix}-${t.value}`}
                         aria-selected={value === t.value} aria-controls={`${idPrefix}-panel`} tabIndex={value === t.value ? 0 : -1}
@@ -43,7 +48,7 @@ export function FolderTabLinks({ items, label, className, children }: {
 }) {
     return (
         <div className={cn('flex items-end gap-2 border-b border-line', className)}>
-            <nav aria-label={label} className="flex items-end gap-0.5 overflow-x-auto">
+            <nav aria-label={label} className={STRIP}>
                 {items.map((t) => <NavLink key={t.to} to={t.to} end={t.end} className="folder-tab">{t.label}</NavLink>)}
             </nav>
             {children && <div className="ml-auto pb-1.5 flex items-center gap-2">{children}</div>}

@@ -219,7 +219,7 @@
 @utility folder-tab {
   /* Section tab: plain label on the row's rule; the active one is underlined in the accent. (Name kept for call sites.)
      (Active state lives here, not in @layer base: base loses to this utility.) */
-  @apply relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 pt-2 pb-2 text-[13px] font-medium text-fg-3 transition-colors hover:text-fg;
+  @apply relative inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 pt-2 pb-2 text-[13px] font-medium text-fg-3 transition-colors hover:text-fg;
   &[aria-selected="true"],
   &[aria-current="page"] {
     z-index: 1;
