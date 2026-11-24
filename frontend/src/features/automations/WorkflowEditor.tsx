@@ -6,7 +6,7 @@ import {
     type Connection, type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, Save, CheckCircle2, AlertTriangle, FlaskConical, PanelLeft, PanelRight, X } from 'lucide-react';
+import { ArrowLeft, Save, CheckCircle2, AlertTriangle, FlaskConical, PanelLeft, PanelRight, Trash2, X } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import type { User } from '../../types';
@@ -18,7 +18,7 @@ import NodeInspector from './NodeInspector';
 import RunsTable from './RunsTable';
 import DryRunDialog from './DryRunDialog';
 import EnabledSwitch from './EnabledSwitch';
-import { Button, FolderTabs, Select, Textarea, Label, TONE_TEXT } from '../../components/ui';
+import { Button, FolderTabs, Select, Textarea, Label, TONE_TEXT, useConfirm } from '../../components/ui';
 
 type ApiErr = { response?: { data?: { detail?: { errors?: ValidationError[]; message?: string } } } };
 const nodeTypes = { wf: WorkflowNode };
@@ -175,6 +175,17 @@ function Editor() {
         onError: (err: ApiErr) => { setErrors(err?.response?.data?.detail?.errors ?? []); setAlert('Fix the problems below before enabling'); },
     });
 
+    const { confirm, dialog: confirmDialog } = useConfirm();
+    const remove = useMutation({
+        mutationFn: async () => api.delete(`/workflows/${id}`),
+        onSuccess: () => { qc.removeQueries({ queryKey: ['workflow', id] }); qc.invalidateQueries({ queryKey: ['workflows'] }); navigate('/workflows'); },
+        onError: () => setAlert('Could not delete the workflow'),
+    });
+    const askDelete = async () => {
+        if (await confirm({ title: `Delete "${wf?.name}"?`, danger: true,
+            body: 'The workflow and its run history are removed, and runs in progress are cancelled. This can\'t be undone.' })) remove.mutate();
+    };
+
     const invalidIds = useMemo(() => new Set(errors.map((e) => e.node_id).filter(Boolean) as string[]), [errors]);
     const displayNodes = useMemo(() => nodes.map((n) => ({ ...n, data: { ...n.data, invalid: invalidIds.has(n.id) } })), [nodes, invalidIds]);
 
@@ -207,6 +218,7 @@ function Editor() {
 
     return (
         <div className="flex flex-col h-[calc(100vh-3.5rem)]">
+            {confirmDialog}
             <div className="flex items-center gap-x-3 gap-y-2 px-4 pt-2 border-b border-line bg-panel flex-wrap">
                 <Link to="/workflows" className="p-1 text-fg-3 hover:text-fg" aria-label="Back to workflows"><ArrowLeft size={18} aria-hidden /></Link>
                 <input className="text-base font-semibold text-fg bg-transparent border-b border-transparent focus:border-accent min-w-0 w-56 sm:w-72"
@@ -226,6 +238,11 @@ function Editor() {
                     {!readOnly && !isNew && wf && (
                         <Button variant="secondary" size="sm" onClick={() => setDryRunOpen(true)} title="Uses the last saved version">
                             <FlaskConical size={14} aria-hidden /> Dry run
+                        </Button>
+                    )}
+                    {!readOnly && !isNew && wf && (
+                        <Button variant="ghost" size="sm" onClick={askDelete} disabled={remove.isPending} aria-label="Delete workflow" title="Delete workflow">
+                            <Trash2 size={14} aria-hidden />
                         </Button>
                     )}
                     {!readOnly && (
