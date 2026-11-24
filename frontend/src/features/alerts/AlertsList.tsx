@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../../api/client';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, X, CheckCircle, BellOff } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, X, CheckCircle, BellOff, ListFilter } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
 import { AlertRuns } from '../automations/CaseAutomation';
-import { Button, Select, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, buttonClass, type Tone } from '../../components/ui';
+import { Button, Input, Label, Select, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, buttonClass, type Tone } from '../../components/ui';
+import { BASE_FIELDS, FIELD_RE, OPS, describe, opLabel, payloadPaths, type Condition } from './conditions';
+import FieldPicker from './FieldPicker';
 import { FIXED_COLUMN_COUNT, useAlertColumns } from './alertColumns';
 import ColumnsMenu from './ColumnsMenu';
 import Modal from '../../components/layout/Modal';
@@ -27,6 +29,40 @@ interface Alert {
 }
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
+const MAX_CONDITIONS = 10;
+
+/** Field conditions live in the URL as a JSON list of [field, op, value]; anything malformed is ignored. */
+function parseWhere(raw: string | null): Condition[] {
+    try {
+        const v = JSON.parse(raw ?? '[]');
+        return Array.isArray(v) ? v.filter((c) => Array.isArray(c) && c.length === 3 && FIELD_RE.test(String(c[0])))
+            .map(([field, op, value]) => ({ field: String(field), op: String(op), value: String(value) })).slice(0, MAX_CONDITIONS) : [];
+    } catch { return []; }
+}
+const isoOf = (local: string) => { const t = Date.parse(local); return Number.isNaN(t) ? undefined : new Date(t).toISOString(); };
+const shortField = (f: string) => f.replace(/^payload\./, '');
+
+/** Add a condition: field (base or any payload path, with suggestions from recent payloads), operator, value. */
+function ConditionAdder({ fields, onAdd }: { fields: string[]; onAdd: (c: Condition) => void }) {
+    const [c, setC] = useState<Condition>({ field: '', op: 'equals', value: '' });
+    const valid = FIELD_RE.test(c.field) && !!c.value.trim();
+    const add = () => { if (valid) { onAdd({ ...c, value: c.value.trim() }); setC({ ...c, value: '' }); } };
+    const groups: [string, string[]][] = [['Alert fields', BASE_FIELDS], ...(fields.length ? [['Seen in recent alerts', fields] as [string, string[]]] : [])];
+    return (
+        <form className="grid grid-cols-1 sm:grid-cols-[minmax(0,2fr)_auto_minmax(0,2fr)_auto] gap-2 items-end"
+            onSubmit={(e) => { e.preventDefault(); add(); }}>
+            <div><Label htmlFor="cond-field">Field</Label><FieldPicker inputId="cond-field" value={c.field} groups={groups} onChange={(field) => setC({ ...c, field })} /></div>
+            <div><Label htmlFor="cond-op">Operator</Label>
+                <Select id="cond-op" value={c.op} onChange={(e) => setC({ ...c, op: e.target.value })}>
+                    {OPS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </Select></div>
+            <div><Label htmlFor="cond-value">Value</Label>
+                <Input id="cond-value" value={c.value} placeholder={c.op === 'in_cidr' ? '10.0.0.0/8' : 'test'}
+                    onChange={(e) => setC({ ...c, value: e.target.value })} /></div>
+            <Button type="submit" disabled={!valid}>Add filter</Button>
+        </form>
+    );
+}
 const alertStatusTone = (s: string): Tone => (s === 'pending' ? 'medium' : s === 'promoted' ? 'ok' : 'neutral');
 type SortKey = 'severity' | 'created_at';
 const PAGE_SIZES = [10, 40, 100] as const;
@@ -46,6 +82,28 @@ function SimilarAlerts({ alertId, onOpen }: { alertId: number; onOpen: (id: numb
                         <SeverityStamp severity={s.severity} />
                         <button onClick={() => onOpen(s.id)} className="text-accent hover:underline">#{s.id} {s.title}</button>
                         {s.case_id && <Link to={`/cases/${s.case_id}`} className="text-accent hover:underline">Case #{s.case_id}</Link>}
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+}
+
+/** "Filter by" shortcuts: one click turns a payload value into a filter (agent name equals test, and so on). */
+function PayloadFilterLinks({ payload, onPick }: { payload: unknown; onPick: (field: string, value: string) => void }) {
+    // Values worth matching exactly: short identifiers (agent, host, user, IP, rule), not timestamps or log lines.
+    const pairs = payloadPaths(payload).filter(([, v]) => v !== '' && v.length <= 60 && !/^\d{4}-\d{2}-\d{2}T/.test(v)).slice(0, 16);
+    if (!pairs.length) return null;
+    return (
+        <div className="mb-3">
+            <h3 className="label-caps mb-1">Filter alerts by</h3>
+            <ul className="flex flex-wrap gap-1.5">
+                {pairs.map(([field, value]) => (
+                    <li key={field}>
+                        <button type="button" onClick={() => onPick(field, value)} title={`Show alerts where ${field} equals ${value}`}
+                            className="inline-flex items-center gap-1 h-6 px-1.5 rounded-sm border border-line bg-panel text-xs hover:border-accent">
+                            <span className="text-fg-3 font-mono">{shortField(field)}</span><span className="font-mono text-fg truncate max-w-[16rem]">{value}</span>
+                        </button>
                     </li>
                 ))}
             </ul>
@@ -91,6 +149,11 @@ export default function AlertsList() {
     const statusFilter = sp.get('status') ?? 'pending';
     const severityFilter = sp.get('severity') ?? 'all';
     const sourceFilter = sp.get('source') ?? 'all';
+    const conds = parseWhere(sp.get('where'));
+    const receivedFrom = sp.get('from') ?? '';
+    const receivedTo = sp.get('to') ?? '';
+    const setConds = (next: Condition[]) => { setParams({ where: next.length ? JSON.stringify(next.map((c) => [c.field, c.op, c.value])) : null }); resetView(); };
+    const [showFields, setShowFields] = useState(conds.length > 0 || !!receivedFrom || !!receivedTo);
     const sizeParam = Number(sp.get('size'));
     const PAGE_SIZE = (PAGE_SIZES as readonly number[]).includes(sizeParam) ? sizeParam : 40;
     const page = Math.max(0, Number(sp.get('page') ?? 1) - 1 || 0);
@@ -123,6 +186,9 @@ export default function AlertsList() {
         ...(statusFilter !== 'all' && { status: statusFilter }),
         ...(severityFilter !== 'all' && { severity: severityFilter }),
         ...(sourceFilter !== 'all' && { source: sourceFilter }),
+        ...(conds.length && { where: JSON.stringify(conds) }),
+        ...(isoOf(receivedFrom) && { received_from: isoOf(receivedFrom) }),
+        ...(isoOf(receivedTo) && { received_before: isoOf(receivedTo) }),
     };
     const { data: result, isLoading, isError, refetch } = useQuery({
         queryKey: ['alerts', 'list', params],
@@ -175,8 +241,17 @@ export default function AlertsList() {
     );
     const openAlert = (id: number) => setViewing(id);
 
-    const filtersActive = statusFilter !== 'pending' || severityFilter !== 'all' || sourceFilter !== 'all';
-    const clearFilters = () => { setParams({ status: null, severity: null, source: null }); resetView(); };
+    const filtersActive = statusFilter !== 'pending' || severityFilter !== 'all' || sourceFilter !== 'all'
+        || conds.length > 0 || !!receivedFrom || !!receivedTo;
+    const clearFilters = () => { setParams({ status: null, severity: null, source: null, where: null, from: null, to: null }); resetView(); };
+    const addCond = (c: Condition) => {
+        if (conds.length < MAX_CONDITIONS && !conds.some((x) => x.field === c.field && x.op === c.op && x.value === c.value)) setConds([...conds, c]);
+    };
+    // Field suggestions: payload paths seen in recent alerts of the selected source.
+    const { data: knownFields = [] } = useQuery({
+        queryKey: ['alerts', 'fields', sourceFilter], enabled: showFields, staleTime: 60_000,
+        queryFn: async () => (await api.get('/alerts/fields', { params: sourceFilter !== 'all' ? { source: sourceFilter } : {} })).data as { field: string }[],
+    });
     const suppressLink = (id: number) => (
         <Link to={`/alerts/suppressions?from_alert=${id}`} title="Create a suppression rule pre-filled from this alert"
             className={buttonClass('ghost', 'sm')}><BellOff size={12} aria-hidden />Suppress similar</Link>
@@ -214,8 +289,45 @@ export default function AlertsList() {
                     <option value="promoted">Promoted</option>
                     <option value="dismissed">Dismissed</option>
                 </Select>
+                <Button size="sm" variant={showFields ? 'secondary' : 'ghost'} aria-expanded={showFields} aria-controls="alert-field-filters"
+                    onClick={() => setShowFields((v) => !v)}><ListFilter size={13} aria-hidden />Field filters</Button>
                 <ColumnsMenu cols={cols} />
             </div>
+
+            {showFields && (
+                <section id="alert-field-filters" aria-label="Field filters" className="space-y-3 border-b border-line pb-4">
+                    <ConditionAdder fields={knownFields.map((f) => f.field)} onAdd={addCond} />
+                    <div className="flex flex-wrap items-end gap-2">
+                        <div><Label htmlFor="recv-from">Received from</Label>
+                            <Input id="recv-from" type="datetime-local" value={receivedFrom}
+                                onChange={(e) => { setParams({ from: e.target.value || null }); resetView(); }} /></div>
+                        <div><Label htmlFor="recv-to">Received before</Label>
+                            <Input id="recv-to" type="datetime-local" value={receivedTo}
+                                onChange={(e) => { setParams({ to: e.target.value || null }); resetView(); }} /></div>
+                        <p className="text-xs text-fg-3 pb-1.5">Times are when sochub received the alert. Sort by Received for oldest or newest first.</p>
+                    </div>
+                </section>
+            )}
+
+            {(conds.length > 0 || receivedFrom || receivedTo) && (
+                <ul aria-label="Active field filters" className="flex flex-wrap items-center gap-1.5">
+                    {conds.map((c, i) => (
+                        <li key={`${c.field}|${c.op}|${c.value}`}>
+                            <button type="button" onClick={() => setConds(conds.filter((_, j) => j !== i))} aria-label={`Remove filter: ${describe(c)}`}
+                                className="inline-flex items-center gap-1 h-7 px-2 rounded-sm border border-accent/40 bg-accent/10 text-xs text-fg hover:border-accent">
+                                <span className="font-mono">{shortField(c.field)}</span> {opLabel(c.op)} <span className="font-mono">{c.value}</span>
+                                <X size={12} aria-hidden />
+                            </button>
+                        </li>
+                    ))}
+                    {(receivedFrom || receivedTo) && (
+                        <li><button type="button" onClick={() => { setParams({ from: null, to: null }); resetView(); }} aria-label="Remove filter: received time"
+                            className="inline-flex items-center gap-1 h-7 px-2 rounded-sm border border-accent/40 bg-accent/10 text-xs text-fg hover:border-accent">
+                            Received {receivedFrom ? new Date(receivedFrom).toLocaleString() : '…'} – {receivedTo ? new Date(receivedTo).toLocaleString() : '…'}<X size={12} aria-hidden />
+                        </button></li>
+                    )}
+                </ul>
+            )}
 
             {canAct && selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-line bg-raised text-sm">
@@ -293,6 +405,7 @@ export default function AlertsList() {
                                         <SimilarAlerts alertId={a.id} onOpen={openAlert} />
                                         <AlertRuns alertId={a.id} />
                                         <p className="sm:hidden mb-2 text-xs text-fg-3">Source: <span className="text-fg-2">{a.source}</span></p>
+                                        <PayloadFilterLinks payload={a.payload} onPick={(field, value) => { addCond({ field, op: 'equals', value }); setShowFields(true); }} />
                                         <pre className="text-xs text-fg-2 overflow-x-auto">{JSON.stringify(a.payload, null, 2)}</pre>
                                     </td></tr>
                                 )}
