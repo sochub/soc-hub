@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { isAxiosError } from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { KeyRound, Plus } from 'lucide-react';
+import { KeyRound, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../api/client';
 import type { SecretScanItem, User } from '../../types';
 import Modal, { btnPrimary, btnSecondary, modalInput } from '../../components/layout/Modal';
@@ -13,7 +13,7 @@ import TemplateGallery from './TemplateGallery';
 import RunsTable, { RelTime, StatusBadge } from './RunsTable';
 import EnabledSwitch from './EnabledSwitch';
 import PageContainer from '../../components/layout/PageContainer';
-import { Button, EmptyState, ErrorState, FolderTabs, PageHeader, Skeleton, TONE_TEXT } from '../../components/ui';
+import { Button, EmptyState, ErrorState, FolderTabs, PageHeader, Skeleton, TONE_TEXT, useConfirm } from '../../components/ui';
 
 const itemKey = (i: SecretScanItem) => `${i.node_id}|${i.location}|${i.key}`;
 
@@ -139,10 +139,23 @@ export default function AutomationsList() {
         },
     });
 
+    const { confirm, dialog: confirmDialog } = useConfirm();
+    const remove = useMutation({
+        mutationFn: async (w: WorkflowSummary) => api.delete(`/workflows/${w.id}`),
+        onMutate: () => setToggleError(null),
+        onSuccess: () => { qc.invalidateQueries({ queryKey: ['workflows'] }); },
+        onError: (_e, w) => setToggleError(`Could not delete "${w.name}"`),
+    });
+    const askDelete = async (w: WorkflowSummary) => {
+        if (await confirm({ title: `Delete "${w.name}"?`, danger: true,
+            body: 'The workflow and its run history are removed, and runs in progress are cancelled. This can\'t be undone.' })) remove.mutate(w);
+    };
+
     const tabLabel: Record<ListTab, string> = { workflows: 'Workflows', templates: 'Templates', runs: 'Runs' };
 
     return (
         <PageContainer className="space-y-0">
+            {confirmDialog}
             <PageHeader title="Workflows" description="Automations that run on cases and alerts."
                 actions={isAdmin && <Button onClick={() => navigate('/workflows/new')}><Plus size={15} aria-hidden /> New workflow</Button>} />
 
@@ -177,7 +190,8 @@ export default function AutomationsList() {
                     <table className="w-full text-sm">
                         <thead className="text-left label-caps">
                             <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Trigger</th><th className="px-3 py-2">Enabled</th>
-                                <th className="px-3 py-2">Last run</th><th className="px-3 py-2">Runs</th></tr>
+                                <th className="px-3 py-2">Last run</th><th className="px-3 py-2">Runs</th>
+                                {isAdmin && <th className="px-3 py-2"><span className="sr-only">Actions</span></th>}</tr>
                         </thead>
                         <tbody className="divide-y divide-line">
                             {workflows.map((w) => (
@@ -197,6 +211,12 @@ export default function AutomationsList() {
                                             {w.last_run_at && <RelTime iso={w.last_run_at} />}</span> : '—'}
                                     </td>
                                     <td className="px-3 py-2.5 num">{w.run_count}</td>
+                                    {isAdmin && (
+                                        <td className="px-3 py-2.5 text-right">
+                                            <Button variant="ghost" size="sm" onClick={() => askDelete(w)} disabled={remove.isPending}
+                                                aria-label={`Delete ${w.name}`} title="Delete workflow"><Trash2 size={14} aria-hidden /></Button>
+                                        </td>
+                                    )}
                                 </tr>
                             ))}
                         </tbody>
