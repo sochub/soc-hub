@@ -74,6 +74,7 @@ class OAuthPrincipal:
     client_id: str
     client_name: str
     scopes: tuple[str, ...]
+    expires_at: Optional[int] = None  # the verified token's exp
 
 
 async def verify_oauth_access_token(db: AsyncSession, token: str, *, resource: str) -> Optional[OAuthPrincipal]:
@@ -83,7 +84,7 @@ async def verify_oauth_access_token(db: AsyncSession, token: str, *, resource: s
     try:
         return await _verify(db, token, resource)
     except Exception as exc:  # a verifier must fail closed, never 500
-        logger.warning("oauth token verification error: %s", type(exc).__name__)
+        logger.warning("oauth token verification error: %s", type(exc).__name__)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- exception class name only
         return None
 
 
@@ -123,4 +124,4 @@ async def _verify(db: AsyncSession, token: str, resource_key: str) -> Optional[O
     user._sso_tenant_id = session.sso_tenant_id
     user._session_id = sid
     return OAuthPrincipal(user=user, tenant_id=tid, role=role, session_id=sid, client_id=cid,
-                          client_name=client.client_name, scopes=scopes)
+                          client_name=client.client_name, scopes=scopes, expires_at=claims.get("exp"))

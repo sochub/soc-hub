@@ -18,6 +18,7 @@ def upgrade() -> None:
     for c in _COLS:
         op.add_column("cases", sa.Column(c, sa.DateTime(timezone=True), nullable=True))
     sets = ", ".join(f"{c} = COALESCE(cases.{c}, r.{c})" for c in _COLS)
+    # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query, python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query -- column names from the constant _COLS
     op.execute(f"UPDATE cases SET {sets} FROM case_reports r WHERE r.case_id = cases.id")
 
 

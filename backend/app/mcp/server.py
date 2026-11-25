@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-import jwt
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
@@ -79,14 +78,12 @@ class SochubTokenVerifier(TokenVerifier):
                           "session_id": p.session_id, "client_name": p.client_name,
                           "amr": p.user._amr, "sso_tenant_id": p.user._sso_tenant_id}
                 subject = p.user.email
-            # Signature and expiry were just checked by verify_oauth_access_token.
-            exp = jwt.decode(token, options={"verify_signature": False}).get("exp")
         except Exception as exc:  # fail closed
-            logger.warning("mcp: token verification error: %s", type(exc).__name__)
+            logger.warning("mcp: token verification error: %s", type(exc).__name__)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- exception class name only
             return None
         await _bump_last_used(claims["session_id"])
         return AccessToken(token=token, client_id=p.client_id, scopes=list(p.scopes),
-                           expires_at=int(exp) if exp is not None else None, subject=subject,
+                           expires_at=p.expires_at, subject=subject,
                            resource=RESOURCES["mcp"].url, claims=claims)
 
 

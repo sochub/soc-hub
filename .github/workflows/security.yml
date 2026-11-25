@@ -109,13 +109,17 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      # ponytail: report-only (no --error) until the 8 open p/default findings in backend/app are triaged
-      # (fixed or marked `# nosemgrep: <rule> -- reason`); then add --error to make it blocking.
+      # Blocking: a new finding is fixed or marked `# nosemgrep: <rule> -- reason`. The SARIF keeps reviewed
+      # (nosemgrep) results with a suppression, which code scanning would still show as open alerts: drop them.
       - name: Semgrep (p/default)
         run: |
           pip install semgrep==1.167.0
           semgrep scan --config p/default --metrics off --exclude docs --exclude frontend/node_modules \
-            --sarif --output semgrep.sarif
+            --sarif --output semgrep.sarif --error
+      - if: always()
+        run: |
+          [ -f semgrep.sarif ] || exit 0
+          jq '.runs |= map(.results |= map(select((.suppressions // []) | length == 0)))' semgrep.sarif > s.tmp && mv s.tmp semgrep.sarif
       - if: always() && env.UPLOAD_SARIF == 'true'
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:

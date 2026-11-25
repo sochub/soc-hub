@@ -567,7 +567,7 @@ async def _oidc_callback(request: Request, db: AsyncSession, slug: str, code: Op
     try:
         secret = decrypt(cfg.oidc_client_secret_enc)
     except Exception:
-        logger.error("OIDC client secret could not be decrypted tenant=%s", tenant.id)
+        logger.error("OIDC client secret could not be decrypted tenant=%s", tenant.id)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- tenant id only
         return await fail("token")
     try:
         meta = await oidc_service.discover(cfg.oidc_issuer)

@@ -23,6 +23,7 @@ mkdirSync(`${work}/f`, { recursive: true }); mkdirSync(out, { recursive: true })
 const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${work}/prof`,
   '--hide-scrollbars', `--window-size=${W},${H}`, 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- local Chrome DevTools endpoint
 let t; for (let i = 0; i < 40 && !t; i++) { await sleep(250); try { t = (await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()).find((x) => x.type === 'page'); } catch {} }
 if (!t) { chrome.kill(); throw new Error('Chrome did not start'); }
 const ws = new WebSocket(t.webSocketDebuggerUrl); await new Promise((r) => ws.addEventListener('open', r));
