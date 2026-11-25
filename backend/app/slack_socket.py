@@ -139,7 +139,7 @@ async def _desired() -> Dict[int, Tuple[int, str]]:
             try:
                 out[i.id] = (i.tenant_id, decrypt(i.app_token_enc))
             except InvalidToken:
-                logger.warning("undecryptable Slack app token for tenant %s (SECRET_KEY changed?)", i.tenant_id)
+                logger.warning("undecryptable Slack app token for tenant %s (SECRET_KEY changed?)", i.tenant_id)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure -- tenant id only
     return out
 
 

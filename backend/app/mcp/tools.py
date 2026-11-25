@@ -1642,4 +1642,4 @@ async def dry_run_workflow(db: AsyncSession, p: OAuthPrincipal, workflow_id: int
     return {"run_id": run.id, "dry_run": True}
 
 
-TOOLS = {name: globals()[name] for name in MIN_ROLE}
+TOOLS = {name: globals()[name] for name in MIN_ROLE}  # nosemgrep: python.lang.security.dangerous-globals-use.dangerous-globals-use -- keys are the fixed MIN_ROLE tool names, never input
