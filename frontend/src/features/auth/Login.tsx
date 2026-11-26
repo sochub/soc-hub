@@ -16,6 +16,23 @@ export default function Login() {
     const [isLoading, setIsLoading] = useState(false);
     const [ssoMode, setSsoMode] = useState(false);
     const [ssoSlug, setSsoSlug] = useState('');
+    // Home-realm discovery: the email's domain belongs to an organization that signs in with SSO. The password
+    // field is grayed out; break-glass accounts (super admin, admins with 2FA) can still choose a password.
+    const [realm, setRealm] = useState<{ domain: string; slug: string } | null>(null);
+    const [passwordFor, setPasswordFor] = useState(''); // the domain the user chose a password for
+    const domain = /^[^@\s]+@([^@\s]+\.[^@\s]+)$/.exec(email.trim())?.[1]?.toLowerCase() ?? '';
+    const usePassword = !!domain && passwordFor === domain;
+    useEffect(() => {
+        if (!domain) return;
+        let live = true;
+        const t = setTimeout(() => {
+            api.post('/auth/sso/discover', { email: email.trim() })
+                .then((r) => { if (live) setRealm(r.data.slug ? { domain, slug: r.data.slug } : null); })
+                .catch(() => { if (live) setRealm(null); }); // no hint: the normal form still works
+        }, 350);
+        return () => { live = false; clearTimeout(t); };
+    }, [domain]); // eslint-disable-line react-hooks/exhaustive-deps -- per domain, not per keystroke
+    const ssoLocked = !!realm && realm.domain === domain && !usePassword;
     // Challenge token lives in component state only (never persisted).
     const [challenge, setChallenge] = useState<{ token: string; kind: 'code' | 'setup' } | null>(null);
     const [code, setCode] = useState('');
@@ -53,6 +70,7 @@ export default function Login() {
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (ssoLocked && realm) { window.location.href = ssoLoginUrl(realm.slug); return; }
         setError('');
         setIsLoading(true);
 
@@ -225,9 +243,10 @@ export default function Login() {
                             type="password"
                             autoComplete="current-password"
                             required
-                            value={password}
+                            value={ssoLocked ? '' : password}
+                            placeholder={ssoLocked ? 'Your organization signs in with SSO' : undefined}
                             onChange={(e) => setPassword(e.target.value)}
-                            disabled={isLoading}
+                            disabled={isLoading || ssoLocked}
                             invalid={!!error}
                             aria-describedby={error ? 'login-error' : undefined}
                         />
@@ -240,8 +259,17 @@ export default function Login() {
                     )}
 
                     <Button type="submit" size="lg" disabled={isLoading} className="w-full">
-                        {isLoading ? 'Signing in…' : 'Sign in'}
+                        {ssoLocked ? <><KeyRound size={16} /> Continue with SSO</> : isLoading ? 'Signing in…' : 'Sign in'}
                     </Button>
+                    {realm && realm.domain === domain && (
+                        <p className="text-xs text-fg-3 text-center">
+                            {usePassword ? 'Password sign-in is for break-glass accounts. ' : <>Accounts at <strong>{realm.domain}</strong> sign in with SSO. </>}
+                            <button type="button" onClick={() => { setPasswordFor(usePassword ? '' : domain); setError(''); }}
+                                className="text-accent hover:underline">
+                                {usePassword ? 'Use SSO instead' : 'Sign in with a password instead'}
+                            </button>
+                        </p>
+                    )}
 
                     <div className="relative py-1">
                         <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-line" /></div>

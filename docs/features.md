@@ -372,6 +372,12 @@ using their tenant slug. An SSO session opens only the tenant whose IdP issued i
 super admins never sign in through a tenant IdP. See [sso/oidc.md](sso/oidc.md) and
 [sso/saml-design.md](sso/saml-design.md).
 
+On the sign-in page, an email whose domain is listed in an organization's SSO email domains (and whose members sign
+in with SAML or OIDC) grays out the password field and turns the button into **Continue with SSO**, straight to that
+IdP. The lookup is per domain only, so the page can't be used to learn whether an account exists or is a super admin;
+instead, **Sign in with a password instead** stays available for break-glass accounts (the super admin, admins with
+MFA), and the password policy above still refuses everyone else. A domain two organizations list gives no hint.
+
 ## AI clients (MCP)
 
 Tenant admins can switch on **Settings -> AI clients (MCP)** so members connect Claude Code, Claude Desktop or
