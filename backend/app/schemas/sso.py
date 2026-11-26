@@ -1,11 +1,12 @@
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, field_validator
 
 from app.models.tenant import LOGIN_METHODS
 
+ROLE_ORDER = ("admin", "analyst", "viewer")  # highest first: the first matching role wins
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 
 
@@ -27,6 +28,25 @@ class SSOConfigUpdate(BaseModel):
     default_role: Optional[str] = None
     saml_allow_idp_initiated: Optional[bool] = None
     groups_claim: Optional[str] = None
+    # IdP group names per role; {} turns role mapping off.
+    role_groups: Optional[Dict[str, List[str]]] = None
+
+    @field_validator("role_groups")
+    @classmethod
+    def _role_groups_ok(cls, v: Optional[Dict[str, List[str]]]) -> Optional[Dict[str, List[str]]]:
+        if v is None:
+            return v
+        bad = set(v) - set(ROLE_ORDER)
+        if bad:
+            raise ValueError(f"role_groups keys must be {', '.join(ROLE_ORDER)}")
+        out = {}
+        for role in ROLE_ORDER:
+            names = list(dict.fromkeys(n.strip() for n in v.get(role) or [] if isinstance(n, str) and n.strip()))
+            if len(names) > 50 or any(len(n) > 200 for n in names):
+                raise ValueError("at most 50 groups per role, each up to 200 characters")
+            if names:
+                out[role] = names
+        return out
 
     @field_validator("groups_claim")
     @classmethod
@@ -106,6 +126,7 @@ class SSOConfigOut(BaseModel):
     default_role: str
     saml_allow_idp_initiated: bool = False
     groups_claim: str = "groups"
+    role_groups: Dict[str, List[str]] = {}
     # Service-provider values the admin pastes into their IdP
     sp_entity_id: str
     sp_acs_url: str

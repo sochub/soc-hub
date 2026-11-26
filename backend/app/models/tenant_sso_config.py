@@ -37,5 +37,8 @@ class TenantSSOConfig(Base):
     saml_allow_idp_initiated = Column(Boolean, nullable=False, default=False, server_default="false")
     # SAML attribute / OIDC claim carrying the user's IdP groups (escalation group sync)
     groups_claim = Column(String(200), nullable=False, default="groups", server_default="groups")
+    # Role from IdP groups, applied at every SSO sign-in: {"admin": [...], "analyst": [...], "viewer": [...]}. The
+    # highest matching role wins; no match = default_role. Empty = roles are managed in SOC Hub only.
+    role_groups = Column(JSON, nullable=False, default=dict, server_default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

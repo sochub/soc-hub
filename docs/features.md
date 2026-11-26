@@ -330,6 +330,13 @@ using their tenant slug. An SSO session opens only the tenant whose IdP issued i
 super admins never sign in through a tenant IdP. See [sso/oidc.md](sso/oidc.md) and
 [sso/saml-design.md](sso/saml-design.md).
 
+**Roles from IdP groups** (optional, same settings page): list IdP group names for Admin, Analyst and Viewer. At every
+SSO sign-in, the member gets the highest role whose groups they are in (names compare case-insensitively); a member
+in none of them gets the default role. Roles take effect on that sign-in and are audited (`sso_role_sync`). If the
+IdP omits the groups claim the role is left unchanged, and a sign-in never demotes the organization's last admin
+(audited as `sso_role_sync_blocked`). With no groups listed, roles are managed in SOC Hub only. The same claim drives
+escalation-group sync.
+
 ## AI clients (MCP)
 
 Tenant admins can switch on **Settings -> AI clients (MCP)** so members connect Claude Code, Claude Desktop or

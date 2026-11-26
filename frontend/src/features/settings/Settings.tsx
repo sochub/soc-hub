@@ -285,6 +285,9 @@ function McpSection() {
     );
 }
 
+const ROLE_KEYS = ['admin', 'analyst', 'viewer'] as const;
+type RoleKey = typeof ROLE_KEYS[number];
+
 function detailMessage(d: unknown): string {
     if (typeof d === 'string') return d;
     if (Array.isArray(d)) {
@@ -338,8 +341,11 @@ export default function Settings() {
         allowed_email_domains: '', // comma-separated in the form, a list on the wire
         saml_allow_idp_initiated: false,
         groups_claim: 'groups',
+        // One IdP group per line (names can contain spaces and commas, e.g. LDAP DNs); a map on the wire.
+        role_groups: { admin: '', analyst: '', viewer: '' } as Record<RoleKey, string>,
     });
     const [savedFlash, setSavedFlash] = useState(false);
+    const roleMapping = ROLE_KEYS.some(r => form.role_groups[r].trim());
 
     useEffect(() => {
         if (cfg) {
@@ -357,6 +363,7 @@ export default function Settings() {
                 default_role: cfg.default_role,
                 saml_allow_idp_initiated: cfg.saml_allow_idp_initiated,
                 groups_claim: cfg.groups_claim ?? 'groups',
+                role_groups: Object.fromEntries(ROLE_KEYS.map(r => [r, (cfg.role_groups?.[r] ?? []).join('\n')])) as Record<RoleKey, string>,
             });
         }
     }, [cfg]);
@@ -365,6 +372,7 @@ export default function Settings() {
         mutationFn: async () => (await api.put('/tenants/sso-config', {
             ...form,
             groups_claim: form.groups_claim.trim() || 'groups',
+            role_groups: Object.fromEntries(ROLE_KEYS.map(r => [r, form.role_groups[r].split('\n').map(g => g.trim()).filter(Boolean)])),
             allowed_email_domains: form.allowed_email_domains.split(/[\s,]+/).map(d => d.trim()).filter(Boolean),
         })).data as SSOConfig,
         onSuccess: () => {
@@ -431,6 +439,24 @@ export default function Settings() {
                                     scopes above and set the app's Groups claim (filter e.g. "Matches regex .*"). Entra: add the groups
                                     claim under Token configuration. SAML: use the attribute name your IdP sends.
                                 </p>
+                                <div>
+                                    <p className="label-caps">Roles from IdP groups</p>
+                                    <p className="text-xs text-fg-3 mt-1 mb-2">
+                                        Optional. At every SSO sign-in a member gets the highest role whose groups they are in; a member in none of
+                                        them gets the default role below. Leave all three empty to manage roles here only. If the IdP omits the
+                                        groups claim, the role is left unchanged, and a sign-in never demotes the organization's last admin.
+                                    </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        {ROLE_KEYS.map(r => (
+                                            <div key={r}>
+                                                <Label htmlFor={`sso-role-${r}`}>{r[0].toUpperCase() + r.slice(1)} groups</Label>
+                                                <Textarea id={`sso-role-${r}`} rows={3} value={form.role_groups[r]} placeholder="one group per line"
+                                                    onChange={e => setForm(f => ({ ...f, role_groups: { ...f.role_groups, [r]: e.target.value } }))}
+                                                    className="font-mono text-xs" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                                 <h4 className="text-sm font-semibold text-fg pt-2">SAML</h4>
                                 <p className="label-caps">Identity provider (from your IdP)</p>
                                 {field('IdP entity ID', 'idp_entity_id', 'https://idp.example.com/entityid')}
@@ -472,7 +498,8 @@ export default function Settings() {
                                         Default role
                                         <Select inputSize="sm" className="w-28" value={form.default_role}
                                             onChange={e => setForm(f => ({ ...f, default_role: e.target.value as 'analyst' | 'viewer' }))}
-                                            disabled={!form.auto_provision}>
+                                            disabled={!form.auto_provision && !roleMapping}
+                                            title="Role for new users, and for members in none of the mapped role groups">
                                             <option value="viewer">Viewer</option>
                                             <option value="analyst">Analyst</option>
                                         </Select>

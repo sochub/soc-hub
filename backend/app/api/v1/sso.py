@@ -20,7 +20,7 @@ from app.auth.login_policy import AMR_OIDC, AMR_SAML
 from app.core import security, session_cookie
 from app.core.config import settings
 from app.core.login_throttle import get_login_throttle
-from app.escalations.sso_sync import oidc_groups, saml_groups, sync_user_groups
+from app.escalations.sso_sync import oidc_groups, saml_groups, sync_user_groups, sync_user_role
 from app.guests import tokens as guest_tokens
 from app.guests.access import ACTIVE as GUEST_ACTIVE, domain_allowed
 from app.models.case_guest import CaseGuest
@@ -411,6 +411,12 @@ async def _finish_member_sso(request: Request, db: AsyncSession, tenant: Tenant,
     await create_audit_log(db=db, entity_type="user", entity_id=user.id, action="sso_login",
                            tenant_id=tenant.id, user_id=user.id, changes={"protocol": amr, "groups": "absent" if idp_groups is None else len(idp_groups)})
     await db.flush()  # an earlier flush failure must not be mislogged as a sync failure
+    try:  # role first: escalation-group eligibility depends on it
+        async with db.begin_nested():
+            await sync_user_role(db, tenant_id=tenant.id, user_id=user.id, idp_groups=idp_groups,
+                                 role_groups=cfg.role_groups or {}, default_role=cfg.default_role)
+    except Exception:
+        logger.exception("SSO role sync failed tenant=%s user=%s", tenant.id, user.id)
     try:  # IdP-authoritative group sync; in a savepoint so a failure can't poison the login transaction
         async with db.begin_nested():
             await sync_user_groups(db, tenant_id=tenant.id, user_id=user.id, idp_groups=idp_groups)
@@ -620,6 +626,7 @@ def _config_out(tenant: Tenant, cfg: Optional[TenantSSOConfig]) -> SSOConfigOut:
         default_role=(cfg.default_role if cfg else "viewer"),
         saml_allow_idp_initiated=bool(cfg and cfg.saml_allow_idp_initiated),
         groups_claim=(cfg.groups_claim if cfg and cfg.groups_claim else "groups"),
+        role_groups=(cfg.role_groups if cfg and cfg.role_groups else {}),
         sp_entity_id=urls["entity_id"],
         sp_acs_url=urls["acs_url"],
         sp_metadata_url=urls["metadata_url"],
@@ -665,7 +672,7 @@ async def update_sso_config(
 
     for field in ("idp_entity_id", "idp_sso_url", "idp_x509_cert", "oidc_issuer", "oidc_client_id",
                   "oidc_scopes", "auto_provision", "allowed_email_domains", "default_role",
-                  "saml_allow_idp_initiated", "groups_claim"):
+                  "saml_allow_idp_initiated", "groups_claim", "role_groups"):
         value = getattr(body, field)
         if value is not None:
             setattr(cfg, field, value)
@@ -698,6 +705,7 @@ async def update_sso_config(
                                     "auto_provision": cfg.auto_provision,
                                     "allowed_email_domains": list(cfg.allowed_email_domains or []),
                                     "saml_allow_idp_initiated": cfg.saml_allow_idp_initiated,
+                                    "role_groups": dict(cfg.role_groups or {}),
                                     "oidc_client_secret_changed": secret_changed})
     await db.commit()
     await db.refresh(cfg)
