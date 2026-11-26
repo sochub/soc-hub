@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
-from app.utils.copilot_heuristics import TLDS, detect_indicators
+from app.utils.copilot_heuristics import TLDS, detect_indicators, refang
 
 # ---- Slack normalisation --------------------------------------------------
 
@@ -32,17 +32,12 @@ def normalize_slack_text(text: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
-# Analysts defang indicators so nobody clicks them: hxxp://evil[.]com, 185[.]220[.]101[.]5, bob[at]evil[.]com
-_REFANG = ((re.compile(r"\[\.\]|\(\.\)|\{\.\}|\[dot\]", re.IGNORECASE), "."), (re.compile(r"\[:\]"), ":"),
-           (re.compile(r"\[@\]|\[at\]", re.IGNORECASE), "@"), (re.compile(r"hxxp(s?)://", re.IGNORECASE), r"http\1://"))
 # Slack italics/bold/strike marks hugging a value (_bad.net_, *bad.net*); svc_backup keeps its underscore
 _SLACK_MARKS = re.compile(r"(?<![A-Za-z0-9])[_*~]+|[_*~]+(?![A-Za-z0-9])")
 
 
 def _refang(text: str) -> str:
-    for rx, to in _REFANG:
-        text = rx.sub(to, text)
-    return _SLACK_MARKS.sub("", text)
+    return _SLACK_MARKS.sub("", refang(text))
 
 
 # Input bounds: Slack allows 40k chars; war-room signal lives in the first few thousand.

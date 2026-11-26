@@ -172,6 +172,10 @@ More symptoms are in the [Slack troubleshooting table](slack/setup.md#troublesho
 - With no `AI_PROVIDER`, sochub uses the bundled Ollama with `OLLAMA_MODEL=llama3.2:3b`, which needs about
   4 GB of free RAM. Larger models on a small host get killed for running out of memory, and the copilot
   then never answers.
+- **Slow local model?** On a Mac, Docker has no GPU access, so the bundled Ollama container runs on CPU. Run the
+  native Ollama app instead and point `OLLAMA_BASE_URL` at `http://host.docker.internal:11434` (add
+  `extra_hosts: ["host.docker.internal:host-gateway"]` to the backend and worker). For reasoning models also set
+  `OLLAMA_THINKING=false`.
 - `AI_*` settings go in **`backend/.env`**, not the root `.env`: compose does not pass them through.
 - Hosted providers: set `AI_PROVIDER`, `AI_MODEL` and `AI_API_KEY` (see `backend/.env.example`). Tenant
   admins can override the provider per tenant unless `AI_ALLOW_TENANT_OVERRIDE=false`.

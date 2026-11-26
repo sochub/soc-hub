@@ -66,6 +66,41 @@ def strip_action_blocks(text: str) -> str:
     return ("".join(out) + (text or "")[pos:]).strip()
 
 
+class ActionFenceFilter:
+    """strip_action_blocks for a reply that arrives in chunks: what may be shown so far. Once a ``` fence
+    opens, everything is held until it closes; a closed block that is an action is dropped, any other is
+    released as written. The client therefore never sees a raw action block, even one split across chunks."""
+
+    def __init__(self) -> None:
+        self._held = ""
+
+    def feed(self, chunk: str) -> str:
+        self._held += chunk
+        out = []
+        while True:
+            start = self._held.find("```")
+            if start < 0:
+                # A trailing backtick or two may be the first half of a fence: keep them back.
+                keep = len(self._held) - len(self._held.rstrip("`"))
+                out.append(self._held[:len(self._held) - keep])
+                self._held = self._held[len(self._held) - keep:]
+                break
+            end = self._held.find("```", start + 3)
+            if end < 0:
+                out.append(self._held[:start])
+                self._held = self._held[start:]
+                break
+            block = self._held[start:end + 3]
+            out.append(self._held[:start] + ("" if any(_action_blocks(block)) else block))
+            self._held = self._held[end + 3:]
+        return "".join(out)
+
+    def flush(self) -> str:
+        """End of the reply: what is still held, minus an action block the model left unterminated."""
+        rest, self._held = self._held, ""
+        return strip_action_blocks(rest) if "```" in rest else rest
+
+
 _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
 
 
@@ -418,19 +453,9 @@ class AIService:
             return self._static_general_welcome(context)
         return text or self._static_general_welcome(context)
 
-    async def chat(
-        self,
-        messages: List[Dict[str, str]],
-        context: Optional[Dict[str, Any]] = None,
-        general: bool = False,
-        raise_errors: bool = False,
-    ) -> str:
-        """Chat with the investigation copilot.
-
-        `general=True` uses the tenant-level queue overview framing; otherwise the
-        full single-case context framing is used. `raise_errors` lets the caller tell a provider failure
-        from a reply (the copilot chat must not store the "unavailable" text as an assistant turn).
-        """
+    def _chat_messages(self, messages: List[Dict[str, str]], context: Optional[Dict[str, Any]],
+                       general: bool) -> List[Dict[str, str]]:
+        """The chat prompt (system + the turns that fit the budget), shared by chat() and chat_stream()."""
         def system(max_events: int = MAX_TIMELINE_EVENTS) -> str:
             # The actions guide comes BEFORE the untrusted data: a provider that truncates an over-long prompt
             # cuts the end, and the guide is what makes actions work at all.
@@ -462,9 +487,30 @@ class AIService:
         while context and not general and max_events > 5 and over():
             max_events //= 2
             system_content = system(max_events)
+        return [{"role": "system", "content": system_content}] + turns
 
+    async def chat_stream(self, messages: List[Dict[str, str]], context: Optional[Dict[str, Any]] = None,
+                          general: bool = False):
+        """chat(raise_errors=True), yielding the raw reply text as the model generates it."""
+        async for chunk in llm.stream(self._chat_messages(messages, context, general),
+                                      tenant_id=self.tenant_id, temperature=0.3):
+            yield chunk
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        context: Optional[Dict[str, Any]] = None,
+        general: bool = False,
+        raise_errors: bool = False,
+    ) -> str:
+        """Chat with the investigation copilot.
+
+        `general=True` uses the tenant-level queue overview framing; otherwise the
+        full single-case context framing is used. `raise_errors` lets the caller tell a provider failure
+        from a reply (the copilot chat must not store the "unavailable" text as an assistant turn).
+        """
         try:
-            text = await self._complete([{"role": "system", "content": system_content}] + turns, temperature=0.3)
+            text = await self._complete(self._chat_messages(messages, context, general), temperature=0.3)
         except AIError as e:
             if raise_errors:
                 raise

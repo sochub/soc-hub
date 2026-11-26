@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User as UserIcon, Loader2, Eraser, X, Sparkles, AlertTriangle } from 'lucide-react';
+import { Send, Bot, User as UserIcon, Loader2, Eraser, X, Sparkles, AlertTriangle, Square } from 'lucide-react';
 import { api } from '../../api/client';
 import { apiErrorMessage } from '../../api/errors';
 import { cn } from '../../lib/utils';
@@ -8,6 +8,7 @@ import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import CopilotActionCard, { CopilotSuggestionChip } from './CopilotActionCard';
+import { sendChat, wasStopped } from './chatStream';
 import type { CopilotAction } from '../../types';
 import { Button, Skeleton, TONE_TEXT } from '../../components/ui';
 
@@ -55,6 +56,9 @@ interface CopilotChatProps {
 export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
     const isCase = !!caseId && caseId > 0;
     const [input, setInput] = useState('');
+    // The reply so far while it streams; replaced by the stored message once the server has settled it.
+    const [streamed, setStreamed] = useState('');
+    const abortRef = useRef<AbortController | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const queryClient = useQueryClient();
@@ -78,23 +82,26 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
 
     // Braces matter: newer browsers return a Promise from scrollIntoView, and an effect must not return one.
     const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
-    useEffect(scrollToBottom, [messages]);
+    useEffect(scrollToBottom, [messages, streamed]);
 
     const chatMutation = useMutation({
         mutationFn: async (message: string) => {
-            const response = await api.post('/copilot/chat', {
-                case_id: isCase ? caseId : null,
-                session_id: session?.id,
-                message,
-            });
-            return response.data;
+            abortRef.current = new AbortController();
+            setStreamed('');
+            return sendChat<Message>(
+                { case_id: isCase ? caseId : null, session_id: session?.id, message },
+                abortRef.current.signal,
+                (text) => setStreamed((soFar) => soFar + text),
+            );
         },
-        // Give the text back so a failed send can be retried or edited (unless something new was typed meanwhile).
+        // Give the text back so a failed or stopped send can be retried or edited (unless something new was typed meanwhile).
         onError: (_e, message) => setInput((current) => current || message),
-        // On error too: a gateway timeout can still leave a saved reply on the server.
+        // On error too: a gateway timeout can still leave a saved reply on the server. Returned, so the
+        // provisional bubble stays until the stored message is on screen.
         onSettled: () => queryClient.invalidateQueries({ queryKey: sessionKey }),
     });
-    const failure = chatMutation.isError ? sendFailure(chatMutation.error) : null;
+    // Stop is the user's choice, not a failure: the server drops the exchange and the text is back in the input.
+    const failure = chatMutation.isError && !wasStopped(chatMutation.error) ? sendFailure(chatMutation.error) : null;
 
     const restartMutation = useMutation({
         mutationFn: async () => (await api.post(`/copilot/sessions/${isCase ? caseId : 'general'}/restart`)).data,
@@ -221,10 +228,19 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                             <div className="w-7 h-7 rounded-md bg-accent/10 border border-accent/30 text-accent flex items-center justify-center shrink-0" aria-hidden>
                                 <Bot size={16} />
                             </div>
-                            <div role="status" className="bg-panel rounded-md p-3 text-sm text-fg-2 flex items-center gap-2 border border-line">
-                                <Loader2 size={14} className="animate-spin text-accent" aria-hidden />
-                                <span>Analyzing…</span>
-                            </div>
+                            {streamed ? (
+                                <div aria-live="polite" className="rounded-md p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere] bg-panel text-fg border border-line">
+                                    <div className="copilot-markdown leading-relaxed">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamed}</ReactMarkdown>
+                                    </div>
+                                    <Loader2 size={13} className="mt-1.5 animate-spin text-accent" aria-label="Still working" />
+                                </div>
+                            ) : (
+                                <div role="status" className="bg-panel rounded-md p-3 text-sm text-fg-2 flex items-center gap-2 border border-line">
+                                    <Loader2 size={14} className="animate-spin text-accent" aria-hidden />
+                                    <span>Analyzing…</span>
+                                </div>
+                            )}
                         </motion.div>
                     </>
                 )}
@@ -260,14 +276,26 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                         aria-label="Message the copilot"
                         className="block w-full max-h-48 resize-none overflow-y-auto bg-panel border border-line-strong rounded-md py-2.5 pl-3 pr-10 text-sm focus:outline-2 focus:-outline-offset-1 focus:outline-accent text-fg placeholder:text-muted disabled:opacity-50"
                     />
-                    <button
-                        type="submit"
-                        disabled={!input.trim() || chatMutation.isPending || !session}
-                        aria-label="Send message"
-                        className="absolute right-1.5 top-1.5 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
-                    >
-                        <Send size={14} />
-                    </button>
+                    {chatMutation.isPending ? (
+                        <button
+                            type="button"
+                            onClick={() => abortRef.current?.abort()}
+                            aria-label="Stop generating"
+                            title="Stop"
+                            className="absolute right-1.5 top-1.5 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md transition-colors"
+                        >
+                            <Square size={14} />
+                        </button>
+                    ) : (
+                        <button
+                            type="submit"
+                            disabled={!input.trim() || !session}
+                            aria-label="Send message"
+                            className="absolute right-1.5 top-1.5 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+                        >
+                            <Send size={14} />
+                        </button>
+                    )}
                 </form>
                 {input.length > MAX_MESSAGE * 0.9 && (
                     <p className="mt-1 text-right text-xs text-fg-3 num" aria-live="polite">

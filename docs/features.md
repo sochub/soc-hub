@@ -112,6 +112,13 @@ local Ollama by default (see [AI providers](#ai-providers)).
   ("add `1.2.3.4` as an artifact?") and offers to record findings to the timeline.
 - **Paste-friendly** — the message box grows with the text and keeps line breaks, so you can paste
   logs or alert bodies (Enter sends, Shift+Enter adds a line).
+- **Streaming** — the reply appears as the model writes it, and a Stop button abandons it (nothing of a
+  stopped exchange is kept; your text goes back to the message box). Proposed actions still arrive as a card
+  once the reply is complete.
+- **Edit before Confirm** — a proposal's values (note text, artifact, case title/severity/description, tags)
+  can be edited on the card; the action type, target case and status stay as proposed.
+- **Defanged indicators** — `hxxp://evil[.]com` or `10[.]0[.]0[.]5` in a message is recognised and stored
+  as the real value.
 - **Clear** — the header's Clear button starts a fresh conversation (case or general), so unrelated
   questions don't share context.
 

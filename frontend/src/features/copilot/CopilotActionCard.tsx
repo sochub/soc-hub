@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, X, Loader2, Zap, ArrowUpRight, Lightbulb } from 'lucide-react';
+import { Check, X, Loader2, Zap, ArrowUpRight, Lightbulb, Pencil } from 'lucide-react';
 import { api } from '../../api/client';
 import { apiErrorMessage } from '../../api/errors';
 import type { CopilotAction, ActionResult } from '../../types';
-import { Button, Select, Textarea, TONE_TEXT } from '../../components/ui';
+import { Button, Input, Select, Textarea, TONE_TEXT } from '../../components/ui';
 import { CASE_OUTCOMES } from '../cases/outcomes';
 
 const WRITE_ACTIONS = new Set(['create_case', 'add_artifact', 'add_timeline_note', 'update_case']);
@@ -65,6 +65,63 @@ function ParamPreview({ action }: { action: CopilotAction }) {
     }
 }
 
+/** What the analyst may change before Confirm, per action (mirrors _EDITABLE in backend/app/api/v1/copilot.py). */
+const EDITABLE: Record<string, string[]> = {
+    add_timeline_note: ['content'],
+    add_artifact: ['value', 'artifact_type', 'description'],
+    create_case: ['title', 'severity', 'description'],
+    update_case: ['tags'],
+};
+const CHOICES: Record<string, string[]> = {
+    artifact_type: ['ip', 'domain', 'url', 'file_hash', 'email', 'hostname', 'username', 'other'],
+    severity: ['critical', 'high', 'medium', 'low', 'info'],
+};
+type Draft = Record<string, string>;
+
+/** What the server writes when the proposal leaves a choice out. */
+const DEFAULTS: Record<string, string> = { artifact_type: 'other', severity: 'medium' };
+
+/** A field's proposed value as the text the edit form starts from (tags: comma-separated). */
+function proposed(action: CopilotAction, key: string): string {
+    const value = action.params[key];
+    if (key === 'tags') return (value == null ? [] : ([] as unknown[]).concat(value)).join(', ');
+    return CHOICES[key] ? String(value || DEFAULTS[key]).toLowerCase() : String(value ?? '');
+}
+
+/** Only the fields the analyst actually changed, in the shape the server validates. */
+function changedFields(action: CopilotAction, draft: Draft): Record<string, unknown> {
+    const edits: Record<string, unknown> = {};
+    for (const [key, text] of Object.entries(draft)) {
+        if (text.trim() === proposed(action, key).trim()) continue;
+        edits[key] = key === 'tags' ? text.split(',').map((t) => t.trim()).filter(Boolean) : text;
+    }
+    return edits;
+}
+
+function EditFields({ draft, onChange }: { draft: Draft; onChange: (d: Draft) => void }) {
+    return (
+        <div className="my-1.5 space-y-1.5">
+            {Object.entries(draft).map(([key, text]) => {
+                const common = {
+                    value: text, 'aria-label': key.replace('_', ' '),
+                    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => onChange({ ...draft, [key]: e.target.value }),
+                };
+                if (CHOICES[key]) {
+                    return (
+                        <Select key={key} inputSize="sm" {...common}>
+                            {CHOICES[key].map((o) => <option key={o} value={o}>{key.replace('_', ' ')}: {o}</option>)}
+                        </Select>
+                    );
+                }
+                if (key === 'content' || key === 'description') {
+                    return <Textarea key={key} rows={key === 'content' ? 3 : 2} placeholder={key} className="text-xs" {...common} />;
+                }
+                return <Input key={key} inputSize="sm" placeholder={key === 'tags' ? 'tags, comma-separated' : key} {...common} />;
+            })}
+        </div>
+    );
+}
+
 interface Props {
     action: CopilotAction;
     caseId?: number | null;
@@ -73,19 +130,19 @@ interface Props {
     suggestionIndex?: number;
 }
 
-/** Collected on the card when a proposal closes a case; the server requires both. */
-type Closure = { outcome: string; closing_note: string };
+/** Sent with Confirm: the closure fields a closing proposal needs, and the values the analyst edited. */
+type Extra = { outcome?: string; closing_note?: string; edits?: Record<string, unknown> };
 
 function useExecute({ action, caseId, messageId, suggestionIndex }: Props) {
     const qc = useQueryClient();
     return useMutation({
-        mutationFn: async (closure: Closure | void) => (await api.post('/copilot/actions/execute', {
+        mutationFn: async (extra: Extra | void) => (await api.post('/copilot/actions/execute', {
             type: action.type,
             params: action.params,
             case_id: action.case_id ?? caseId ?? null,
             message_id: messageId,
             suggestion_index: suggestionIndex ?? null,
-            ...(closure ?? {}),
+            ...(extra ?? {}),
         })).data as ActionResult,
         onSuccess: (r) => {
             // Refresh anything the action may have changed.
@@ -119,6 +176,8 @@ export default function CopilotActionCard(props: Props) {
     const cancel = useDismiss(props, 'cancelled');
     const [outcome, setOutcome] = useState('');
     const [closingNote, setClosingNote] = useState('');
+    // The edit form's values while "Edit" is on; null shows the proposal as proposed.
+    const [draft, setDraft] = useState<Draft | null>(null);
 
     // Read-only correlation runs automatically, once: its result is stored on the message.
     useEffect(() => {
@@ -161,7 +220,10 @@ export default function CopilotActionCard(props: Props) {
                     </p>
                 )
             )}
-            {!result && <ParamPreview action={action} />}
+            {open && draft
+                ? <EditFields draft={draft} onChange={setDraft} />
+                : (!result || action.edited) && <ParamPreview action={action} />}
+            {result && action.edited && <p className="text-xs text-fg-3">Edited before confirming.</p>}
             {open && closing && (
                 <div className="my-1.5 space-y-1.5">
                     <Select inputSize="sm" value={outcome} onChange={(e) => setOutcome(e.target.value)} aria-label="Outcome" required>
@@ -222,10 +284,26 @@ export default function CopilotActionCard(props: Props) {
                 <div className="flex items-center gap-2 mt-1">
                     <Button
                         size="sm" disabled={exec.isPending || blocked} aria-label={`Confirm: ${label}`}
-                        onClick={() => exec.mutate(closing ? { outcome, closing_note: closingNote } : undefined)}
+                        onClick={() => {
+                            const edits = draft ? changedFields(action, draft) : {};
+                            exec.mutate({
+                                ...(closing ? { outcome, closing_note: closingNote } : {}),
+                                ...(Object.keys(edits).length ? { edits } : {}),
+                            });
+                        }}
                     >
                         <Check size={13} aria-hidden /> Confirm
                     </Button>
+                    {EDITABLE[action.type] && (
+                        <Button
+                            size="sm" variant="ghost" disabled={exec.isPending}
+                            aria-label={draft ? `Discard edits: ${label}` : `Edit before confirming: ${label}`}
+                            onClick={() => setDraft(draft ? null : Object.fromEntries(
+                                EDITABLE[action.type].map((key) => [key, proposed(action, key)])))}
+                        >
+                            {draft ? 'Cancel edit' : <><Pencil size={13} aria-hidden /> Edit</>}
+                        </Button>
+                    )}
                     <Button size="sm" variant="secondary" disabled={exec.isPending} aria-label={`Cancel: ${label}`} onClick={() => cancel.mutate()}>
                         <X size={13} aria-hidden /> Cancel
                     </Button>

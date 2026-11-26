@@ -66,6 +66,60 @@ confirmed write executes). A write runs once: a second Confirm, or a Confirm of 
 proposal, is a 409. A failed run releases the claim so it can be confirmed again. `find_related` stores its
 result too, so the card does not query again each time the panel opens.
 
+## Editing before Confirm
+The card's Edit toggle turns the preview into inputs. `POST /copilot/actions/execute` takes an optional
+`edits` object next to `message_id`; the stored proposal stays the base and only that action's editable keys
+are applied over it (`_EDITABLE` in `api/v1/copilot.py`):
+
+| type | editable |
+|---|---|
+| add_timeline_note | `content` |
+| add_artifact | `value`, `artifact_type`, `description` |
+| create_case | `title`, `severity`, `description` |
+| update_case | `tags` |
+
+Any other key, or a value that fails its check (type, length, enum), is a 422 and the proposal stays
+confirmable. The action type, target case, status and a new case's attached indicators cannot be edited. The
+meta-note filter is for model output and is not applied to what a person typed. After the run the proposal
+holds the params that were written and `edited: true`, so the card shows what happened after a reload. Role
+checks and the lifecycle rules (409 for a cancelled, dismissed or already-run proposal) are unchanged.
+
+## Stuck claims
+The `running` claim is stored with `claimed_at`. A claim older than `CLAIM_TTL` (2 minutes,
+`schemas/copilot_action.py`) no longer counts: the session read shows the proposal as confirmable again and
+Confirm or Cancel work. An action is a few DB writes, so a claim that old can only belong to a worker that
+died; the window is deliberately far above any real run because writes are not idempotent.
+
+## Defanged indicators
+`refang()` in `utils/copilot_heuristics.py` (shared with the Slack war-room extractor) undoes
+`hxxp://`, `[.]`, `(.)`, `{.}`, `[dot]`, `[at]`, `[@]` and `[:]` before indicator detection on the analyst's
+messages, for the add-artifact suggestions and for the indicators attached to a new case. The stored
+artifact value is the real one.
+
+## Streaming (`POST /copilot/chat/stream`)
+Same request as `POST /copilot/chat`, answered as Server-Sent Events:
+
+- `delta` `{text}`: the first-pass reply as the model writes it. Text inside a code fence is held until the
+  fence closes; a block that is an action is dropped, any other is sent. The client never receives a raw
+  action block.
+- then exactly one of `message` (the stored assistant message, the same JSON `POST /copilot/chat` returns)
+  or `error` `{code, detail}` with code `unavailable`, `timeout` or `provider`.
+
+Everything refused before the model is called (auth, session, case mismatch, message too long) is a normal
+HTTP error, as on the plain endpoint. Both endpoints share `_open_turn` / `_close_turn`, so action
+resolution, validation, target case and suggestions are one code path. On a provider failure or when the
+client disconnects (Stop button, closed tab) generation stops and nothing is stored, the user turn included.
+The response carries `X-Accel-Buffering: no` so nginx passes events through as they are written.
+
+`app/ai/llm.py` `stream_with` / `stream` go through the same provider config, SSRF and no-redirect
+protections and error mapping as the plain call, with the timeout applied to the start of the response and
+to each chunk. Streaming skips the Redis answer cache and in-flight dedup. A provider that cannot stream
+answers in one chunk.
+
+The UI (`features/copilot/chatStream.ts`) reads the stream with `fetch`; it falls back to the plain endpoint
+when the browser has no `ReadableStream`, when the stream route is missing (older backend), and on a 401 so
+the session-refresh path runs.
+
 ## Files
 - Backend: `schemas/copilot_action.py`, `ai_service.py` (ACTIONS_GUIDE, extract_action,
   strip_action_blocks), `models/copilot_session.py` (CopilotMessage.action JSON),

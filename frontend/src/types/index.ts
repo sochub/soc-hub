@@ -188,6 +188,8 @@ export interface CopilotAction {
   case_missing?: boolean;
   /** Stored once the user cancelled/dismissed it, or while a confirmed write runs: no longer confirmable. */
   state?: 'cancelled' | 'dismissed' | 'running' | null;
+  /** The analyst changed values before Confirm: `params` are what was written. */
+  edited?: boolean;
 }
 
 export interface RelatedCase {

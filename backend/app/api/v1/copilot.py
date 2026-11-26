@@ -1,6 +1,12 @@
+import asyncio
+import json
 import re
-from typing import Any, List, Dict, Optional
+from contextlib import aclosing
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import delete, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +16,10 @@ from sqlalchemy.orm import selectinload
 from app.api import deps
 from app.services import case_service, task_service
 from app.ai.errors import AIError, AIUnavailable
-from app.services.ai_service import AIService, _unavailable_text, extract_action, strip_action_blocks
+from app.db.session import AsyncSessionLocal
+from app.services.ai_service import (
+    ActionFenceFilter, AIService, _unavailable_text, extract_action, strip_action_blocks,
+)
 from app.services.artifact_types import not_private
 from app.models.case import CASE_OUTCOMES, Case, CaseStatus, CaseSeverity, TimelineEvent
 from app.models.artifact import Artifact, ArtifactType
@@ -21,12 +30,12 @@ from app.models.copilot_session import CopilotSession, CopilotMessage
 from app.schemas.copilot import CopilotSessionSchema, CopilotChatRequest, CopilotMessageSchema
 from app.schemas.copilot_action import (
     ActionDismissRequest, ActionExecuteRequest, ActionProposal, ActionResult, RelatedCase, WRITE_ACTIONS,
-    ACTION_TYPES,
+    ACTION_TYPES, live_state,
 )
 from app.utils.audit import create_audit_log
 from app.utils.copilot_heuristics import (
     detect_indicators, extract_note_text, is_note_request, is_declarative_finding,
-    is_meta_note,
+    is_meta_note, refang,
 )
 from app.utils.roles import resolve_active_role
 
@@ -80,7 +89,7 @@ async def _build_suggestions(
         return None
     suggestions: List[Dict[str, Any]] = []
 
-    detected = detect_indicators(message)
+    detected = detect_indicators(refang(message))  # "hxxp://evil[.]com" is suggested (and stored) as the real value
     if detected:
         existing = await _case_indicator_values(db, case_id, tenant_id)
         primary_value = ""
@@ -402,19 +411,24 @@ async def restart_session(
     return session
 
 
-@router.post("/chat", response_model=CopilotMessageSchema)
-async def chat_copilot(
-    *,
-    db: AsyncSession = Depends(deps.get_db),
-    chat_in: CopilotChatRequest,
-    current_user: User = Depends(deps.get_current_active_user),
-    tenant_id: int = Depends(deps.get_effective_tenant_id),
-) -> Any:
-    """Send a message to the copilot. Persists both user and assistant messages.
+@dataclass
+class _Turn:
+    """One user message being answered: what the reply's post-processing needs, as plain values so it can run
+    on another DB session than the request's (the streaming endpoint outlives the request's session)."""
+    session_id: int
+    case_id: Optional[int]
+    message: str
+    user_msg_id: int
+    context: Dict[str, Any]
+    history: List[Dict[str, str]]
 
-    With a `case_id` the copilot uses full single-case context; without one it
-    runs in general mode against a tenant-level queue overview.
-    """
+    @property
+    def general(self) -> bool:
+        return self.case_id is None
+
+
+async def _open_turn(db: AsyncSession, chat_in: CopilotChatRequest, user_id: int, tenant_id: int) -> _Turn:
+    """Checks, context and the stored user turn — everything before the model is called."""
     if not chat_in.session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
 
@@ -426,7 +440,7 @@ async def chat_copilot(
             CopilotSession.tenant_id == tenant_id,
             # Scope to the caller — a session belongs to one user; without this a
             # tenant peer could post into another user's session (IDOR).
-            CopilotSession.user_id == current_user.id,
+            CopilotSession.user_id == user_id,
         )
     )
     session = result.scalars().first()
@@ -438,8 +452,7 @@ async def chat_copilot(
     case_id = session.case_id
     if chat_in.case_id is not None and chat_in.case_id != case_id:
         raise HTTPException(status_code=400, detail="This session belongs to a different conversation.")
-    general = case_id is None
-    if general:
+    if case_id is None:
         context = await _build_general_context(db, tenant_id)
     else:
         context = await _build_full_case_context(db, case_id, tenant_id)
@@ -456,34 +469,44 @@ async def chat_copilot(
     # Build message history for AI (before the commit: the user message isn't in session.messages yet)
     history = [{"role": m.role, "content": m.content} for m in session.messages]
     history.append({"role": "user", "content": chat_in.message})
-    # Commit the user message and release the DB connection before the LLM calls below (each up to
+    # Commit the user message and release the DB connection before the LLM calls (each up to
     # AI_TIMEOUT_SECONDS): holding it would let a few slow chats drain the pool. The next query reopens one.
     await db.commit()
+    return _Turn(session.id, case_id, chat_in.message, user_msg.id, context, history)
 
-    service = AIService(tenant_id=tenant_id)
-    try:
-        response_text = await service.chat(history, context, general=general, raise_errors=True)
-    except AIError as e:
-        # A failed exchange leaves nothing behind: stored as an assistant turn, the "unavailable" text was
-        # replayed to the model as its own words on every later message. The client keeps the typed text
-        # for a retry, so the user turn goes too (no duplicate on resend).
-        await db.delete(user_msg)
-        await db.commit()
-        timed_out = getattr(e, "cause", None) == "Timeout"
-        raise HTTPException(status_code=504 if timed_out else 503 if isinstance(e, AIUnavailable) else 502,
-                            detail=_unavailable_text(e))
 
+async def _drop_turn(db: AsyncSession, turn: _Turn) -> None:
+    """A failed (or abandoned) exchange leaves nothing behind: stored as an assistant turn, the "unavailable"
+    text was replayed to the model as its own words on every later message. The client keeps the typed text
+    for a retry, so the user turn goes too (no duplicate on resend)."""
+    await db.execute(delete(CopilotMessage).where(CopilotMessage.id == turn.user_msg_id))
+    await db.commit()
+
+
+def _failure(e: AIError) -> tuple:
+    """(HTTP status, stream error code, user-facing detail) for a provider failure."""
+    if getattr(e, "cause", None) == "Timeout":
+        return 504, "timeout", _unavailable_text(e)
+    return (503, "unavailable", _unavailable_text(e)) if isinstance(e, AIUnavailable) else \
+        (502, "provider", _unavailable_text(e))
+
+
+async def _close_turn(db: AsyncSession, tenant_id: int, turn: _Turn, service: AIService,
+                      response_text: str) -> CopilotMessageSchema:
+    """Turn the model's first-pass reply into the stored assistant message: action resolution, validation,
+    target case, suggestions. The one place this happens, for the plain and the streaming endpoint alike."""
+    general, case_id, message, history = turn.general, turn.case_id, turn.message, turn.history
     # ---- action resolution -------------------------------------------------
     # Note requests are handled deterministically: the local model is unreliable
     # at echoing the literal note text, so we parse it from the user's message;
     # for referential requests ("add the activity log") we compose the content
     # from the recent conversation instead.
     action = None
-    note_req = is_note_request(chat_in.message)
+    note_req = is_note_request(message)
     if note_req and not general:
-        content = extract_note_text(chat_in.message)
+        content = extract_note_text(message)
         if not content or is_meta_note(content):
-            content = await service.generate_note_content(history, chat_in.message)
+            content = await service.generate_note_content(history, message)
         if content and not is_meta_note(content):
             action = {
                 "type": "add_timeline_note",
@@ -492,21 +515,21 @@ async def chat_copilot(
             }
     else:
         action = extract_action(response_text)
-        if not action and _looks_actionable(chat_in.message):
+        if not action and _looks_actionable(message):
             # Second pass: the local model often forgets the fenced block. It gets the turns just before
             # this message too, so "yes, add it" has something to refer to.
-            action = await service.force_action_extraction(chat_in.message, context, general=general,
+            action = await service.force_action_extraction(message, turn.context, general=general,
                                                            recent=history[-4:-1])
 
     # Validate any model-proposed note: prefer literal text from the user's
     # message; reject meta/placeholder content ("Added activity log") outright.
     if action and action.get("type") == "add_timeline_note":
         content = str(action["params"].get("content", "")).strip()
-        better = extract_note_text(chat_in.message)
+        better = extract_note_text(message)
         if better and not is_meta_note(better):
             action["params"]["content"] = better
         elif not content or len(content) < 10 or is_meta_note(content):
-            regenerated = None if general else await service.generate_note_content(history, chat_in.message)
+            regenerated = None if general else await service.generate_note_content(history, message)
             if regenerated and not is_meta_note(regenerated):
                 action["params"]["content"] = regenerated
             else:
@@ -517,20 +540,21 @@ async def chat_copilot(
         # cut by the cap, and a long session's early indicators don't leak into an unrelated case.
         found: List[Dict[str, str]] = []
         for said in [m["content"] for m in reversed(history) if m["role"] == "user"][:4]:
-            found += [d for d in detect_indicators(said, limit=MAX_CASE_ARTIFACTS)
+            found += [d for d in detect_indicators(refang(said), limit=MAX_CASE_ARTIFACTS)
                       if d["value"].lower() not in {f["value"].lower() for f in found}]
         if found:
             action["params"]["artifacts"] = found[:MAX_CASE_ARTIFACTS]
 
     if action and action.get("type") in _CASE_ACTIONS:
-        target = await _target_case(db, tenant_id, session, chat_in.message)
+        target = await _target_case(db, tenant_id, turn.session_id, case_id, message)
         if target is not None:
             action["case_id"] = target
 
     if action:
         # Model output is stored (and later executed) only in the proposal's shape.
         try:
-            action = ActionProposal(**action).model_dump(exclude_none=True, exclude={"case_title", "case_missing"})
+            action = ActionProposal(**action).model_dump(
+                exclude_none=True, exclude={"case_title", "case_missing", "edited"})
         except ValidationError:
             action = None
 
@@ -539,10 +563,10 @@ async def chat_copilot(
         display_text = action.get("summary") or "I've prepared an action below — confirm to run it."
 
     # ---- proactive suggestions ----------------------------------------------
-    suggestions = await _build_suggestions(db, tenant_id, case_id, chat_in.message, action)
+    suggestions = await _build_suggestions(db, tenant_id, case_id, message, action)
 
     assistant_msg = CopilotMessage(
-        session_id=session.id,
+        session_id=turn.session_id,
         role="assistant",
         content=display_text,
         action=action,
@@ -557,14 +581,109 @@ async def chat_copilot(
     return out
 
 
-async def _target_case(db: AsyncSession, tenant_id: int, session: CopilotSession, message: str) -> Optional[int]:
+@router.post("/chat", response_model=CopilotMessageSchema)
+async def chat_copilot(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    chat_in: CopilotChatRequest,
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Send a message to the copilot. Persists both user and assistant messages.
+
+    With a `case_id` the copilot uses full single-case context; without one it
+    runs in general mode against a tenant-level queue overview.
+    """
+    turn = await _open_turn(db, chat_in, current_user.id, tenant_id)
+    service = AIService(tenant_id=tenant_id)
+    try:
+        response_text = await service.chat(turn.history, turn.context, general=turn.general, raise_errors=True)
+    except AIError as e:
+        await _drop_turn(db, turn)
+        status, _code, detail = _failure(e)
+        raise HTTPException(status_code=status, detail=detail)
+    return await _close_turn(db, tenant_id, turn, service, response_text)
+
+
+def _sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+# Clean-up tasks for abandoned streams, held here so they aren't garbage-collected before they finish.
+_ABANDONED: set = set()
+
+
+async def _abandon_turn(turn: _Turn) -> None:
+    async with AsyncSessionLocal() as db:
+        await _drop_turn(db, turn)
+
+
+async def _chat_events(turn: _Turn, tenant_id: int) -> AsyncIterator[str]:
+    """The streamed reply as Server-Sent Events: `delta` {text} while the model writes, then exactly one of
+    `message` (the stored assistant message, same JSON as POST /chat) or `error` {code, detail}.
+
+    Runs after the request's DB session is gone, so it opens its own. If the client goes away (Stop button,
+    closed tab) the generator is cancelled or closed: generation stops and the user turn is removed, as on
+    a provider failure."""
+    service = AIService(tenant_id=tenant_id)
+    shown = ActionFenceFilter()  # the client never sees a raw action block
+    settled = False
+    try:
+        raw = ""
+        try:
+            async with aclosing(service.chat_stream(turn.history, turn.context, general=turn.general)) as chunks:
+                async for chunk in chunks:
+                    raw += chunk
+                    text = shown.feed(chunk)
+                    if text:
+                        yield _sse("delta", {"text": text})
+        except AIError as e:
+            async with AsyncSessionLocal() as db:
+                await _drop_turn(db, turn)
+            settled = True
+            _status, code, detail = _failure(e)
+            yield _sse("error", {"code": code, "detail": detail})
+            return
+        text = shown.flush()
+        if text:
+            yield _sse("delta", {"text": text})
+        async with AsyncSessionLocal() as db:
+            out = await _close_turn(db, tenant_id, turn, service, raw or "No response from AI")
+        settled = True
+        yield _sse("message", out.model_dump(mode="json"))
+    finally:
+        if not settled:
+            # Cancelled mid-await: nothing more can be awaited here, so the clean-up runs as its own task.
+            task = asyncio.get_running_loop().create_task(_abandon_turn(turn))
+            _ABANDONED.add(task)
+            task.add_done_callback(_ABANDONED.discard)
+
+
+@router.post("/chat/stream")
+async def chat_copilot_stream(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    chat_in: CopilotChatRequest,
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> StreamingResponse:
+    """POST /chat with the reply streamed as Server-Sent Events (see _chat_events). Everything refused before
+    the model is called (auth, session, case) is a plain HTTP error, exactly as on POST /chat."""
+    turn = await _open_turn(db, chat_in, current_user.id, tenant_id)
+    # X-Accel-Buffering: nginx would otherwise hold the events back until its buffer fills.
+    return StreamingResponse(_chat_events(turn, tenant_id), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _target_case(db: AsyncSession, tenant_id: int, session_id: int, session_case_id: Optional[int],
+                       message: str) -> Optional[int]:
     """The case a proposal will act on, fixed when it is proposed so the card shows it before Confirm: the
     session's case; in the general session a case the analyst named ("case #12"), otherwise the case most
     recently created from this conversation. None means the proposal needs a case — never a guess."""
-    if session.case_id is not None:
-        return session.case_id
+    if session_case_id is not None:
+        return session_case_id
     named = _CASE_REF.search(message or "")
-    case_id = int(named.group(1)) if named else await _conversation_case(db, session.id)
+    case_id = int(named.group(1)) if named else await _conversation_case(db, session_id)
     if case_id is None:
         return None
     return (await db.execute(select(Case.id).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalar()
@@ -673,16 +792,66 @@ def _set_proposal(msg: CopilotMessage, index: Optional[int], proposal: Dict[str,
         msg.suggestions = [proposal if i == index else s for i, s in enumerate(msg.suggestions)]
 
 
+# Per action type: the values the analyst may change on the card before Confirm, each with the check a
+# model-proposed value gets. Not here = not editable (action type, target case, status, attached indicators).
+def _text(limit: int, required: bool = True):
+    def check(v: Any) -> str:
+        if not isinstance(v, str) or len(v) > limit or (required and not v.strip()):
+            raise ValueError(f"must be {'' if required else 'empty or '}text of at most {limit} characters")
+        return v.strip()
+    return check
+
+
+def _one_of(enum):
+    def check(v: Any) -> str:
+        return enum(v.lower() if isinstance(v, str) else v).value  # ValueError when not a member
+    return check
+
+
+def _tag_list(v: Any) -> List[str]:
+    if not isinstance(v, list) or len(v) > 50 or not all(isinstance(t, str) and len(t) <= 100 for t in v):
+        raise ValueError("must be a list of at most 50 short text values")
+    return [t.strip() for t in v if t.strip()]
+
+
+_EDITABLE = {
+    "add_timeline_note": {"content": _text(16_000)},
+    "add_artifact": {"value": _text(2048), "artifact_type": _one_of(ArtifactType),
+                     "description": _text(2000, required=False)},
+    "create_case": {"title": _text(500), "severity": _one_of(CaseSeverity),
+                    "description": _text(10_000, required=False)},
+    "update_case": {"tags": _tag_list},
+}
+
+
+def _apply_edits(action_type: str, params: Dict[str, Any], edits: Dict[str, Any]) -> Dict[str, Any]:
+    """The stored params with the analyst's edits over them. 422 for a key that isn't editable on this action
+    or a value that doesn't validate — before anything is claimed, so the proposal stays confirmable."""
+    allowed = _EDITABLE.get(action_type, {})
+    out = dict(params)
+    for key, value in edits.items():
+        if key not in allowed:
+            raise HTTPException(status_code=422, detail=f"'{key}' can't be edited on this action.")
+        try:
+            out[key] = allowed[key](value)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=422, detail=f"{key}: {e}")
+    return out
+
+
 async def _settle(db: AsyncSession, req: ActionExecuteRequest, user_id: int, tenant_id: int,
                   result: Optional[ActionResult]) -> None:
-    """End a run: store its result on the proposal, or (result None: it failed) hand the proposal back."""
+    """End a run: store its result on the proposal (with the params that were actually written, when the
+    analyst edited them), or (result None: it failed) hand the proposal back as it was proposed."""
     try:
         msg = await _lock_message(db, req.message_id, user_id, tenant_id)
     except HTTPException:
         return  # the conversation was cleared while the action ran: nothing left to record it on
-    stored = {k: v for k, v in _proposal(msg, req.suggestion_index).items() if k != "state"}
+    stored = {k: v for k, v in _proposal(msg, req.suggestion_index).items() if k not in ("state", "claimed_at")}
     if result is not None:
         stored["result"] = result.model_dump(exclude_none=True)
+        if req.edits:
+            stored["params"], stored["edited"] = req.params, True
     _set_proposal(msg, req.suggestion_index, stored)
     await db.commit()
 
@@ -710,17 +879,23 @@ async def execute_action(
         is_write = stored.get("type") in WRITE_ACTIONS
         if stored.get("result") and not is_write:
             return ActionResult(**stored["result"])
-        if stored.get("result") or stored.get("state"):
-            raise HTTPException(status_code=409, detail=f"This action was already {stored.get('state') or 'run'}.")
+        state = live_state(stored)
+        if stored.get("result") or state:
+            raise HTTPException(status_code=409, detail=f"This action was already {state or 'run'}.")
         req.type, req.params = stored.get("type", req.type), stored.get("params") or {}
+        if req.edits:
+            req.params = _apply_edits(req.type, req.params, req.edits)
         # The target was resolved when the proposal was made and shown on the card; it is not re-guessed here.
         req.case_id = stored.get("case_id") or msg.session.case_id
         if is_write:
             # Claim it under the row lock, so a second Confirm (double click, second tab) is refused above.
-            # ponytail: a worker killed mid-run leaves the proposal "running" for good; the analyst asks again.
-            _set_proposal(msg, req.suggestion_index, {**stored, "state": "running"})
+            # The claim is timestamped: one left behind by a worker that died mid-run expires (see live_state).
+            _set_proposal(msg, req.suggestion_index, {
+                **stored, "state": "running", "claimed_at": datetime.now(timezone.utc).isoformat()})
             claimed = True
         await db.commit()
+    elif req.edits:
+        raise HTTPException(status_code=422, detail="Edits apply to a stored proposal (message_id).")
 
     try:
         result = await _run_action(db, req, current_user, tenant_id)
@@ -746,8 +921,8 @@ async def dismiss_action(
     (e.g. after reopening the panel). A proposal that already ran or was already settled is left as it is."""
     msg = await _lock_message(db, req.message_id, current_user.id, tenant_id)
     stored = _proposal(msg, req.suggestion_index)
-    if not stored.get("result") and not stored.get("state"):
-        stored = {**stored, "state": req.state}
+    if not stored.get("result") and not live_state(stored):
+        stored = {k: v for k, v in stored.items() if k != "claimed_at"} | {"state": req.state}
         _set_proposal(msg, req.suggestion_index, stored)
     await db.commit()
     return stored

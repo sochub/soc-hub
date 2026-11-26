@@ -59,6 +59,18 @@ def _is_file_name(domain: str, before: str) -> bool:
     return labels[-2] in _FILE_EXTS or (labels[-1] in _FILE_TLDS and bool(_FILE_CUE.search(before)))
 
 
+# Analysts defang indicators so nobody clicks them: hxxp://evil[.]com, 185[.]220[.]101[.]5, bob[at]evil[.]com
+_REFANG = ((re.compile(r"\[\.\]|\(\.\)|\{\.\}|\[dot\]", re.IGNORECASE), "."), (re.compile(r"\[:\]"), ":"),
+           (re.compile(r"\[@\]|\[at\]", re.IGNORECASE), "@"), (re.compile(r"hxxp(s?)://", re.IGNORECASE), r"http\1://"))
+
+
+def refang(text: str) -> str:
+    """Undo defanging so detect_indicators sees (and callers store) the real value."""
+    for rx, to in _REFANG:
+        text = rx.sub(to, text)
+    return text
+
+
 MAX_SCAN_CHARS = 64_000
 
 

@@ -61,6 +61,7 @@ below. A tenant admin can optionally **override** it for their tenant under
 | `AI_TIMEOUT_SECONDS` | Per-call timeout (must be > 0) | `120` |
 | `AI_ALLOW_TENANT_OVERRIDE` | Allow tenant admins to set their own provider | `true` |
 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | Legacy Ollama settings, still honoured. Under docker compose the model is set to `llama3.2:3b` in `docker-compose.yml` (edit it there; `backend/.env` doesn't override it) | `http://localhost:11434` / `llama3` |
+| `OLLAMA_THINKING` | `false` asks Ollama reasoning models (lfm3, qwen3, deepseek-r1, ...) to answer without their hidden thinking pass. On local hardware that pass is most of the wait: with `lfm3:1.7b` on an M4 Pro a case-sized question went from 14 s to under 2 s. Models that don't think ignore it | `true` |
 
 **Backward compatibility.** With `AI_PROVIDER` unset, nothing changes: the app
 uses Ollama at `OLLAMA_BASE_URL` with `OLLAMA_MODEL`, as before.

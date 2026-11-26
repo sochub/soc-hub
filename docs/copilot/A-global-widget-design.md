@@ -28,6 +28,9 @@
   gives the typed text back and says why (provider unavailable as a status line by the input, timeout, too
   long, other). The input is capped at the API's 16,000 characters with a counter near the limit.
 
+- Replies stream into a provisional bubble (`chatStream.ts`, see [actions](B-actions-design.md#streaming-post-copilotchatstream));
+  the Send button becomes Stop while a reply is in flight. The stored message replaces the bubble when it arrives.
+
 ## Boundaries (other subsystems)
 - No cross-case correlation/memory retrieval (C). General context = current-state summary only.
 - No actions/tool-calling (B). Chat only. Stays on `llama3`.
