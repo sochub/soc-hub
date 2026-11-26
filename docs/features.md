@@ -270,6 +270,35 @@ in CIDR. Regular expressions are not supported.
   in the audit log.
 - Analysts and admins manage rules; viewers can read them.
 
+### Alert retention
+
+**Alerts → Retention** (admins) deletes old alerts on a schedule, for example dismissed alerts after 90 days
+when your SIEM already keeps them. A policy has:
+
+- **Keep for** N days (1 to 3650), measured from when SOC Hub received the alert.
+- The **statuses** it deletes: dismissed, pending (never triaged), or both. Promoted alerts belong to a case
+  and are never deleted.
+- Optional **conditions**, the same vocabulary as suppression rules (`source equals wazuh`, `payload.<path>`, ...),
+  all of which must hold.
+
+Rules that always apply:
+
+- An alert **linked to a case** is never deleted, so a case keeps the alerts it was built from. Cases are never
+  deleted automatically.
+- Nothing cascades: workflow runs, email artifacts and suppression rules that pointed at a deleted alert keep
+  their own rows and just lose the link.
+- New policies start **disabled**. **Preview** shows how many alerts would be deleted now, the oldest one, a
+  sample, and how many matching alerts are kept because a case holds them. Enabling a policy shows the same
+  preview for confirmation.
+- Enabled policies run daily at 02:30 UTC (`purge-alerts` in the Celery beat schedule), up to 100,000 alerts
+  per policy per run; a larger backlog clears over the following days.
+- **Run now** runs a policy immediately, enabled or not, after confirming against the same preview.
+- Each policy shows its **last run**: when, whether it was scheduled or run now, and how many alerts it
+  deleted, or that it failed (the error class; the traceback is in the worker log). A failure doesn't stop the
+  other policies, and the next good run clears it. Every run now, and every scheduled run that deletes
+  something, writes an `alerts_purged` audit entry with the count, the trigger, who ran it and the policy's
+  scope.
+
 ## Ticketing (Jira, HaloPSA, ConnectWise)
 
 An admin connects one ticketing system per organization in **Settings → Integrations → Ticketing / PSA**:

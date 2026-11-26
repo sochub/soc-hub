@@ -59,6 +59,7 @@ import app.tasks.slack  # noqa: E402,F401
 import app.tasks.war_room  # noqa: E402,F401
 import app.tasks.email_intake  # noqa: E402,F401
 import app.tasks.escalations  # noqa: E402,F401
+import app.tasks.retention  # noqa: E402,F401
 
 # Beat schedule: run exactly one beat process per deployment (see the queue note above).
 # Beat's schedule file can live on tmpfs (read-only containers), so a restart forgets when an interval entry
@@ -104,5 +105,9 @@ celery_app.conf.beat_schedule = {
     "prune-notifications": {
         "task": "app.tasks.notifications.prune_notifications_task",
         "schedule": crontab(hour=3, minute=15),  # daily, 03:15 UTC
+    },
+    "purge-alerts": {
+        "task": "app.tasks.retention.purge_alerts_task",
+        "schedule": crontab(hour=2, minute=30),  # daily, 02:30 UTC (before the email-artifact cleanup)
     },
 }
