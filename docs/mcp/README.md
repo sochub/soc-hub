@@ -155,6 +155,13 @@ cases; bulk alert actions (call the single-alert tools); AI timeline suggestions
 Workflow steps added recently are available to `create_workflow` / `update_workflow` like any other node type:
 `containment_guard`, `email_ask_user` and `case_task_complete` (see the [workflow reference](../workflows/README.md)).
 
+### Programmatic tool calling
+
+Every tool says what JSON it returns and answers with one JSON text block, so your own agent can offer SOC Hub's
+tools to Claude for [programmatic tool calling](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)
+(Claude's code calls them in loops and only the result reaches the model). Tools reached through Anthropic's MCP
+connector can't be called that way; see [programmatic-tool-calling.md](programmatic-tool-calling.md) for the setup.
+
 ## 4. Attribution and audit
 
 - Anything an AI client writes to a case shows in the case **Activity** tab with a badge
