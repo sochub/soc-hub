@@ -28,6 +28,12 @@ Create and work security cases with severity/status, tags, a description, attach
 The case header shows the SLA, AI triage, the Slack war room and the **owner**: analysts and admins reassign the case
 from the owner picker (or set it to *Unassigned*); the new owner is notified.
 
+When the war room has SOC-bot listening on, indicators and milestone times it spots in the channel appear above the
+tabs as suggestions: **Add to case** / **Set milestone** or dismiss each one, or use **Add all** / **Dismiss all**.
+A milestone suggestion shows the time the case currently has, and one that would be out of order stays with the
+reason until the other milestone is fixed. Nothing is written until someone accepts. Details:
+[docs/slack/setup.md](slack/setup.md#what-soc-bot-picks-up).
+
 **Deleting a case** (admins only): the trash button opens a warning that lists what goes with the case (tasks,
 activity, evidence files, artifact links, guest invitations, ticket links) and what can't be undone outside SOC Hub:
 containment still active (deleting doesn't release a host, user or IP), evidence removed from storage, tickets that
@@ -119,6 +125,13 @@ local Ollama by default (see [AI providers](#ai-providers)).
   ("add `1.2.3.4` as an artifact?") and offers to record findings to the timeline.
 - **Paste-friendly** — the message box grows with the text and keeps line breaks, so you can paste
   logs or alert bodies (Enter sends, Shift+Enter adds a line).
+- **Streaming** — the reply appears as the model writes it, and a Stop button abandons it (nothing of a
+  stopped exchange is kept; your text goes back to the message box). Proposed actions still arrive as a card
+  once the reply is complete.
+- **Edit before Confirm** — a proposal's values (note text, artifact, case title/severity/description, tags)
+  can be edited on the card; the action type, target case and status stay as proposed.
+- **Defanged indicators** — `hxxp://evil[.]com` or `10[.]0[.]0[.]5` in a message is recognised and stored
+  as the real value.
 - **Clear** — the header's Clear button starts a fresh conversation (case or general), so unrelated
   questions don't share context.
 

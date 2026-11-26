@@ -3,6 +3,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from app.core.config import settings
+
 PROVIDERS = ("ollama", "openai", "openai_compatible", "anthropic", "gemini", "vertex", "bedrock")
 
 _PREFIX = {
@@ -116,6 +118,8 @@ def build_kwargs(cfg: ProviderConfig, aws_creds: Optional[dict] = None) -> dict:
         kw["model"] = f"bedrock/converse/{cfg.model}"
     if p in ("ollama", "openai_compatible"):
         kw["api_base"] = cfg.api_base
+    if p == "ollama" and not settings.OLLAMA_THINKING:
+        kw["reasoning_effort"] = "none"  # LiteLLM sends Ollama think=false
     if p in ("openai", "openai_compatible", "anthropic", "gemini") and s.get("api_key"):
         kw["api_key"] = s["api_key"]
     if p == "openai_compatible" and "api_key" not in kw:

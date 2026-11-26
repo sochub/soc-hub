@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from app.db.session import AsyncSessionLocal
 from app.models.artifact import Artifact, ArtifactType
 from app.models.audit_log import AuditLog
-from app.models.case import Case
+from app.models.case import Case, TimelineEvent
 from app.models.case_artifact import CaseArtifact
 from app.models.war_room_suggestion import WarRoomSuggestion
 from app.services import war_room_suggestions as ws
@@ -32,7 +32,7 @@ def art(value, type_="ip"):
 
 
 def ms(key="contained", at="2099-10-22T18:40:00+00:00"):
-    return Candidate("milestone", {"key": key, "at": at}, key)
+    return Candidate("milestone", {"key": key, "at": at}, f"{key}:{at}")
 
 
 async def rec(db, case, cands, channel="C1", ts="1.1"):
@@ -67,13 +67,135 @@ def test_record_dedupes_dismissed_value():
     run(body)
 
 
-def test_record_caps_5_per_message():
+def test_overflow_is_stored_and_reply_shows_5_plus_milestones():
     async def body(ids):
         async with AsyncSessionLocal() as db:
             t = await make_tenant(db, ids)
             case = await db.get(Case, (await make_case(db, ids, t)).id)
-            out = await rec(db, case, [art(f"10.0.0.{i}") for i in range(8)])
-            assert len(out) == ws.MAX_PER_MESSAGE == 5
+            out = await rec(db, case, [art(f"10.0.0.{i}") for i in range(8)] + [ms()])
+            assert len(out) == 9 and all(s.status == "pending" for s in out)
+            shown, more = ws.split_for_reply(out)
+            assert [s.kind for s in shown] == ["artifact"] * ws.MAX_PER_MESSAGE + ["milestone"] and more == 3
+            out[7].status = "dismissed"
+            assert ws.split_for_reply(out)[1] == 2
+    run(body)
+
+
+def test_hourly_cap_ignores_dismissed_and_milestones_have_their_own_budget():
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t)).id)
+            u = await make_user(db, ids)
+            out = await rec(db, case, [art(f"10.0.0.{i}") for i in range(25)] + [ms()])
+            assert [s.kind for s in out].count("artifact") == ws.MAX_PER_CHANNEL_HOUR
+            assert out[-1].kind == "milestone"   # a flood of indicators does not crowd the milestone out
+            assert await rec(db, case, [art("9.9.9.9")], ts="2.2") == []
+            await ws.resolve_suggestion(db, tenant_id=t.id, suggestion_id=out[0].id, accept=False, user=u)
+            await db.commit()
+            assert len(await rec(db, case, [art("9.9.9.9")], ts="3.3")) == 1   # the dismissed one freed a slot
+    run(body)
+
+
+def test_domain_and_its_root_url_are_the_same_value():
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t)).id)
+            for type_, value in ((ArtifactType.DOMAIN, "Evil.COM"), (ArtifactType.URL, "https://Bad.net/")):
+                await add_artifact_to_case(db, case=case, artifact_type=type_, value=value, description=None, user_id=None)
+            await db.commit()
+            out = await rec(db, case, [art("http://evil.com", "url"), art("http://EVIL.com/", "url"), art("bad.net", "domain"),
+                                       art("http://evil.com/payload", "url"), art("https://bad.net/", "url")])
+            assert [s.value_key for s in out] == ["url:http://evil.com/payload"]
+    run(body)
+
+
+def test_new_time_supersedes_pending_milestone(delays):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t)).id)
+            u = await make_user(db, ids)
+            (first,) = await rec(db, case, [ms(at="2099-10-22T18:40:00+00:00")])
+            first.reply_ts = "5.5"
+            await db.commit()
+            assert await rec(db, case, [ms(at="2099-10-22T18:40:00+00:00")], ts="2.2") == []   # same time: nothing new
+            (second,) = await rec(db, case, [ms(at="2099-10-22T18:55:00+00:00")], ts="3.3")
+            await db.refresh(first)
+            assert first.status == "superseded" and second.status == "pending"
+            assert delays == [(t.id, "war_room.rerender", case.id, {"reply_ts": "5.5", "channel": "C1"})]
+            # another milestone is untouched; a time equal to the declared one is not suggested
+            (other,) = await rec(db, case, [ms("detected", "2099-10-22T18:00:00+00:00")], ts="4.4")
+            await ws.resolve_suggestion(db, tenant_id=t.id, suggestion_id=second.id, accept=True, user=u)
+            await db.commit()
+            await db.refresh(other)
+            assert other.status == "pending" and case.contained_at == datetime(2099, 10, 22, 18, 55, tzinfo=UTC)
+            assert await rec(db, case, [ms(at="2099-10-22T19:55:00+01:00")], ts="5.5") == []
+    run(body)
+
+
+def test_resolve_many_reports_conflict_and_applies_the_rest(delays):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t, detected_at=datetime(2099, 12, 1, tzinfo=UTC))).id)
+            u = await make_user(db, ids)
+            a, b, m = await rec(db, case, [art("1.2.3.4"), art("5.6.7.8"), ms()])
+            for s in (a, b, m):
+                s.reply_ts = "5.5"
+            await db.commit()
+            res = await ws.resolve_many(db, tenant_id=t.id, suggestion_ids=[m.id, a.id, b.id, 10**9], accept=True, user=u)
+            await db.commit()
+            assert [(s.status, applied, bool(why)) for s, applied, why in res] == [
+                ("accepted", True, False), ("accepted", True, False), ("pending", True, True)]
+            assert await _artifact_count(db, case.id) == 2
+        assert [d[1] for d in delays] == ["war_room.rerender"]   # one redraw for the whole reply
+    run(body)
+
+
+def test_api_bulk_accept_and_dismiss(delays):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t, detected_at=datetime(2099, 12, 1, tzinfo=UTC))).id)
+            other = await db.get(Case, (await make_case(db, ids, t)).id)
+            _, h = await _member(db, ids, t)
+            _, viewer = await _member(db, ids, t, role="viewer")
+            a, b, m = await rec(db, case, [art("1.2.3.4"), art("5.6.7.8"), ms()])
+            (foreign,) = await rec(db, other, [art("9.9.9.9")], channel="C2")
+        async with client() as cl:
+            base = f"/api/v1/cases/{case.id}/war-room/suggestions"
+            body_ = {"ids": [a.id, m.id, foreign.id], "accept": True}
+            assert (await cl.post(f"{base}/bulk", json=body_, headers=viewer)).status_code == 403
+            assert (await cl.post(f"{base}/bulk", json={"ids": [], "accept": True}, headers=h)).status_code == 422
+            r = await cl.post(f"{base}/bulk", json=body_, headers=h)
+            assert r.status_code == 200, r.text
+            got = {x["id"]: x for x in r.json()}
+            assert set(got) == {a.id, m.id}   # another case's suggestion is ignored
+            assert got[a.id]["status"] == "accepted"
+            assert got[m.id]["status"] == "pending" and "must not be after" in got[m.id]["payload"]["conflict"]
+            r = await cl.post(f"{base}/bulk", json={"ids": [b.id, m.id], "accept": False}, headers=h)
+            assert {x["status"] for x in r.json()} == {"dismissed"}
+            assert (await cl.get(base, headers=h)).json() == []
+        async with AsyncSessionLocal() as db:
+            assert (await db.get(WarRoomSuggestion, foreign.id)).status == "pending"
+            assert await _artifact_count(db, case.id) == 1
+    run(body)
+
+
+def test_api_shows_current_declared_milestone():
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t = await make_tenant(db, ids)
+            case = await db.get(Case, (await make_case(db, ids, t, contained_at=datetime(2099, 10, 22, 17, 0, tzinfo=UTC))).id)
+            _, h = await _member(db, ids, t)
+            await rec(db, case, [ms(), ms("detected", "2099-10-22T16:00:00+00:00"), art("1.2.3.4")])
+        async with client() as cl:
+            lst = (await cl.get(f"/api/v1/cases/{case.id}/war-room/suggestions", headers=h)).json()
+            cur = {x["payload"].get("key"): x["current"] for x in lst}
+            assert cur[None] is None and cur["detected"] is None   # computed defaults are not "current"
+            assert datetime.fromisoformat(cur["contained"]) == datetime(2099, 10, 22, 17, 0, tzinfo=UTC)
     run(body)
 
 
@@ -102,7 +224,9 @@ def test_accept_artifact_creates_and_marks_accepted(delays):
             t = await make_tenant(db, ids)
             case = await db.get(Case, (await make_case(db, ids, t)).id)
             u = await make_user(db, ids)
-            (s,) = await rec(db, case, [art("1.2.3.4")])
+            out = await ws.record_candidates(db, case, [art("1.2.3.4")], channel="C1", source_ts="1.1", permalink="http://p",
+                                             author={"slack_user": "U1", "author": "Ana Ruiz"})
+            (s,) = out
             s.reply_ts = "5.5"
             await db.commit()
             r = await ws.resolve_suggestion(db, tenant_id=t.id, suggestion_id=s.id, accept=True, user=u)
@@ -110,7 +234,11 @@ def test_accept_artifact_creates_and_marks_accepted(delays):
             assert r.status == "accepted" and r.resolved_by_user_id == u.id and r.resolved_at is not None
             assert await _artifact_count(db, case.id) == 1
             a = (await db.execute(select(Artifact).join(CaseArtifact).where(CaseArtifact.case_id == case.id))).scalar_one()
-            assert a.value == "1.2.3.4" and a.description == "From Slack war room"
+            # provenance: who said it in Slack and where, on the new artifact and on the one activity entry
+            source = "From Slack war room, posted by Ana Ruiz (U1): http://p"
+            assert a.value == "1.2.3.4" and a.description == source
+            (entry,) = (await db.execute(select(TimelineEvent).where(TimelineEvent.case_id == case.id))).scalars().all()
+            assert entry.event_type == "artifact_added" and entry.content == f"Added artifact: 1.2.3.4 (ip). {source}"
             log = (await db.execute(select(AuditLog).where(
                 AuditLog.tenant_id == t.id, AuditLog.action == "war_room_suggestion_accepted"))).scalars().all()
             assert len(log) == 1
@@ -130,11 +258,14 @@ def test_accept_milestone_sets_contained_and_queues_containment_card(delays):
             assert r.status == "accepted"
             await db.refresh(case)
             assert case.contained_at == datetime(2099, 10, 22, 18, 40, tzinfo=UTC)
+            audit = (await db.execute(select(AuditLog).where(
+                AuditLog.tenant_id == t.id, AuditLog.action == "milestones_changed"))).scalars().one()
+            assert audit.changes["source"] == "From Slack war room: http://p"
         assert [d[1] for d in delays] == ["containment.confirmed"]
     run(body)
 
 
-def test_accept_milestone_inversion_marks_conflict(delays):
+def test_accept_milestone_inversion_stays_pending_with_reason(delays):
     async def body(ids):
         async with AsyncSessionLocal() as db:
             t = await make_tenant(db, ids)
@@ -144,12 +275,20 @@ def test_accept_milestone_inversion_marks_conflict(delays):
             (s,) = await rec(db, case, [ms()])
             r = await ws.resolve_suggestion(db, tenant_id=t.id, suggestion_id=s.id, accept=True, user=u)
             await db.commit()
-            assert r.status == "conflict"
+            assert r.status == "pending" and r.resolved_at is None
+            assert r.payload["conflict"] == "Detected must not be after Contained"
             await db.refresh(case)
             assert case.contained_at is None
             assert (await db.execute(select(func.count()).select_from(AuditLog).where(
                 AuditLog.tenant_id == t.id, AuditLog.action == "war_room_suggestion_conflict"))).scalar() == 1
-        assert delays == []
+            assert delays == []
+            # the analyst fixes the other milestone: the same suggestion can now be accepted
+            case.detected_at = datetime(2099, 10, 1, tzinfo=UTC)
+            await db.commit()
+            r = await ws.resolve_suggestion(db, tenant_id=t.id, suggestion_id=s.id, accept=True, user=u)
+            await db.commit()
+            assert r.status == "accepted" and "conflict" not in r.payload
+            assert case.contained_at == datetime(2099, 10, 22, 18, 40, tzinfo=UTC)
     run(body)
 
 
@@ -226,7 +365,7 @@ def test_api_list_accept_dismiss_flow(delays):
             base = f"/api/v1/cases/{case.id}/war-room/suggestions"
             lst = await cl.get(base, headers=h)
             assert lst.status_code == 200 and {x["id"] for x in lst.json()} == {a.id, b.id}
-            assert set(lst.json()[0]) == {"id", "kind", "payload", "status", "permalink", "created_at"}
+            assert set(lst.json()[0]) == {"id", "kind", "payload", "status", "permalink", "created_at", "current"}
             r = await cl.post(f"{base}/{a.id}/accept", headers=h)
             assert r.status_code == 200 and r.json()["status"] == "accepted"
             r = await cl.post(f"{base}/{b.id}/dismiss", headers=h)

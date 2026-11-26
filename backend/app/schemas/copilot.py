@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.schemas.copilot_action import ActionProposal
 
@@ -16,6 +16,16 @@ class CopilotMessageSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def _drop_malformed_action(cls, v):
+        # A proposal stored before model output was validated may not have the proposal's shape (e.g. params
+        # as a string). Drop it rather than fail the whole session read.
+        try:
+            return None if v is None else ActionProposal.model_validate(v)
+        except ValidationError:
+            return None
 
 
 class CopilotSessionSchema(BaseModel):

@@ -171,3 +171,26 @@ def test_tenant_id_is_required_keyword():
     with pytest.raises(TypeError):
         AIService(5)
     assert AIService(tenant_id=None).tenant_id is None  # deployment-only use is explicit
+
+
+def test_action_blocks_parse_and_strip():
+    from app.services.ai_service import extract_action, strip_action_blocks
+    act = {"type": "add_artifact", "summary": "s", "params": {"value": "1.2.3.4", "nested": {"a": 1}}}
+    for reply in ("Sure.\n```action\n" + json.dumps(act) + "\n```\nAnything else?",
+                  "Sure.\n```\n" + json.dumps(act) + "\n```\nAnything else?",        # unlabelled
+                  "Sure.\n```json\n" + json.dumps(act)):                              # unterminated
+        assert extract_action(reply) == act
+        assert strip_action_blocks(reply) in ("Sure.\n\nAnything else?", "Sure.")
+    # flat params are folded under params; params that are not an object drop the action
+    assert extract_action('```action\n{"type": "find_related", "value": "1.2.3.4"}\n```')["params"] == {"value": "1.2.3.4"}
+    for params in ('"1.2.3.4"', "[1]", "5"):
+        assert extract_action('```action\n{"type": "add_artifact", "params": %s}\n```' % params) is None
+    # fenced JSON that is not an action (unknown or missing type) is an answer, not a block to hide
+    for sample in ('```json\n{"type": "ip", "value": "1.2.3.4"}\n```', '```json\n{"title": "x"}\n```', "```\nnot json\n```"):
+        reply = f"Here you go:\n{sample}\nDone."
+        assert extract_action(reply) is None and strip_action_blocks(reply) == reply
+
+
+def test_force_action_drops_non_dict_params(fake):
+    fake.reply = json.dumps({"type": "add_artifact", "summary": "s", "params": "1.2.3.4"})
+    assert run(AIService(tenant_id=1).force_action_extraction("add 1.2.3.4")) is None

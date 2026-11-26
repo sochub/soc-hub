@@ -21,6 +21,14 @@ def test_ollama():
     assert "api_key" not in build_kwargs(cfg("ollama", api_base="http://h:11434", source="deployment"))
 
 
+def test_ollama_thinking_can_be_turned_off(monkeypatch):
+    from app.core.config import settings
+    assert "reasoning_effort" not in build_kwargs(cfg("ollama", api_base="http://h:11434"))
+    monkeypatch.setattr(settings, "OLLAMA_THINKING", False)
+    assert build_kwargs(cfg("ollama", api_base="http://h:11434"))["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in build_kwargs(cfg("openai", secrets={"api_key": "k"}))
+
+
 def test_tenant_ollama_never_inherits_server_ollama_key():
     kw = build_kwargs(cfg("ollama", api_base="http://h:11434", source="tenant"))
     assert kw["api_key"] == "not-needed"

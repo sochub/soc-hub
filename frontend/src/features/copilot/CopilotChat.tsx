@@ -1,14 +1,34 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User as UserIcon, Loader2, Eraser, X, Sparkles } from 'lucide-react';
+import { Send, Bot, User as UserIcon, Loader2, Eraser, X, Sparkles, AlertTriangle, Square } from 'lucide-react';
 import { api } from '../../api/client';
+import { apiErrorMessage } from '../../api/errors';
 import { cn } from '../../lib/utils';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import CopilotActionCard, { CopilotSuggestionChip } from './CopilotActionCard';
+import { sendChat, wasStopped } from './chatStream';
 import type { CopilotAction } from '../../types';
-import { Button, Skeleton } from '../../components/ui';
+import { Button, Skeleton, TONE_TEXT } from '../../components/ui';
+
+/** Mirrors CopilotChatRequest.message (backend/app/schemas/copilot.py). */
+const MAX_MESSAGE = 16_000;
+
+/** Why a send failed. `unavailable` is the provider's state (a status line by the input), not part of the chat. */
+function sendFailure(e: unknown): { kind: 'unavailable' | 'error'; text: string } {
+    const status = (e as { response?: { status?: number } } | null)?.response?.status;
+    if (status === 502 || status === 503) {
+        return { kind: 'unavailable', text: apiErrorMessage(e, 'The AI provider is unavailable. Ask an admin to check the AI settings.') };
+    }
+    if (status === undefined || status === 504 || status === 408) {
+        return { kind: 'error', text: "The copilot didn't answer in time. If a reply arrives it will show up here; otherwise try again." };
+    }
+    if (status === 413 || status === 422) {
+        return { kind: 'error', text: `That message is too long (limit ${MAX_MESSAGE.toLocaleString()} characters). Shorten it and send again.` };
+    }
+    return { kind: 'error', text: apiErrorMessage(e, 'The message could not be sent. Try again.') };
+}
 
 interface Message {
     id: number;
@@ -36,6 +56,9 @@ interface CopilotChatProps {
 export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
     const isCase = !!caseId && caseId > 0;
     const [input, setInput] = useState('');
+    // The reply so far while it streams; replaced by the stored message once the server has settled it.
+    const [streamed, setStreamed] = useState('');
+    const abortRef = useRef<AbortController | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const queryClient = useQueryClient();
@@ -47,7 +70,7 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
         queryFn: async () => (await api.get('/ai/info')).data as { provider: string | null; model: string | null },
         staleTime: 60_000,
     });
-    const { data: session, isLoading: isLoadingSession } = useQuery<Session>({
+    const { data: session, isLoading: isLoadingSession, isError: sessionFailed, refetch: retrySession } = useQuery<Session>({
         queryKey: sessionKey,
         queryFn: async () => {
             const url = isCase ? `/copilot/sessions/${caseId}` : '/copilot/sessions/general';
@@ -59,20 +82,26 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
 
     // Braces matter: newer browsers return a Promise from scrollIntoView, and an effect must not return one.
     const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
-    useEffect(scrollToBottom, [messages]);
+    useEffect(scrollToBottom, [messages, streamed]);
 
     const chatMutation = useMutation({
         mutationFn: async (message: string) => {
-            const response = await api.post('/copilot/chat', {
-                case_id: isCase ? caseId : null,
-                session_id: session?.id,
-                message,
-            });
-            return response.data;
+            abortRef.current = new AbortController();
+            setStreamed('');
+            return sendChat<Message>(
+                { case_id: isCase ? caseId : null, session_id: session?.id, message },
+                abortRef.current.signal,
+                (text) => setStreamed((soFar) => soFar + text),
+            );
         },
-        // On error too: a gateway timeout can still leave a saved reply on the server.
+        // Give the text back so a failed or stopped send can be retried or edited (unless something new was typed meanwhile).
+        onError: (_e, message) => setInput((current) => current || message),
+        // On error too: a gateway timeout can still leave a saved reply on the server. Returned, so the
+        // provisional bubble stays until the stored message is on screen.
         onSettled: () => queryClient.invalidateQueries({ queryKey: sessionKey }),
     });
+    // Stop is the user's choice, not a failure: the server drops the exchange and the text is back in the input.
+    const failure = chatMutation.isError && !wasStopped(chatMutation.error) ? sendFailure(chatMutation.error) : null;
 
     const restartMutation = useMutation({
         mutationFn: async () => (await api.post(`/copilot/sessions/${isCase ? caseId : 'general'}/restart`)).data,
@@ -135,6 +164,16 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
             <div className="flex-1 overflow-y-auto p-4 space-y-5" aria-live="polite">
                 {isLoadingSession ? (
                     <Skeleton rows={3} />
+                ) : sessionFailed && !session ? (
+                    <div role="alert" className="text-xs text-severity-critical bg-severity-critical/5 border border-severity-critical/30 rounded-md p-3">
+                        <p>This conversation could not be loaded.</p>
+                        <div className="mt-2 flex items-center gap-2">
+                            <Button size="sm" variant="secondary" onClick={() => retrySession()}>Retry</Button>
+                            <Button size="sm" variant="secondary" onClick={() => restartMutation.mutate()} disabled={restartMutation.isPending}>
+                                Clear conversation
+                            </Button>
+                        </div>
+                    </div>
                 ) : (
                     messages.map((msg) => (
                         <motion.div
@@ -189,16 +228,25 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                             <div className="w-7 h-7 rounded-md bg-accent/10 border border-accent/30 text-accent flex items-center justify-center shrink-0" aria-hidden>
                                 <Bot size={16} />
                             </div>
-                            <div role="status" className="bg-panel rounded-md p-3 text-sm text-fg-2 flex items-center gap-2 border border-line">
-                                <Loader2 size={14} className="animate-spin text-accent" aria-hidden />
-                                <span>Analyzing…</span>
-                            </div>
+                            {streamed ? (
+                                <div aria-live="polite" className="rounded-md p-3 text-sm max-w-[85%] min-w-0 break-words [overflow-wrap:anywhere] bg-panel text-fg border border-line">
+                                    <div className="copilot-markdown leading-relaxed">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamed}</ReactMarkdown>
+                                    </div>
+                                    <Loader2 size={13} className="mt-1.5 animate-spin text-accent" aria-label="Still working" />
+                                </div>
+                            ) : (
+                                <div role="status" className="bg-panel rounded-md p-3 text-sm text-fg-2 flex items-center gap-2 border border-line">
+                                    <Loader2 size={14} className="animate-spin text-accent" aria-hidden />
+                                    <span>Analyzing…</span>
+                                </div>
+                            )}
                         </motion.div>
                     </>
                 )}
-                {chatMutation.isError && (
+                {failure?.kind === 'error' && (
                     <p role="alert" className="text-xs text-severity-critical bg-severity-critical/5 border border-severity-critical/30 rounded-md p-3">
-                        The copilot didn't answer in time. If a reply arrives it will show up here; otherwise try again.
+                        {failure.text}
                     </p>
                 )}
                 <div ref={messagesEndRef} />
@@ -206,11 +254,18 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
 
             {/* Input */}
             <div className="p-4 border-t border-line bg-panel shrink-0">
+                {failure?.kind === 'unavailable' && (
+                    <p role="status" className="mb-2 flex items-start gap-1.5 text-xs text-fg-2">
+                        <AlertTriangle size={13} className={`${TONE_TEXT.medium} shrink-0 mt-0.5`} aria-hidden />
+                        <span>{failure.text} Your message was not sent.</span>
+                    </p>
+                )}
                 <form onSubmit={handleSubmit} className="relative">
                     <textarea
                         ref={inputRef}
                         rows={1}
                         value={input}
+                        maxLength={MAX_MESSAGE}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={(e) => {
                             // Enter sends, Shift+Enter adds a line; never send mid-IME composition.
@@ -221,15 +276,32 @@ export default function CopilotChat({ caseId, onClose }: CopilotChatProps) {
                         aria-label="Message the copilot"
                         className="block w-full max-h-48 resize-none overflow-y-auto bg-panel border border-line-strong rounded-md py-2.5 pl-3 pr-10 text-sm focus:outline-2 focus:-outline-offset-1 focus:outline-accent text-fg placeholder:text-muted disabled:opacity-50"
                     />
-                    <button
-                        type="submit"
-                        disabled={!input.trim() || chatMutation.isPending || !session}
-                        aria-label="Send message"
-                        className="absolute right-1.5 top-1.5 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
-                    >
-                        <Send size={14} />
-                    </button>
+                    {chatMutation.isPending ? (
+                        <button
+                            type="button"
+                            onClick={() => abortRef.current?.abort()}
+                            aria-label="Stop generating"
+                            title="Stop"
+                            className="absolute right-1.5 top-1.5 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md transition-colors"
+                        >
+                            <Square size={14} />
+                        </button>
+                    ) : (
+                        <button
+                            type="submit"
+                            disabled={!input.trim() || !session}
+                            aria-label="Send message"
+                            className="absolute right-1.5 top-1.5 p-1.5 text-fg-2 hover:text-on-accent hover:bg-accent rounded-md disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+                        >
+                            <Send size={14} />
+                        </button>
+                    )}
                 </form>
+                {input.length > MAX_MESSAGE * 0.9 && (
+                    <p className="mt-1 text-right text-xs text-fg-3 num" aria-live="polite">
+                        {input.length.toLocaleString()} / {MAX_MESSAGE.toLocaleString()}
+                    </p>
+                )}
             </div>
         </div>
     );

@@ -48,8 +48,9 @@ class MilestoneConflict(Exception):
     """A patch would introduce an out-of-order milestone pair; str(e) is the user-facing message."""
 
 
-async def set_milestones(db, case, patch: dict, user_id: Optional[int]) -> dict:
-    """Apply a milestone patch (column names), audit it, queue the containment card. Does not commit."""
+async def set_milestones(db, case, patch: dict, user_id: Optional[int], source: Optional[str] = None) -> dict:
+    """Apply a milestone patch (column names), audit it, queue the containment card. Does not commit.
+    `source` (where the time came from, e.g. a Slack message) is kept on the audit entry."""
     old = {k: getattr(case, k) for k in patch}
     for k, v in patch.items():
         setattr(case, k, v)
@@ -61,7 +62,8 @@ async def set_milestones(db, case, patch: dict, user_id: Optional[int]) -> dict:
         raise MilestoneConflict(inversion_message(bad[0]))
     iso = lambda d: {k: (v.isoformat() if v is not None else None) for k, v in d.items()}  # noqa: E731
     await create_audit_log(db=db, entity_type="case", entity_id=case.id, action="milestones_changed",
-                           tenant_id=case.tenant_id, user_id=user_id, changes={"old": iso(old), "new": iso(patch)})
+                           tenant_id=case.tenant_id, user_id=user_id,
+                           changes={"old": iso(old), "new": iso(patch), **({"source": source} if source else {})})
     new_c = patch.get("contained_at")
     if new_c is not None and new_c != old.get("contained_at"):
         queue_card(db, case.tenant_id, "containment.confirmed", case.id,

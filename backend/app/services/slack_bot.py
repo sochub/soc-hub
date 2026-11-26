@@ -335,6 +335,7 @@ def should_alert(min_severity: Optional[str], severity, *, previous=None) -> boo
 async def _rerender_suggestions(db, token: str, tenant_id: int, changes: dict) -> None:
     """Redraw a SOC-bot suggestions thread reply from the current DB state."""
     from app.models.war_room_suggestion import WarRoomSuggestion
+    from app.services.war_room_suggestions import declared_milestones
     channel, ts = changes.get("channel"), changes.get("reply_ts")
     if not channel or not ts:
         return
@@ -344,8 +345,15 @@ async def _rerender_suggestions(db, token: str, tenant_id: int, changes: dict) -
     if not rows:
         return
     names = await _names(db, [r.resolved_by_user_id for r in rows])
+    # the same message's suggestions that did not fit in the reply and still wait in the web UI
+    more = (await db.execute(select(func.count()).select_from(WarRoomSuggestion).where(
+        WarRoomSuggestion.tenant_id == tenant_id, WarRoomSuggestion.slack_channel == channel,
+        WarRoomSuggestion.source_ts == rows[0].source_ts, WarRoomSuggestion.reply_ts.is_(None),
+        WarRoomSuggestion.status == "pending"))).scalar() or 0
+    case = await _case(db, tenant_id, rows[0].case_id)
     await _safe(slack_call(token, "chat.update", channel=channel, ts=ts, text="SOC-bot suggestions",
-                           blocks=ui.suggestions_reply(rows, tenant_id, names)))
+                           blocks=ui.suggestions_reply(rows, tenant_id, names, more=more,
+                                                       current=declared_milestones(case) if case else None)))
 
 
 async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: dict) -> None:
@@ -510,9 +518,10 @@ async def dispatch_command(db, integ: SlackIntegration, form: dict) -> dict:
 
 
 def _is_listenable_message(event: dict) -> bool:
-    """A human-authored plain message (or thread broadcast); edits, joins and bot posts never count."""
+    """A human-authored message (plain, thread broadcast, or text sent with a file); edits, joins and bot
+    posts never count."""
     return (event.get("type") == "message" and not event.get("bot_id")
-            and event.get("subtype") in (None, "thread_broadcast")
+            and event.get("subtype") in (None, "thread_broadcast", "file_share")
             and bool(event.get("user") and event.get("channel") and event.get("ts") and event.get("text")))
 
 

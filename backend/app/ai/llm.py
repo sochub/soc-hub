@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import time
-from typing import List, Optional, Sequence, Tuple
+from typing import AsyncIterator, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse, urlunparse
 
 # Use the bundled model cost map — never fetch it from GitHub at import time.
@@ -126,8 +126,11 @@ def _rejects_temperature(e: Exception) -> bool:
     return isinstance(e, litellm.BadRequestError) and "temperature" in str(e).lower()
 
 
-async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float], json_mode: bool,
-                max_tokens: Optional[int], timeout: Optional[float], allowlist: Sequence[str]) -> str:
+async def _prepare(cfg: ProviderConfig, temperature: Optional[float], json_mode: bool, max_tokens: Optional[int],
+                   timeout: Optional[float], allowlist: Sequence[str]) -> Tuple[dict, list, list, list]:
+    """Everything before the provider call, shared by the plain and the streaming call: config validation, the
+    SSRF check and IP pin, credentials, and the no-redirect client for a guarded tenant endpoint.
+    Returns (LiteLLM kwargs, secrets to scrub, redirect flags, clients to close)."""
     secrets = list((cfg.secrets or {}).values())
     # Validate before anything touches the network (SSRF DNS lookup, STS).
     if cfg.provider not in PROVIDERS:
@@ -152,8 +155,7 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
         raise _fail(AIUnavailable, f"AI provider misconfigured: {e}", e) from None
     if guarded:
         kwargs["api_base"] = _pin(kwargs["api_base"], pinned_ip)
-    model_key = (cfg.provider, cfg.model)
-    if temperature is not None and model_key not in _NO_TEMPERATURE:
+    if temperature is not None and (cfg.provider, cfg.model) not in _NO_TEMPERATURE:
         kwargs["temperature"] = temperature
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
@@ -164,23 +166,40 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
     to_close: List[httpx.AsyncClient] = []
     if guarded:
         kwargs["client"], to_close = _no_redirect_client(cfg, kwargs, refused)
-    # `from None` throughout: the raw provider exception may carry keys; only the scrubbed text survives.
+    return kwargs, secrets, refused, to_close
+
+
+async def _acompletion(cfg: ProviderConfig, messages: List[dict], kwargs: dict):
+    model_key = (cfg.provider, cfg.model)
     try:
-        try:
-            resp = await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
-        except Exception as e:
-            if "temperature" not in kwargs or not _rejects_temperature(e):
-                raise
-            logger.info("AI model %s/%s rejects temperature; retrying without it", *model_key)
-            _NO_TEMPERATURE.add(model_key)
-            kwargs.pop("temperature")
-            resp = await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
+        return await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
     except Exception as e:
-        if refused:
-            raise _fail(AIUnavailable, "AI endpoint redirect refused", "RedirectRefused") from None
-        if isinstance(e, _UNAVAILABLE):
-            raise _fail(AIUnavailable, scrub(f"{type(e).__name__}: {e}", secrets), e) from None
-        raise _fail(AIError, scrub(f"{type(e).__name__}: {e}", secrets), e) from None
+        if "temperature" not in kwargs or not _rejects_temperature(e):
+            raise
+        logger.info("AI model %s/%s rejects temperature; retrying without it", *model_key)
+        _NO_TEMPERATURE.add(model_key)
+        kwargs.pop("temperature")
+        return await litellm.acompletion(messages=normalize_messages(messages), **kwargs)
+
+
+def _provider_error(e: Exception, refused: list, secrets: list) -> AIError:
+    # Raised `from None` by the callers: the raw provider exception may carry keys; only the scrubbed text survives.
+    if refused:
+        return _fail(AIUnavailable, "AI endpoint redirect refused", "RedirectRefused")
+    if isinstance(e, _UNAVAILABLE):
+        return _fail(AIUnavailable, scrub(f"{type(e).__name__}: {e}", secrets), e)
+    return _fail(AIError, scrub(f"{type(e).__name__}: {e}", secrets), e)
+
+
+async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float], json_mode: bool,
+                max_tokens: Optional[int], timeout: Optional[float], allowlist: Sequence[str]) -> str:
+    kwargs, secrets, refused, to_close = await _prepare(cfg, temperature, json_mode, max_tokens, timeout, allowlist)
+    try:
+        resp = await _acompletion(cfg, messages, kwargs)
+        if _empty_without_thinking(resp, kwargs):
+            resp = await _acompletion(cfg, messages, _with_thinking(kwargs))
+    except Exception as e:
+        raise _provider_error(e, refused, secrets) from None
     finally:
         for c in to_close:
             await c.aclose()
@@ -192,11 +211,77 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
         raise _fail(AIError, "AI provider returned an empty response", "EmptyResponse") from None
 
 
-async def complete_with(cfg: ProviderConfig, messages: List[dict], *, temperature: Optional[float] = None,
-                        json_mode: bool = False, max_tokens: Optional[int] = None,
-                        timeout: Optional[float] = None, allowlist: Sequence[str] = ()) -> str:
-    """Run one chat completion. Logs exactly one `ai_call` line: ids, names, timing, outcome and
-    exception type/HTTP status only — never prompts, responses, error text or secrets."""
+def _with_thinking(kwargs: dict) -> dict:
+    return {k: v for k, v in kwargs.items() if k != "reasoning_effort"}
+
+
+def _empty_without_thinking(resp, kwargs: dict) -> bool:
+    """OLLAMA_THINKING=false and the model said nothing. Some reasoning models (lfm3) answer an "act on this"
+    prompt with an empty message when thinking is off; the caller then asks once more with thinking on, so the
+    setting costs time on those turns instead of the answer."""
+    if kwargs.get("reasoning_effort") != "none":
+        return False
+    try:
+        return not (resp.choices[0].message.content or "").strip()
+    except (AttributeError, IndexError, TypeError):
+        return False
+
+
+async def _stream_call(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float],
+                       timeout: Optional[float], allowlist: Sequence[str]) -> AsyncIterator[str]:
+    """_call, yielding the reply's text as it is generated. Same preparation and error mapping. The timeout is
+    wait for the response to start and then for each chunk, not a cap on the whole reply."""
+    kwargs, secrets, refused, to_close = await _prepare(cfg, temperature, False, None, timeout, allowlist)
+    resp = None
+    try:
+        try:
+            attempts = [kwargs, _with_thinking(kwargs)] if kwargs.get("reasoning_effort") == "none" else [kwargs]
+            for attempt in attempts:  # the second only when the first said nothing (see _empty_without_thinking)
+                said = False
+                resp = await _acompletion(cfg, messages, {**attempt, "stream": True})
+                if not hasattr(resp, "__aiter__"):
+                    # A provider that can't stream answers whole: one chunk.
+                    text = resp.choices[0].message.content or ""
+                    if text.strip():
+                        said = True
+                        yield text
+                else:
+                    parts = resp.__aiter__()
+                    while True:
+                        try:
+                            # Enforced here too: not every provider transport times out a stream that stalls.
+                            part = await asyncio.wait_for(parts.__anext__(), kwargs["timeout"])
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError:
+                            raise _fail(AIUnavailable, "AI provider stopped answering", "Timeout") from None
+                        text = part.choices[0].delta.content if part.choices else None
+                        if text:
+                            said = said or bool(text.strip())
+                            yield text
+                    if not said and hasattr(resp, "aclose"):
+                        await resp.aclose()
+                if said:
+                    break
+        except AIError:
+            raise
+        except Exception as e:
+            raise _provider_error(e, refused, secrets) from None
+        if refused:
+            raise _fail(AIUnavailable, "AI endpoint redirect refused", "RedirectRefused")
+    finally:
+        # Also when the consumer stops early (client disconnect): closing the response ends the generation.
+        try:
+            if hasattr(resp, "aclose"):
+                await resp.aclose()
+        finally:
+            for c in to_close:
+                await c.aclose()
+
+
+def _call_log(cfg: ProviderConfig, json_mode: bool):
+    """The one `ai_call` line per call: ids, names, timing, outcome and exception type/HTTP status only —
+    never prompts, responses, error text or secrets."""
     start = time.monotonic()
 
     def log(level: int, outcome: str, exc: Optional[BaseException] = None) -> None:
@@ -210,7 +295,15 @@ async def complete_with(cfg: ProviderConfig, messages: List[dict], *, temperatur
                 fmt += " status=%d"
                 args.append(status)
         logger.log(level, fmt, *args)
+    return log
 
+
+async def complete_with(cfg: ProviderConfig, messages: List[dict], *, temperature: Optional[float] = None,
+                        json_mode: bool = False, max_tokens: Optional[int] = None,
+                        timeout: Optional[float] = None, allowlist: Sequence[str] = ()) -> str:
+    """Run one chat completion. Logs exactly one `ai_call` line: ids, names, timing, outcome and
+    exception type/HTTP status only — never prompts, responses, error text or secrets."""
+    log = _call_log(cfg, json_mode)
     try:
         out = await _call(cfg, messages, temperature, json_mode, max_tokens, timeout, allowlist)
     except AIUnavailable as e:
@@ -226,6 +319,26 @@ async def complete_with(cfg: ProviderConfig, messages: List[dict], *, temperatur
     return out
 
 
+async def stream_with(cfg: ProviderConfig, messages: List[dict], *, temperature: Optional[float] = None,
+                      timeout: Optional[float] = None, allowlist: Sequence[str] = ()) -> AsyncIterator[str]:
+    """complete_with as a stream of text chunks, with the same single `ai_call` log line (a consumer that
+    stops early is logged as cancelled)."""
+    log = _call_log(cfg, False)
+    try:
+        async for chunk in _stream_call(cfg, messages, temperature, timeout, allowlist):
+            yield chunk
+    except AIUnavailable as e:
+        log(logging.WARNING, "unavailable", e)
+        raise
+    except (asyncio.CancelledError, GeneratorExit) as e:
+        log(logging.WARNING, "cancelled", e)
+        raise
+    except Exception as e:
+        log(logging.ERROR, "error", e)
+        raise
+    log(logging.INFO, "ok")
+
+
 async def test_connection(cfg: ProviderConfig, *, allowlist: Sequence[str] = ()) -> Tuple[bool, str]:
     try:
         await complete_with(cfg, [{"role": "user", "content": "Reply with OK"}],
@@ -235,9 +348,7 @@ async def test_connection(cfg: ProviderConfig, *, allowlist: Sequence[str] = ())
     return True, f"Connected — {cfg.provider} / {cfg.model} replied."
 
 
-async def complete(messages: List[dict], *, tenant_id: Optional[int], temperature: Optional[float] = None,
-                   json_mode: bool = False) -> str:
-    """Resolve the tenant's (or deployment's) provider and run one completion. No fallback between them."""
+async def _resolve(tenant_id: Optional[int]) -> Tuple[ProviderConfig, list]:
     from app.ai.config import resolve_config, tenant_allowlist
     from app.db.session import AsyncSessionLocal
     try:
@@ -248,6 +359,23 @@ async def complete(messages: List[dict], *, tenant_id: Optional[int], temperatur
         raise
     except Exception:
         raise AIUnavailable("AI configuration lookup failed") from None
+    return cfg, allow
+
+
+async def stream(messages: List[dict], *, tenant_id: Optional[int],
+                 temperature: Optional[float] = None) -> AsyncIterator[str]:
+    """complete(), as text chunks while the model generates. Deliberately outside the answer cache and the
+    in-flight dedup of _shared: a cached answer has nothing to stream, and each reader needs its own stream.
+    No background slot either — only interactive (API) callers stream."""
+    cfg, allow = await _resolve(tenant_id)
+    async for chunk in stream_with(cfg, untrusted.with_rule(messages), temperature=temperature, allowlist=allow):
+        yield chunk
+
+
+async def complete(messages: List[dict], *, tenant_id: Optional[int], temperature: Optional[float] = None,
+                   json_mode: bool = False) -> str:
+    """Resolve the tenant's (or deployment's) provider and run one completion. No fallback between them."""
+    cfg, allow = await _resolve(tenant_id)
     messages = untrusted.with_rule(messages)
     key = _cache_key(cfg, messages, temperature, json_mode)
     return await _shared(cfg, key, lambda: complete_with(cfg, messages, temperature=temperature,

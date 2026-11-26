@@ -133,10 +133,11 @@ async def _handle_case_action(tenant_id: int, payload: dict, btn_tenant_id: int,
 
 async def _handle_suggestion_action(tenant_id: int, payload: dict, btn_tenant_id: int, suggestion_id: int,
                                     verb: str) -> None:
-    """Add/Set/Dismiss on a SOC-bot suggestion. The reply is re-rendered by the after-commit war_room.rerender card."""
+    """Add/Set/Dismiss on a SOC-bot suggestion, or Add all / Dismiss all on every pending row of its reply.
+    The reply is re-rendered by the after-commit war_room.rerender card."""
     if btn_tenant_id != tenant_id:
         return  # button belongs to another tenant's message
-    from app.services.war_room_suggestions import resolve_suggestion_ex
+    from app.services.war_room_suggestions import reply_pending_ids, resolve_many
     clicker = payload["user"]["id"]
     async with AsyncSessionLocal() as db:
         _, token = await load_integration(db, tenant_id)
@@ -145,13 +146,19 @@ async def _handle_suggestion_action(tenant_id: int, payload: dict, btn_tenant_id
             await _ephemeral(payload, "Your Slack account isn't linked to a sochub user with analyst access in this tenant.")
             return
         try:
-            _, applied = await resolve_suggestion_ex(db, tenant_id=tenant_id, suggestion_id=suggestion_id,
-                                     accept=verb == "accept", user=user, slack_user_id=clicker)
+            ids = await reply_pending_ids(db, tenant_id, suggestion_id) if verb.endswith("_all") else [suggestion_id]
         except LookupError:
-            await _ephemeral(payload, "This suggestion no longer exists.")
-            return
+            ids = []
+        results = await resolve_many(db, tenant_id=tenant_id, suggestion_ids=ids, accept=verb.startswith("accept"),
+                                     user=user, slack_user_id=clicker)
         await db.commit()
-    if not applied:
+    conflicts = [c for _, _, c in results if c]
+    if conflicts:
+        # the suggestion stays on the card: say why, and that it can be set again
+        await _ephemeral(payload, "Not set: " + "; ".join(conflicts) + ". Fix the other milestone on the case, then try again.")
+    elif not results:
+        await _ephemeral(payload, "This suggestion no longer exists or was already resolved.")
+    elif not any(applied for _, applied, _ in results):
         await _ephemeral(payload, "This suggestion was already resolved.")
 
 

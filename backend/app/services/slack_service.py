@@ -1,4 +1,5 @@
 """Slack Web API client (httpx, form-encoded), request verification and Block Kit builders."""
+import asyncio
 import hashlib
 import hmac
 import json
@@ -15,10 +16,12 @@ from app.models.slack_integration import SlackIntegration
 from app.utils.crypto import decrypt
 
 SLACK_API = "https://slack.com/api/"
+MAX_RETRY_AFTER = 5  # seconds; a longer Retry-After fails the call instead of holding a worker
 _CASE_ACTIONS = {"ack", "assign", "close", "warroom"}  # note/severity/assignto open modals inline (slack_bot)
 _WF_RE = re.compile(r"wf:([A-Za-z0-9_\-]{1,64}):([0-9]{1,2})")
 _CASE_RE = re.compile(r"case:([0-9]{1,10}):([0-9]{1,10}):([a-z]{1,10})")
-_WRS_RE = re.compile(r"wrs:([0-9]{1,10}):([0-9]{1,10}):([ad])")
+_WRS_RE = re.compile(r"wrs:([0-9]{1,10}):([0-9]{1,10}):([adAD])")  # capitals: every pending row of that reply
+_WRS_VERBS = {"a": "accept", "d": "dismiss", "A": "accept_all", "D": "dismiss_all"}
 
 
 class SlackError(Exception):
@@ -47,6 +50,13 @@ async def slack_call(token: str, method: str, **args) -> dict:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(SLACK_API + method, data=data, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code == 429:  # rate limited: wait as told (a few seconds at most) and try once more
+                try:
+                    wait = float(resp.headers.get("Retry-After") or 1)
+                except ValueError:
+                    wait = 1.0
+                await asyncio.sleep(min(max(wait, 0), MAX_RETRY_AFTER))
+                resp = await client.post(SLACK_API + method, data=data, headers={"Authorization": f"Bearer {token}"})
         body = resp.json()
     except (httpx.HTTPError, ValueError) as e:
         raise SlackError(f"{method}: {e}") from e
@@ -77,7 +87,7 @@ def parse_action_value(value: str) -> Optional[Tuple]:
         return ("case", int(m.group(1)), int(m.group(2)), m.group(3))
     m = _WRS_RE.fullmatch(value or "")
     if m:
-        return ("wrs", int(m.group(1)), int(m.group(2)), "accept" if m.group(3) == "a" else "dismiss")
+        return ("wrs", int(m.group(1)), int(m.group(2)), _WRS_VERBS[m.group(3)])
     return None
 
 

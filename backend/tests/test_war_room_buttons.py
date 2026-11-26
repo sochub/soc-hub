@@ -1,5 +1,6 @@
 """Slack Add/Set/Dismiss buttons on SOC-bot suggestions and the in-place re-render of the reply."""
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -82,6 +83,8 @@ def flat(blocks):
 def test_parse_wrs_values():
     assert parse_action_value("wrs:12:345:a") == ("wrs", 12, 345, "accept")
     assert parse_action_value("wrs:12:345:d") == ("wrs", 12, 345, "dismiss")
+    assert parse_action_value("wrs:12:345:A") == ("wrs", 12, 345, "accept_all")
+    assert parse_action_value("wrs:12:345:D") == ("wrs", 12, 345, "dismiss_all")
     assert parse_action_value("wrs:12:345:x") is None
     assert parse_action_value("wrs:12:345") is None
 
@@ -194,9 +197,8 @@ def test_reply_backtick_value_cannot_break_code_span():
     assert "a`b.com" not in text and "aˋb.com" in json.dumps(suggestions_reply([s], 1), ensure_ascii=False)
 
 
-def test_slack_milestone_conflict_no_ephemeral(env):
+def test_slack_milestone_conflict_keeps_buttons_and_says_why(env):
     async def body(ids):
-        from datetime import datetime, timezone
         async with AsyncSessionLocal() as db:
             t, case, u, _, s = await setup(db, ids, env)
             c = await db.get(Case, case.id)
@@ -208,5 +210,74 @@ def test_slack_milestone_conflict_no_ephemeral(env):
             await db.commit()
             await sa._handle_suggestion_action(t.id, payload(), t.id, m.id, "accept")
             await drain(env)
-            assert env["ephem"] == [] and "out of order" in flat(env["updates"][0]["blocks"])
+            (why,) = env["ephem"]
+            assert why.startswith("Not set: Detected must not be after Contained")
+            card = flat(env["updates"][0]["blocks"])
+            assert "Not set: Detected must not be after Contained" in card and f"wrs:{t.id}:{m.id}:a" in card
+            # fixed on the case: the same button now works and the card closes
+            c.detected_at = datetime(2099, 10, 1, tzinfo=timezone.utc)
+            await db.commit()
+            await sa._handle_suggestion_action(t.id, payload(), t.id, m.id, "accept")
+            await drain(env)
+            assert len(env["ephem"]) == 1 and "actions" not in flat(env["updates"][-1]["blocks"])
+    run(body)
+
+
+def _sug(id, kind, payload, status="pending"):
+    return WarRoomSuggestion(id=id, case_id=42, kind=kind, payload=payload, status=status)
+
+
+def test_reply_bulk_buttons_only_with_two_pending():
+    one = _sug(1, "artifact", {"type": "ip", "value": "1.2.3.4"})
+    two = _sug(2, "artifact", {"type": "ip", "value": "5.6.7.8"})
+    assert "wrs_accept_all" not in flat(suggestions_reply([one], 7))
+    blocks = suggestions_reply([one, two], 7)
+    last = blocks[-1]
+    assert [(e["action_id"], e["value"]) for e in last["elements"]] == [
+        ("wrs_accept_all", "wrs:7:1:A"), ("wrs_dismiss_all", "wrs:7:1:D")]
+    assert "confirm" in last["elements"][0]
+    one.status = "accepted"
+    assert "wrs_accept_all" not in flat(suggestions_reply([one, two], 7))
+
+
+def test_reply_says_how_many_more_and_the_current_milestone(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://soc.example")
+    s = [_sug(1, "milestone", {"key": "contained", "at": "2026-10-26T14:32:00+01:00"}),
+         _sug(2, "milestone", {"key": "detected", "at": "2026-10-26T14:00:00+01:00"}, "superseded")]
+    text = flat(suggestions_reply(s, 7, more=3, current={"contained": datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)}))
+    assert "It is currently Mon 26 Oct 13:00" in text
+    assert "+3 more in <https://soc.example/cases/42|SOC Hub>" in text
+    assert "Replaced by a newer *Detected* time" in text
+    assert "more in" not in flat(suggestions_reply(s, 7)) and "currently" not in flat(suggestions_reply(s, 7))
+
+
+def test_slack_add_all_and_dismiss_all(env):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, u, _, s = await setup(db, ids, env)
+            c = await db.get(Case, case.id)
+            a, b = await rec(db, c, [art("5.6.7.8"), art("9.9.9.9")], channel=CHANNEL)
+            (elsewhere,) = await rec(db, c, [art("7.7.7.7")], channel=CHANNEL, ts="2.2")   # not in this reply
+            a.reply_ts = b.reply_ts = "5.5"
+            elsewhere.reply_ts = "8.8"
+            a, b, elsewhere = N(id=a.id), N(id=b.id), N(id=elsewhere.id)
+            await db.commit()
+            viewer, _h = await _member(db, ids, t, role="viewer")
+            env["email"] = viewer.email
+            await sa.handle_interaction(t.id, {**payload(), "actions": [{"value": f"wrs:{t.id}:{a.id}:A"}]})
+            assert "isn't linked" in env["ephem"].pop() and env["delays"] == []
+            env["email"] = u.email
+            await sa.handle_interaction(t.id, {**payload(), "actions": [{"value": f"wrs:{t.id}:{a.id}:A"}]})
+            assert len(await drain(env)) == 1 and env["ephem"] == []
+            db.expire_all()
+            st = dict((await db.execute(select(WarRoomSuggestion.id, WarRoomSuggestion.status).where(
+                WarRoomSuggestion.case_id == case.id))).all())
+            assert st == {s.id: "accepted", a.id: "accepted", b.id: "accepted", elsewhere.id: "pending"}
+            assert "actions" not in flat(env["updates"][-1]["blocks"])
+            await sa.handle_interaction(t.id, {**payload(), "actions": [{"value": f"wrs:{t.id}:{elsewhere.id}:D"}]})
+            db.expire_all()
+            assert (await db.get(WarRoomSuggestion, elsewhere.id)).status == "dismissed"
+            await sa.handle_interaction(t.id, {**payload(), "actions": [{"value": f"wrs:{t.id}:{a.id}:A"}]})
+            assert "already resolved" in env["ephem"][-1]
     run(body)

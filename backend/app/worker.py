@@ -40,6 +40,8 @@ celery_app.conf.task_routes = {
     "app.tasks.workflows.run_schedules_task": {"queue": "celery"},
     "app.tasks.workflows.expire_waits_task": {"queue": "celery"},
     "app.tasks.workflows.reap_stuck_steps_task": {"queue": "celery"},
+    # A person is waiting on a Slack button click: it must not queue behind tenant workflow runs.
+    "app.tasks.workflows.handle_slack_interaction_task": {"queue": "celery"},
     "app.tasks.workflows.*": {"queue": AUTOMATION_QUEUE},
     "app.tasks.email_intake.*": {"queue": AUTOMATION_QUEUE},
 }
@@ -105,6 +107,10 @@ celery_app.conf.beat_schedule = {
     "prune-notifications": {
         "task": "app.tasks.notifications.prune_notifications_task",
         "schedule": crontab(hour=3, minute=15),  # daily, 03:15 UTC
+    },
+    "prune-war-room": {
+        "task": "app.tasks.war_room.prune_war_room_task",
+        "schedule": crontab(hour=3, minute=30),  # daily, 03:30 UTC
     },
     "purge-alerts": {
         "task": "app.tasks.retention.purge_alerts_task",

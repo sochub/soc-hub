@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     # Ollama Configuration
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3"
+    # False asks reasoning models (e.g. lfm3, qwen3, deepseek-r1) to answer without their hidden "thinking" pass,
+    # which on local hardware is most of the wait. Models that don't think ignore it.
+    OLLAMA_THINKING: bool = True
 
     # --- AI provider (deployment default; see docs/configuration.md) ---
     # Unset AI_PROVIDER keeps the legacy behaviour: Ollama at OLLAMA_BASE_URL/OLLAMA_MODEL.
