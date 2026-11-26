@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Flag, Pencil } from 'lucide-react';
+import { Flag, History, Pencil } from 'lucide-react';
 
 import { api } from '../../api/client';
 import type { Case, CaseEvent, MilestoneKey } from '../../types';
 import { formatDateTime } from '../../utils/datetime';
 import MilestonesEditor from './MilestonesEditor';
+import StatusHistoryEditor from './StatusHistoryEditor';
 import { MILESTONES } from './milestones';
 import { TONE_VAR, statusTone } from '../../components/ui';
 
@@ -45,6 +46,7 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
 }) {
     const [now] = useState(() => Date.now()); // "now" for open cases, fixed per mount
     const [editing, setEditing] = useState(false);
+    const [fixingStatus, setFixingStatus] = useState(false);
     const { data: invEvents = [] } = useQuery({
         queryKey: ['case-events', caseData.id],
         queryFn: async () => (await api.get(`/cases/${caseData.id}/events`)).data as CaseEvent[],
@@ -116,6 +118,12 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
                     <span className="text-xs num text-fg-3">
                         {formatDateTime(new Date(start), tz)} → {recoveredAt ? formatDateTime(new Date(recoveredAt), tz) : 'now'}
                     </span>
+                    {canEdit && (
+                        <button type="button" onClick={() => setFixingStatus((v) => !v)} aria-expanded={fixingStatus}
+                            className="inline-flex items-center gap-1 text-xs text-accent hover:underline rounded-sm">
+                            <History size={11} aria-hidden /> {fixingStatus ? 'Close' : 'Status history'}
+                        </button>
+                    )}
                     {ms && canEdit && (
                         <button type="button" onClick={() => setEditing((v) => !v)} aria-expanded={editing}
                             className="inline-flex items-center gap-1 text-xs text-accent hover:underline rounded-sm">
@@ -129,6 +137,12 @@ export default function IncidentOverview({ caseData, tz, canEdit, onOpenInvestig
                 <div className="rounded-md border border-line bg-surface p-3">
                     <MilestonesEditor key={JSON.stringify(ms)} caseId={caseData.id} milestones={ms} canEdit={!!canEdit}
                         onDone={() => setEditing(false)} />
+                </div>
+            )}
+
+            {canEdit && fixingStatus && (
+                <div className="rounded-md border border-line bg-surface p-3">
+                    <StatusHistoryEditor caseData={caseData} tz={tz} onDone={() => setFixingStatus(false)} />
                 </div>
             )}
 

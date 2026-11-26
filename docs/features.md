@@ -52,6 +52,19 @@ phases and only the items you chose. Status and severity changes always appear; 
 appear when pinned (the flag or pin on the entry). A declared First seen earlier than the case adds a "before case"
 phase. Clicking an item scrolls the feed to it.
 
+**Status history** on the glance lists the status changes behind the phase bar, oldest first, with who made each
+one (and "via MCP" when an MCP client did). When a status was changed by mistake (say a case closed by hand, then
+re-opened and closed again by an MCP session), correct a change's time or from/to statuses, or delete it after
+confirming. Admins can correct any change; analysts can correct their own, including the ones an MCP client made
+for them.
+
+- The case's current status never changes. The editor warns when the history no longer ends in it.
+- For a resolved or closed case whose history ends in its current status, the resolved time (the end of the
+  resolve span and the computed Recovered milestone) is recalculated from the corrected history: when the case last
+  became resolved or closed and stayed that way. A declared Recovered milestone is not touched.
+- Each correction and deletion is in the audit log (`status_history_corrected`, `status_history_deleted`) with the
+  entry as it was. Deleting a status change from the Activity feed recalculates the resolved time the same way.
+
 ![Incident at a glance: milestones, status phases and pinned items](images/case-glance.png)
 
 ## Multiple organizations (optional)
@@ -365,6 +378,11 @@ in none of them gets the default role. Roles take effect on that sign-in and are
 IdP omits the groups claim the role is left unchanged, and a sign-in never demotes the organization's last admin
 (audited as `sso_role_sync_blocked`). With no groups listed, roles are managed in SOC Hub only. The same claim drives
 escalation-group sync.
+On the sign-in page, an email whose domain is listed in an organization's SSO email domains (and whose members sign
+in with SAML or OIDC) grays out the password field and turns the button into **Continue with SSO**, straight to that
+IdP. The lookup is per domain only, so the page can't be used to learn whether an account exists or is a super admin;
+instead, **Sign in with a password instead** stays available for break-glass accounts (the super admin, admins with
+MFA), and the password policy above still refuses everyone else. A domain two organizations list gives no hint.
 
 ## AI clients (MCP)
 
