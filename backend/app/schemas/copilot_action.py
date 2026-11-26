@@ -1,5 +1,5 @@
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, Field
 
 # Action types the copilot may propose.
 WRITE_ACTIONS = {"create_case", "add_artifact", "add_timeline_note", "update_case", "apply_playbook"}
@@ -14,6 +14,13 @@ class ActionProposal(BaseModel):
     summary: str = ""
     params: Dict[str, Any] = {}
     result: Optional[Dict[str, Any]] = None  # set once executed (ActionResult shape)
+    # Target case, resolved when the proposal is made. None on an action that needs one = "needs a case".
+    case_id: Optional[int] = None
+    # "cancelled" / "dismissed" by the user, or "running" while a confirmed write executes: not confirmable.
+    state: Optional[str] = None
+    # Filled when a message is read (never stored): the target as it is now.
+    case_title: Optional[str] = None
+    case_missing: bool = False
 
 
 class ActionExecuteRequest(BaseModel):
@@ -24,6 +31,15 @@ class ActionExecuteRequest(BaseModel):
     # reload and a second Confirm returns the stored result instead of running again.
     message_id: Optional[int] = None
     suggestion_index: Optional[int] = None  # None = the message's main action
+    # Closing a case (update_case with status closed): collected by the card, validated by case_service.
+    outcome: Optional[str] = None
+    closing_note: Optional[str] = Field(None, max_length=8000)
+
+
+class ActionDismissRequest(BaseModel):
+    message_id: int
+    suggestion_index: Optional[int] = None
+    state: Literal["dismissed", "cancelled"] = "dismissed"
 
 
 class RelatedCase(BaseModel):

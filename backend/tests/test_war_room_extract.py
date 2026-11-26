@@ -40,7 +40,7 @@ def test_hash_maps_to_file_hash():
 
 
 def test_hostname_patterns():
-    found = _artifacts(_extract("WS-FIN-07 beaconed, dc01.corp is down, host fileserver rebooted"))
+    found = _artifacts(_extract("WS-FIN-07 beaconed, dc01.corp is down, host: fileserver rebooted"))
     assert {("hostname", "WS-FIN-07"), ("hostname", "dc01.corp"), ("hostname", "fileserver")} <= found
 
 
@@ -56,10 +56,10 @@ def test_hostname_noise_ignored():
 
 
 def test_username_needs_cue():
-    found = _artifacts(_extract("ACME\\jdoe logged in, user asmith, reset password for bwayne"))
+    found = _artifacts(_extract("ACME\\jdoe logged in, user: asmith, reset password for b.wayne"))
     assert ("username", "ACME\\jdoe") in found
     assert ("username", "asmith") in found
-    assert ("username", "bwayne") in found
+    assert ("username", "b.wayne") in found
     assert _artifacts(_extract("jdoe said hi")) == set()
     assert _artifacts(_extract("user is locked out")) == set()
 
@@ -107,8 +107,8 @@ def test_explicit_date_before_time():
 def test_explicit_date_with_utc_and_beats_yesterday_and_rollback():
     assert _milestones(_extract("recovered on 2026-10-24 09:10 UTC")) == {"recovered": "2026-10-24T09:10:00+00:00"}
     assert _milestones(_extract("first seen yesterday 22:00 2026-10-20")) == {"first_seen": "2026-10-20T22:00:00+02:00"}
-    # a time later than the message, on an explicit date, is not rolled back
-    assert _milestones(_extract("contained 2026-10-26 23:50")) == {"contained": "2026-10-26T23:50:00+01:00"}
+    # a time later than the message, on an explicit date, is a plan: neither rolled back nor suggested
+    assert _milestones(_extract("contained 2026-10-26 23:50")) == {}
 
 
 def test_far_date_does_not_attach():
@@ -172,3 +172,91 @@ def test_cue_host_with_public_domain_stays_a_domain():
     assert ("domain", "evil.com") in found
     assert ("ip", "10.0.0.5") in found
     assert not any(t == "hostname" for t, _ in found)
+
+
+# ---- fix round 2: Slack links, defanging, noise, wider TLDs, time parsing -----------
+
+NOV = datetime(2026, 11, 26, 15, 0, tzinfo=MAD)
+
+
+@pytest.mark.parametrize("text, expected", [
+    # 1. a domain Slack linked by itself is a domain; a typed URL stays a URL
+    ("see <http://evil.com|evil.com>", {("domain", "evil.com")}),
+    ("see <http://evil.com/|evil.com>", {("domain", "evil.com")}),
+    ("see <http://evil.com>", {("url", "http://evil.com")}),
+    ("see <http://evil.com/a|the report>", {("url", "http://evil.com/a")}),
+    ("see <http://evil.it|evil.it>", {("domain", "evil.it")}),   # TLD outside the list: Slack vouches for it
+    # 2. defanged values
+    ("hxxp://evil[.]com/payload and 185[.]220[.]101[.]5", {("url", "http://evil.com/payload"), ("ip", "185.220.101.5")}),
+    ("hxxps[:]//evil(.)com/x bob[at]bad[dot]net 8{.}8{.}4{.}4",
+     {("url", "https://evil.com/x"), ("email", "bob@bad.net"), ("ip", "8.8.4.4")}),
+    # 3. false positives
+    ("agent version 7.14.2.1 and v 1.2.3.4, ver. 2.3.4.5", set()),
+    ("running Chrome 120.0.60.71", set()),
+    ("ping 127.0.0.1, 0.0.0.0 and 169.254.10.2 but 10.1.2.3 answered", {("ip", "10.1.2.3")}),
+    ("dropped invoice.pdf.exe, ran run.me, opened setup.app, file config.dev, attachment invoice.pdf.zip", set()),
+    ("dropped invoice.pdf.exe and run.me", set()),  # an earlier file name in the list still counts as the cue
+    ("beacon to evil.co.uk and evil.com.au, not co.uk itself", {("domain", "evil.co.uk"), ("domain", "evil.com.au")}),
+    ("the user clicked the link", set()),
+    ("host down", set()),
+    ("user: jdoe on host: fileserver", {("username", "jdoe"), ("hostname", "fileserver")}),
+    ("user j.doe, account svc_backup, login admin2, host web-proxy",
+     {("username", "j.doe"), ("username", "svc_backup"), ("username", "admin2"), ("hostname", "web-proxy")}),
+    ("see JIRA-221 and PROJ-42", set()),
+    ("host SRV-01 and WS-FIN-07", {("hostname", "SRV-01"), ("hostname", "WS-FIN-07")}),
+    ("uuid 5f0c2a9e8b7d4c3fa1b2c3d4e5f60718, id: 5f0c2a9e8b7d4c3fa1b2c3d4e5f60719", set()),
+    ("md5 5f0c2a9e8b7d4c3fa1b2c3d4e5f60718", {("file_hash", "5f0c2a9e8b7d4c3fa1b2c3d4e5f60718")}),
+    ("open http://localhost/cases/4, https://acme.slack.com/archives/C1/p1 or slack.com", set()),
+    # 4. false negatives
+    ("c2 at malware-c2.de, bad.shop and evil.zip", {("domain", "malware-c2.de"), ("domain", "bad.shop"), ("domain", "evil.zip")}),
+    ("_bad.net_ and *worse.net* and ~185.220.101.9~", {("domain", "bad.net"), ("domain", "worse.net"), ("ip", "185.220.101.9")}),
+])
+def test_artifact_phrases(text, expected):
+    assert _artifacts(_extract(text, NOV)) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    # 5. ISO timestamps keep their own zone, seconds and fractions included
+    ("Detected: 2026-11-26T12:32:00Z", {"detected": "2026-11-26T12:32:00+00:00"}),
+    ("Detected: 2026-11-26T13:32:00.123Z", {"detected": "2026-11-26T13:32:00+00:00"}),
+    ("detected 2026-11-26T08:32:00-05:00", {"detected": "2026-11-26T08:32:00-05:00"}),
+    ("detected 2:15pm yesterday", {"detected": "2026-11-25T14:15:00+01:00"}),
+    ("contained at 3pm", {"contained": "2026-11-26T15:00:00+01:00"}),
+    ("contained at 9 am", {"contained": "2026-11-26T09:00:00+01:00"}),
+    # negated, planned or simply not a time of day
+    ("not contained, we look again at 14:00", {}),
+    ("not contained 14:00", {}),
+    ("we haven't contained it 14:00", {}),
+    ("haven't contained 14:00", {}),
+    ("not yet contained 14:00", {}),
+    ("contained, ETA 16:00", {}),
+    ("ETA 16:00", {}),
+    ("it will be contained at 14:00", {}),
+    ("contained. next sync 14:00", {}),
+    ("we expect to recover by 14:00", {}),
+    ("expect it recovered by 14:00", {}),
+    ("recovered in 10:30 minutes", {}),
+    ("contained at 15:30", {}),                      # half an hour after the message
+    ("contained at 2026-11-27 09:00", {}),
+    ("Detected: 2026-11-26T14:32:00Z", {}),          # 15:32 local, the message is from 15:00
+    ("contained at 15:02", {"contained": "2026-11-26T15:02:00+01:00"}),   # clock skew, not a plan
+    ("contained 14:00-15:30", {"contained": "2026-11-26T14:00:00+01:00"}),  # a range is not a UTC offset
+])
+def test_milestone_phrases(text, expected):
+    assert _milestones(_extract(text, NOV)) == expected
+
+
+def test_milestone_key_carries_the_time():
+    (c,) = [c for c in _extract("contained at 14:32", NOV) if c.kind == "milestone"]
+    assert c.value_key == "contained:2026-11-26T13:32Z"
+    later = datetime(2026, 11, 26, 16, 0, tzinfo=MAD)
+    assert _milestones(_extract("Detected: 2026-11-26T14:32:00Z", later)) == {"detected": "2026-11-26T14:32:00+00:00"}
+
+
+def test_unknown_timezone_keeps_only_zoned_times():
+    at = datetime(2026, 11, 26, 15, 0, tzinfo=ZoneInfo("UTC"))
+    assert _milestones(extract_candidates("contained at 14:32", tz=None, message_at=at)) == {}
+    assert _milestones(extract_candidates("contained at 14:32 UTC", tz=None, message_at=at)) == {
+        "contained": "2026-11-26T14:32:00+00:00"}
+    assert _artifacts(extract_candidates("contained at 14:32, 185.220.101.4", tz=None, message_at=at)) == {
+        ("ip", "185.220.101.4")}

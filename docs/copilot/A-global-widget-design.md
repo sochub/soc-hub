@@ -21,6 +21,13 @@
 - `features/cases/CaseDetail.tsx`: embedded sidebar removed; main column reclaims width.
 - `CopilotSidebar.tsx` removed (superseded by CopilotChat).
 
+## Later changes
+- Session get-or-create: the briefing is generated first, then the insert re-checks under a per-user advisory
+  lock, so two tabs opening the panel together share one session.
+- `CopilotChat` shows an error state with Retry and Clear when the session cannot be loaded. A failed send
+  gives the typed text back and says why (provider unavailable as a status line by the input, timeout, too
+  long, other). The input is capped at the API's 16,000 characters with a counter near the limit.
+
 ## Boundaries (other subsystems)
 - No cross-case correlation/memory retrieval (C). General context = current-state summary only.
 - No actions/tool-calling (B). Chat only. Stays on `llama3`.

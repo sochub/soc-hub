@@ -12,36 +12,58 @@ logger = logging.getLogger(__name__)
 _VALID_ACTION_TYPES = {
     "create_case", "add_artifact", "add_timeline_note", "update_case", "find_related",
 }
-# Matches a ```action ...``` or ```json ...``` fenced block.
-_ACTION_BLOCK_RE = re.compile(r"```(?:action|json)\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+# Opening of a fenced block that starts with a JSON object: ```action, ```json or unlabelled.
+_FENCE_OPEN_RE = re.compile(r"```(?:action|json)?[ \t]*\n?\s*(?=\{)", re.IGNORECASE)
+_FENCE_CLOSE_RE = re.compile(r"\s*```")
+_JSON = json.JSONDecoder()
+
+
+def _action_blocks(text: str):
+    """Yield (start, end, data) for each fenced block whose JSON is an action (a dict with a valid "type").
+    The closing fence is optional: small models often leave the block unterminated. Any other fenced JSON
+    (a sample the analyst asked for) is not an action block."""
+    for m in _FENCE_OPEN_RE.finditer(text or ""):
+        try:
+            data, end = _JSON.raw_decode(text, m.end())
+        except ValueError:
+            continue
+        if isinstance(data, dict) and data.get("type") in _VALID_ACTION_TYPES:
+            close = _FENCE_CLOSE_RE.match(text, end)
+            yield m.start(), close.end() if close else end, data
+
+
+def _as_action(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Normalize a model-proposed action, or None when it can't be trusted as one. `params` must be an object;
+    a model that put the fields next to "type" (flat) gets them moved under params."""
+    if "params" in data:
+        params = {} if data["params"] is None else data["params"]
+    else:
+        params = {k: v for k, v in data.items() if k not in ("type", "summary")}
+    if not isinstance(params, dict):
+        return None
+    return {"type": data["type"], "summary": str(data.get("summary") or ""), "params": params}
 
 
 def extract_action(text: str) -> Optional[Dict[str, Any]]:
     """Parse a proposed action out of an assistant reply, or None.
 
-    Looks for a fenced ```action / ```json block containing a JSON object with a
-    valid "type". Lenient: any parse/validation failure yields None so the reply
-    is treated as ordinary chat.
+    Lenient: any parse/validation failure yields None so the reply is treated as ordinary chat.
     """
-    if not text:
-        return None
-    for match in _ACTION_BLOCK_RE.finditer(text):
-        try:
-            data = json.loads(match.group(1))
-        except (ValueError, TypeError):
-            continue
-        if isinstance(data, dict) and data.get("type") in _VALID_ACTION_TYPES:
-            return {
-                "type": data["type"],
-                "summary": str(data.get("summary", "")),
-                "params": data.get("params") or {},
-            }
+    for _start, _end, data in _action_blocks(text):
+        action = _as_action(data)
+        if action:
+            return action
     return None
 
 
 def strip_action_blocks(text: str) -> str:
-    """Remove fenced action blocks from a reply for clean display."""
-    return _ACTION_BLOCK_RE.sub("", text or "").strip()
+    """Remove fenced action blocks from a reply for clean display. Other code blocks are left intact."""
+    out, pos = [], 0
+    for start, end, _data in _action_blocks(text):
+        if start >= pos:
+            out.append(text[pos:start])
+            pos = end
+    return ("".join(out) + (text or "")[pos:]).strip()
 
 
 _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
@@ -109,7 +131,7 @@ Supported actions and their params:
 - create_case — {"title": str, "severity": "critical|high|medium|low|info", "description": str}
 - add_artifact — {"value": str, "artifact_type": "ip|domain|url|file_hash|email|hostname|username|other", "description": str}  (applies to the current case)
 - add_timeline_note — {"content": str}  (current case)
-- update_case — {"status": "new|open|in_progress|pending|resolved|closed", "severity": "critical|high|medium|low|info"}  (current case; include only fields to change)
+- update_case — {"status": "new|open|in_progress|pending|resolved|closed", "severity": "critical|high|medium|low|info", "tags": [str]}  (current case; include only fields to change; tags are ADDED to the case's existing tags)
 - find_related — {"value": str}  (omit value to correlate the current case's IOCs/artifacts across other cases)
 
 **Always emit the block when the user asks you to do one of these things** — do not
@@ -131,6 +153,12 @@ Adding that to the case timeline.
 ALLOWED_CHAT_ROLES = {"user", "assistant"}
 
 MAX_CHAT_MESSAGES = 50
+MAX_TIMELINE_EVENTS = 30
+MAX_ARTIFACTS = 50
+# ponytail: the whole chat prompt is capped at this many CHARACTERS (~6k tokens at ~4 chars/token), not counted
+# with a tokenizer. Over it, the oldest turns go first, then the timeline is shortened. Move to the provider's
+# token count if small-context models still truncate.
+PROMPT_CHAR_BUDGET = 24_000
 
 
 def _sanitize_text(text: str, max_length: int = 10000) -> str:
@@ -219,8 +247,10 @@ class AIService:
         # llm.complete_with logs one ai_call line per call; never log prompts or replies here.
         return await llm.complete(messages, tenant_id=self.tenant_id, temperature=temperature, json_mode=json_mode)
 
-    def _format_case_context(self, context: Dict[str, Any]) -> str:
-        """Format full case context into a readable text block for the LLM."""
+    def _format_case_context(self, context: Dict[str, Any], max_events: int = MAX_TIMELINE_EVENTS) -> str:
+        """Format full case context into a readable text block for the LLM.
+
+        `timeline_events` come oldest first and `artifacts` newest first (see _build_full_case_context)."""
         parts = []
 
         parts.append(f"Title: {_sanitize_text(str(context.get('title', 'N/A')), 500)}")
@@ -240,18 +270,25 @@ class AIService:
         # Timeline events
         events = context.get("timeline_events", [])
         if events:
-            parts.append(f"\nTimeline ({len(events)} events):")
-            for ev in events[:30]:
+            # The most recent entries are what the analyst is asking about; pinned ones are kept however old.
+            cut = max(len(events) - max_events, 0)
+            shown = [ev for ev in events[:cut] if ev.get("pinned")] + events[cut:]
+            omitted = len(events) - len(shown)
+            note = f"; the {omitted} earliest entries are omitted, only pinned and the most recent are shown" if omitted else ""
+            parts.append(f"\nTimeline ({len(events)} events, oldest first{note}):")
+            for ev in shown:
                 ts = ev.get("created_at", "")
                 etype = ev.get("type", "note")
                 content = _sanitize_text(str(ev.get("content", "")), 500)
-                parts.append(f"  [{ts}] ({etype}) {content}")
+                parts.append(f"  [{ts}] ({etype}){' [pinned]' if ev.get('pinned') else ''} {content}")
 
         # Artifacts / IOCs
         artifacts = context.get("artifacts", [])
         if artifacts:
-            parts.append(f"\nArtifacts / IOCs ({len(artifacts)}):")
-            for a in artifacts[:50]:
+            omitted = max(len(artifacts) - MAX_ARTIFACTS, 0)
+            note = f"; the {omitted} oldest are omitted" if omitted else ""
+            parts.append(f"\nArtifacts / IOCs ({len(artifacts)}, newest first{note}):")
+            for a in artifacts[:MAX_ARTIFACTS]:
                 atype = a.get("type", "other")
                 value = _sanitize_text(str(a.get("value", "")), 200)
                 desc = a.get("description") or ""
@@ -386,38 +423,51 @@ class AIService:
         messages: List[Dict[str, str]],
         context: Optional[Dict[str, Any]] = None,
         general: bool = False,
+        raise_errors: bool = False,
     ) -> str:
         """Chat with the investigation copilot.
 
         `general=True` uses the tenant-level queue overview framing; otherwise the
-        full single-case context framing is used.
+        full single-case context framing is used. `raise_errors` lets the caller tell a provider failure
+        from a reply (the copilot chat must not store the "unavailable" text as an assistant turn).
         """
-        if general:
-            system_content = GENERAL_SYSTEM_PROMPT
-            if context:
-                system_content += f"\n\n--- QUEUE OVERVIEW ---\n{self._format_general_context(context)}\n--- END OVERVIEW ---"
-        else:
-            system_content = COPILOT_SYSTEM_PROMPT
-            if context:
-                system_content += f"\n\n--- CASE CONTEXT ---\n{self._format_case_context(context)}\n--- END CONTEXT ---"
-
-        system_content += ACTIONS_GUIDE
-
-        chat_messages = [{"role": "system", "content": system_content}]
+        def system(max_events: int = MAX_TIMELINE_EVENTS) -> str:
+            # The actions guide comes BEFORE the untrusted data: a provider that truncates an over-long prompt
+            # cuts the end, and the guide is what makes actions work at all.
+            text = (GENERAL_SYSTEM_PROMPT if general else COPILOT_SYSTEM_PROMPT) + "\n" + ACTIONS_GUIDE
+            if context and general:
+                text += f"\n--- QUEUE OVERVIEW ---\n{self._format_general_context(context)}\n--- END OVERVIEW ---"
+            elif context:
+                text += f"\n--- CASE CONTEXT ---\n{self._format_case_context(context, max_events)}\n--- END CONTEXT ---"
+            return text
 
         # Only take the last N messages and enforce allowed roles
-        recent_messages = messages[-MAX_CHAT_MESSAGES:]
-        for msg in recent_messages:
+        turns = []
+        for msg in messages[-MAX_CHAT_MESSAGES:]:
             role = msg.get("role", "user")
             if role not in ALLOWED_CHAT_ROLES:
                 role = "user"
             content = _sanitize_text(msg.get("content", ""))
             if content:
-                chat_messages.append({"role": role, "content": content})
+                turns.append({"role": role, "content": content})
+
+        system_content = system()
+
+        def over() -> bool:
+            return len(system_content) + sum(len(t["content"]) for t in turns) > PROMPT_CHAR_BUDGET
+
+        while len(turns) > 1 and over():
+            turns.pop(0)  # oldest turn first; the message being answered always stays
+        max_events = MAX_TIMELINE_EVENTS
+        while context and not general and max_events > 5 and over():
+            max_events //= 2
+            system_content = system(max_events)
 
         try:
-            text = await self._complete(chat_messages, temperature=0.3)
+            text = await self._complete([{"role": "system", "content": system_content}] + turns, temperature=0.3)
         except AIError as e:
+            if raise_errors:
+                raise
             return _unavailable_text(e)
         return text or "No response from AI"
 
@@ -461,11 +511,14 @@ class AIService:
         return text if len(text) >= 10 else None
 
     async def force_action_extraction(
-        self, user_message: str, context: Optional[Dict[str, Any]] = None, general: bool = False
+        self, user_message: str, context: Optional[Dict[str, Any]] = None, general: bool = False,
+        recent: Optional[List[Dict[str, str]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Second-pass: ask the model (with constrained JSON output) whether the
         user's request maps to a concrete action. More reliable than relying on a
         fenced block in free-form chat. Returns an action dict or None.
+
+        `recent` is the few turns before the request, so "yes, add it" has something to refer to.
         """
         if general and context:
             ctx = self._format_general_context(context)
@@ -479,13 +532,18 @@ class AIService:
             '- create_case {"title","severity","description"}\n'
             '- add_artifact {"value","artifact_type","description"}  (ip|domain|url|file_hash|email|hostname|username|other)\n'
             '- add_timeline_note {"content"}\n'
-            '- update_case {"status","severity"}\n'
+            '- update_case {"status","severity","tags"}\n'
             '- find_related {"value"}\n'
             'If the message asks to DO one of these, output {"type": <type>, "summary": <short>, "params": {...}}.\n'
             'If it is only a question or discussion, output {"type": null}.\n'
             "Output ONLY the JSON object, nothing else."
         )
-        user = f"Context:\n{ctx}\n\nAnalyst request: {_sanitize_text(user_message, 2000)}"
+        earlier = "\n".join(f"{m.get('role', 'user')}: {_sanitize_text(m.get('content') or '', 600)}"
+                            for m in (recent or [])[-3:])
+        user = f"Context:\n{ctx}\n\n"
+        if earlier:
+            user += f"Earlier in the conversation:\n{earlier}\n\n"
+        user += f"Analyst request: {_sanitize_text(user_message, 2000)}"
         try:
             text = await self._complete([
                 {"role": "system", "content": system},
@@ -497,13 +555,7 @@ class AIService:
         if data is None:
             logger.warning("Forced action extraction: unparseable reply")
             return None
-        if isinstance(data, dict) and data.get("type") in _VALID_ACTION_TYPES:
-            return {
-                "type": data["type"],
-                "summary": str(data.get("summary", "")),
-                "params": data.get("params") or {},
-            }
-        return None
+        return _as_action(data) if data.get("type") in _VALID_ACTION_TYPES else None
 
     async def generate_triage(self, case_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """LLM-only triage for a new/updated case: proposed severity, tags, and

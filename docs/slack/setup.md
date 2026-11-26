@@ -37,8 +37,36 @@ analyst or admin of the tenant the workspace is connected to. Unlinked users get
 | Responder alerts | Cases at or above the configured severity are posted to the alerts channel as a live card when created, escalated into that severity, or when an SLA is breached. Follow-ups thread under the card, and the card is updated in place as the case changes. |
 | Direct messages | Mentions, assignments and SLA breaches arrive as DMs with the case card (email fallback). The owner is also DMed when their case's severity goes up. |
 | War room | Private channel for a case, opened with **War room** on a Slack card or **Open war room** on the case page. The name follows the tenant's naming convention (**Settings → Slack**, default `inc-{id}-{title}`; placeholders `{id}`, `{title}`, `{date}`) and can be edited when opening. The owner, followers and the opener are invited, the case card is posted and the opening is recorded on the case timeline. Cards in the room update on status, severity and owner changes, SLA breaches, task completion, workflow completion (with a link to the run) and containment confirmed. |
-| SOC-bot listening | Optional per war room (toggle when opening, or later on the case page). SOC-bot reads the channel and suggests indicators (IPs, domains, hashes, hostnames, usernames) and incident milestone times (first seen, detected, contained, recovered) in a thread reply with **Add** / **Dismiss** buttons. The same suggestions appear on the case page. Nothing is added until an analyst confirms. |
+| SOC-bot listening | Optional per war room (toggle when opening, or later on the case page). SOC-bot reads what people write in the channel (plain messages, thread replies, text sent with a file; never bot posts or edits) and suggests indicators (IPs, domains, URLs, hashes, email addresses, hostnames, usernames) and incident milestone times (first seen, detected, contained, recovered) in a thread reply with **Add** / **Dismiss** buttons, plus **Add all** / **Dismiss all** when a reply has several. The same suggestions appear on the case page. Nothing is added until an analyst or admin confirms. See [What SOC-bot picks up](#what-soc-bot-picks-up). |
 | App Home | The app's **Home** tab shows your open cases with actions and a **New case** button. |
+
+## What SOC-bot picks up
+
+Detection is pattern matching, with no AI model involved, and it prefers missing a value to suggesting noise.
+
+- **Indicators.** Defanged values are read as written for a tool (`hxxp://evil[.]com`, `185[.]220[.]101[.]5`,
+  `bob[at]evil[.]com`). A domain that Slack turned into a link by itself is suggested as a domain; a URL someone
+  typed stays a URL. Not suggested: version numbers (`agent version 7.14.2.1`), loopback and link-local addresses
+  (private ranges are kept), file names (`invoice.pdf.exe`, `ran run.me`), ticket ids (`JIRA-221`), ids written as
+  `uuid …`/`id: …`, Slack links and this deployment's own address. A user or host named after a cue word needs to
+  look like an identifier (`user j.doe`, `host web-proxy`) or follow a colon (`user: jdoe`).
+- **Already on the case.** A value is not suggested again when the case has it, in any letter case; a domain and
+  the root URL of that domain (`evil.com`, `http://evil.com/`) count as the same value.
+- **Milestone times.** `contained at 14:32`, `detected 2:15pm yesterday`, `contained at 3pm`,
+  `Detected: 2026-11-26T14:32:00Z`. Times without a zone are read in the author's Slack timezone (or their sochub
+  profile timezone); if neither is known the time is skipped. Plans and negations are skipped (`not yet contained`,
+  `will be contained at 16:00`, `ETA 16:00`), and so is any time later than the message.
+- **Corrections.** A new time for the same milestone replaces the pending suggestion. When the case already has
+  that milestone, the suggestion shows the current time, and accepting replaces it.
+- **Out-of-order milestone.** If accepting would put the milestones out of order, nothing is set, the reason is
+  shown in Slack and on the case page, and the suggestion can be accepted again after the other milestone is fixed.
+- **Long messages.** A Slack reply shows up to 5 indicators plus the milestone times; the rest are listed on the
+  case page and the reply says how many (`+3 more in SOC Hub`). At most 20 indicators and 20 milestone times are
+  kept per channel and hour; dismissed ones do not count.
+- **Where it came from.** An accepted suggestion records the Slack author and the message link on the new
+  artifact's description, on the case activity entry and in the audit log.
+- **When it stops.** No suggestions are made once the case is resolved or closed. Suggestions nobody answered are
+  dismissed a week after the case is closed.
 
 ## Troubleshooting
 

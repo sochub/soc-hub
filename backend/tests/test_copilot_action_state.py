@@ -29,19 +29,24 @@ def test_general_chat_create_case_then_follow_up(monkeypatch):
                     "artifacts": [{"value": "198.51.100.42", "artifact_type": "ip"}]}})
             db.add(create)
             await db.flush()
-            follow = CopilotMessage(session_id=s.id, role="assistant", content="add ip?", action={
-                "type": "add_artifact", "summary": "", "params": {"value": "203.0.113.9", "artifact_type": "ip"}})
-            db.add(follow)
             await db.commit()
-            ids.session, ids.create, ids.follow = s.id, create.id, follow.id
+            ids.session, ids.create = s.id, create.id
         h = hdr(w, "analyst")
         try:
             body_ = {"type": "create_case", "params": {}, "message_id": ids.create}
             r1 = (await c.post("/api/v1/copilot/actions/execute", json=body_, headers=h)).json()
-            r2 = (await c.post("/api/v1/copilot/actions/execute", json=body_, headers=h)).json()
-            assert r1["case_id"] and r2 == r1 and "198.51.100.42" in r1["message"]  # second Confirm: stored result
+            r2 = await c.post("/api/v1/copilot/actions/execute", json=body_, headers=h)
+            assert r1["case_id"] and "198.51.100.42" in r1["message"]
+            assert r2.status_code == 409  # second Confirm: refused, the case is not created twice
             ids.case = r1["case_id"]
-            # follow-up in the general chat lands on the case created above
+            # a follow-up proposed after that (the chat resolves its target when it proposes) lands on that case
+            async with AsyncSessionLocal() as db:
+                follow = CopilotMessage(session_id=ids.session, role="assistant", content="add ip?", action={
+                    "type": "add_artifact", "summary": "", "case_id": ids.case,
+                    "params": {"value": "203.0.113.9", "artifact_type": "ip"}})
+                db.add(follow)
+                await db.commit()
+                ids.follow = follow.id
             r3 = await c.post("/api/v1/copilot/actions/execute", headers=h,
                               json={"type": "add_artifact", "params": {}, "message_id": ids.follow})
             assert r3.status_code == 200 and r3.json()["case_id"] == ids.case

@@ -1,3 +1,5 @@
+import pytest
+
 from app.utils.copilot_heuristics import (
     detect_indicators, extract_note_text, is_note_request, is_declarative_finding,
     is_meta_note,
@@ -51,6 +53,42 @@ def test_declarative_finding():
     assert is_declarative_finding("We isolated the host and reset the user credentials this morning.")
     assert not is_declarative_finding("what happened to the host?")
     assert not is_declarative_finding("ok thanks")
+
+
+@pytest.mark.parametrize("message, is_request, literal", [
+    # literal text: taken verbatim from the message
+    ("Add a note that the syslog-ng server on host-1 was restarted", True,
+     "the syslog-ng server on host-1 was restarted"),
+    ("Add a note that the analyst reviewed the catalog - nothing unusual", True,
+     "the analyst reviewed the catalog - nothing unusual"),
+    ("Record that the user's mailbox was purged and the sender's domain blocked", True,
+     "the user's mailbox was purged and the sender's domain blocked"),
+    ('add a note "we blocked the sender at the gateway"', True, "we blocked the sender at the gateway"),
+    ("record a timeline entry: contained the host", True, "contained the host"),
+    # a request to compose: a note request with no literal text (the model writes it)
+    ("Create a timeline of the attack", True, None),
+    ("Write a comment summarizing the phishing analysis", True, None),
+    ("add this to the timeline", True, None),
+    # not note requests at all
+    ("log in to the firewall and check the timeline", False, None),
+    ("create a case and note the IP 1.2.3.4", False, None),
+    ("Add 1.2.3.4 as an artifact and log it", False, None),
+    ("create a case and add a note that the user clicked", False, "the user clicked"),
+])
+def test_note_phrases(message, is_request, literal):
+    assert is_note_request(message) is is_request
+    assert extract_note_text(message) == literal
+
+
+@pytest.mark.parametrize("message, finding", [
+    ("We isolated the host and reset the user credentials this morning.", True),
+    ("Blocked the sender domain at the gateway and purged 14 mailboxes.", True),
+    ("Update the severity to high and close the case please", False),
+    ("Please summarize what we know so far about this incident", False),
+    ("The user says the laptop was stolen yesterday, can you check please", False),
+])
+def test_declarative_finding_ignores_commands_and_questions(message, finding):
+    assert is_declarative_finding(message) is finding
 
 
 # --- the case-44 failure modes -------------------------------------------

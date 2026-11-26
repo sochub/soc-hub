@@ -232,12 +232,24 @@ def _ms_title(p: dict) -> str:
     return slack_escape(str(p.get("key", "")).replace("_", " ").title())
 
 
-def _suggestion_text(s) -> str:
+def _suggestion_text(s, current: dict) -> str:
     p = s.payload or {}
     if s.kind == "milestone":
         emoji, phrase = _MS_STYLE.get(p.get("key"), (":mag:", "a milestone time"))
-        return (f"{emoji} This sounds like {phrase}. Should I set the case's *{_ms_title(p)}* milestone "
+        text = (f"{emoji} This sounds like {phrase}. Should I set the case's *{_ms_title(p)}* milestone "
                 f"to {slack_escape(_at_label(p.get('at')))}?")
+        now = current.get(p.get("key"))
+        if now is not None:  # accepting replaces a time a person declared: say which
+            from datetime import datetime
+            try:
+                now = now.astimezone(datetime.fromisoformat(p.get("at")).tzinfo)  # same zone as the suggestion
+            except (TypeError, ValueError):
+                pass
+            text += f" It is currently {slack_escape(_at_label(now.isoformat()))}."
+        if p.get("conflict"):
+            text += (f"\n:warning: Not set: {slack_escape(str(p['conflict']))}. Fix the other milestone on the case, "
+                     "then set this one again.")
+        return text
     emoji, noun, value = _art_parts(p)
     return f"{emoji} Should I add the {noun} `{value}` to the case artifacts? It isn't on the case yet."
 
@@ -254,14 +266,18 @@ def _resolved_line(s, names: dict) -> str:
     if s.status == "conflict":
         return (f":warning: Not set: that time would put *{_ms_title(p)}* out of order with the other milestones. "
                 "Adjust it on the case.")
+    if s.status == "superseded":
+        return f":arrows_counterclockwise: Replaced by a newer *{_ms_title(p)}* time."
     by = f" by {who}" if who else ""
     return f":no_entry_sign: Dismissed{by} \u2014 it won't be suggested again for this case."
 
 
-def suggestions_reply(suggestions: list, tenant_id: int, names: Optional[dict] = None) -> List[dict]:
+def suggestions_reply(suggestions: list, tenant_id: int, names: Optional[dict] = None, *,
+                      current: Optional[dict] = None, more: int = 0) -> List[dict]:
     """Thread reply listing SOC-bot suggestions; pending ones get Add/Set + Dismiss buttons.
-    names maps resolved_by_user_id to a display name."""
-    names = names or {}
+    names maps resolved_by_user_id to a display name; current maps a milestone key to the time already declared
+    on the case; more counts this message's pending suggestions that are only shown in the web UI."""
+    names, current = names or {}, current or {}
     blocks: List[dict] = []
     if suggestions:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text":
@@ -273,12 +289,29 @@ def suggestions_reply(suggestions: list, tenant_id: int, names: Optional[dict] =
         if s.status != "pending":
             blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _resolved_line(s, names)}]})
             continue
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _suggestion_text(s)}})
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _suggestion_text(s, current)}})
         blocks.append({"type": "actions", "block_id": f"wrs_{s.id}", "elements": [
             {"type": "button", "action_id": "wrs_accept", "style": "primary", "value": f"wrs:{tenant_id}:{s.id}:a",
              "text": {"type": "plain_text", "text": "Set milestone" if s.kind == "milestone" else "Add to case"}},
             {"type": "button", "action_id": "wrs_dismiss", "value": f"wrs:{tenant_id}:{s.id}:d",
              "text": {"type": "plain_text", "text": "Dismiss"}}]})
+    pending = [s for s in suggestions if s.status == "pending"]
+    if len(pending) > 1:
+        # the value carries one suggestion of this reply; the handler resolves every pending row of the reply
+        anchor = pending[0].id
+        blocks.append({"type": "actions", "block_id": f"wrs_all_{anchor}", "elements": [
+            {"type": "button", "action_id": "wrs_accept_all", "value": f"wrs:{tenant_id}:{anchor}:A",
+             "text": {"type": "plain_text", "text": "Add all"},
+             "confirm": {"title": {"type": "plain_text", "text": "Add all?"},
+                         "text": {"type": "plain_text", "text": f"Apply all {len(pending)} suggestions to the case."},
+                         "confirm": {"type": "plain_text", "text": "Add all"},
+                         "deny": {"type": "plain_text", "text": "Cancel"}}},
+            {"type": "button", "action_id": "wrs_dismiss_all", "value": f"wrs:{tenant_id}:{anchor}:D",
+             "text": {"type": "plain_text", "text": "Dismiss all"}}]})
+    if more > 0 and suggestions:
+        url = case_url(suggestions[0].case_id)
+        where = f"<{url}|SOC Hub>" if url else "SOC Hub"
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"+{more} more in {where}"}]})
     return blocks
 
 

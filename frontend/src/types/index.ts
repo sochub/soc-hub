@@ -181,6 +181,13 @@ export interface CopilotAction {
   params: Record<string, unknown>;
   /** Set once the action ran; stored on the message so it survives a reload. */
   result?: ActionResult | null;
+  /** Target case, fixed when the action was proposed. Absent on a case action = it needs a case. */
+  case_id?: number | null;
+  /** The target as it is now: its title, or `case_missing` when it was deleted since. */
+  case_title?: string | null;
+  case_missing?: boolean;
+  /** Stored once the user cancelled/dismissed it, or while a confirmed write runs: no longer confirmable. */
+  state?: 'cancelled' | 'dismissed' | 'running' | null;
 }
 
 export interface RelatedCase {
@@ -501,10 +508,12 @@ export interface CaseAsset {
 export interface WarRoomSuggestion {
   id: number;
   kind: 'artifact' | 'milestone';
-  payload: { type?: string; value?: string; key?: string; at?: string };
+  // conflict: why a milestone could not be set (the suggestion stays pending); author: who said it in Slack
+  payload: { type?: string; value?: string; key?: string; at?: string; conflict?: string; author?: string };
   status: string;
   permalink: string | null;
   created_at: string;
+  current?: string | null;  // milestone only: the time already declared on the case
 }
 
 export interface EscalationGroupMember { user_id: number; email: string; full_name: string | null }

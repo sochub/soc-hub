@@ -1,16 +1,18 @@
+import re
 from typing import Any, List, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import delete, func
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import delete, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.api import deps
 from app.services import case_service, task_service
-from app.services.ai_service import AIService, extract_action, strip_action_blocks
+from app.ai.errors import AIError, AIUnavailable
+from app.services.ai_service import AIService, _unavailable_text, extract_action, strip_action_blocks
 from app.services.artifact_types import not_private
-from app.models.case import Case, CaseStatus, CaseSeverity, TimelineEvent
+from app.models.case import CASE_OUTCOMES, Case, CaseStatus, CaseSeverity, TimelineEvent
 from app.models.artifact import Artifact, ArtifactType
 from app.models.case_artifact import CaseArtifact
 from app.models.ioc import IOC
@@ -18,7 +20,8 @@ from app.models.user import User
 from app.models.copilot_session import CopilotSession, CopilotMessage
 from app.schemas.copilot import CopilotSessionSchema, CopilotChatRequest, CopilotMessageSchema
 from app.schemas.copilot_action import (
-    ActionExecuteRequest, ActionResult, RelatedCase, WRITE_ACTIONS, ACTION_TYPES,
+    ActionDismissRequest, ActionExecuteRequest, ActionProposal, ActionResult, RelatedCase, WRITE_ACTIONS,
+    ACTION_TYPES,
 )
 from app.utils.audit import create_audit_log
 from app.utils.copilot_heuristics import (
@@ -35,16 +38,21 @@ _CLOSED_STATUSES = {CaseStatus.RESOLVED, CaseStatus.CLOSED}
 
 # If the first reply has no action block but the message looks like a command,
 # we run a constrained-JSON second pass to recover the action.
-_ACTION_KEYWORDS = (
-    "create", "add ", "note", "comment", "set ", "update", "change", "mark",
-    "resolve", "close", "block", "isolate", "tag", "apply", "correlate",
-    "related case", "escalat", "remediat", "contain", "open a case", "make a case",
+# Whole words only: "stage", "outage", "markdown" or "why was this blocked?" are not commands.
+_ACTION_KEYWORDS = re.compile(
+    r"\b(?:create|add|note|comment|set|update|change|mark|resolve|close|block|isolate|tag|apply|correlate"
+    r"|related cases?|escalate|remediate|contain|open a case|make a case)\b",
+    re.IGNORECASE,
 )
+# Actions that write to (or read from) one case, so their proposal carries the target case.
+_CASE_ACTIONS = {"add_artifact", "add_timeline_note", "update_case", "apply_playbook", "find_related"}
+# "case #12", "case 12" or "#12" in the analyst's message; not the "10" of "case 10.0.0.1".
+_CASE_REF = re.compile(r"(?:\bcase\s*#?\s*|#)(\d{1,9})(?![.\d])", re.IGNORECASE)
+_SESSION_LOCK_NS = 0x436F5069  # advisory-lock namespace for copilot session get-or-create
 
 
 def _looks_actionable(message: str) -> bool:
-    m = (message or "").lower()
-    return any(k in m for k in _ACTION_KEYWORDS)
+    return bool(_ACTION_KEYWORDS.search(message or ""))
 
 
 async def _case_indicator_values(db: AsyncSession, case_id: int, tenant_id: int) -> set:
@@ -93,7 +101,7 @@ async def _build_suggestions(
 
     if (
         len(suggestions) < 3
-        and (primary_action is None or primary_action.get("type") != "add_timeline_note")
+        and primary_action is None  # a command that already produced an action is not a finding
         and not is_note_request(message)
         and is_declarative_finding(message)
     ):
@@ -164,16 +172,18 @@ async def _build_full_case_context(
     db: AsyncSession, case_id: int, tenant_id: int
 ) -> Dict[str, Any] | None:
     """Load case with all related data (timeline, artifacts) scoped to tenant."""
-    result = await db.execute(
-        select(Case)
-        .options(selectinload(Case.timeline_events))
-        .where(Case.id == case_id, Case.tenant_id == tenant_id)
-    )
+    result = await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))
     case = result.scalars().first()
     if not case:
         return None
 
-    # Load artifacts through junction table
+    # Oldest first, in a stable order: the prompt keeps the most recent entries (and pinned ones).
+    timeline = (await db.execute(
+        select(TimelineEvent).where(TimelineEvent.case_id == case_id)
+        .order_by(TimelineEvent.created_at, TimelineEvent.id)
+    )).scalars().all()
+
+    # Load artifacts through junction table, most recently attached first
     result = await db.execute(
         select(Artifact)
         .join(CaseArtifact, CaseArtifact.artifact_id == Artifact.id)
@@ -182,6 +192,7 @@ async def _build_full_case_context(
             Artifact.tenant_id == tenant_id,
             not_private(),
         )
+        .order_by(CaseArtifact.id.desc())
     )
     artifacts = result.scalars().all()
 
@@ -196,13 +207,14 @@ async def _build_full_case_context(
     }
 
     # Timeline events
-    if case.timeline_events:
+    if timeline:
         events = []
-        for e in case.timeline_events:
+        for e in timeline:
             events.append({
                 "type": e.event_type,
                 "content": e.content,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
+                "pinned": bool(e.pinned),
             })
         context["timeline_events"] = events
 
@@ -221,6 +233,40 @@ async def _build_full_case_context(
     return context
 
 
+async def _existing_session(
+    db: AsyncSession, tenant_id: int, user_id: int, case_id: Optional[int]
+) -> Optional[CopilotSession]:
+    """The user's newest session for a case (or the general one when `case_id` is None), with its messages."""
+    result = await db.execute(
+        select(CopilotSession)
+        .options(selectinload(CopilotSession.messages))
+        .where(
+            CopilotSession.case_id == case_id if case_id is not None else CopilotSession.case_id.is_(None),
+            CopilotSession.user_id == user_id,
+            CopilotSession.tenant_id == tenant_id,
+        )
+        .order_by(CopilotSession.created_at.desc())
+    )
+    return result.scalars().first()
+
+
+async def _store_session(
+    db: AsyncSession, tenant_id: int, user_id: int, case_id: Optional[int], welcome_text: str
+) -> CopilotSession:
+    """Insert the session with its briefing — unless another request (a second tab) stored one while this one
+    was waiting on the model. There is no unique constraint to lean on, so the re-check and the insert run
+    under a per-user advisory lock held until commit."""
+    await db.execute(text("SELECT pg_advisory_xact_lock(:ns, :uid)"), {"ns": _SESSION_LOCK_NS, "uid": user_id})
+    session = await _existing_session(db, tenant_id, user_id, case_id)
+    if session is None:
+        session = CopilotSession(case_id=case_id, tenant_id=tenant_id, user_id=user_id)
+        db.add(session)
+        await db.flush()
+        db.add(CopilotMessage(session_id=session.id, role="assistant", content=welcome_text))
+    await db.commit()
+    return await _existing_session(db, tenant_id, user_id, case_id)
+
+
 async def _create_session_with_briefing(
     db: AsyncSession, case_id: int, tenant_id: int, user_id: int
 ) -> CopilotSession:
@@ -237,28 +283,7 @@ async def _create_session_with_briefing(
     else:
         welcome_text = "Investigation session started. Ask me anything about this case."
 
-    session = CopilotSession(
-        case_id=case_id,
-        tenant_id=tenant_id,
-        user_id=user_id,
-    )
-    db.add(session)
-    await db.flush()
-    welcome = CopilotMessage(
-        session_id=session.id,
-        role="assistant",
-        content=welcome_text,
-    )
-    db.add(welcome)
-    await db.commit()
-
-    # Re-load with messages
-    result = await db.execute(
-        select(CopilotSession)
-        .options(selectinload(CopilotSession.messages))
-        .where(CopilotSession.id == session.id)
-    )
-    return result.scalars().first()
+    return await _store_session(db, tenant_id, user_id, case_id, welcome_text)
 
 
 async def _create_general_session_with_briefing(
@@ -269,19 +294,26 @@ async def _create_general_session_with_briefing(
     await db.commit()  # release the DB connection before the slow LLM call (see above)
     service = AIService(tenant_id=tenant_id)
     welcome_text = await service.generate_general_welcome(context)
+    return await _store_session(db, tenant_id, user_id, None, welcome_text)
 
-    session = CopilotSession(case_id=None, tenant_id=tenant_id, user_id=user_id)
-    db.add(session)
-    await db.flush()
-    db.add(CopilotMessage(session_id=session.id, role="assistant", content=welcome_text))
-    await db.commit()
 
-    result = await db.execute(
-        select(CopilotSession)
-        .options(selectinload(CopilotSession.messages))
-        .where(CopilotSession.id == session.id)
-    )
-    return result.scalars().first()
+async def _with_targets(db: AsyncSession, tenant_id: int, messages: List[CopilotMessageSchema]) -> None:
+    """Fill in each proposal's target case as it is NOW (title, or missing when it was deleted since), so the
+    card can name the case before Confirm instead of failing after it."""
+    proposals = [p for m in messages for p in (m.action, *(m.suggestions or [])) if p and p.case_id]
+    if not proposals:
+        return
+    rows = await db.execute(select(Case.id, Case.title).where(
+        Case.id.in_({p.case_id for p in proposals}), Case.tenant_id == tenant_id))
+    titles = {cid: title for cid, title in rows.all()}
+    for p in proposals:
+        p.case_title, p.case_missing = titles.get(p.case_id), p.case_id not in titles
+
+
+async def _session_out(db: AsyncSession, tenant_id: int, session: CopilotSession) -> CopilotSessionSchema:
+    out = CopilotSessionSchema.model_validate(session)
+    await _with_targets(db, tenant_id, out.messages)
+    return out
 
 
 @router.get("/sessions/general", response_model=CopilotSessionSchema)
@@ -295,20 +327,10 @@ async def get_or_create_general_session(
 
     Declared before /sessions/{case_id} so the literal path wins the match.
     """
-    result = await db.execute(
-        select(CopilotSession)
-        .options(selectinload(CopilotSession.messages))
-        .where(
-            CopilotSession.case_id.is_(None),
-            CopilotSession.user_id == current_user.id,
-            CopilotSession.tenant_id == tenant_id,
-        )
-        .order_by(CopilotSession.created_at.desc())
-    )
-    session = result.scalars().first()
+    session = await _existing_session(db, tenant_id, current_user.id, None)
     if not session:
         session = await _create_general_session_with_briefing(db, tenant_id, current_user.id)
-    return session
+    return await _session_out(db, tenant_id, session)
 
 
 @router.get("/sessions/{case_id}", response_model=CopilotSessionSchema)
@@ -327,23 +349,10 @@ async def get_or_create_session(
     if not result.scalars().first():
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Find existing session for this user + case
-    result = await db.execute(
-        select(CopilotSession)
-        .options(selectinload(CopilotSession.messages))
-        .where(
-            CopilotSession.case_id == case_id,
-            CopilotSession.user_id == current_user.id,
-            CopilotSession.tenant_id == tenant_id,
-        )
-        .order_by(CopilotSession.created_at.desc())
-    )
-    session = result.scalars().first()
-
+    session = await _existing_session(db, tenant_id, current_user.id, case_id)
     if not session:
         session = await _create_session_with_briefing(db, case_id, tenant_id, current_user.id)
-
-    return session
+    return await _session_out(db, tenant_id, session)
 
 
 async def _drop_sessions(db: AsyncSession, tenant_id: int, user_id: int, case_id: Optional[int]) -> None:
@@ -406,14 +415,6 @@ async def chat_copilot(
     With a `case_id` the copilot uses full single-case context; without one it
     runs in general mode against a tenant-level queue overview.
     """
-    general = chat_in.case_id is None
-    if general:
-        context = await _build_general_context(db, tenant_id)
-    else:
-        context = await _build_full_case_context(db, chat_in.case_id, tenant_id)
-        if not context:
-            raise HTTPException(status_code=404, detail="Case not found")
-
     if not chat_in.session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
 
@@ -432,6 +433,19 @@ async def chat_copilot(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # The session decides the mode and the case. A request naming another case is a stale or mismatched pair:
+    # answering it would file one case's conversation (and its actions) under the other.
+    case_id = session.case_id
+    if chat_in.case_id is not None and chat_in.case_id != case_id:
+        raise HTTPException(status_code=400, detail="This session belongs to a different conversation.")
+    general = case_id is None
+    if general:
+        context = await _build_general_context(db, tenant_id)
+    else:
+        context = await _build_full_case_context(db, case_id, tenant_id)
+        if not context:
+            raise HTTPException(status_code=404, detail="Case not found")
+
     # Save user message
     user_msg = CopilotMessage(
         session_id=session.id,
@@ -447,7 +461,17 @@ async def chat_copilot(
     await db.commit()
 
     service = AIService(tenant_id=tenant_id)
-    response_text = await service.chat(history, context, general=general)
+    try:
+        response_text = await service.chat(history, context, general=general, raise_errors=True)
+    except AIError as e:
+        # A failed exchange leaves nothing behind: stored as an assistant turn, the "unavailable" text was
+        # replayed to the model as its own words on every later message. The client keeps the typed text
+        # for a retry, so the user turn goes too (no duplicate on resend).
+        await db.delete(user_msg)
+        await db.commit()
+        timed_out = getattr(e, "cause", None) == "Timeout"
+        raise HTTPException(status_code=504 if timed_out else 503 if isinstance(e, AIUnavailable) else 502,
+                            detail=_unavailable_text(e))
 
     # ---- action resolution -------------------------------------------------
     # Note requests are handled deterministically: the local model is unreliable
@@ -469,13 +493,15 @@ async def chat_copilot(
     else:
         action = extract_action(response_text)
         if not action and _looks_actionable(chat_in.message):
-            # Second pass: the local model often forgets the fenced block.
-            action = await service.force_action_extraction(chat_in.message, context, general=general)
+            # Second pass: the local model often forgets the fenced block. It gets the turns just before
+            # this message too, so "yes, add it" has something to refer to.
+            action = await service.force_action_extraction(chat_in.message, context, general=general,
+                                                           recent=history[-4:-1])
 
     # Validate any model-proposed note: prefer literal text from the user's
     # message; reject meta/placeholder content ("Added activity log") outright.
     if action and action.get("type") == "add_timeline_note":
-        content = str(action.get("params", {}).get("content", "")).strip()
+        content = str(action["params"].get("content", "")).strip()
         better = extract_note_text(chat_in.message)
         if better and not is_meta_note(better):
             action["params"]["content"] = better
@@ -487,19 +513,33 @@ async def chat_copilot(
                 action = None
 
     if action and action.get("type") == "create_case":
-        said = "\n".join(m["content"] for m in history if m["role"] == "user")
-        found = detect_indicators(said, limit=MAX_CASE_ARTIFACTS)
+        # This message first, then the few user turns before it: the indicator just named is never the one
+        # cut by the cap, and a long session's early indicators don't leak into an unrelated case.
+        found: List[Dict[str, str]] = []
+        for said in [m["content"] for m in reversed(history) if m["role"] == "user"][:4]:
+            found += [d for d in detect_indicators(said, limit=MAX_CASE_ARTIFACTS)
+                      if d["value"].lower() not in {f["value"].lower() for f in found}]
         if found:
-            action.setdefault("params", {})["artifacts"] = found
+            action["params"]["artifacts"] = found[:MAX_CASE_ARTIFACTS]
+
+    if action and action.get("type") in _CASE_ACTIONS:
+        target = await _target_case(db, tenant_id, session, chat_in.message)
+        if target is not None:
+            action["case_id"] = target
+
+    if action:
+        # Model output is stored (and later executed) only in the proposal's shape.
+        try:
+            action = ActionProposal(**action).model_dump(exclude_none=True, exclude={"case_title", "case_missing"})
+        except ValidationError:
+            action = None
 
     display_text = strip_action_blocks(response_text)
     if action and not display_text:
         display_text = action.get("summary") or "I've prepared an action below — confirm to run it."
 
     # ---- proactive suggestions ----------------------------------------------
-    suggestions = await _build_suggestions(
-        db, tenant_id, None if general else chat_in.case_id, chat_in.message, action
-    )
+    suggestions = await _build_suggestions(db, tenant_id, case_id, chat_in.message, action)
 
     assistant_msg = CopilotMessage(
         session_id=session.id,
@@ -512,7 +552,22 @@ async def chat_copilot(
     await db.commit()
     await db.refresh(assistant_msg)
 
-    return assistant_msg
+    out = CopilotMessageSchema.model_validate(assistant_msg)
+    await _with_targets(db, tenant_id, [out])
+    return out
+
+
+async def _target_case(db: AsyncSession, tenant_id: int, session: CopilotSession, message: str) -> Optional[int]:
+    """The case a proposal will act on, fixed when it is proposed so the card shows it before Confirm: the
+    session's case; in the general session a case the analyst named ("case #12"), otherwise the case most
+    recently created from this conversation. None means the proposal needs a case — never a guess."""
+    if session.case_id is not None:
+        return session.case_id
+    named = _CASE_REF.search(message or "")
+    case_id = int(named.group(1)) if named else await _conversation_case(db, session.id)
+    if case_id is None:
+        return None
+    return (await db.execute(select(Case.id).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalar()
 
 
 @router.post("/analyze", response_model=Dict[str, str])
@@ -587,6 +642,51 @@ async def _find_related_cases(
     ]
 
 
+async def _lock_message(db: AsyncSession, message_id: int, user_id: int, tenant_id: int) -> CopilotMessage:
+    """The caller's own message, row-locked until the next commit so two requests can't both act on its
+    proposal. Someone else's (or another tenant's) message is a 404."""
+    msg = (await db.execute(
+        select(CopilotMessage).join(CopilotSession).options(selectinload(CopilotMessage.session))
+        .where(CopilotMessage.id == message_id, CopilotSession.user_id == user_id,
+               CopilotSession.tenant_id == tenant_id)
+        .with_for_update(of=CopilotMessage).execution_options(populate_existing=True)
+    )).scalars().first()
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return msg
+
+
+def _proposal(msg: CopilotMessage, index: Optional[int]) -> Dict[str, Any]:
+    """The stored proposal (main action, or suggestion `index`); 404 when there is none or it is malformed."""
+    items = msg.suggestions if isinstance(msg.suggestions, list) else []
+    stored = msg.action if index is None else items[index] if 0 <= index < len(items) else None
+    if not isinstance(stored, dict) or not isinstance(stored.get("params") or {}, dict):
+        raise HTTPException(status_code=404, detail="Action not found")
+    return stored
+
+
+def _set_proposal(msg: CopilotMessage, index: Optional[int], proposal: Dict[str, Any]) -> None:
+    # Always a new object: the JSON column only notices reassignment, not in-place edits.
+    if index is None:
+        msg.action = proposal
+    else:
+        msg.suggestions = [proposal if i == index else s for i, s in enumerate(msg.suggestions)]
+
+
+async def _settle(db: AsyncSession, req: ActionExecuteRequest, user_id: int, tenant_id: int,
+                  result: Optional[ActionResult]) -> None:
+    """End a run: store its result on the proposal, or (result None: it failed) hand the proposal back."""
+    try:
+        msg = await _lock_message(db, req.message_id, user_id, tenant_id)
+    except HTTPException:
+        return  # the conversation was cleared while the action ran: nothing left to record it on
+    stored = {k: v for k, v in _proposal(msg, req.suggestion_index).items() if k != "state"}
+    if result is not None:
+        stored["result"] = result.model_dump(exclude_none=True)
+    _set_proposal(msg, req.suggestion_index, stored)
+    await db.commit()
+
+
 @router.post("/actions/execute", response_model=ActionResult)
 async def execute_action(
     *,
@@ -598,61 +698,70 @@ async def execute_action(
     """Execute a copilot-proposed action. Writes require analyst-or-above and are
     audit-logged; everything is scoped to the active tenant.
 
-    With `message_id` the proposal is taken from that (own) message rather than the request, an
-    already-executed proposal returns its stored result, the result is stored on the message,
-    and in a general session a case created earlier in the conversation is the default target.
+    With `message_id` the proposal (type, params, target case) is taken from that (own) message rather than
+    the request, and its outcome is stored there. A write runs once: a proposal that was already run,
+    cancelled or dismissed is refused with 409. A read returns its stored result instead of running again.
     """
-    msg = None
+    claimed = False
+    user_id = current_user.id  # read now: a rollback below expires the loaded user
     if req.message_id is not None:
-        msg = (await db.execute(
-            select(CopilotMessage).join(CopilotSession).options(selectinload(CopilotMessage.session))
-            .where(CopilotMessage.id == req.message_id, CopilotSession.user_id == current_user.id,
-                   CopilotSession.tenant_id == tenant_id)
-        )).scalars().first()
-        if msg is None:
-            raise HTTPException(status_code=404, detail="Message not found")
+        msg = await _lock_message(db, req.message_id, user_id, tenant_id)
         stored = _proposal(msg, req.suggestion_index)
-        if stored is None:
-            raise HTTPException(status_code=404, detail="Action not found")
-        if stored.get("result"):
+        is_write = stored.get("type") in WRITE_ACTIONS
+        if stored.get("result") and not is_write:
             return ActionResult(**stored["result"])
+        if stored.get("result") or stored.get("state"):
+            raise HTTPException(status_code=409, detail=f"This action was already {stored.get('state') or 'run'}.")
         req.type, req.params = stored.get("type", req.type), stored.get("params") or {}
-        if msg.session.case_id is not None:
-            req.case_id = msg.session.case_id
-        elif req.case_id is None:
-            req.case_id = await _conversation_case(db, msg)
-
-    result = await _run_action(db, req, current_user, tenant_id)
-
-    if msg is not None and req.type in WRITE_ACTIONS:
-        # ponytail: not locked; two Confirms landing in the same instant can both run. Lock the row if that shows up.
-        await db.refresh(msg)
-        stored = dict(_proposal(msg, req.suggestion_index) or {})
-        stored["result"] = result.model_dump(exclude_none=True)
-        if req.suggestion_index is None:
-            msg.action = stored
-        else:
-            msg.suggestions = [stored if i == req.suggestion_index else s for i, s in enumerate(msg.suggestions)]
+        # The target was resolved when the proposal was made and shown on the card; it is not re-guessed here.
+        req.case_id = stored.get("case_id") or msg.session.case_id
+        if is_write:
+            # Claim it under the row lock, so a second Confirm (double click, second tab) is refused above.
+            # ponytail: a worker killed mid-run leaves the proposal "running" for good; the analyst asks again.
+            _set_proposal(msg, req.suggestion_index, {**stored, "state": "running"})
+            claimed = True
         await db.commit()
+
+    try:
+        result = await _run_action(db, req, current_user, tenant_id)
+    except Exception:
+        if claimed:
+            await db.rollback()
+            await _settle(db, req, user_id, tenant_id, None)
+        raise
+    if req.message_id is not None:
+        await _settle(db, req, user_id, tenant_id, result)
     return result
 
 
-def _proposal(msg: CopilotMessage, index: Optional[int]) -> Optional[Dict[str, Any]]:
-    if index is None:
-        return msg.action
-    items = msg.suggestions or []
-    return items[index] if 0 <= index < len(items) else None
+@router.post("/actions/dismiss", response_model=ActionProposal)
+async def dismiss_action(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    req: ActionDismissRequest,
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Record that the user cancelled or dismissed a proposal of their own, so it can't be confirmed later
+    (e.g. after reopening the panel). A proposal that already ran or was already settled is left as it is."""
+    msg = await _lock_message(db, req.message_id, current_user.id, tenant_id)
+    stored = _proposal(msg, req.suggestion_index)
+    if not stored.get("result") and not stored.get("state"):
+        stored = {**stored, "state": req.state}
+        _set_proposal(msg, req.suggestion_index, stored)
+    await db.commit()
+    return stored
 
 
-async def _conversation_case(db: AsyncSession, msg: CopilotMessage) -> Optional[int]:
-    """The most recent case created by a confirmed action earlier in this conversation."""
+async def _conversation_case(db: AsyncSession, session_id: int) -> Optional[int]:
+    """The most recent case created by a confirmed action in this conversation."""
     rows = (await db.execute(
-        select(CopilotMessage.action).where(CopilotMessage.session_id == msg.session_id,
-                                            CopilotMessage.id <= msg.id, CopilotMessage.action.isnot(None))
+        select(CopilotMessage.action).where(CopilotMessage.session_id == session_id)
         .order_by(CopilotMessage.id.desc())
     )).scalars().all()
     for action in rows:
-        if action.get("type") == "create_case" and (action.get("result") or {}).get("case_id"):
+        if (isinstance(action, dict) and action.get("type") == "create_case"
+                and (action.get("result") or {}).get("case_id")):
             return action["result"]["case_id"]
     return None
 
@@ -777,12 +886,24 @@ async def _run_action(db: AsyncSession, req: ActionExecuteRequest, current_user:
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid severity.")
         if p.get("tags") is not None:
-            tags = [str(t).strip() for t in p["tags"] if str(t).strip()]
+            new_tags = [p["tags"]] if isinstance(p["tags"], str) else p["tags"]  # never iterate a string
+            if not isinstance(new_tags, list) or not all(isinstance(t, str) for t in new_tags):
+                raise HTTPException(status_code=400, detail="Tags must be a list of text values.")
+            # Added to the case's tags, never replacing them: a proposal naming one tag must not wipe the rest.
+            tags = list(dict.fromkeys(t.strip() for t in [*(case.tags or []), *new_tags] if t.strip()))
             update_data["tags"] = tags
             changes["tags"] = tags
         if not changes:
             raise HTTPException(status_code=400, detail="Nothing to update.")
-        # Same guards as REST/MCP: closing needs an outcome + closing note, which a copilot action can't supply.
+        if update_data.get("status") == CaseStatus.CLOSED:
+            # Outcome and closing note come from the analyst on the card (the model can't supply them).
+            if req.outcome is not None:
+                if req.outcome not in CASE_OUTCOMES:
+                    raise HTTPException(status_code=400, detail="Invalid outcome.")
+                update_data["outcome"] = req.outcome
+            if req.closing_note is not None:
+                update_data["closing_note"] = req.closing_note.strip()
+        # Same guards as REST/MCP: closing needs an outcome + closing note.
         await case_service.check_case_update(db, case=case, data=update_data, tenant_id=tenant_id, role=role)
         await case_service.apply_case_update(db, case=case, update_data=update_data, user_id=current_user.id)
         await db.commit()

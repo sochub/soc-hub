@@ -1,12 +1,15 @@
 """Listening pipeline: Slack message events -> suggestions -> thread reply."""
+import itertools
+import json
 import secrets
-import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select, update
 
 from app.db.session import AsyncSessionLocal
 from app.models.case import Case
+from app.models.membership import TenantMembership
 from app.models.slack_integration import SlackIntegration
 from app.models.war_room_suggestion import WarRoomMessageSeen, WarRoomSuggestion
 from app.services import slack_bot
@@ -41,7 +44,7 @@ def slack(monkeypatch):
     async def fake_call(token, method, **kw):
         calls.append((method, kw))
         if method == "users.info":
-            return {"user": {"tz": state["tz"], "profile": {"email": state["email"]}}}
+            return {"user": {"tz": state["tz"], "real_name": "Ana Ruiz", "profile": {"email": state["email"]}}}
         if method == "chat.postMessage":
             return {"ok": True, "ts": "9.9"}
         if method == "chat.getPermalink":
@@ -69,8 +72,12 @@ async def room(db, ids, *, listen=True, channel=None, alert_channel=None):
     return t, case, channel
 
 
+# A fixed clock (16:00 in Madrid): TEXT's "contained at 14:32" must be in the past whenever the suite runs.
+_clock = itertools.count(int(datetime(2026, 10, 26, 15, 0, tzinfo=timezone.utc).timestamp()))
+
+
 def ev(channel, ts=None, **kw):
-    ts = ts or f"{time.time():.6f}"
+    ts = ts or f"{next(_clock)}.000100"
     return {"channel": channel, "ts": ts, "thread_ts": None, "user": "U1", "text": TEXT, **kw}
 
 
@@ -174,8 +181,8 @@ def test_tz_cached_in_redis_and_linked_user_fallback(slack):
             await db.commit()
         slack["state"]["tz"] = None
         slack["state"]["email"] = u.email
-        await wr.process_message(t.id, ev(ch, ts="1.1"))
-        await wr.process_message(t.id, ev(ch, ts="2.2", text="contained at 14:32"))
+        await wr.process_message(t.id, ev(ch))
+        await wr.process_message(t.id, ev(ch, text="contained at 14:32"))
         assert sum(1 for m, _ in slack["calls"] if m == "users.info") == 1
         assert any(k == f"slack:tz:{t.id}:U1" for k in slack["redis"].data)
         ms = [r for r in await rows(case.id) if r.kind == "milestone"]
@@ -194,20 +201,230 @@ def test_author_email_excluded(slack):
     run(body)
 
 
-def test_slack_failure_releases_seen_row(slack, monkeypatch):
+def _failing_post(monkeypatch, error):
+    orig = wr.slack_call
+
+    async def boom(token, method, **kw):
+        if method == "chat.postMessage":
+            raise error
+        return await orig(token, method, **kw)
+    monkeypatch.setattr(wr, "slack_call", boom)
+    return orig
+
+
+def test_transient_reply_failure_keeps_rows_and_the_retry_posts_once(slack, monkeypatch):
     async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+        e = ev(ch)
+        orig = _failing_post(monkeypatch, wr.SlackError("down"))
+        with pytest.raises(wr.SlackError):   # raised so Celery retries the task
+            await wr.process_message(t.id, e)
+        rs = await rows(case.id)
+        assert len(rs) == 3 and all(r.reply_ts is None and r.permalink for r in rs) and await seen(ch) == 1
+        monkeypatch.setattr(wr, "slack_call", orig)
+        await wr.process_message(t.id, e)   # the retry: nothing is recorded twice, the reply goes out
+        await wr.process_message(t.id, e)   # a late redelivery: no second reply
+        rs = await rows(case.id)
+        assert len(rs) == 3 and all(r.reply_ts == "9.9" for r in rs) and len(posts(slack)) == 1
+    run(body)
+
+
+def test_permanent_reply_failure_does_not_raise_or_lose_rows(slack, monkeypatch):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+        _failing_post(monkeypatch, wr.SlackError("chat.postMessage: is_archived", code="is_archived"))
+        await wr.process_message(t.id, ev(ch))
+        assert len(await rows(case.id)) == 3
+    run(body)
+
+
+def test_crash_while_recording_leaves_nothing_behind(slack, monkeypatch):
+    """'Seen' and the suggestions commit together: a failed run is redone in full by the retry."""
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+        e = ev(ch)
+        real = wr.record_candidates
+
+        async def boom(*a, **kw):
+            await real(*a, **kw)
+            raise RuntimeError("worker died")
+        monkeypatch.setattr(wr, "record_candidates", boom)
+        with pytest.raises(RuntimeError):
+            await wr.process_message(t.id, e)
+        assert await rows(case.id) == [] and await seen(ch) == 0 and not posts(slack)
+        monkeypatch.setattr(wr, "record_candidates", real)
+        await wr.process_message(t.id, e)
+        assert len(await rows(case.id)) == 3 and len(posts(slack)) == 1
+    run(body)
+
+
+def test_task_retries_with_backoff():
+    task = wr.war_room_message_task
+    assert task.max_retries == 3 and task.retry_backoff is True and task.acks_late
+    assert task.autoretry_for == (Exception,) and task.dont_autoretry_for == (wr.SoftTimeLimitExceeded,)
+
+
+def test_overflow_reply_shows_five_and_counts_the_rest(slack):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+        text = " ".join(f"185.220.101.{i}" for i in range(1, 9)) + " contained at 14:32"
+        await wr.process_message(t.id, ev(ch, text=text))
+        rs = await rows(case.id)
+        assert len(rs) == 9 and all(r.status == "pending" and r.permalink for r in rs)
+        assert sorted(r.kind for r in rs if r.reply_ts) == ["artifact"] * 5 + ["milestone"]
+        blocks = json.dumps(posts(slack)[0]["blocks"])
+        assert "+3 more in" in blocks and "wrs_accept_all" in blocks and "185.220.101.8" not in blocks
+    run(body)
+
+
+def test_author_and_permalink_are_stored(slack):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+        await wr.process_message(t.id, ev(ch, text="beacon to 185.220.101.4"))
+        (r,) = await rows(case.id)
+        assert r.payload == {"type": "ip", "value": "185.220.101.4", "slack_user": "U1", "author": "Ana Ruiz"}
+        assert r.permalink == "https://x.slack.com/archives/C/p1"
+    run(body)
+
+
+def test_users_info_failure_falls_back_to_bound_member_timezone(slack, monkeypatch):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+            u = await make_user(db, ids)
+            u.timezone = "Asia/Tokyo"
+            db.add(TenantMembership(user_id=u.id, tenant_id=t.id, role="analyst", slack_user_id="U1"))
+            await db.commit()
+        orig = wr.slack_call
+
+        async def no_profile(token, method, **kw):
+            if method == "users.info":
+                raise wr.SlackError("users.info: user_not_found", code="user_not_found")
+            return await orig(token, method, **kw)
+        monkeypatch.setattr(wr, "slack_call", no_profile)
+        await wr.process_message(t.id, ev(ch))
+        ms = [r for r in await rows(case.id) if r.kind == "milestone"]
+        assert ms and ms[0].payload["at"].endswith("+09:00")
+        # an author nobody can place: indicators are still suggested, a zone-less time is not guessed as UTC
+        await wr.process_message(t.id, ev(ch, user="U2", text="recovered at 15:10, also 185.220.101.99"))
+        new = [r for r in await rows(case.id) if r.payload.get("slack_user") == "U2"]
+        assert [r.kind for r in new] == ["artifact"]
+    run(body)
+
+
+@pytest.mark.parametrize("status", ["resolved", "closed"])
+def test_finished_case_gets_no_suggestions(slack, status):
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+            c = await db.get(Case, case.id)
+            c.status = status
+            await db.commit()
+        await wr.process_message(t.id, ev(ch))
+        assert await rows(case.id) == [] and not posts(slack) and await seen(ch) == 0
+        async with AsyncSessionLocal() as db:
+            assert (await db.get(Case, case.id)).slack_listen is True   # the toggle is left alone
+    run(body)
+
+
+def test_accepted_before_reply_ts_is_stored_redraws_the_reply(slack, monkeypatch):
+    async def body(ids):
+        from app.tasks.slack import slack_case_event_task
+        queued = []
+        monkeypatch.setattr(slack_case_event_task, "delay", lambda *a: queued.append(a))
         async with AsyncSessionLocal() as db:
             t, case, ch = await room(db, ids)
         orig = wr.slack_call
 
-        async def boom(token, method, **kw):
-            if method == "chat.postMessage":
-                raise wr.SlackError("down")
+        async def accept_meanwhile(token, method, **kw):
+            if method == "chat.postMessage":   # someone accepts in the web UI while the reply is in flight
+                async with AsyncSessionLocal() as db:
+                    row = (await db.execute(select(WarRoomSuggestion).where(
+                        WarRoomSuggestion.case_id == case.id))).scalars().first()
+                    row.status = "accepted"
+                    await db.commit()
             return await orig(token, method, **kw)
-        monkeypatch.setattr(wr, "slack_call", boom)
-        await wr.process_message(t.id, ev(ch))  # reply failure must not raise or lose rows
-        assert len(await rows(case.id)) == 3
+        monkeypatch.setattr(wr, "slack_call", accept_meanwhile)
+        await wr.process_message(t.id, ev(ch))
+        assert queued == [(t.id, "war_room.rerender", case.id, {"reply_ts": "9.9", "channel": ch})]
     run(body)
+
+
+def test_prune_drops_old_seen_rows_and_expires_suggestions_of_long_closed_cases(slack):
+    async def body(ids):
+        old = datetime.now(timezone.utc) - timedelta(days=8)
+        async with AsyncSessionLocal() as db:
+            t, case, ch = await room(db, ids)
+            _, open_case, ch2 = await room(db, ids)
+            await wr.process_message(t.id, ev(ch))
+            db.add(WarRoomMessageSeen(slack_channel=ch, ts="0.000001", tenant_id=t.id, created_at=old))
+            db.add(WarRoomSuggestion(tenant_id=open_case.tenant_id, case_id=open_case.id, kind="artifact",
+                                     payload={"type": "ip", "value": "1.2.3.4"}, value_key="ip:1.2.3.4", status="pending"))
+            await db.commit()
+            await db.execute(update(Case).where(Case.id == case.id).values(status="closed", updated_at=old))
+            await db.commit()
+        await wr.prune()
+        assert await seen(ch) == 1   # the fresh marker stays
+        assert {r.status for r in await rows(case.id)} == {"dismissed"}
+        assert {r.status for r in await rows(open_case.id)} == {"pending"}
+    run(body)
+
+
+def test_slack_button_clicks_use_the_default_queue():
+    from app.worker import celery_app
+    assert celery_app.conf.task_routes["app.tasks.workflows.handle_slack_interaction_task"] == {"queue": "celery"}
+    assert celery_app.conf.beat_schedule["prune-war-room"]["task"] == wr.prune_war_room_task.name
+
+
+class _Resp:
+    def __init__(self, status, body, headers=None):
+        self.status_code, self._body, self.headers = status, body, headers or {}
+
+    def json(self):
+        return self._body
+
+
+@pytest.mark.parametrize("second, ok", [(_Resp(200, {"ok": True, "ts": "1"}), True),
+                                        (_Resp(429, {"ok": False, "error": "ratelimited"}), False)])
+def test_slack_call_honours_retry_after_once(monkeypatch, second, ok):
+    from app.services import slack_service as ss
+    answers = [_Resp(429, {"ok": False, "error": "ratelimited"}, {"Retry-After": "120"}), second]
+    slept, sent = [], []
+
+    class Client:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kw):
+            sent.append(url)
+            return answers.pop(0)
+
+    async def no_sleep(s):
+        slept.append(s)
+    monkeypatch.setattr(ss.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(ss.asyncio, "sleep", no_sleep)
+
+    async def go():
+        if ok:
+            assert (await ss.slack_call("x", "chat.postMessage", channel="C1"))["ts"] == "1"
+        else:
+            with pytest.raises(ss.SlackError) as e:
+                await ss.slack_call("x", "chat.postMessage", channel="C1")
+            assert e.value.code == "ratelimited"
+    import asyncio
+    asyncio.run(go())
+    assert slept == [ss.MAX_RETRY_AFTER] and len(sent) == 2   # capped wait, exactly one more try
 
 
 # ---- dispatch_event filter ---------------------------------------------------
@@ -232,8 +449,9 @@ def test_dispatch_forwards_plain_message(delays):
     assert delays == [(7, {"channel": "C1", "ts": "1.1", "thread_ts": "0.5", "user": "U1", "text": "hi"})]
 
 
-def test_dispatch_forwards_thread_broadcast(delays):
-    slack_bot.dispatch_event(_integ(), _msg(subtype="thread_broadcast"))
+@pytest.mark.parametrize("subtype", ["thread_broadcast", "file_share"])
+def test_dispatch_forwards_broadcasts_and_messages_with_a_file(delays, subtype):
+    slack_bot.dispatch_event(_integ(), _msg(subtype=subtype))
     assert len(delays) == 1
 
 

@@ -226,7 +226,8 @@ async def delete_timeline_note(db: AsyncSession, *, case: Case, event: TimelineE
 
 async def add_artifact_to_case(db: AsyncSession, *, case: Case, artifact_type: ArtifactType, value: str,
                                description: Optional[str], user_id: Optional[int], isolated: bool = False,
-                               custom_type=None) -> Artifact:
+                               custom_type=None, source: Optional[str] = None) -> Artifact:
+    """`source` (where the value came from, e.g. a Slack message) is appended to the activity entry."""
     custom_type_id = custom_type.id if custom_type is not None else None
     artifact = None
     if not isolated:
@@ -248,7 +249,8 @@ async def add_artifact_to_case(db: AsyncSession, *, case: Case, artifact_type: A
         db.add(CaseArtifact(case_id=case.id, artifact_id=artifact.id, added_by=user_id))
         if not (custom_type is not None and custom_type.private):  # private values never reach the timeline
             db.add(TimelineEvent(case_id=case.id, user_id=user_id, event_type="artifact_added",
-                                 content=f"Added artifact: {value} ({artifact.type_key})"))
+                                 content=f"Added artifact: {value} ({artifact.type_key})"
+                                         + (f". {source}" if source else "")))
     await db.flush()
     return artifact
 
