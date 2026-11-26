@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Enum, ForeignKey, DateTime, Text, JSON, UniqueConstraint
+from sqlalchemy import Boolean, Column, Integer, String, Enum, ForeignKey, DateTime, Text, JSON, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import expression, func
 from app.db.base_class import Base
@@ -78,6 +78,7 @@ class Alert(Base):
     __table_args__ = (
         # Webhook ingest is idempotent on this key (see alerts.ingest_alert).
         UniqueConstraint("tenant_id", "source", "external_id", name="uq_alerts_tenant_source_external"),
+        Index("ix_alerts_tenant_created_at", "tenant_id", "created_at"),  # retention purge, received-time filters
     )
 
     id = Column(Integer, primary_key=True, index=True)
