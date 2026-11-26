@@ -3,6 +3,7 @@
 Every user-controlled string goes through slack_escape (no mentions, links or formatting injection).
 """
 import json
+import re
 from typing import Iterable, List, Optional
 
 from app.core.config import settings
@@ -324,6 +325,16 @@ def _pretty(v) -> str:
     return str(_val(v) or "none").replace("_", " ").capitalize()
 
 
+_MENTION = re.compile(r"@\[([^\]]+)\]\(user:\d+\)")
+_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+
+
+def _note_mrkdwn(text: str) -> str:
+    """A note (Markdown, with @[Name](user:id) mentions) as safe Slack text: mentions become plain @Name (no Slack
+    ping: the app already notified them), images become a placeholder, everything else is escaped as typed."""
+    return slack_escape(_IMAGE.sub("[image]", _MENTION.sub(r"@\1", text))).strip()
+
+
 def war_room_card(event_type: str, case, payload: dict, *, actor: Optional[str]) -> dict:
     """One colour-barred war-room card. Returns {"text": fallback, "attachments": [{"color", "blocks"}]}."""
     payload = payload or {}
@@ -358,6 +369,10 @@ def war_room_card(event_type: str, case, payload: dict, *, actor: Optional[str])
         if payload.get("run_id") and run_url(payload["run_id"]):
             lines.append(f"<{run_url(payload['run_id'])}|View run>")
         detail = "\n".join(lines) or None
+    elif event_type == "note.added":
+        kind = payload.get("type") or "comment"
+        color, title = BLUE, "New comment" if kind == "comment" else f"New {_pretty(kind).lower()} note"
+        detail = _note_mrkdwn(str(payload.get("content") or "")) + ("…" if payload.get("truncated") else "")
     elif event_type == "containment.confirmed":
         color, title = GREEN, "Containment confirmed"
         if payload.get("after_workflow"):

@@ -22,6 +22,7 @@ from app.notifications import service as notify
 from app.notifications.mentions import canonicalize_mentions
 from app.services.artifact_types import payload_values, resolve_type
 from app.services.task_service import assignable_ids
+from app.services.war_room_events import queue_card
 from app.utils.audit import create_audit_log
 from app.utils.copilot_heuristics import detect_indicators
 
@@ -186,6 +187,9 @@ async def apply_case_update(db: AsyncSession, *, case: Case, update_data: dict, 
     return changes
 
 
+NOTE_CARD_CHARS = 700  # of a note shown in its war-room card; the card links to the case for the rest
+
+
 async def add_timeline_note(db: AsyncSession, *, case: Case, content: str, user_id: Optional[int],
                             event_type: str = "comment") -> TimelineEvent:
     if event_type == "comment" and user_id is not None:
@@ -195,6 +199,10 @@ async def add_timeline_note(db: AsyncSession, *, case: Case, content: str, user_
     await db.flush()
     if event_type == "comment":
         await notify.on_comment(db, case, ev, user_id)
+    if case.slack_channel_id:  # keep the war room posted: one card per new note (edits don't repeat it)
+        queue_card(db, case.tenant_id, "note.added", case.id,
+                   {"entry_id": ev.id, "type": event_type, "content": content[:NOTE_CARD_CHARS], "user_id": user_id,
+                    "truncated": len(content) > NOTE_CARD_CHARS})
     return ev
 
 

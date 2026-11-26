@@ -28,7 +28,8 @@ Create and work security cases with severity/status, tags, a description, attach
 The case header shows the SLA, AI triage, the Slack war room and the **owner**: analysts and admins reassign the case
 from the owner picker (or set it to *Unassigned*); the new owner is notified.
 
-When the war room has SOC-bot listening on, indicators and milestone times it spots in the channel appear above the
+Every new note or comment on a case with a war room is also posted there as a card (author and the start of the
+text), so the channel follows the investigation without opening the case. When the war room has SOC-bot listening on, indicators and milestone times it spots in the channel appear above the
 tabs as suggestions: **Add to case** / **Set milestone** or dismiss each one, or use **Add all** / **Dismiss all**.
 A milestone suggestion shows the time the case currently has, and one that would be out of order stays with the
 reason until the other milestone is fixed. Nothing is written until someone accepts. Details:

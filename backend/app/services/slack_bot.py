@@ -420,7 +420,8 @@ async def on_case_event(tenant_id: int, event_type: str, case_id: int, changes: 
                     await _safe(slack_call(token, "chat.postMessage", channel=case.slack_channel_id,
                                            text=msg["text"], attachments=msg["attachments"]))
 
-        if case.slack_channel_id and event_type in ("task.completed", "workflow.finished", "containment.confirmed"):
+        if case.slack_channel_id and event_type in ("task.completed", "workflow.finished", "containment.confirmed",
+                                                    "note.added"):
             payload = dict(changes or {})
             if event_type == "containment.confirmed":
                 payload["after_workflow"] = await _recent_workflow_name(db, tenant_id, case_id, payload.get("at"))
