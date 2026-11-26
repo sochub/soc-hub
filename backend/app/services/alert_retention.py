@@ -51,8 +51,10 @@ async def preview(db: AsyncSession, tenant_id: int, scope: dict, now: datetime |
     }
 
 
-async def run_policy(db: AsyncSession, policy: AlertRetentionPolicy, now: datetime | None = None) -> int:
-    """Delete the policy's eligible alerts in committed batches; returns how many were deleted."""
+async def run_policy(db: AsyncSession, policy: AlertRetentionPolicy, now: datetime | None = None, *,
+                     trigger: str = "scheduled", user_id: int | None = None) -> int:
+    """Delete the policy's eligible alerts in committed batches; returns how many were deleted. Raises on failure
+    (use ``run_safely`` to record it)."""
     now = now or datetime.now(timezone.utc)
     scope = {"retain_days": policy.retain_days, "statuses": policy.statuses, "conditions": policy.conditions or []}
     deleted = 0
@@ -69,19 +71,45 @@ async def run_policy(db: AsyncSession, policy: AlertRetentionPolicy, now: dateti
         await db.commit()
         if len(ids) < BATCH:
             break
-    policy.last_run_at, policy.last_deleted = now, deleted
+    _stamp(policy, now, trigger, user_id, error=None)
+    policy.last_deleted = deleted
     policy.total_deleted = (policy.total_deleted or 0) + deleted
-    if deleted:
+    if deleted or trigger == "manual":  # a manual run is always on record; a scheduled one when it deleted something
         await create_audit_log(db, "alert_retention_policy", policy.id, "alerts_purged", policy.tenant_id,
-                               changes={"deleted": deleted, "retain_days": policy.retain_days,
+                               user_id=user_id,
+                               changes={"deleted": deleted, "trigger": trigger, "retain_days": policy.retain_days,
                                         "statuses": policy.statuses, "conditions": policy.conditions},
-                               actor="retention")
+                               actor=None if user_id else "retention")
     await db.commit()
     return deleted
 
 
-async def run_all(now: datetime | None = None, *, tenant_ids=None) -> int:
-    """Run every enabled policy. One failing policy is logged and does not stop the others. `tenant_ids` scopes
+def _stamp(policy: AlertRetentionPolicy, now: datetime, trigger: str, user_id: int | None, error: str | None) -> None:
+    policy.last_run_at, policy.last_run_trigger, policy.last_run_by, policy.last_error = now, trigger, user_id, error
+
+
+async def run_safely(db: AsyncSession, policy: AlertRetentionPolicy, *, trigger: str = "scheduled",
+                     user_id: int | None = None) -> int | None:
+    """run_policy, but a failure is recorded on the policy (last_error) instead of raised. Batches committed before
+    the failure stay deleted and are not counted. Returns None on failure."""
+    now = datetime.now(timezone.utc)
+    pid = policy.id
+    try:
+        return await run_policy(db, policy, now, trigger=trigger, user_id=user_id)
+    except Exception as e:
+        logger.exception("alert retention policy %s failed", pid)
+        await db.rollback()
+        policy = await db.get(AlertRetentionPolicy, pid)
+        if policy is not None:
+            # The class only: the message can carry SQL or driver detail; the worker log has the traceback.
+            _stamp(policy, now, trigger, user_id, error=f"Run failed ({type(e).__name__}). See the worker log.")
+            policy.last_deleted = 0
+            await db.commit()
+        return None
+
+
+async def run_all(*, tenant_ids=None) -> int:
+    """Run every enabled policy. One failing policy is recorded and does not stop the others. `tenant_ids` scopes
     the run (tests)."""
     from app.db.session import AsyncSessionLocal
 
@@ -96,8 +124,5 @@ async def run_all(now: datetime | None = None, *, tenant_ids=None) -> int:
             policy = await db.get(AlertRetentionPolicy, pid)
             if policy is None or not policy.enabled:
                 continue
-            try:
-                total += await run_policy(db, policy, now)
-            except Exception:
-                logger.exception("alert retention policy %s failed", pid)
+            total += await run_safely(db, policy) or 0
     return total

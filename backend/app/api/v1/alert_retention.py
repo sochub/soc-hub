@@ -72,6 +72,17 @@ async def update_policy(policy_id: int, body: RetentionUpdate, db: AsyncSession 
     return p
 
 
+@router.post("/{policy_id}/run", response_model=RetentionOut)
+async def run_policy_now(policy_id: int, db: AsyncSession = Depends(deps.get_db),
+                         current_user: User = Depends(deps.require_admin),
+                         tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    """Run the policy now, enabled or not. The result (count, or the failure) is on the returned policy."""
+    p = await _get(db, tenant_id, policy_id)
+    uid = current_user.id
+    await alert_retention.run_safely(db, p, trigger="manual", user_id=uid)
+    return await _get(db, tenant_id, policy_id)
+
+
 @router.delete("/{policy_id}", status_code=204)
 async def delete_policy(policy_id: int, db: AsyncSession = Depends(deps.get_db),
                         current_user: User = Depends(deps.require_admin),

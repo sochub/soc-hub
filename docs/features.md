@@ -291,9 +291,13 @@ Rules that always apply:
   sample, and how many matching alerts are kept because a case holds them. Enabling a policy shows the same
   preview for confirmation.
 - Enabled policies run daily at 02:30 UTC (`purge-alerts` in the Celery beat schedule), up to 100,000 alerts
-  per policy per run; a larger backlog clears over the following days. Each run that deletes alerts writes an
-  `alerts_purged` audit entry with the count and the policy's scope, and the policy shows its last run and
-  total.
+  per policy per run; a larger backlog clears over the following days.
+- **Run now** runs a policy immediately, enabled or not, after confirming against the same preview.
+- Each policy shows its **last run**: when, whether it was scheduled or run now, and how many alerts it
+  deleted, or that it failed (the error class; the traceback is in the worker log). A failure doesn't stop the
+  other policies, and the next good run clears it. Every run now, and every scheduled run that deletes
+  something, writes an `alerts_purged` audit entry with the count, the trigger, who ran it and the policy's
+  scope.
 
 ## Ticketing (Jira, HaloPSA, ConnectWise)
 

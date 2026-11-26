@@ -56,5 +56,8 @@ class RetentionOut(BaseModel):
     enabled: bool
     last_run_at: Optional[datetime] = None
     last_deleted: int
+    last_run_trigger: Optional[str] = None
+    last_run_by: Optional[int] = None
+    last_error: Optional[str] = None
     total_deleted: int
     created_at: Optional[datetime] = None

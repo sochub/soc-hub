@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 
 from app.db.session import AsyncSessionLocal
+from app.models.alert_retention import AlertRetentionPolicy
 from app.models.audit_log import AuditLog
 from app.models.case import Alert
 from app.models.membership import TenantMembership
@@ -78,18 +79,31 @@ def test_alert_retention_policy():
             assert await alert_retention.run_all(tenant_ids=[t.id, other.id]) == 0
 
             async with client() as cl:
+                # run now works on a disabled policy, is admin only, and records the run
+                assert (await cl.post(f"/api/v1/alert-retention/{pol['id']}/run", headers=ha)).status_code == 403
+                r = await cl.post(f"/api/v1/alert-retention/{pol['id']}/run", headers=h)
+                assert r.status_code == 200, r.text
+                run = r.json()
+                assert run["last_deleted"] == 1 and run["last_run_trigger"] == "manual" and run["last_run_by"] == admin.id
+                assert run["last_run_at"] and run["last_error"] is None and run["enabled"] is False
+
                 r = await cl.put(f"/api/v1/alert-retention/{pol['id']}", headers=h, json={"enabled": True})
                 assert r.status_code == 200 and r.json()["enabled"] is True
                 assert (await cl.put(f"/api/v1/alert-retention/{pol['id']}", headers=h, json={"retain_days": None})).status_code == 422
 
-            assert await alert_retention.run_all(tenant_ids=[t.id, other.id]) == 1
+            # a scheduled run with nothing left still stamps the run, and writes no audit entry
+            assert await alert_retention.run_all(tenant_ids=[t.id, other.id]) == 0
+            async with AsyncSessionLocal() as db:
+                p = await db.get(AlertRetentionPolicy, pol["id"])
+                assert p.last_run_trigger == "scheduled" and p.last_run_by is None and p.last_deleted == 0
+                assert p.last_run_at.isoformat() > run["last_run_at"]
             async with AsyncSessionLocal() as db:
                 left = set((await db.execute(select(Alert.title).where(Alert.id.in_(alert_ids)))).scalars())
                 assert left == set(rows) - {"old-dismissed-wazuh"}
                 assert (await db.get(SuppressionRule, rule.id)).created_from_alert_id is None  # SET NULL, no cascade
                 audit = (await db.execute(select(AuditLog).where(AuditLog.tenant_id == t.id,
                                                                  AuditLog.action == "alerts_purged"))).scalars().all()
-                assert len(audit) == 1
+                assert len(audit) == 1 and audit[0].user_id == admin.id and audit[0].changes["trigger"] == "manual"
 
             # wider policy: pending + dismissed, any source; case-linked and other-tenant alerts survive
             async with client() as cl:
@@ -101,9 +115,23 @@ def test_alert_retention_policy():
                 left = set((await db.execute(select(Alert.title).where(Alert.id.in_(alert_ids)))).scalars())
                 assert left == {"old-dismissed-on-case", "old-promoted", "new-dismissed-wazuh", "other-tenant"}
 
+            # a failing run is recorded on the policy, not raised; the next good run clears it
+            async def boom(*a, **k):
+                raise RuntimeError("db said: secret detail")
+            real, alert_retention.run_policy = alert_retention.run_policy, boom
+            try:
+                assert await alert_retention.run_all(tenant_ids=[t.id, other.id]) == 0
+            finally:
+                alert_retention.run_policy = real
+            async with client() as cl:
+                failed = (await cl.get("/api/v1/alert-retention/", headers=h)).json()[0]
+                assert failed["last_error"] == "Run failed (RuntimeError). See the worker log."
+                assert "secret" not in failed["last_error"] and failed["last_deleted"] == 0
+                assert (await cl.post(f"/api/v1/alert-retention/{pol['id']}/run", headers=h)).json()["last_error"] is None
+
             async with client() as cl:
                 r = await cl.get("/api/v1/alert-retention/", headers=h)
-                assert r.json()[0]["total_deleted"] == 3 and r.json()[0]["last_deleted"] == 2
+                assert r.json()[0]["total_deleted"] == 3 and r.json()[0]["last_deleted"] == 0
                 assert (await cl.delete(f"/api/v1/alert-retention/{pol['id']}", headers=h)).status_code == 204
                 assert (await cl.get("/api/v1/alert-retention/", headers=h)).json() == []
         finally:

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, X, Search } from 'lucide-react';
+import { Plus, Pencil, Play, Trash2, X, Search } from 'lucide-react';
 import { api } from '../../api/client';
 import { cn } from '../../lib/utils';
 import { Button, Input, Skeleton, ErrorState, EmptyState, Badge, fieldClass, useConfirm } from '../../components/ui';
@@ -11,6 +11,7 @@ import FieldPicker from './FieldPicker';
 type Policy = {
     id: number; name: string; retain_days: number; statuses: string[]; conditions: Condition[]; enabled: boolean;
     last_run_at: string | null; last_deleted: number; total_deleted: number;
+    last_run_trigger: 'scheduled' | 'manual' | null; last_error: string | null;
 };
 type Scope = Pick<Policy, 'retain_days' | 'statuses' | 'conditions'>;
 type Preview = {
@@ -25,6 +26,8 @@ const apiError = (err: unknown, fallback: string) => {
     return typeof d === 'string' ? d : fallback;
 };
 const summary = (p: Scope) => `Deletes ${p.statuses.join(' and ')} alerts older than ${p.retain_days} days`;
+const lastRun = (p: Policy) => !p.last_run_at ? 'Never run'
+    : `Last run ${new Date(p.last_run_at).toLocaleString()} (${p.last_run_trigger === 'manual' ? 'run now' : 'scheduled'}): ${p.last_error ? 'failed' : `deleted ${p.last_deleted}`}`;
 const fetchPreview = async (s: Scope) => (await api.post('/alert-retention/preview', s)).data as Preview;
 
 function PreviewBox({ p }: { p: Preview }) {
@@ -147,6 +150,18 @@ export default function RetentionList() {
         },
         onSuccess: refresh,
     });
+    const runNow = useMutation({
+        mutationFn: async (p: Policy) => {
+            const pv = await fetchPreview(p);
+            const ok = await confirm({
+                title: `Run “${p.name}” now?`, danger: true, confirmLabel: 'Delete now',
+                body: <div className="space-y-2"><p>This permanently deletes matching alerts now, whether or not the policy is enabled:</p><PreviewBox p={pv} /></div>,
+            });
+            if (!ok) return null;
+            return (await api.post(`/alert-retention/${p.id}/run`)).data as Policy;
+        },
+        onSuccess: (p) => { if (p) qc.setQueryData<Policy[]>(['alert-retention'], (old) => old?.map((x) => (x.id === p.id ? p : x))); refresh(); },
+    });
     const remove = useMutation({ mutationFn: async (id: number) => api.delete(`/alert-retention/${id}`), onSuccess: refresh });
 
     if (me && !isAdmin) return <div className="p-4"><EmptyState title="Admins only" body="Ask an admin of this organization to manage alert retention." /></div>;
@@ -157,11 +172,11 @@ export default function RetentionList() {
                 {!editing && <Button size="sm" onClick={() => setEditing('new')}><Plus size={12} aria-hidden /> New policy</Button>}
             </div>
             <p className="text-sm text-fg-3 max-w-[80ch]">
-                Delete old alerts once a day, for example dismissed alerts after 90 days when your SIEM already keeps them.
+                Delete old alerts once a day (02:30 UTC) or with Run now, for example dismissed alerts after 90 days when your SIEM already keeps them.
                 Alerts linked to a case are never deleted, and cases are never deleted automatically. Each run is recorded in the audit log.
             </p>
             {editing && <PolicyForm key={editing === 'new' ? 'new' : editing.id} policy={editing === 'new' ? null : editing} onDone={() => setEditing(null)} />}
-            {(toggle.isError || remove.isError) && <p role="alert" className="text-xs text-severity-critical">{apiError(toggle.error ?? remove.error, 'Could not change the policy.')}</p>}
+            {(toggle.isError || remove.isError || runNow.isError) && <p role="alert" className="text-xs text-severity-critical">{apiError(toggle.error ?? remove.error ?? runNow.error, 'Could not change the policy.')}</p>}
             {isError ? <ErrorState message="Could not load retention policies." onRetry={() => refetch()} /> : isLoading ? <Skeleton rows={3} /> : !policies.length ? (
                 <EmptyState title="No retention policies" body="Alerts are kept forever until you add one." />
             ) : (
@@ -171,13 +186,14 @@ export default function RetentionList() {
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-sm font-medium text-fg">{p.name}</span>
                                 {!p.enabled && <Badge>Disabled</Badge>}
-                                <span className="text-xs text-fg-3 num">
-                                    {p.total_deleted} deleted{p.last_run_at && ` · last run ${new Date(p.last_run_at).toLocaleString()} (${p.last_deleted})`}
-                                </span>
+                                <span className="text-xs text-fg-3 num">{p.total_deleted} deleted in total</span>
                                 <span className="ml-auto flex items-center gap-3">
                                     <label className="flex items-center gap-1.5 text-xs text-fg-2">
                                         <input type="checkbox" checked={p.enabled} disabled={toggle.isPending} onChange={() => toggle.mutate(p)} /> Enabled
                                     </label>
+                                    <Button size="sm" variant="secondary" onClick={() => runNow.mutate(p)} disabled={runNow.isPending}>
+                                        <Play size={12} aria-hidden /> {runNow.isPending && runNow.variables?.id === p.id ? 'Running…' : 'Run now'}
+                                    </Button>
                                     <button onClick={() => setEditing(p)} className="text-muted hover:text-fg" aria-label="Edit policy" title="Edit"><Pencil size={13} /></button>
                                     <button onClick={async () => { if (await confirm({ title: 'Delete this policy?', danger: true, confirmLabel: 'Delete policy', body: 'Alerts it already deleted stay deleted; no more are deleted by it.' })) remove.mutate(p.id); }}
                                         className="text-muted hover:text-severity-critical" aria-label="Delete policy" title="Delete"><Trash2 size={13} /></button>
@@ -185,6 +201,9 @@ export default function RetentionList() {
                             </div>
                             <p className="mt-1 text-xs text-fg-2">{summary(p)}{p.conditions.length > 0 && ' where'}</p>
                             {p.conditions.length > 0 && <p className="mt-0.5 text-xs font-mono text-fg-2">{p.conditions.map(describe).join('  AND  ')}</p>}
+                            <p className={cn('mt-1 text-xs num', p.last_error ? 'text-severity-critical' : 'text-fg-3')}>
+                                {lastRun(p)}{p.last_error && ` · ${p.last_error}`}
+                            </p>
                         </article>
                     ))}
                 </div>

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.sql import func
 from app.db.base_class import Base
 
@@ -19,6 +19,9 @@ class AlertRetentionPolicy(Base):
     enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_deleted = Column(Integer, nullable=False, default=0, server_default="0")
+    last_run_trigger = Column(String(16), nullable=True)  # scheduled | manual
+    last_run_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # manual runs
+    last_error = Column(Text, nullable=True)  # set when the last run failed, cleared by the next success
     total_deleted = Column(Integer, nullable=False, default=0, server_default="0")
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
