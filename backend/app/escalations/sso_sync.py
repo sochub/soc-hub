@@ -1,11 +1,11 @@
-"""Login-time sync of escalation-group membership from an IdP group claim (SAML attribute / OIDC claim).
+"""Login-time sync from an IdP group claim (SAML attribute / OIDC claim): the member's role, and escalation groups.
 
 A group with a non-empty `idp_groups` is *mapped*: the IdP decides who is in it. Unmapped groups are never touched.
 """
 import logging
 from typing import Any, List, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.escalation import UserGroup, UserGroupMember
@@ -74,3 +74,39 @@ async def sync_user_groups(db: AsyncSession, *, tenant_id: int, user_id: int,
         await db.flush()
         await create_audit_log(db, "user", user_id, "user_group_sso_sync", tenant_id, user_id, dict(result))
     return result
+
+
+ROLE_ORDER = ("admin", "analyst", "viewer")  # highest first
+
+
+async def sync_user_role(db: AsyncSession, *, tenant_id: int, user_id: int, idp_groups: Optional[List[str]],
+                         role_groups: dict, default_role: str) -> Optional[dict]:
+    """Set the member's role from their IdP groups when the tenant maps groups to roles: the highest role with a
+    matching group, else the default (JIT) role. Never demotes the tenant's last admin. Flush only; the caller
+    commits. Returns {"from", "to"} when the role changed."""
+    if not any(role_groups.get(r) for r in ROLE_ORDER):
+        return None  # role mapping off: roles are managed in SOC Hub
+    if idp_groups is None:  # claim absent: an IdP misconfiguration must not change anyone's role
+        return None
+    m = (await db.execute(select(TenantMembership).where(
+        TenantMembership.tenant_id == tenant_id, TenantMembership.user_id == user_id))).scalars().first()
+    if m is None:
+        return None
+    asserted = {g.casefold() for g in idp_groups}
+    matched = next((r for r in ROLE_ORDER if any(str(g).casefold() in asserted for g in role_groups.get(r) or [])), None)
+    new = matched or (default_role if default_role in ("analyst", "viewer") else "viewer")
+    if new == m.role:
+        return None
+    if m.role == "admin":
+        others = (await db.execute(select(func.count()).select_from(TenantMembership).where(
+            TenantMembership.tenant_id == tenant_id, TenantMembership.role == "admin",
+            TenantMembership.user_id != user_id))).scalar_one()
+        if not others:
+            await create_audit_log(db, "user", user_id, "sso_role_sync_blocked", tenant_id, user_id,
+                                   {"role": m.role, "idp_role": new, "reason": "last_admin"})
+            return None
+    change = {"from": m.role, "to": new, "matched": matched is not None}
+    m.role = new
+    await db.flush()
+    await create_audit_log(db, "user", user_id, "sso_role_sync", tenant_id, user_id, dict(change))
+    return change

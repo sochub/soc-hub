@@ -161,6 +161,7 @@ export interface SSOConfig {
   default_role: 'analyst' | 'viewer';
   saml_allow_idp_initiated: boolean;
   groups_claim: string;
+  role_groups?: Partial<Record<'admin' | 'analyst' | 'viewer', string[]>>;
   sp_entity_id: string;
   sp_acs_url: string;
   sp_metadata_url: string;
