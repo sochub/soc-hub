@@ -8,6 +8,7 @@ from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from onelogin.saml2.constants import OneLogin_Saml2_Constants
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -457,6 +458,29 @@ _OIDC_COOKIE_PATH = "/api/v1/auth/oidc"
 
 def _oidc_cookie_secure() -> bool:
     return settings.PUBLIC_BASE_URL.startswith("https")
+
+
+class DiscoverIn(BaseModel):
+    email: str = Field(max_length=320)
+
+
+@saml_router.post("/sso/discover")
+async def sso_discover(*, db: AsyncSession = Depends(deps.get_db), body: DiscoverIn) -> Any:
+    """Home-realm discovery for the login page: the slug of the one active organization whose members sign in with
+    SSO and that lists this email's domain (its SSO email domains), else null. Answers per domain, never per user,
+    so it reveals nothing about accounts (not even whether the email is a super admin's); the password policy
+    still decides who may use a password."""
+    domain = body.email.strip().lower().rpartition("@")[2]
+    if not domain or "@" not in body.email:
+        return {"slug": None}
+    rows = (await db.execute(
+        select(Tenant.slug, TenantSSOConfig.allowed_email_domains)
+        .join(TenantSSOConfig, TenantSSOConfig.tenant_id == Tenant.id)
+        .where(Tenant.is_active == True, Tenant.member_login_method.in_(("saml", "oidc")))  # noqa: E712
+    )).all()
+    # ponytail: scans every SSO organization's domain list per call; index the domains if there are thousands.
+    slugs = [slug for slug, domains in rows if domain in {str(d).lower() for d in (domains or [])}]
+    return {"slug": slugs[0] if len(slugs) == 1 else None}  # a domain two organizations claim is ambiguous: no hint
 
 
 @saml_router.get("/sso/{slug}/login")
