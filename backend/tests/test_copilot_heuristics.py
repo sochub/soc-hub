@@ -146,3 +146,69 @@ def test_copilot_message_length_capped():
     CopilotChatRequest(message="x" * 16_000)
     with pytest.raises(ValidationError):
         CopilotChatRequest(message="x" * 16_001)
+
+
+def test_ground_action_keeps_only_what_was_asked():
+    from app.utils.copilot_heuristics import ground_action
+    ST, SV = ("new", "open", "in_progress", "pending", "resolved", "closed"), ("critical", "high", "medium", "low", "info")
+
+    def g(action_type, params, asked):
+        out = ground_action({"type": action_type, "summary": "s", "params": params}, asked, statuses=ST, severities=SV)
+        return out and out["params"]
+
+    full = {"status": "open", "severity": "high", "tags": ["data exfiltration"]}
+    # the model filled every field of a "tag this" request (and invented a status)
+    assert g("update_case", full, "Tag this as data exfiltration") == {"tags": ["data exfiltration"]}
+    assert g("update_case", {**full, "status": "exfiltration_tagged"}, "tag this case a data exfiltration") \
+        == {"tags": ["data exfiltration"]}
+    # each field survives when it was asked for
+    assert g("update_case", full, "raise the severity to high") == {"severity": "high"}
+    assert g("update_case", {"status": "resolved", "severity": "low"}, "mark this as resolved") == {"status": "resolved"}
+    assert g("update_case", {"status": "open"}, "please reopen the case") == {"status": "open"}
+    assert g("update_case", full, "set it to open, make it high priority and tag it") == full
+    # the turn before counts: "yes" keeps what the assistant offered
+    assert g("update_case", {"severity": "critical"}, "Should I raise the severity to critical? yes do it") \
+        == {"severity": "critical"}
+    # nothing asked-for left: no action at all
+    assert g("update_case", {"status": "open", "severity": "medium"}, "what happened here?") is None
+    assert g("update_case", {"status": "bogus"}, "close it") is None
+    # find_related: an invented value is dropped (the case's own indicators are used), a given one is kept
+    assert g("find_related", {"value": "phishing campaign"}, "find related cases") == {}
+    assert g("find_related", {"value": "evil.com"}, "which cases share hxxp://evil[.]com ?") == {"value": "evil.com"}
+    # words from an earlier turn are not a search value; an indicator from an earlier turn is
+    def gm(params, asked, message):
+        return ground_action({"type": "find_related", "params": params}, asked, statuses=ST, severities=SV,
+                             message=message)["params"]
+    assert gm({"value": "data exfiltration"}, "tag this case a data exfiltration find related cases", "find related cases") == {}
+    assert gm({"value": "203.0.113.77"}, "it beacons to 203.0.113.77 find related cases", "find related cases") \
+        == {"value": "203.0.113.77"}
+    assert gm({"value": "WS-042"}, "find cases related to WS-042", "find cases related to WS-042") == {"value": "WS-042"}
+    # other actions pass through untouched
+    assert g("add_artifact", {"value": "1.2.3.4"}, "anything") == {"value": "1.2.3.4"}
+    assert ground_action(None, "x", statuses=ST, severities=SV) is None
+
+
+def test_related_request_and_affirmation():
+    from app.utils.copilot_heuristics import is_affirmation, related_request_value as rel
+    for msg in ("find related cases", "Are there similar cases?", "any other cases sharing this IP?",
+                "correlate this with the rest of the queue", "have we seen this before?"):
+        assert rel(msg) == "", msg
+    assert rel("which cases share hxxp://evil[.]com/x ?") == "http://evil.com/x"
+    assert rel("find cases related to 203.0.113.77") == "203.0.113.77"
+    for msg in ("tag this case a data exfiltration", "add a note that we closed the related ticket", "what is this case?"):
+        assert rel(msg) is None, msg
+    assert is_affirmation("yes do it") and is_affirmation("ok, go ahead") and is_affirmation("Sure")
+    assert not is_affirmation("find related cases") and not is_affirmation("yes but first tell me everything about the host and the user and why")
+
+
+def test_explicit_case_update():
+    from app.utils.copilot_heuristics import explicit_case_update as up
+    assert up("raise the severity to high") == {"severity": "high"}
+    assert up("Set severity: critical please") == {"severity": "critical"}
+    assert up("escalate this to critical and mark it as in progress") == {"severity": "critical", "status": "in_progress"}
+    assert up("mark this as resolved") == {"status": "resolved"}
+    assert up("change the status to pending") == {"status": "pending"}
+    assert up("please reopen the case") == {"status": "open"}
+    for msg in ("should we raise the severity to high?", "why is the severity high", "tag this as high-value target",
+                "the status page is open", "what is this case about"):
+        assert up(msg) is None, msg

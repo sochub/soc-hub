@@ -196,6 +196,8 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
     kwargs, secrets, refused, to_close = await _prepare(cfg, temperature, json_mode, max_tokens, timeout, allowlist)
     try:
         resp = await _acompletion(cfg, messages, kwargs)
+        if _empty_without_thinking(resp, kwargs):
+            resp = await _acompletion(cfg, messages, _with_thinking(kwargs))
     except Exception as e:
         raise _provider_error(e, refused, secrets) from None
     finally:
@@ -209,6 +211,22 @@ async def _call(cfg: ProviderConfig, messages: List[dict], temperature: Optional
         raise _fail(AIError, "AI provider returned an empty response", "EmptyResponse") from None
 
 
+def _with_thinking(kwargs: dict) -> dict:
+    return {k: v for k, v in kwargs.items() if k != "reasoning_effort"}
+
+
+def _empty_without_thinking(resp, kwargs: dict) -> bool:
+    """OLLAMA_THINKING=false and the model said nothing. Some reasoning models (lfm3) answer an "act on this"
+    prompt with an empty message when thinking is off; the caller then asks once more with thinking on, so the
+    setting costs time on those turns instead of the answer."""
+    if kwargs.get("reasoning_effort") != "none":
+        return False
+    try:
+        return not (resp.choices[0].message.content or "").strip()
+    except (AttributeError, IndexError, TypeError):
+        return False
+
+
 async def _stream_call(cfg: ProviderConfig, messages: List[dict], temperature: Optional[float],
                        timeout: Optional[float], allowlist: Sequence[str]) -> AsyncIterator[str]:
     """_call, yielding the reply's text as it is generated. Same preparation and error mapping. The timeout is
@@ -217,23 +235,34 @@ async def _stream_call(cfg: ProviderConfig, messages: List[dict], temperature: O
     resp = None
     try:
         try:
-            resp = await _acompletion(cfg, messages, {**kwargs, "stream": True})
-            if not hasattr(resp, "__aiter__"):
-                # A provider that can't stream answers whole: one chunk.
-                yield resp.choices[0].message.content or ""
-            else:
-                parts = resp.__aiter__()
-                while True:
-                    try:
-                        # Enforced here too: not every provider transport times out a stream that stalls.
-                        part = await asyncio.wait_for(parts.__anext__(), kwargs["timeout"])
-                    except StopAsyncIteration:
-                        break
-                    except asyncio.TimeoutError:
-                        raise _fail(AIUnavailable, "AI provider stopped answering", "Timeout") from None
-                    text = part.choices[0].delta.content if part.choices else None
-                    if text:
+            attempts = [kwargs, _with_thinking(kwargs)] if kwargs.get("reasoning_effort") == "none" else [kwargs]
+            for attempt in attempts:  # the second only when the first said nothing (see _empty_without_thinking)
+                said = False
+                resp = await _acompletion(cfg, messages, {**attempt, "stream": True})
+                if not hasattr(resp, "__aiter__"):
+                    # A provider that can't stream answers whole: one chunk.
+                    text = resp.choices[0].message.content or ""
+                    if text.strip():
+                        said = True
                         yield text
+                else:
+                    parts = resp.__aiter__()
+                    while True:
+                        try:
+                            # Enforced here too: not every provider transport times out a stream that stalls.
+                            part = await asyncio.wait_for(parts.__anext__(), kwargs["timeout"])
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError:
+                            raise _fail(AIUnavailable, "AI provider stopped answering", "Timeout") from None
+                        text = part.choices[0].delta.content if part.choices else None
+                        if text:
+                            said = said or bool(text.strip())
+                            yield text
+                    if not said and hasattr(resp, "aclose"):
+                        await resp.aclose()
+                if said:
+                    break
         except AIError:
             raise
         except Exception as e:

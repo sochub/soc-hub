@@ -2,7 +2,7 @@
 explicit note-text extraction. Pure functions — unit-testable without a DB/LLM."""
 import ipaddress
 import re
-from typing import List, Dict, Optional
+from typing import Dict, Iterable, List, Optional
 
 # ---- indicator detection -------------------------------------------------
 
@@ -236,3 +236,99 @@ def is_declarative_finding(message: str) -> bool:
     if _NOT_A_FINDING.search(msg):
         return False
     return len(msg.split()) >= 6
+
+
+# ── grounding a model-proposed action in what was actually asked ──────────────────────────────────────────────
+# Small models fill every field of an action's shape: asked to "tag this as data exfiltration" they also propose
+# a status and a severity (sometimes invented ones). A field survives only if the conversation asked for it.
+_STATUS_ASK = re.compile(r"\b(status|clos(e|ed|es|ing)|resolv(e|ed|es|ing)|re-?open(ed|s|ing)?|in[ _-]progress|pending|"
+                         r"(set|move|change|mark)\b.{0,30}\b(new|open))\b", re.IGNORECASE)
+_SEVERITY_ASK = re.compile(r"\b(severity|sev|priority|critical|escalat(e|ed|es|ing)|downgrad(e|ed|es|ing)|rais(e|ed|es|ing)|"
+                           r"lower(ed|s|ing)?|bump(ed|s|ing)?|(to|as|is) (high|medium|low|info))\b", re.IGNORECASE)
+_TAG_ASK = re.compile(r"\b(tag(s|ged|ging)?|label(s|ed|led|ing)?)\b", re.IGNORECASE)
+
+
+_AFFIRMATION = re.compile(r"^\W*(yes|yep|yeah|ok(ay)?|sure|please do|do (it|that|so)|go ahead|confirm(ed)?|"
+                          r"(add|apply|run|tag|set) (it|that|them))\b", re.IGNORECASE)
+_RELATED_ASK = re.compile(
+    r"\b(related|similar|linked|connected)\b.{0,30}\b(cases?|incidents?)\b|"
+    r"\b(cases?|incidents?)\b.{0,40}\b(related|similar|shar(e|es|ed|ing)|same (ioc|indicator|ip|domain|hash|host))|"
+    r"\bcorrelat(e|es|ed|ing|ion)\b|\bseen (this|it|them) (before|elsewhere)\b", re.IGNORECASE)
+
+
+def is_affirmation(message: str) -> bool:
+    """"yes" / "do it" / "go ahead": the request is whatever the turn before offered."""
+    return bool(_AFFIRMATION.match(message or "")) and len((message or "").split()) <= 8
+
+
+def related_request_value(message: str) -> Optional[str]:
+    """For "find related cases"-style messages: "" to correlate the case's own indicators, or the one indicator
+    the message names. None when the message is not asking for related cases. Decided here, not by the model:
+    a small model answers this with whatever action the previous turn was about."""
+    if not _RELATED_ASK.search(message or ""):
+        return None
+    found = detect_indicators(refang(message), limit=1)
+    return found[0]["value"] if found else ""
+
+
+_LEVEL = r"(critical|high|medium|low|info)(?![-\w])"
+_EXPLICIT_SEVERITY = re.compile(
+    rf"\b(?:severity|priority)\b[^.?!]{{0,30}}?\b{_LEVEL}|"
+    rf"\b(?:rais\w+|lower\w*|escalat\w+|downgrad\w+|bump\w*)\b[^.?!]{{0,30}}?\bto\s+{_LEVEL}", re.IGNORECASE)
+_STATE = r"(new|open|in[ _-]progress|pending|resolved|closed)(?![-\w])"
+_EXPLICIT_STATUS = re.compile(
+    rf"\bstatus\b[^.?!]{{0,20}}?\b(?:to|as|=|:)\s*{_STATE}|\bmark\w*\b[^.?!]{{0,25}}?\bas\s+{_STATE}", re.IGNORECASE)
+_REOPEN = re.compile(r"\bre-?open\b", re.IGNORECASE)
+_QUESTION = re.compile(r"^\W*(what|why|how|should|could|can|is|are|was|were|does|do|did|who|when|where|which)\b|\?\s*$",
+                       re.IGNORECASE)
+
+
+def explicit_case_update(message: str) -> Optional[dict]:
+    """update_case params an instruction states outright ("raise the severity to high", "mark this as resolved",
+    "reopen the case"), else None. The net under a model that answered such a request with nothing; questions
+    ("should we raise the severity to high?") are not instructions."""
+    text = message or ""
+    if _QUESTION.search(text):
+        return None
+    params: dict = {}
+    m = _EXPLICIT_SEVERITY.search(text)
+    if m:
+        params["severity"] = (m.group(1) or m.group(2)).lower()
+    m = _EXPLICIT_STATUS.search(text)
+    if m:
+        params["status"] = re.sub(r"[ -]", "_", (m.group(1) or m.group(2)).lower())
+    elif _REOPEN.search(text):
+        params["status"] = "open"
+    return params or None
+
+
+def ground_action(action: Optional[dict], asked: str, *, statuses: Iterable[str], severities: Iterable[str],
+                  message: Optional[str] = None) -> Optional[dict]:
+    """Drop what the model added to an action beyond the request. `asked` is the user's message plus the turn or
+    two before it (so "yes, do it" keeps what the assistant just offered); `message` is the user's message alone
+    (defaults to `asked`). Returns the action, trimmed, or None
+    when nothing asked-for is left. Only update_case and find_related are trimmed; the others have their own
+    checks (literal note text, indicators from the conversation)."""
+    if not action:
+        return action
+    params = dict(action.get("params") or {})
+    if action.get("type") == "update_case":
+        status = str(params.get("status") or "").strip().lower()
+        if status not in set(statuses) or not _STATUS_ASK.search(asked):
+            params.pop("status", None)
+        severity = str(params.get("severity") or "").strip().lower()
+        if severity not in set(severities) or not _SEVERITY_ASK.search(asked):
+            params.pop("severity", None)
+        if not params.get("tags") or not _TAG_ASK.search(asked):
+            params.pop("tags", None)
+        if not any(k in params for k in ("status", "severity", "tags")):
+            return None
+    elif action.get("type") == "find_related":
+        # An invented search value ("phishing campaign", or words from an earlier turn) can never match: only a
+        # value in this message, or an indicator from the recent turns, is used. Without one the search
+        # correlates the current case's own indicators.
+        value = str(params.get("value") or "").strip().lower()
+        recent = {d["value"].lower() for d in detect_indicators(refang(asked), limit=50)}
+        if value and value not in refang(message if message is not None else asked).lower() and value not in recent:
+            params.pop("value", None)
+    return {**action, "params": params}

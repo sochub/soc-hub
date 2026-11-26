@@ -18,7 +18,7 @@ from app.services import case_service, task_service
 from app.ai.errors import AIError, AIUnavailable
 from app.db.session import AsyncSessionLocal
 from app.services.ai_service import (
-    ActionFenceFilter, AIService, _unavailable_text, extract_action, strip_action_blocks,
+    NO_REPLY, ActionFenceFilter, AIService, _unavailable_text, extract_action, strip_action_blocks,
 )
 from app.services.artifact_types import not_private
 from app.models.case import CASE_OUTCOMES, Case, CaseStatus, CaseSeverity, TimelineEvent
@@ -35,7 +35,7 @@ from app.schemas.copilot_action import (
 from app.utils.audit import create_audit_log
 from app.utils.copilot_heuristics import (
     detect_indicators, extract_note_text, is_note_request, is_declarative_finding,
-    is_meta_note, refang,
+    explicit_case_update, ground_action, is_affirmation, is_meta_note, refang, related_request_value,
 )
 from app.utils.roles import resolve_active_role
 
@@ -513,6 +513,11 @@ async def _close_turn(db: AsyncSession, tenant_id: int, turn: _Turn, service: AI
                 "summary": "Add this note to the case timeline",
                 "params": {"content": content},
             }
+    elif related_request_value(message) is not None:
+        value = related_request_value(message)
+        action = {"type": "find_related", "params": {"value": value} if value else {},
+                  "summary": f"Find other cases with {value}" if value
+                  else "Correlate this case's indicators with other cases"}
     else:
         action = extract_action(response_text)
         if not action and _looks_actionable(message):
@@ -534,6 +539,22 @@ async def _close_turn(db: AsyncSession, tenant_id: int, turn: _Turn, service: AI
                 action["params"]["content"] = regenerated
             else:
                 action = None
+
+    if not action and not note_req:
+        # The model answered a plain instruction with nothing usable (small models do): take it from the words.
+        stated = explicit_case_update(message)
+        if stated and not general:
+            action = {"type": "update_case", "params": stated,
+                      "summary": "Update the case: " + ", ".join(f"{k} → {v.replace('_', ' ')}" for k, v in stated.items())}
+
+    # What the model added beyond the request goes (see ground_action): an unasked status or severity on a
+    # "tag this" request, an invented search value. The turn or two before count, so "yes, do it" keeps the offer.
+    # ... but only for a "yes, do it": any other message is judged on its own words, or a tag request two turns
+    # back would keep justifying tags.
+    asked = " ".join(m["content"] for m in history[-3:]) if is_affirmation(message) else message
+    action = ground_action(action, asked,
+                           statuses=[x.value for x in CaseStatus], severities=[x.value for x in CaseSeverity],
+                           message=message)
 
     if action and action.get("type") == "create_case":
         # This message first, then the few user turns before it: the indicator just named is never the one
@@ -559,7 +580,9 @@ async def _close_turn(db: AsyncSession, tenant_id: int, turn: _Turn, service: AI
             action = None
 
     display_text = strip_action_blocks(response_text)
-    if action and not display_text:
+    # A small model often answers an "act on this" turn with nothing but the action (or nothing at all, and the
+    # action came from the user's own words): the card is the reply, so don't call that "no response".
+    if action and (not display_text or display_text == NO_REPLY):
         display_text = action.get("summary") or "I've prepared an action below — confirm to run it."
 
     # ---- proactive suggestions ----------------------------------------------
@@ -648,7 +671,7 @@ async def _chat_events(turn: _Turn, tenant_id: int) -> AsyncIterator[str]:
         if text:
             yield _sse("delta", {"text": text})
         async with AsyncSessionLocal() as db:
-            out = await _close_turn(db, tenant_id, turn, service, raw or "No response from AI")
+            out = await _close_turn(db, tenant_id, turn, service, raw or NO_REPLY)
         settled = True
         yield _sse("message", out.model_dump(mode="json"))
     finally:

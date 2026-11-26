@@ -473,3 +473,65 @@ def test_update_case_merges_tags_and_collects_closure():
         assert (closed.status, closed.outcome, closed.closing_note) == \
             (CaseStatus.CLOSED, "false_positive", "Benign scanner, allow-listed.")
     _world(body)
+
+
+def test_silent_model_with_an_action_is_not_called_no_response(llm):
+    """A model that answers an "act on this" turn with no text still gets a card; the card's summary is the reply.
+    With nothing to show at all, the reply says so."""
+    async def body(c, w):
+        h = hdr(w, "analyst")
+        sid, _ = await _session(w, w.case)
+        llm.replies = [""]
+        r = await c.post(CHAT, headers=h, json={"session_id": sid, "case_id": w.case,
+                                                "message": "Add a note that the finance mailbox was purged"})
+        assert r.status_code == 200, r.text
+        m = r.json()
+        assert m["action"]["params"]["content"] == "the finance mailbox was purged"
+        assert m["content"] == "Add this note to the case timeline" and "No response" not in m["content"]
+        r = await c.post(CHAT, headers=h, json={"session_id": sid, "case_id": w.case, "message": "hello there"})
+        assert r.json()["content"] == ai_service.NO_REPLY and r.json().get("action") is None
+    _world(body)
+
+
+def test_tag_request_does_not_touch_status_or_severity(llm):
+    """The model over-fills update_case on "tag this ..." (an invented status, a severity nobody asked for): the
+    proposal keeps the tags only, and confirming it leaves status and severity alone."""
+    async def body(c, w):
+        h = hdr(w, "analyst")
+        sid, _ = await _session(w, w.case)
+        async with AsyncSessionLocal() as db:
+            case = await db.get(Case, w.case)
+            before = (case.status, case.severity)
+        llm.replies = [block({"type": "update_case", "summary": "",
+                              "params": {"status": "exfiltration_tagged", "severity": "medium", "tags": ["data_exfiltration"]}})]
+        r = await c.post(CHAT, headers=h, json={"session_id": sid, "case_id": w.case,
+                                                "message": "tag this case a data exfiltration"})
+        assert r.status_code == 200, r.text
+        m = r.json()
+        assert m["action"]["params"] == {"tags": ["data_exfiltration"]}
+        r = await c.post(EXECUTE, headers=h, json={"type": "update_case", "params": {}, "message_id": m["id"]})
+        assert r.status_code == 200, r.text
+        async with AsyncSessionLocal() as db:
+            case = await db.get(Case, w.case)
+            assert (case.status, case.severity) == before and "data_exfiltration" in case.tags
+        # an invented search value is dropped, so find-related correlates the case's own indicators
+        llm.replies = [block({"type": "find_related", "summary": "s", "params": {"value": "phishing campaign"}})]
+        r = await c.post(CHAT, headers=h, json={"session_id": sid, "case_id": w.case, "message": "find related cases"})
+        assert r.json()["action"]["type"] == "find_related" and r.json()["action"]["params"] == {}
+    _world(body)
+
+
+def test_explicit_instruction_survives_a_silent_model(llm):
+    """The model returns nothing (reply and second pass): a stated severity change still gets its card."""
+    async def body(c, w):
+        h = hdr(w, "analyst")
+        sid, _ = await _session(w, w.case)
+        llm.replies = [""]
+        r = await c.post(CHAT, headers=h, json={"session_id": sid, "case_id": w.case, "message": "raise the severity to high"})
+        m = r.json()
+        assert m["action"]["type"] == "update_case" and m["action"]["params"] == {"severity": "high"}, m
+        assert "No response" not in m["content"]
+        r = await c.post(CHAT, headers=h, json={"session_id": sid, "case_id": w.case,
+                                                "message": "should we raise the severity to high?"})
+        assert r.json().get("action") is None
+    _world(body)

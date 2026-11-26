@@ -402,3 +402,53 @@ def test_other_bad_requests_not_retried(monkeypatch):
     with pytest.raises(AIError):
         run(llm.complete_with(OPENAI, [{"role": "user", "content": "x"}], temperature=0.3))
     assert n == [1]
+
+
+OLLAMA = ProviderConfig("ollama", "lfm3:1.7b", "deployment", api_base="http://h:11434")
+
+
+def _chunks(*texts):
+    async def gen():
+        for t in texts:
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=t))])
+    return gen()
+
+
+def test_empty_reply_with_thinking_off_is_asked_again_with_thinking(monkeypatch):
+    """OLLAMA_THINKING=false: a reasoning model that answers nothing gets one more call with thinking on."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "OLLAMA_THINKING", False)
+    seen = []
+
+    async def fake(**kw):
+        seen.append(kw)
+        quiet = kw.get("reasoning_effort") == "none"
+        if kw.get("stream"):
+            return _chunks() if quiet else _chunks("with ", "thinking")
+        return resp("" if quiet else "with thinking")
+    monkeypatch.setattr(llm.litellm, "acompletion", fake)
+
+    assert run(llm.complete_with(OLLAMA, [{"role": "user", "content": "x"}])) == "with thinking"
+    assert [k.get("reasoning_effort") for k in seen] == ["none", None]
+
+    async def collect():
+        return [c async for c in llm.stream_with(OLLAMA, [{"role": "user", "content": "x"}])]
+    seen.clear()
+    assert run(collect()) == ["with ", "thinking"]
+    assert [k.get("reasoning_effort") for k in seen] == ["none", None]
+
+
+def test_reply_with_thinking_off_is_not_asked_twice(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "OLLAMA_THINKING", False)
+    seen = []
+
+    async def fake(**kw):
+        seen.append(kw)
+        return _chunks("fast") if kw.get("stream") else resp("fast")
+    monkeypatch.setattr(llm.litellm, "acompletion", fake)
+
+    async def collect():
+        return [c async for c in llm.stream_with(OLLAMA, [{"role": "user", "content": "x"}])]
+    assert run(llm.complete_with(OLLAMA, [{"role": "user", "content": "x"}])) == "fast"
+    assert run(collect()) == ["fast"] and len(seen) == 2
