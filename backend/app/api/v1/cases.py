@@ -17,7 +17,7 @@ from app.models.case import Case, CaseSeverity, CaseStatus, TimelineEvent
 from app.models.membership import TenantMembership
 from app.models.slack_integration import SlackIntegration
 from app.models.user import User
-from app.services import case_delete, task_service
+from app.services import case_delete, status_history, task_service
 from app.services.slack_service import SlackError, load_integration
 from app.schemas import case as case_schema
 from app.services.case_service import (
@@ -618,6 +618,53 @@ async def delete_timeline_event(
     if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
         raise HTTPException(status_code=403, detail="Only the author or an admin can delete this entry")
 
+    was_status = event.event_type == "status_change"
     await delete_timeline_note(db, case=case, event=event, user_id=current_user.id)
+    if was_status:  # same effect as deleting it from the glance's status history
+        await status_history.resync_resolved_at(db, case)
     await db.commit()
     return {"ok": True}
+
+
+async def _status_entry(db: AsyncSession, case_id: int, event_id: int, tenant_id: int, current_user: User):
+    """The case and one of its status_change entries, if the caller is an admin or the analyst who made the change
+    (the activity-entry rule; an MCP change belongs to the user the client acted for)."""
+    case = (await db.execute(select(Case).where(Case.id == case_id, Case.tenant_id == tenant_id))).scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    event = (await db.execute(select(TimelineEvent).where(
+        TimelineEvent.id == event_id, TimelineEvent.case_id == case_id,
+        TimelineEvent.event_type == "status_change"))).scalars().first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Status change not found")
+    role = resolve_active_role(current_user.is_super_admin, getattr(current_user, "_active_tenant_id", None),
+                               current_user.memberships)
+    if not (role in ("admin", "super_admin") or (role == "analyst" and event.user_id == current_user.id)):
+        raise HTTPException(status_code=403, detail="Only the person who made this change or an admin can correct it")
+    return case, event
+
+
+@router.put("/{case_id}/status-history/{event_id}")
+async def correct_status_change(*, db: AsyncSession = Depends(deps.get_db), case_id: int, event_id: int,
+                                body: case_schema.StatusChangeFix,
+                                current_user: User = Depends(deps.require_analyst_or_above),
+                                tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    """Correct when a status change happened and what it changed from/to. The case's current status is unchanged."""
+    case, event = await _status_entry(db, case_id, event_id, tenant_id, current_user)
+    uid = current_user.id
+    resolved = await status_history.correct(db, case=case, event=event, at=body.at, from_status=body.from_status,
+                                            to_status=body.to_status, user_id=uid)
+    await db.commit()
+    return {"ok": True, "resolved_at": resolved}
+
+
+@router.delete("/{case_id}/status-history/{event_id}")
+async def delete_status_change(*, db: AsyncSession = Depends(deps.get_db), case_id: int, event_id: int,
+                               current_user: User = Depends(deps.require_analyst_or_above),
+                               tenant_id: int = Depends(deps.get_effective_tenant_id)) -> Any:
+    """Delete a status change made by mistake. The case's current status is unchanged."""
+    case, event = await _status_entry(db, case_id, event_id, tenant_id, current_user)
+    uid = current_user.id
+    resolved = await status_history.remove(db, case=case, event=event, user_id=uid)
+    await db.commit()
+    return {"ok": True, "resolved_at": resolved}

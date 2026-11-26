@@ -99,6 +99,12 @@ class TimelineEventCreate(TimelineEventBase):
     pass
 
 
+class StatusChangeFix(BaseModel):
+    at: datetime
+    from_status: str
+    to_status: str
+
+
 class TimelineEventUpdate(BaseModel):
     event_type: Optional[str] = None
     content: Optional[str] = None
