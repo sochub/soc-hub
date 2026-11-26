@@ -225,3 +225,39 @@ def test_no_war_room_no_post(delays, posts):
             await slack_bot.on_case_event(tid, ev, cid, ch)
         assert [1 for m, _ in posts if m == "chat.postMessage"] == []
     run(body)
+
+
+def test_new_note_posts_card_to_war_room(delays, posts):
+    from app.models.case import TimelineEvent
+    from app.services.case_service import NOTE_CARD_CHARS, add_timeline_note, edit_timeline_note
+
+    async def body(ids):
+        async with AsyncSessionLocal() as db:
+            t, u, case = await _setup(db, ids)
+            u.full_name = "Ana Analyst"
+            quiet = await make_case(db, ids, t)  # no war room
+            await add_timeline_note(db, case=quiet, content="nobody to tell", user_id=u.id)
+            ev = await add_timeline_note(
+                db, case=case, user_id=u.id, event_type="containment",
+                content="Blocked <!channel> **1.2.3.4** with @[Bo Lee](user:7) ![shot](/api/x.png) " + "x" * 800)
+            await db.commit()
+            assert len(delays) == 1 and delays[0][1] == "note.added"
+            payload = delays[0][3]
+            assert payload["entry_id"] == ev.id and payload["type"] == "containment" and payload["truncated"]
+            assert len(payload["content"]) == NOTE_CARD_CHARS
+
+            # editing a note does not post it again
+            await edit_timeline_note(db, case=case, event=await db.get(TimelineEvent, ev.id),
+                                     update_data={"content": "Blocked 1.2.3.4 at the edge"}, user_id=u.id)
+            await db.commit()
+            assert len(delays) == 1
+
+        await slack_bot.on_case_event(*delays[0])
+        war = _war(posts)
+        assert len(war) == 1 and war[0]["attachments"][0]["color"] == "#36c5f0"
+        text = flat(war)
+        assert "New containment note" in text and "by Ana Analyst" in text and "1.2.3.4" in text
+        assert "@Bo Lee" in text and "user:7" not in text and "[image]" in text and "/api/x.png" not in text
+        assert "<!channel>" not in text and "…" in text  # escaped: a note can't ping the channel
+        assert not [1 for m, kw in posts if kw.get("channel") == "CALERT"]
+    run(body)

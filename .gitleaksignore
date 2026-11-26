@@ -31,3 +31,5 @@ d24b57462df86d5c42f4c71e6777c2fd20f59c54:backend/tests/test_wf_http_oauth.py:gen
 d37f6eca903129db7e25cc4b5b1c8cfef28021e7:backend/tests/test_wf_http_pkjwt.py:private-key:132
 f291cd8cbcfe1c96fdd221e98586674dee0ac2a1:backend/tests/test_wf_http_oauth.py:generic-api-key:22
 f291cd8cbcfe1c96fdd221e98586674dee0ac2a1:backend/tests/test_wf_templates_edr.py:generic-api-key:63
+9d143d995eed111f79d0f3c17e33024aba66819c:backend/tests/test_copilot_stream.py:generic-api-key:195
+c6a1c973b4b6ff6b271cb6fae8b264421dabe64e:backend/tests/test_copilot_stream.py:generic-api-key:195
