@@ -5,9 +5,12 @@ import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, X, CheckCircle, Bell
 import { Link, useSearchParams } from 'react-router-dom';
 import PromoteAlertModal from './PromoteAlertModal';
 import { AlertRuns } from '../automations/CaseAutomation';
-import { Button, Input, Label, Select, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, buttonClass, type Tone } from '../../components/ui';
+import { Button, Label, Select, SeverityStamp, Stamp, Skeleton, ErrorState, EmptyState, buttonClass, type Tone } from '../../components/ui';
 import { BASE_FIELDS, FIELD_RE, OPS, describe, opLabel, payloadPaths, type Condition } from './conditions';
 import FieldPicker from './FieldPicker';
+import ValuePicker from './ValuePicker';
+import TimeRangePicker from './TimeRangePicker';
+import { RANGE_RE, absoluteLabel, rangeLabel, rangeStart } from './timeRange';
 import { FIXED_COLUMN_COUNT, useAlertColumns } from './alertColumns';
 import ColumnsMenu from './ColumnsMenu';
 import Modal from '../../components/layout/Modal';
@@ -43,7 +46,7 @@ const isoOf = (local: string) => { const t = Date.parse(local); return Number.is
 const shortField = (f: string) => f.replace(/^payload\./, '');
 
 /** Add a condition: field (base or any payload path, with suggestions from recent payloads), operator, value. */
-function ConditionAdder({ fields, onAdd }: { fields: string[]; onAdd: (c: Condition) => void }) {
+function ConditionAdder({ fields, onAdd, scope, scopeKey }: { fields: string[]; onAdd: (c: Condition) => void; scope: () => Record<string, string>; scopeKey: string }) {
     const [c, setC] = useState<Condition>({ field: '', op: 'equals', value: '' });
     const valid = FIELD_RE.test(c.field) && !!c.value.trim();
     const add = () => { if (valid) { onAdd({ ...c, value: c.value.trim() }); setC({ ...c, value: '' }); } };
@@ -57,8 +60,9 @@ function ConditionAdder({ fields, onAdd }: { fields: string[]; onAdd: (c: Condit
                     {OPS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                 </Select></div>
             <div><Label htmlFor="cond-value">Value</Label>
-                <Input id="cond-value" value={c.value} placeholder={c.op === 'in_cidr' ? '10.0.0.0/8' : 'test'}
-                    onChange={(e) => setC({ ...c, value: e.target.value })} /></div>
+                <ValuePicker inputId="cond-value" fieldName={c.field} value={c.value} suggest={c.op !== 'in_cidr'}
+                    placeholder={c.op === 'in_cidr' ? '10.0.0.0/8' : 'pick a value or type one'}
+                    scope={scope} scopeKey={scopeKey} onChange={(value) => setC({ ...c, value })} /></div>
             <Button type="submit" disabled={!valid}>Add filter</Button>
         </form>
     );
@@ -152,8 +156,16 @@ export default function AlertsList() {
     const conds = parseWhere(sp.get('where'));
     const receivedFrom = sp.get('from') ?? '';
     const receivedTo = sp.get('to') ?? '';
+    // A relative range ("24h", "today") wins over from/to and is turned into an instant at each fetch.
+    const range = RANGE_RE.test(sp.get('range') ?? '') ? sp.get('range')! : '';
+    const refresh = [30, 60, 300].includes(Number(sp.get('refresh'))) ? Number(sp.get('refresh')) : 0;
+    const timeActive = !!range || !!receivedFrom || !!receivedTo;
+    const timeParams = (): Record<string, string> => range ? { received_from: rangeStart(range)! } : {
+        ...(isoOf(receivedFrom) && { received_from: isoOf(receivedFrom)! }),
+        ...(isoOf(receivedTo) && { received_before: isoOf(receivedTo)! }),
+    };
     const setConds = (next: Condition[]) => { setParams({ where: next.length ? JSON.stringify(next.map((c) => [c.field, c.op, c.value])) : null }); resetView(); };
-    const [showFields, setShowFields] = useState(conds.length > 0 || !!receivedFrom || !!receivedTo);
+    const [showFields, setShowFields] = useState(conds.length > 0);
     const sizeParam = Number(sp.get('size'));
     const PAGE_SIZE = (PAGE_SIZES as readonly number[]).includes(sizeParam) ? sizeParam : 40;
     const page = Math.max(0, Number(sp.get('page') ?? 1) - 1 || 0);
@@ -187,13 +199,13 @@ export default function AlertsList() {
         ...(severityFilter !== 'all' && { severity: severityFilter }),
         ...(sourceFilter !== 'all' && { source: sourceFilter }),
         ...(conds.length && { where: JSON.stringify(conds) }),
-        ...(isoOf(receivedFrom) && { received_from: isoOf(receivedFrom) }),
-        ...(isoOf(receivedTo) && { received_before: isoOf(receivedTo) }),
     };
+    const timeKey = range || `${receivedFrom}|${receivedTo}`;
     const { data: result, isLoading, isError, refetch } = useQuery({
-        queryKey: ['alerts', 'list', params],
+        queryKey: ['alerts', 'list', params, timeKey],
+        refetchInterval: refresh ? refresh * 1000 : false,
         queryFn: async () => {
-            const r = await api.get<Alert[]>('/alerts/', { params });
+            const r = await api.get<Alert[]>('/alerts/', { params: { ...params, ...timeParams() } });
             return { items: r.data, total: Number(r.headers['x-total-count'] ?? r.data.length) };
         },
         placeholderData: keepPreviousData,
@@ -242,8 +254,8 @@ export default function AlertsList() {
     const openAlert = (id: number) => setViewing(id);
 
     const filtersActive = statusFilter !== 'pending' || severityFilter !== 'all' || sourceFilter !== 'all'
-        || conds.length > 0 || !!receivedFrom || !!receivedTo;
-    const clearFilters = () => { setParams({ status: null, severity: null, source: null, where: null, from: null, to: null }); resetView(); };
+        || conds.length > 0 || timeActive;
+    const clearFilters = () => { setParams({ status: null, severity: null, source: null, where: null, from: null, to: null, range: null }); resetView(); };
     const addCond = (c: Condition) => {
         if (conds.length < MAX_CONDITIONS && !conds.some((x) => x.field === c.field && x.op === c.op && x.value === c.value)) setConds([...conds, c]);
     };
@@ -289,6 +301,9 @@ export default function AlertsList() {
                     <option value="promoted">Promoted</option>
                     <option value="dismissed">Dismissed</option>
                 </Select>
+                <TimeRangePicker value={{ range, from: receivedFrom, to: receivedTo }} refresh={refresh}
+                    onChange={(v) => { setParams({ range: v.range || null, from: v.from || null, to: v.to || null }); resetView(); }}
+                    onRefresh={(n) => setParams({ refresh: n || null, page: page + 1 })} />
                 <Button size="sm" variant={showFields ? 'secondary' : 'ghost'} aria-expanded={showFields} aria-controls="alert-field-filters"
                     onClick={() => setShowFields((v) => !v)}><ListFilter size={13} aria-hidden />Field filters</Button>
                 <ColumnsMenu cols={cols} />
@@ -296,20 +311,17 @@ export default function AlertsList() {
 
             {showFields && (
                 <section id="alert-field-filters" aria-label="Field filters" className="space-y-3 border-b border-line pb-4">
-                    <ConditionAdder fields={knownFields.map((f) => f.field)} onAdd={addCond} />
-                    <div className="flex flex-wrap items-end gap-2">
-                        <div><Label htmlFor="recv-from">Received from</Label>
-                            <Input id="recv-from" type="datetime-local" value={receivedFrom}
-                                onChange={(e) => { setParams({ from: e.target.value || null }); resetView(); }} /></div>
-                        <div><Label htmlFor="recv-to">Received before</Label>
-                            <Input id="recv-to" type="datetime-local" value={receivedTo}
-                                onChange={(e) => { setParams({ to: e.target.value || null }); resetView(); }} /></div>
-                        <p className="text-xs text-fg-3 pb-1.5">Times are when sochub received the alert. Sort by Received for oldest or newest first.</p>
-                    </div>
+                    <ConditionAdder fields={knownFields.map((f) => f.field)} onAdd={addCond}
+                        scopeKey={`${statusFilter}|${severityFilter}|${sourceFilter}|${timeKey}`}
+                        scope={() => ({
+                            ...(statusFilter !== 'all' && { status: statusFilter }), ...(severityFilter !== 'all' && { severity: severityFilter }),
+                            ...(sourceFilter !== 'all' && { source: sourceFilter }), ...timeParams(),
+                        })} />
+                    <p className="text-xs text-fg-3">Value suggestions come from every stored alert that matches the source, severity, status and time range above, with how many alerts have each value.</p>
                 </section>
             )}
 
-            {(conds.length > 0 || receivedFrom || receivedTo) && (
+            {(conds.length > 0 || timeActive) && (
                 <ul aria-label="Active field filters" className="flex flex-wrap items-center gap-1.5">
                     {conds.map((c, i) => (
                         <li key={`${c.field}|${c.op}|${c.value}`}>
@@ -320,10 +332,10 @@ export default function AlertsList() {
                             </button>
                         </li>
                     ))}
-                    {(receivedFrom || receivedTo) && (
-                        <li><button type="button" onClick={() => { setParams({ from: null, to: null }); resetView(); }} aria-label="Remove filter: received time"
+                    {timeActive && (
+                        <li><button type="button" onClick={() => { setParams({ from: null, to: null, range: null }); resetView(); }} aria-label="Remove filter: received time"
                             className="inline-flex items-center gap-1 h-7 px-2 rounded-sm border border-accent/40 bg-accent/10 text-xs text-fg hover:border-accent">
-                            Received {receivedFrom ? new Date(receivedFrom).toLocaleString() : '…'} – {receivedTo ? new Date(receivedTo).toLocaleString() : '…'}<X size={12} aria-hidden />
+                            Received: {range ? rangeLabel(range) : absoluteLabel(receivedFrom, receivedTo)}<X size={12} aria-hidden />
                         </button></li>
                     )}
                 </ul>

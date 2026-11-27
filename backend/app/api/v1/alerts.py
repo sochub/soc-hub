@@ -18,7 +18,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.schemas import case as case_schema
-from app.schemas.suppression import Conditions
+from app.schemas.suppression import FIELD_RE, Conditions
 from app.services import alert_service, email_intake, suppression_service
 from app.workflows.events import emit_event
 
@@ -155,6 +155,33 @@ async def alert_fields(
 ) -> Any:
     """Payload fields seen in recent alerts (optionally of one source), for the Alerts field filter."""
     return await alert_service.payload_fields(db, tenant_id, source)
+
+
+@router.get("/field-values")
+async def alert_field_values(
+    field: str = Query(..., max_length=600, pattern=FIELD_RE.pattern, description="source, title, severity or payload.<path>"),
+    q: Optional[str] = Query(None, max_length=200, description="Only values containing this text (case-insensitive)."),
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    source: Optional[str] = None,
+    received_from: Optional[datetime] = None,
+    received_before: Optional[datetime] = None,
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+    tenant_id: int = Depends(deps.get_effective_tenant_id),
+) -> Any:
+    """Value suggestions for a field filter: the most common values of `field` among the alerts the list's other
+    filters select (every matching alert, not one page), each with its count."""
+    base = select(Alert).where(Alert.tenant_id == tenant_id)
+    for col, val in ((Alert.status, status), (Alert.severity, severity), (Alert.source, source)):
+        if val:
+            base = base.where(col == val)
+    if received_from:
+        base = base.where(Alert.created_at >= received_from)
+    if received_before:
+        base = base.where(Alert.created_at < received_before)
+    return await alert_service.field_values(db, base, field, q, limit)
 
 
 @router.get("/sources", response_model=List[str])
