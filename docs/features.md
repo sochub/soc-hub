@@ -267,14 +267,24 @@ together with the source, severity and status filters.
 - The Field box suggests the paths seen in the last 300 alerts (of the selected source), and any path can be
   typed, nested ones included (`payload.agent.name`). A key that itself contains a dot can't be named.
 - In an expanded alert, **Filter alerts by** turns any short payload value into an *equals* filter in one click.
-- **Received from / before** limits the time sochub received the alert. Sort the Received column for oldest
-  or newest first, to read an endpoint's alerts in order.
+- The Value box suggests the field's most common values with how many alerts have each, and narrows them as
+  you type (`backup` finds `backup-server-test`). Suggestions are counted over every stored alert that matches
+  the source, severity, status and time range, not the loaded page; any other value can still be typed.
+  Lists, objects and values over 200 characters are not suggested.
+- The **time range** button (next to Field filters) limits by when sochub received the alert, not the event
+  time inside it: quick ranges (last 15 minutes, hour, 6 hours, 24 hours, 7 days, today), any "last N
+  minutes/hours/days", or exact From / Before dates. A relative range is re-evaluated on every refresh, and
+  **Auto-refresh** reloads the list every 30 seconds, minute or 5 minutes. The picker shows the timezone used
+  (the browser's) and the ranges you used recently. Sort the Received column for oldest or newest first, to
+  read an endpoint's alerts in order.
 - Filtering runs on the server across all alerts, so paging and the count are exact. Filters live in the URL,
   so a filtered view is a link you can share or bookmark.
 - A list or object field matches as its JSON text, so `contains` finds an item in a list such as rule groups.
 - REST: `GET /alerts/?where=[{"field":"payload.agent_name","op":"equals","value":"test"}]` with
-  `received_from` / `received_before`; `GET /alerts/fields` lists the known paths. The MCP `list_alerts` tool
-  takes the same `conditions`.
+  `received_from` / `received_before`; `GET /alerts/fields` lists the known paths and
+  `GET /alerts/field-values?field=payload.agent.name&q=back` the values with counts (it takes the same source,
+  severity, status and time parameters). The MCP `list_alerts` tool takes the same `conditions`. In the URL a
+  relative range is `range=24h` (or `15m`, `7d`, `today`) and an absolute one `from` / `to`.
 
 ### Suppression rules
 

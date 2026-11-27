@@ -91,6 +91,28 @@ def test_alert_list_payload_conditions_time_range_and_fields():
                 fields = {f["field"]: f for f in r.json()}
                 assert fields["payload.agent_name"]["count"] == 3 and "test" in fields["payload.agent_name"]["examples"]
                 assert "payload.rule.groups" in fields and "payload.user" not in fields
+
+                # value suggestions: most common first, counted over every matching alert (not a page)
+                vals = lambda params: cl.get("/api/v1/alerts/field-values", headers=h, params=params)  # noqa: E731
+                r = await vals({"field": "payload.agent_id"})
+                assert r.status_code == 200, r.text
+                assert r.json() == [{"value": "008", "count": 2}, {"value": "011", "count": 1}]
+                # typed text narrows them, ignoring case; other tenants never leak in
+                assert (await vals({"field": "payload.agent_name", "q": "WEB"})).json() == [{"value": "web-01", "count": 1}]
+                names = {v["value"]: v["count"] for v in (await vals({"field": "payload.agent_name"})).json()}
+                assert names == {"test": 1, "TEST": 1, "web-01": 1}  # stored spellings, surrounding spaces trimmed
+                # the list's other filters apply: source, severity, status and the received-time window
+                assert (await vals({"field": "source"})).json()[0] == {"value": "wazuh", "count": 3}
+                assert (await vals({"field": "payload.agent_id", "severity": "medium"})).json() == [{"value": "008", "count": 1}]
+                r = await vals({"field": "payload.agent_id", "received_from": (now - timedelta(minutes=90)).isoformat()})
+                assert r.json() == [{"value": "011", "count": 1}]
+                assert (await vals({"field": "payload.agent_id", "status": "dismissed"})).json() == []
+                # lists/objects are not offered as values; a field nobody sends is empty; bad fields are a 422
+                assert (await vals({"field": "payload.rule.groups"})).json() == []
+                assert (await vals({"field": "payload.rule"})).json() == []
+                assert (await vals({"field": "payload.nope"})).json() == []
+                assert (await vals({"field": "payload.x;drop"})).status_code == 422
+                assert (await vals({"field": "payload.agent_id", "limit": 1})).json() == [{"value": "008", "count": 2}]
         finally:
             async with AsyncSessionLocal() as db:
                 await db.execute(delete(Alert).where(Alert.id.in_(alert_ids or [-1])))

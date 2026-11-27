@@ -29,6 +29,7 @@ SORTS = {"-created_at": Alert.created_at.desc(), "created_at": Alert.created_at.
 
 MAX_LIST_CONDITIONS = 10
 FIELD_SCAN = 300       # recent alerts /alerts/fields samples
+VALUE_MAX = 200        # longest value /alerts/field-values offers
 CIDR_SCAN = 20_000     # rows in_cidr checks in Python after the SQL conditions narrowed them
 
 _COLUMNS = {"source": Alert.source, "title": Alert.title, "severity": Alert.severity}
@@ -75,6 +76,24 @@ async def apply_conditions(db: AsyncSession, q, conditions: list):
                                                      "payload": r.payload or {}})]
         q = q.where(Alert.id.in_(keep))
     return q
+
+
+async def field_values(db: AsyncSession, base, field: str, q: Optional[str] = None, limit: int = 10) -> list:
+    """The most common values of one field among the alerts ``base`` selects (an alerts query already narrowed to
+    the tenant and the list's filters), optionally only those containing ``q``; each with its alert count.
+    Counted over every matching alert, not a page. Objects, lists and very long texts are not offered as values.
+    Values group as stored, while matching ignores case, so two spellings can show as two rows."""
+    # ponytail: a JSON extraction per matching alert, no index; narrow with a time range on very large tenants,
+    # or add an expression index for the hot paths if this gets slow.
+    text = func.btrim(_field_text(field))
+    sub = base.with_only_columns(text.label("value")).subquery()
+    stmt = select(sub.c.value, func.count().label("n")).where(
+        sub.c.value.isnot(None), sub.c.value != "", func.length(sub.c.value) <= VALUE_MAX,
+        func.left(sub.c.value, 1).notin_(("{", "[")))
+    if q and q.strip():
+        stmt = stmt.where(func.lower(sub.c.value).contains(q.strip().lower(), autoescape=True))
+    rows = await db.execute(stmt.group_by(sub.c.value).order_by(func.count().desc(), sub.c.value).limit(limit))
+    return [{"value": v, "count": n} for v, n in rows.all()]
 
 
 def _flatten(value, prefix: str, out: dict, depth: int = 0) -> None:
