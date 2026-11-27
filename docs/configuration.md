@@ -308,6 +308,21 @@ with "AI endpoint redirect refused". Point `api_base` at the final URL.
 - Re-running AI triage while a run for the case is still pending returns
   that run instead of starting a new one.
 
+## Security briefs
+
+Off until an organization admin turns it on (**Settings -> Security briefs**); see
+[features.md](features.md#security-briefs). The beat schedule entry `fetch-briefs` (every 30 minutes) needs the
+default-queue worker and makes no outbound call while no organization has the feature on.
+
+| Variable | Description | Default |
+|---|---|---|
+| `BRIEFS_CENTRAL_FEED_URL` | The sochub briefs feed (RSS/Atom) offered to every organization as a built-in source. Empty string = no central feed. A feed that does not answer is recorded on the source (visible to admins on the Sources tab), not logged as an error | `https://sochub.io/briefs/rss.xml` |
+
+The daily cap (`BRIEFS_DAILY_CAP`, 40 AI briefs per organization per UTC day) is a constant in
+`backend/app/services/briefs.py` for now, next to the other limits (fetch interval, 90-day retention, response
+size, 20 own sources per organization). The deployment needs outbound https to `sochub.io`, `www.cisa.gov` and to
+any feed an admin adds.
+
 ## Threat-intel enrichment
 
 sochub can look up IOCs and artifacts in public threat-intelligence services and

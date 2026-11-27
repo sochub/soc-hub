@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.oauth import routes as oauth
 
-from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, ticketing, portfolio, containment, user_verification, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room, case_time, mailboxes, misp, alert_retention
+from app.api.v1 import auth, users, cases, alerts, artifacts, artifact_types, integrations, copilot, audit_logs, suppressions, ticketing, portfolio, containment, user_verification, tenants, invitations, iocs, stats, playbooks, case_tasks, case_events, case_assets, case_triage, sso, workflows, slack, ai_config, enrichment, attachments, reports, secrets, notifications, mfa, sessions, guest_portal, guest_auth, case_guests, war_room, case_time, mailboxes, misp, alert_retention, briefs
 from app.escalations import api as escalation_api
 from app.escalations import inbound as escalation_inbound
 
@@ -53,6 +53,7 @@ api_router.include_router(reports.router, prefix="/cases", tags=["reports"])
 api_router.include_router(misp.router, prefix="/cases", tags=["misp"])
 api_router.include_router(case_time.router, prefix="/cases", tags=["case-time"])
 api_router.include_router(reports.branding_router, prefix="/tenants", tags=["reports"])
+api_router.include_router(briefs.router, prefix="/briefs", tags=["briefs"])
 api_router.include_router(secrets.router, prefix="/secrets", tags=["secrets"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(guest_auth.router, prefix="/guest/auth", tags=["guest"])

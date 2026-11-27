@@ -216,6 +216,8 @@ export interface User {
   is_active: boolean;
   is_super_admin?: boolean;
   active_tenant_id?: number | null;
+  briefs_enabled?: boolean;  // the active organization has Security briefs on (/users/me only)
+  briefs_correlate?: boolean;  // ...and matches briefs with its observables
   memberships?: Membership[];
   job_title?: string | null;
   timezone?: string | null;

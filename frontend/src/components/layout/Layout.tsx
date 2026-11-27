@@ -4,7 +4,7 @@ import Avatar from '../Avatar';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard, ShieldAlert, Settings, Bell, Database, Share2, LogOut,
-    Inbox, Menu, X, Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, BookText, Code, Workflow, Search, Building2, Plus, Sparkles,
+    Inbox, Menu, X, Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, BookText, Code, Workflow, Search, Building2, Plus, Sparkles, Newspaper, Crosshair,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,6 +27,7 @@ const NAV_GROUPS = [
     { label: 'Intel', items: [
         { icon: Database, label: 'Observables', path: '/observables' },
         { icon: Share2, label: 'Graph', path: '/graph' },
+        { icon: Newspaper, label: 'Briefs', path: '/briefs', briefs: true },
     ] },
     { label: 'Automate', items: [
         { icon: BookText, label: 'Playbooks', path: '/playbooks' },
@@ -71,6 +72,12 @@ export default function Layout() {
     });
 
     // The active organization changed under this tab (switched in another one): its cached data is stale.
+    // Security briefs is per organization and off by default: the nav entry and its unread badge exist only when on.
+    const briefsOn = !!currentUser?.briefs_enabled;
+    const { data: briefsUnread } = useQuery({
+        queryKey: ['briefs', 'unread'], enabled: briefsOn, refetchInterval: 5 * 60 * 1000,
+        queryFn: async () => (await api.get('/briefs/unread-count')).data as { count: number; capped: boolean; matched_unread?: number },
+    });
     const qc = useQueryClient();
     const seenTenant = useRef<number | null | undefined>(undefined);
     const activeTenant = currentUser?.active_tenant_id;
@@ -179,14 +186,19 @@ export default function Layout() {
                             {(showLabels || mobileOpen)
                                 ? <p className="label-caps !text-rail-ink/50 px-4 pt-2 pb-1.5">{group.label}</p>
                                 : <div className="mx-4 my-2 border-t border-rail-line hidden lg:block" />}
-                            {group.items.filter((i) => !('multiTenant' in i) || !!currentUser?.is_super_admin || (currentUser?.memberships?.length ?? 0) > 1).map((item) => {
+                            {group.items.filter((i) => !('multiTenant' in i) || !!currentUser?.is_super_admin || (currentUser?.memberships?.length ?? 0) > 1)
+                                .filter((i) => !('briefs' in i) || briefsOn).map((item) => {
                                 const Icon = item.icon;
+                                const unread = 'briefs' in item && briefsUnread?.count ? `${briefsUnread.capped ? '99+' : briefsUnread.count}` : null;
+                                // Unread briefs that match this organization's observables: the badge inverts and says so.
+                                const matched = unread ? briefsUnread?.matched_unread ?? 0 : 0;
+                                const unreadLabel = matched > 0 ? `${matched >= 100 ? '99+' : matched} unread brief${matched === 1 ? '' : 's'} match${matched === 1 ? 'es' : ''} your observables` : `${unread} unread`;
                                 const isActive = location.pathname === item.path
                                     || (item.path !== '/' && location.pathname.startsWith(item.path));
                                 return (
                                     <Link key={item.path} to={item.path}
                                         aria-current={isActive ? 'page' : undefined}
-                                        title={collapsed ? item.label : undefined}
+                                        title={unread && (collapsed || matched > 0) ? `${item.label} (${unreadLabel})` : collapsed ? item.label : undefined}
                                         className={cn(
                                             // Active item: lifted row, lavender icon and a lime signal bar on the left edge (the website's dot).
                                             'relative flex items-center gap-3 h-8 mx-2 px-3 rounded-md text-[13.5px] transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-lavender',
@@ -197,6 +209,10 @@ export default function Layout() {
                                         )}>
                                         <Icon size={16} className={cn('shrink-0', isActive && 'text-lavender')} aria-hidden />
                                         {(showLabels || mobileOpen) && <span className="truncate">{item.label}</span>}
+                                        {unread && (showLabels || mobileOpen
+                                            ? <span className={cn('num ml-auto inline-flex items-center gap-1 rounded-sm px-1.5 text-[11px] font-semibold', matched > 0 ? 'bg-rail-ink text-rail' : 'bg-rail-2 text-rail-ink')}>
+                                                {matched > 0 && <Crosshair size={10} aria-hidden />}<span aria-hidden>{unread}</span><span className="sr-only">{unreadLabel}</span></span>
+                                            : <span className="sr-only">{unreadLabel}</span>)}
                                     </Link>
                                 );
                             })}
@@ -306,7 +322,7 @@ export default function Layout() {
             </div>
 
             <CopilotWidget />
-            <CommandPalette nav={ALL_NAV} />
+            <CommandPalette nav={ALL_NAV.filter((i) => !('briefs' in i) || briefsOn)} />
         </div>
     );
 }

@@ -27,6 +27,7 @@ export default function SettingsHub() {
                 { label: 'Integrations', to: '/settings/integrations', show: true },
                 { label: 'Users', to: '/settings/users', show: isAdmin },
                 { label: 'Escalation', to: '/settings/escalation', show: isAdmin },
+                { label: 'Briefs', to: '/settings/briefs', show: isAdmin },
                 { label: 'Audit log', to: '/settings/audit', show: isAdmin },
             ],
         },

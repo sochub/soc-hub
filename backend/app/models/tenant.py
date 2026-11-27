@@ -1,5 +1,5 @@
 from sqlalchemy import Boolean, Column, Integer, JSON, LargeBinary, String, Text, DateTime
-from sqlalchemy.sql import func, false as sa_false
+from sqlalchemy.sql import func, false as sa_false, true as sa_true
 from app.db.base_class import Base
 
 LOGIN_METHODS = ("password", "saml", "oidc")
@@ -21,6 +21,11 @@ class Tenant(Base):
     session_max_minutes = Column(Integer, nullable=True)
     guest_domain_allowlist = Column(JSON, nullable=False, default=list, server_default="[]")
     mcp_enabled = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    # Security briefs (app/services/briefs.py): off by default; built-in source ids this organization switched off.
+    briefs_enabled = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    # Flag briefs whose indicators / CVEs are among this organization's artifacts and IOCs (matched at read time).
+    briefs_correlate = Column(Boolean, nullable=False, default=True, server_default=sa_true())
+    briefs_disabled_sources = Column(JSON, nullable=False, default=list, server_default="[]")
     guest_require_sso = Column(Boolean, nullable=False, default=False, server_default=sa_false())  # superseded by guest_login_method
     # How members / external guests sign in: one of LOGIN_METHODS
     member_login_method = Column(String, nullable=False, default="password", server_default="password")

@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     # Threat-intel enrichment kill switch: False stops all automatic enqueueing.
     ENRICHMENT_ENABLED: bool = True
 
+    # Security briefs: the sochub-curated incident feed every briefs-enabled organization gets as a built-in
+    # source. Empty string = no central feed.
+    BRIEFS_CENTRAL_FEED_URL: str = "https://sochub.io/briefs/rss.xml"
+
     # --- Evidence attachment storage ---
     STORAGE_BACKEND: Literal["local", "s3"] = "local"
     STORAGE_LOCAL_PATH: str = "/data/attachments"

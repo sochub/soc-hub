@@ -35,6 +35,8 @@ const Portfolio = lazy(() => import('./features/portfolio/Portfolio'));
 const ArtifactsList = lazy(() => import('./features/artifacts/ArtifactsList'));
 const IOCList = lazy(() => import('./features/iocs/IOCList'));
 const ArtifactMindMap = lazy(() => import('./features/artifacts/ArtifactMindMap'));
+const BriefsPage = lazy(() => import('./features/briefs/BriefsPage'));
+const BriefsSettings = lazy(() => import('./features/briefs/BriefsSettings'));
 const Playbooks = lazy(() => import('./features/playbooks/Playbooks'));
 const AutomationsList = lazy(() => import('./features/automations/AutomationsList'));
 const WorkflowEditor = lazy(() => import('./features/automations/WorkflowEditor'));
@@ -109,6 +111,7 @@ function App() {
                   <Route path="iocs" element={<IOCList />} />
                 </Route>
                 <Route path="graph" element={<ArtifactMindMap />} />
+                <Route path="briefs" element={<BriefsPage />} />
                 <Route path="playbooks" element={<Playbooks />} />
                 <Route path="workflows" element={<AutomationsList />} />
                 <Route path="workflows/runs/:runId" element={<RunDetail />} />
@@ -124,6 +127,7 @@ function App() {
                     <Route path="time" element={<TimeMetrics />} />
                     <Route path="workload" element={<AnalystWorkload />} />
                     <Route path="escalation" element={<EscalationPolicy />} />
+                    <Route path="briefs" element={<BriefsSettings />} />
                   </Route>
                   <Route element={<RequireRole roles={['super_admin']} />}>
                     <Route path="tenants" element={<TenantManagement />} />

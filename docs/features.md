@@ -407,3 +407,58 @@ tasks and their workflows, enrichment, triage, suppression drafts, tickets, cont
 and admin authoring of playbooks and workflows, always with the signed-in person's live role. Anything that can hide
 alerts or run on its own (workflows, suppression rules) is saved **disabled** for a person to review and enable. Writes show "via MCP" in the case Activity tab and as
 `mcp.<tool>` audit entries; users and admins can revoke connected apps. See [mcp/README.md](mcp/README.md).
+
+## Security briefs
+
+A **Briefs** page (Intel group) that keeps the team current: recent vulnerabilities and incidents from public
+security feeds, each with a short AI-written brief of what happened, why it matters to a SOC team, and lessons
+learned. It is **off by default** and switched on per organization by an admin under **Settings -> Briefs**
+(Organization group), where all of its configuration lives; the Briefs page itself only shows the briefs. While it is off the page, the navigation entry and the `/api/v1/briefs` API do not exist for that
+organization (404), and when no organization has it on the deployment makes no outbound calls for it at all.
+
+**Sources.** Built-in sources are shared by every organization on the deployment: the sochub briefs feed
+(`BRIEFS_CENTRAL_FEED_URL`), the CISA Known Exploited Vulnerabilities catalog (entries added in the last 30 days)
+and the CISA cybersecurity advisories feed. An admin can switch any built-in off for their own organization, and
+add up to 20 RSS or Atom feeds of their own (https only) under **Settings -> Briefs**, which also shows when each
+source was last fetched and, in plain words, why the last fetch failed. An organization's own sources and their
+items are visible to that organization only.
+
+**Fetching.** A scheduled job runs every 30 minutes and fetches each source about once an hour: at most 50 new
+items per fetch, 2 MB per response (the CISA catalog, a single large file, gets 8 MB), a 15 second timeout, and the
+User-Agent `sochub-briefs`. An organization's own feed URL goes through the same guard as workflow HTTP requests
+(never an internal address, the connection is pinned to the checked address, redirects are not followed).
+
+**The page.** Filter by kind, source, CVE, unread, saved or text; filters live in the URL. Unread items are marked
+as such; opening an item or its link marks it read, and each member has their own read and saved marks. Clicking a
+CVE shows every item that mentions it.
+
+**AI briefs.** Each organization's own AI provider (see [AI providers](#ai-providers)) writes its briefs, so
+nothing is shared between organizations. The scheduled run briefs items published in the last 7 days, newest
+first, up to **40 briefs per organization per UTC day**. Analysts and admins can also ask for one item with
+**Brief me**; that counts toward the day's total but is not stopped by it. Every brief is labelled **AI-written**
+with the model that wrote it, next to the source's own summary: treat it as a reading aid and open the original
+before acting on it. If the organization has no working AI provider, items simply show the source summary.
+
+**Untrusted text.** Everything a feed sends is untrusted. Documents with a DOCTYPE or entity declarations are
+refused, HTML is stripped, text is stored and shown as plain text, and only `http(s)` links are rendered (opened in
+a new tab with `rel="noopener noreferrer"`). The model receives the article inside the same untrusted-data fence
+the copilot uses for case data and is told never to follow instructions in it. Only feed text is sent to the
+model, never case data.
+
+**Matches with your observables.** Each item's title and summary are scanned for indicators (IP addresses,
+domains, URLs, file hashes, email addresses; defanged forms such as `hxxp://` and `[.]` are read as the real
+value), shown on the card as plain text. The item's own link and its feed's host are not counted. When one of
+those indicators, or a CVE id the item mentions, is also one of the organization's artifacts or IOCs, the brief is
+flagged **Matches your observables** with the matched values, the cases they are on (up to five each) and whether
+it is an IOC; a **Matches my observables** filter lists only those, and the Briefs entry in the sidebar marks
+unread matches. Matching is exact on the value, ignoring case (a domain does not match a URL on that host), never
+uses private-type artifacts, and is computed inside the deployment each time the list is read: an observable added
+today flags last month's brief, nothing is stored per organization, and nothing about the observables is sent
+anywhere, including to the AI model. A feed only carries a summary, so indicators that appear only in the full
+article are not seen. An admin can switch matching off under **Settings -> Briefs** (it is on by default);
+indicators are still listed, since they are part of the article.
+
+**Outbound calls.** The built-in feed URLs above (`sochub.io` and `cisa.gov`), any feed an admin added, and the
+organization's AI provider. Nothing about the organization is sent to a feed.
+
+**Retention.** Items older than 90 days are deleted, with their briefs and read/saved marks.

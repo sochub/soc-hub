@@ -173,9 +173,14 @@ async def read_user_me(
     # A member whose active tenant is deactivated has no role there (every tenant route answers 403).
     deactivated = bool(getattr(current_user, "_tenant_deactivated", False))
     role = None if deactivated else resolve_active_role(current_user.is_super_admin, active, current_user.memberships)
+    briefs = None if active is None or deactivated else (await db.execute(
+        select(Tenant.briefs_enabled, Tenant.briefs_correlate).where(Tenant.id == active))).first()
+    briefs_enabled = bool(briefs and briefs[0])
 
     return UserMe(
         tenant_deactivated=deactivated,
+        briefs_enabled=briefs_enabled,
+        briefs_correlate=bool(briefs_enabled and briefs[1]),
         id=current_user.id,
         email=current_user.email,
         full_name=current_user.full_name,
