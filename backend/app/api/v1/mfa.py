@@ -297,6 +297,8 @@ class SecurityOut(BaseModel):
     require_mfa: bool
     members_without_mfa: int
     mcp_enabled: bool
+    briefs_enabled: bool
+    briefs_correlate: bool
     session_idle_minutes: Optional[int] = None
     session_max_minutes: Optional[int] = None
 
@@ -304,6 +306,8 @@ class SecurityOut(BaseModel):
 class SecurityIn(BaseModel):
     require_mfa: Optional[bool] = None
     mcp_enabled: Optional[bool] = None
+    briefs_enabled: Optional[bool] = None
+    briefs_correlate: Optional[bool] = None
     # Sent as null = back to the platform default; omitted = unchanged.
     session_idle_minutes: Optional[int] = None
     session_max_minutes: Optional[int] = None
@@ -332,7 +336,8 @@ async def _security_out(db: AsyncSession, tenant: Tenant) -> SecurityOut:
                User.mfa_enabled_at.is_(None), User.password_login_enabled.is_(True))
     )).scalar_one()
     return SecurityOut(require_mfa=bool(tenant.require_mfa), members_without_mfa=int(n),
-                       mcp_enabled=bool(tenant.mcp_enabled),
+                       mcp_enabled=bool(tenant.mcp_enabled), briefs_enabled=bool(tenant.briefs_enabled),
+                       briefs_correlate=bool(tenant.briefs_correlate),
                        session_idle_minutes=tenant.session_idle_minutes, session_max_minutes=tenant.session_max_minutes)
 
 
@@ -373,6 +378,18 @@ async def update_tenant_security(
         await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
                                action="tenant.mcp_toggled", tenant_id=tenant.id,
                                user_id=current_user.id, changes={"mcp_enabled": body.mcp_enabled})
+        changed = True
+    if body.briefs_enabled is not None and bool(tenant.briefs_enabled) != body.briefs_enabled:
+        tenant.briefs_enabled = body.briefs_enabled
+        await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
+                               action="tenant.briefs_toggled", tenant_id=tenant.id,
+                               user_id=current_user.id, changes={"briefs_enabled": body.briefs_enabled})
+        changed = True
+    if body.briefs_correlate is not None and bool(tenant.briefs_correlate) != body.briefs_correlate:
+        tenant.briefs_correlate = body.briefs_correlate
+        await create_audit_log(db=db, entity_type="tenant", entity_id=tenant.id,
+                               action="tenant.briefs_correlate_toggled", tenant_id=tenant.id,
+                               user_id=current_user.id, changes={"briefs_correlate": body.briefs_correlate})
         changed = True
     policy = {k: getattr(body, k) for k in ("session_idle_minutes", "session_max_minutes")
               if k in body.model_fields_set and getattr(tenant, k) != getattr(body, k)}

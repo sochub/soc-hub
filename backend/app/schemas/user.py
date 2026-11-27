@@ -134,6 +134,10 @@ class UserMe(BaseModel):
     # frontend role checks keep working.
     role: Optional[str] = None
     active_tenant_id: Optional[int] = None
+    # The active tenant has Security briefs on (the frontend shows the Briefs nav entry).
+    briefs_enabled: bool = False
+    # ...and matches briefs with its observables (the Briefs page shows the "matches" filter).
+    briefs_correlate: bool = False
     memberships: List[MembershipOut] = []
     job_title: Optional[str] = None
     timezone: Optional[str] = None

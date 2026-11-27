@@ -62,6 +62,7 @@ import app.tasks.war_room  # noqa: E402,F401
 import app.tasks.email_intake  # noqa: E402,F401
 import app.tasks.escalations  # noqa: E402,F401
 import app.tasks.retention  # noqa: E402,F401
+import app.tasks.briefs  # noqa: E402,F401
 
 # Beat schedule: run exactly one beat process per deployment (see the queue note above).
 # Beat's schedule file can live on tmpfs (read-only containers), so a restart forgets when an interval entry
@@ -111,6 +112,10 @@ celery_app.conf.beat_schedule = {
     "prune-war-room": {
         "task": "app.tasks.war_room.prune_war_room_task",
         "schedule": crontab(hour=3, minute=30),  # daily, 03:30 UTC
+    },
+    "fetch-briefs": {
+        "task": "app.tasks.briefs.fetch_briefs_task",
+        "schedule": crontab(minute="5,35"),  # every 30 minutes; does nothing until an organization turns briefs on
     },
     "purge-alerts": {
         "task": "app.tasks.retention.purge_alerts_task",
